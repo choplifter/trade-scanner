@@ -1,0 +1,17 @@
+# Backend
+backend/.venv/
+backend/.env
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.egg-info/
+backend/.pytest_cache/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+
+.DS_Store
+
+# Claude Code local state (machine-specific, not meant to be shared)
+.claude/
