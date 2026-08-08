@@ -12,8 +12,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import anthropic
     from fastapi import FastAPI
 
+    from app.ai.trade_idea_tracker import TradeIdeaTracker
     from app.alpaca.client import AlpacaClients
     from app.alpaca.universe import UniverseSymbol
     from app.core.config import Settings
@@ -26,6 +28,8 @@ class BackendState:
         self.scanner_engine: "ScannerEngine | None" = None
         self.settings: "Settings | None" = None
         self.universe: "dict[str, UniverseSymbol] | None" = None
+        self.anthropic_client: "anthropic.AsyncAnthropic | None" = None
+        self.trade_idea_tracker: "TradeIdeaTracker | None" = None
 
 
 backend_state = BackendState()
@@ -41,3 +45,5 @@ def bind(app: "FastAPI") -> None:
     backend_state.scanner_engine = app.state.scanner_engine
     backend_state.settings = app.state.settings
     backend_state.universe = app.state.universe
+    backend_state.anthropic_client = app.state.anthropic_client
+    backend_state.trade_idea_tracker = app.state.trade_idea_tracker

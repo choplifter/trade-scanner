@@ -64,3 +64,200 @@ div[id$="-timeframe"] label,
 div[id="heatmap-scanner-view"] label {
   margin-right: 12px;
 }
+
+/* 3x3 grid: panels sit in tracks 1 and 3, the drag splitters occupy the
+   thin track 2 between them. resizable_grid.js drags these by rewriting
+   grid-template-columns/rows on .home-grid with px values -- the panels
+   themselves don't need any JS, they just follow whatever tracks the grid
+   currently has. */
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 6px minmax(240px, 1.3fr);
+  grid-template-rows: minmax(160px, 1fr) 6px minmax(160px, 1fr);
+  gap: 16px;
+  padding: 0 16px 16px;
+  height: calc(100vh - 96px);
+  box-sizing: border-box;
+}
+
+.home-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: #fcfcfb;
+  border: 1px solid rgba(11, 11, 11, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.home-panel-table {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.home-panel-heatmap {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.home-panel-symbol {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.home-panel-ideas {
+  grid-column: 3;
+  grid-row: 3;
+}
+
+.home-splitter {
+  position: relative;
+  z-index: 1;
+}
+
+.home-splitter::after {
+  content: "";
+  position: absolute;
+  background: rgba(11, 11, 11, 0.1);
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.home-splitter:hover::after,
+.home-splitter.dragging::after {
+  background: #2a78d6;
+}
+
+.home-splitter-v {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  cursor: col-resize;
+}
+
+.home-splitter-v::after {
+  top: 0;
+  bottom: 0;
+  left: 1px;
+  width: 4px;
+}
+
+.home-splitter-h {
+  grid-column: 1 / span 3;
+  grid-row: 2;
+  cursor: row-resize;
+}
+
+.home-splitter-h::after {
+  left: 0;
+  right: 0;
+  top: 1px;
+  height: 4px;
+}
+
+.home-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 0;
+}
+
+.home-panel-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #52514e;
+}
+
+#home-symbol-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2a78d6;
+}
+
+.home-panel-body {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 12px 12px;
+  overflow-y: auto;
+}
+
+.home-ideas-empty {
+  font-size: 12px;
+  color: #898781;
+  line-height: 1.5;
+}
+
+.home-ideas-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.home-idea-card {
+  border: 1px solid rgba(11, 11, 11, 0.1);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.home-idea-card:hover {
+  background: rgba(42, 120, 214, 0.06);
+}
+
+.home-idea-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  margin-right: 6px;
+  border-radius: 4px;
+  background: #2a78d6;
+  color: #fcfcfb;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-idea-symbol {
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.home-idea-score {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-right: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(11, 11, 11, 0.1);
+  color: #898781;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+
+.home-idea-headline {
+  color: #52514e;
+  font-size: 12px;
+}
+
+.home-idea-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #52514e;
+  line-height: 1.4;
+}
+
+.home-ideas-disclaimer {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: #898781;
+  font-style: italic;
+}

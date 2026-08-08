@@ -1,4 +1,5 @@
-"""Scanner-wide gainers heatmap/treemap.
+"""Home page: scanner table, gainers heatmap, symbol detail, and AI trade
+ideas in one view.
 
 engine.snapshot_view() is synchronous and reads an in-memory dict -- no
 Alpaca I/O -- so this page can poll on the same cadence as the live
@@ -6,14 +7,38 @@ scanner engine itself without adding real request load. When markets are
 closed, snapshot_view() itself falls back to the most recently completed
 session's real gainers (see ScannerEngine.backfill_latest_session_gainers)
 rather than returning nothing -- this page just labels that state.
+
+Layout is a 2x2 grid: scanner table top-left, heatmap bottom-left, symbol
+detail top-right, AI trade ideas bottom-right. Table and heatmap share one
+poll interval/callback so a tick only calls snapshot_view() once. Clicking
+a table row, a heatmap tile, or a trade-idea card all load that symbol into
+the detail iframe (see pages/symbol_detail.py for why an iframe: same
+lightweight-charts widget the React app uses, embedded via
+assets/lightweight_chart.html).
+
+Trade ideas call the same app.ai.trade_ideas.generate_trade_ideas() and
+TradeIdeaTracker the React AI widget (routers/trade_ideas.py) uses, via
+backend_state + async_bridge.run_async rather than an HTTP round-trip to
+its own backend -- so a Dash-triggered generation also shows up in the
+React app's past-picks performance table, and vice versa.
 """
+
+import logging
+import urllib.parse
+from datetime import datetime, timezone
 
 import dash
 import pandas as pd
 import plotly.express as px
-from dash import Input, Output, callback, dcc, html
+from dash import ALL, Input, Output, State, callback, dash_table, dcc, html
 
+from app.ai.trade_idea_tracker import TrackedIdea
+from app.ai.trade_ideas import TradeIdea, generate_trade_ideas
+from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
+from app.dash_app.theme import DELTA_DOWN, DELTA_UP, TEXT_MUTED
+
+logger = logging.getLogger(__name__)
 
 dash.register_page(__name__, path="/", name="Scanner Heatmap")
 
@@ -24,41 +49,265 @@ _SCANNER_OPTIONS = [
     {"label": "Premarket Gainers", "value": "premarket_gainers"},
 ]
 
+_TABLE_COLUMNS = [
+    {"name": "Symbol", "id": "symbol"},
+    {"name": "Last", "id": "last"},
+    {"name": "Chg %", "id": "chg"},
+    {"name": "Vol", "id": "vol"},
+    {"name": "RVol", "id": "rvol"},
+]
+
+
+def _format_price(value: float) -> str:
+    return f"{value:,.2f}"
+
+
+def _format_pct(value: float) -> str:
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}%"
+
+
+def _format_volume(value: float) -> str:
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.2f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return f"{value:.0f}"
+
+
+def _format_rvol(value: float) -> str:
+    return f"{value:.2f}x"
+
+
+def _table_rows(rows) -> list[dict]:
+    return [
+        {
+            "symbol": r.symbol,
+            "last": _format_price(r.last_price),
+            "chg": _format_pct(r.pct_change),
+            "vol": _format_volume(r.volume_today),
+            "rvol": _format_rvol(r.rvol),
+            "pct_change_num": r.pct_change,
+        }
+        for r in rows
+    ]
+
+
+def _iframe_src(symbol: str | None) -> str:
+    if not symbol:
+        return "/analytics/assets/lightweight_chart.html"
+    return "/analytics/assets/lightweight_chart.html?symbol=" + urllib.parse.quote(symbol)
+
+
+_TRADE_IDEAS_PROMPT = (
+    "Click Generate to have Claude select today's 3 most notable setups from the "
+    "gainers scanner, with reasons and a signal score based on gap %, relative "
+    "volume, dollar volume, high-of-day status, news, VWAP, momentum, spread, "
+    "and multi-day context."
+)
+
+
+def _trade_ideas_message(text: str) -> html.Div:
+    return html.Div(text, className="home-ideas-empty")
+
+
+def _trade_ideas_cards(ideas: list[TradeIdea], disclaimer: str) -> html.Div:
+    cards = [
+        html.Div(
+            [
+                html.Span(f"#{i + 1}", className="home-idea-rank"),
+                html.Span(idea.symbol, className="home-idea-symbol"),
+                html.Span(
+                    f"Signal {idea.signal_score}/10",
+                    className="home-idea-score",
+                    title=(
+                        "How many scanner signals (catalyst, VWAP, momentum, spread, "
+                        "continuation, range) line up for this pick, not a prediction of outcome"
+                    ),
+                ),
+                html.Span(idea.headline, className="home-idea-headline"),
+                html.P(idea.reason, className="home-idea-note"),
+            ],
+            id={"type": "trade-idea-row", "index": idea.symbol},
+            n_clicks=0,
+            className="home-idea-card",
+        )
+        for i, idea in enumerate(ideas)
+    ]
+    return html.Div(
+        [
+            html.Div(cards, className="home-ideas-list"),
+            html.P(disclaimer, className="home-ideas-disclaimer"),
+        ]
+    )
+
 
 def layout(**_kwargs):
     poll_ms = _DEFAULT_POLL_MS
     if backend_state.settings is not None:
         poll_ms = int(backend_state.settings.scanner_poll_interval_regular * 1000)
 
+    engine = backend_state.scanner_engine
+    initial_rows = engine.snapshot_view("gainers") if engine is not None else []
+    default_symbol = initial_rows[0].symbol if initial_rows else None
+
     return html.Div(
         [
             html.H2("Scanner Heatmap"),
-            dcc.RadioItems(
-                id="heatmap-scanner-view",
-                options=_SCANNER_OPTIONS,
-                value="gainers",
-                inline=True,
-            ),
             dcc.Interval(id="heatmap-interval", interval=poll_ms, n_intervals=0),
-            dcc.Graph(id="heatmap-graph", style={"height": "80vh"}),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.H3("Scanner"),
+                                    dcc.RadioItems(
+                                        id="heatmap-scanner-view",
+                                        options=_SCANNER_OPTIONS,
+                                        value="gainers",
+                                        inline=True,
+                                    ),
+                                ],
+                                className="home-panel-header",
+                            ),
+                            html.Div(
+                                dash_table.DataTable(
+                                    id="home-scanner-table",
+                                    columns=_TABLE_COLUMNS,
+                                    data=_table_rows(initial_rows),
+                                    row_deletable=False,
+                                    sort_action="native",
+                                    # No fixed_rows: that switches the table into a
+                                    # JS-measured/virtualized layout that computes pixel
+                                    # widths/heights once at mount and never re-measures
+                                    # on container resize, so the table would stay stuck
+                                    # at its original size when the splitter is dragged.
+                                    # A plain table + CSS `position: sticky` header (below)
+                                    # gets the same sticky-header effect and reflows for
+                                    # free since it's just normal DOM/CSS.
+                                    style_table={"height": "100%", "overflowY": "auto"},
+                                    style_as_list_view=True,
+                                    style_cell={
+                                        "fontFamily": "system-ui, -apple-system, 'Segoe UI', sans-serif",
+                                        "fontSize": "12px",
+                                        "padding": "6px 10px",
+                                        "textAlign": "right",
+                                        "border": "none",
+                                        "borderBottom": "1px solid #e1e0d9",
+                                    },
+                                    style_cell_conditional=[
+                                        {"if": {"column_id": "symbol"}, "textAlign": "left", "fontWeight": "600"}
+                                    ],
+                                    style_header={
+                                        "position": "sticky",
+                                        "top": 0,
+                                        "zIndex": 1,
+                                        "backgroundColor": "#fcfcfb",
+                                        "color": TEXT_MUTED,
+                                        "fontWeight": "600",
+                                        "textTransform": "uppercase",
+                                        "fontSize": "11px",
+                                        "border": "none",
+                                        "borderBottom": "1px solid #e1e0d9",
+                                    },
+                                    style_data={"backgroundColor": "#fcfcfb"},
+                                    style_data_conditional=[
+                                        {
+                                            "if": {"filter_query": "{pct_change_num} >= 0", "column_id": "chg"},
+                                            "color": DELTA_UP,
+                                        },
+                                        {
+                                            "if": {"filter_query": "{pct_change_num} < 0", "column_id": "chg"},
+                                            "color": DELTA_DOWN,
+                                        },
+                                    ],
+                                    cell_selectable=True,
+                                ),
+                                className="home-panel-body",
+                            ),
+                        ],
+                        className="home-panel home-panel-table",
+                    ),
+                    html.Div(
+                        [
+                            html.Div(html.H3("Heatmap"), className="home-panel-header"),
+                            html.Div(
+                                dcc.Graph(
+                                    id="heatmap-graph",
+                                    style={"height": "100%"},
+                                    config={"responsive": True},
+                                ),
+                                className="home-panel-body",
+                            ),
+                        ],
+                        className="home-panel home-panel-heatmap",
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.H3("Symbol Detail"),
+                                    html.Span(default_symbol or "Select a symbol", id="home-symbol-label"),
+                                ],
+                                className="home-panel-header",
+                            ),
+                            html.Div(
+                                html.Iframe(
+                                    id="home-symbol-frame",
+                                    src=_iframe_src(default_symbol),
+                                    style={"width": "100%", "height": "100%", "border": "none"},
+                                ),
+                                className="home-panel-body",
+                            ),
+                        ],
+                        className="home-panel home-panel-symbol",
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.H3("AI Top 3 Trade Ideas"),
+                                    html.Button("Generate", id="trade-ideas-generate", n_clicks=0),
+                                ],
+                                className="home-panel-header",
+                            ),
+                            html.Div(
+                                dcc.Loading(
+                                    html.Div(_trade_ideas_message(_TRADE_IDEAS_PROMPT), id="trade-ideas-body"),
+                                    type="circle",
+                                ),
+                                className="home-panel-body",
+                            ),
+                        ],
+                        className="home-panel home-panel-ideas",
+                    ),
+                    html.Div(className="home-splitter home-splitter-v"),
+                    html.Div(className="home-splitter home-splitter-h"),
+                ],
+                className="home-grid",
+            ),
         ]
     )
 
 
 @callback(
     Output("heatmap-graph", "figure"),
+    Output("home-scanner-table", "data"),
     Input("heatmap-interval", "n_intervals"),
     Input("heatmap-scanner-view", "value"),
 )
-def update_heatmap(_n_intervals, view_name):
+def update_home_panels(_n_intervals, view_name):
     engine = backend_state.scanner_engine
     rows = engine.snapshot_view(view_name or "gainers") if engine is not None else []
     is_latest_session = engine.is_latest_session_fallback if engine is not None else False
 
+    table_data = _table_rows(rows)
+
     if not rows:
         fig = px.treemap(names=["No symbols matching this scanner right now"], parents=[""])
         fig.update_layout(margin=dict(t=30, l=10, r=10, b=10))
-        return fig
+        return fig, table_data
 
     df = pd.DataFrame([r.model_dump() for r in rows])
     df["root"] = "Gainers"
@@ -83,4 +332,82 @@ def update_heatmap(_n_intervals, view_name):
         title=(view_name or "gainers") + suffix,
         margin=dict(t=30, l=10, r=10, b=10),
     )
-    return fig
+    return fig, table_data
+
+
+@callback(
+    Output("home-symbol-frame", "src"),
+    Output("home-symbol-label", "children"),
+    Input("home-scanner-table", "active_cell"),
+    Input("heatmap-graph", "clickData"),
+    Input({"type": "trade-idea-row", "index": ALL}, "n_clicks"),
+    State("home-scanner-table", "data"),
+    prevent_initial_call=True,
+)
+def update_home_symbol_detail(active_cell, click_data, _idea_clicks, table_data):
+    triggered_id = dash.ctx.triggered_id
+    symbol = None
+
+    if triggered_id == "home-scanner-table":
+        if active_cell and table_data:
+            symbol = table_data[active_cell["row"]]["symbol"]
+    elif triggered_id == "heatmap-graph":
+        points = (click_data or {}).get("points") or []
+        if points and points[0].get("parent"):
+            # Leaf (symbol) nodes have a parent ("Gainers"); the root
+            # "Gainers" tile itself has none -- ignore clicks on that.
+            symbol = points[0].get("label")
+    elif isinstance(triggered_id, dict) and triggered_id.get("type") == "trade-idea-row":
+        # The ALL-pattern Input also fires (with n_clicks still 0) the
+        # moment idea cards first mount -- ctx.triggered[0]["value"] is the
+        # actual n_clicks of whichever card fired, so falsy here means this
+        # is that mount event, not a genuine click.
+        if dash.ctx.triggered[0]["value"]:
+            symbol = triggered_id["index"]
+
+    if not symbol:
+        return dash.no_update, dash.no_update
+    return _iframe_src(symbol), symbol
+
+
+@callback(
+    Output("trade-ideas-body", "children"),
+    Input("trade-ideas-generate", "n_clicks"),
+    prevent_initial_call=True,
+)
+def generate_trade_ideas_callback(_n_clicks):
+    settings = backend_state.settings
+    if settings is None or not settings.has_anthropic_credentials:
+        return _trade_ideas_message(
+            "ANTHROPIC_API_KEY not configured -- add it to backend/.env to enable AI trade ideas."
+        )
+
+    engine = backend_state.scanner_engine
+    rows = engine.snapshot_view("gainers") if engine is not None else []
+    if not rows:
+        return _trade_ideas_message("No active movers to summarize right now.")
+
+    client = backend_state.anthropic_client
+    alpaca = backend_state.alpaca_clients
+    try:
+        result = run_async(generate_trade_ideas(client, alpaca, rows))
+    except Exception:
+        logger.exception("Trade idea generation failed")
+        return _trade_ideas_message("Failed to generate trade ideas.")
+
+    last_prices = {r.symbol: r.last_price for r in rows}
+    generated_at = datetime.now(timezone.utc)
+    tracked = [
+        TrackedIdea(
+            symbol=idea.symbol,
+            headline=idea.headline,
+            entry_price=last_prices[idea.symbol],
+            generated_at=generated_at,
+        )
+        for idea in result.ideas
+        if idea.symbol in last_prices
+    ]
+    if backend_state.trade_idea_tracker is not None:
+        backend_state.trade_idea_tracker.record(tracked)
+
+    return _trade_ideas_cards(result.ideas, result.disclaimer)
