@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     universe_min_avg_volume: int = 300_000
     max_universe_size: int = 2000
 
+    # How often to re-check Alpaca's movers screener for symbols that are
+    # moving big today but never qualified for the trailing-volume-filtered
+    # universe above (see fetch_movers_backstop in app.alpaca.universe).
+    movers_backstop_interval: float = 300.0
+
     max_stream_symbols: int = 30
 
     cors_origins: list[str] = ["http://localhost:5173"]

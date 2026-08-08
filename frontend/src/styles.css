@@ -80,6 +80,44 @@ body {
   margin: 0;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mock-toggle {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.mock-toggle:hover {
+  background: var(--row-hover);
+}
+
+.mock-toggle[aria-pressed="true"] {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+.mock-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--status-warning);
+  border: 1px solid var(--status-warning);
+  letter-spacing: 0.03em;
+}
+
 .session-badge {
   display: inline-flex;
   align-items: center;

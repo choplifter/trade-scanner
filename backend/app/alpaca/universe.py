@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.requests import MarketMoversRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.enums import AssetClass, AssetStatus
 from alpaca.trading.requests import GetAssetsRequest
@@ -44,7 +44,22 @@ def _looks_like_etf(name: str | None) -> bool:
     return any(marker in upper for marker in _ETF_NAME_MARKERS)
 
 
+# Alpaca's movers screener isn't filtered for security type -- warrants and
+# rights show up alongside common stock (e.g. "ANSCW" as a top gainer), and
+# their all-letter symbols pass _PLAIN_TICKER_RE, so they need a name check
+# same as ETFs do above.
+_WARRANT_NAME_MARKERS = ("WARRANT", "RIGHTS", " UNITS")
+
+
+def _looks_like_warrant(name: str | None) -> bool:
+    if not name:
+        return False
+    upper = name.upper()
+    return any(marker in upper for marker in _WARRANT_NAME_MARKERS)
+
+
 _BATCH_SIZE = 500
+_MOVERS_TOP = 50
 
 
 @dataclass(frozen=True)
@@ -135,4 +150,92 @@ async def build_universe(
     result = {u.symbol: u for u in ranked}
 
     logger.info("Universe built: %d symbols (capped at %d)", len(result), settings.max_universe_size)
+    return result
+
+
+async def fetch_movers_backstop(
+    clients: AlpacaClients, settings: Settings, existing: dict[str, UniverseSymbol]
+) -> dict[str, UniverseSymbol]:
+    """Catch today's runners that build_universe()'s trailing-volume filter
+    structurally can't see.
+
+    build_universe() only admits symbols with strong *trailing* 20-day
+    average volume, so a normally-quiet stock that explodes today on a
+    catalyst -- the classic day-trading setup -- never enters the polled
+    universe, no matter how big it moves. Alpaca's movers screener reflects
+    the live tape instead of trailing history, so calling this periodically
+    (see ScannerEngine.run_loop) surfaces those names mid-day. Candidates go
+    through the same price/exchange/ticker-shape/ETF filters as
+    build_universe(), plus a warrant/rights name check the screener doesn't
+    apply itself.
+    """
+    try:
+        movers = await asyncio.to_thread(
+            clients.screener.get_market_movers, MarketMoversRequest(top=_MOVERS_TOP)
+        )
+    except Exception:
+        logger.exception("Movers backstop request failed")
+        return {}
+
+    candidates = {
+        m.symbol: m
+        for m in (*movers.gainers, *movers.losers)
+        if m.symbol not in existing
+        and _PLAIN_TICKER_RE.match(m.symbol)
+        and settings.universe_min_price <= m.price <= settings.universe_max_price
+    }
+    if not candidates:
+        return {}
+
+    qualified: dict[str, str] = {}
+    for symbol in candidates:
+        try:
+            asset = await asyncio.to_thread(clients.trading.get_asset, symbol)
+        except Exception:
+            continue
+        if (
+            asset.tradable
+            and asset.exchange.value in _ALLOWED_EXCHANGES
+            and not _looks_like_etf(asset.name)
+            and not _looks_like_warrant(asset.name)
+        ):
+            qualified[symbol] = asset.exchange.value
+
+    if not qualified:
+        return {}
+
+    start = datetime.now(timezone.utc) - timedelta(days=40)
+    try:
+        bar_set = await asyncio.to_thread(
+            clients.data.get_stock_bars,
+            StockBarsRequest(
+                symbol_or_symbols=list(qualified),
+                timeframe=TimeFrame.Day,
+                start=start,
+                limit=20 * len(qualified),
+                feed=clients.feed,
+            ),
+        )
+    except Exception:
+        logger.exception("Movers backstop bar fetch failed")
+        return {}
+
+    result: dict[str, UniverseSymbol] = {}
+    for symbol, exchange in qualified.items():
+        mover = candidates[symbol]
+        bars = bar_set.data.get(symbol, [])
+        # New listings may have little or no daily-bar history yet -- fall
+        # back to 0 rather than skipping, since the mover itself is still a
+        # legitimate signal even without an rvol baseline (rvol just reads
+        # as 0 downstream, see formulas.rvol).
+        avg_vol_20d = sum(b.volume for b in bars) / len(bars) if bars else 0.0
+        result[symbol] = UniverseSymbol(
+            symbol=symbol,
+            exchange=exchange,
+            prev_close=mover.price - mover.change,
+            avg_vol_20d=avg_vol_20d,
+            avg_dollar_vol_20d=avg_vol_20d * mover.price,
+        )
+
+    logger.info("Movers backstop qualified %d new symbol(s): %s", len(result), sorted(result))
     return result

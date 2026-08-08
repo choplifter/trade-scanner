@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from alpaca.data.requests import StockBarsRequest, StockSnapshotRequest
 from alpaca.data.timeframe import TimeFrame
 
 from app.alpaca.client import AlpacaClients
-from app.alpaca.universe import UniverseSymbol
+from app.alpaca.universe import UniverseSymbol, fetch_movers_backstop
 from app.core.config import Settings
 from app.market_data.bars import today_premarket_start_utc
 from app.scanners import formulas
@@ -57,6 +58,7 @@ class ScannerEngine:
         self.rows: dict[str, ScannerRow] = {}
         self.session: str = "closed"
         self._premarket_snapshot: list[ScannerRow] | None = None
+        self._last_backstop_refresh: float = 0.0
 
     def _compute_rows(self, snapshots: dict) -> None:
         now = datetime.now(timezone.utc)
@@ -202,6 +204,24 @@ class ScannerEngine:
         self._premarket_snapshot = _rank_gainers(rows.values())
         logger.info("Backfilled premarket snapshot: %d gainers", len(self._premarket_snapshot))
 
+    async def _refresh_movers_backstop(self) -> None:
+        """Merge in any new symbols from the movers backstop (see
+        fetch_movers_backstop) on a slower cadence than the regular poll --
+        the screener endpoint reflects the whole live tape, not a single
+        watchlist, so it doesn't need per-poll-interval freshness.
+
+        self.universe is the same dict object main.py stored on app.state,
+        so mutating it in place here is enough for both to see the update.
+        """
+        now = time.monotonic()
+        if now - self._last_backstop_refresh < self.settings.movers_backstop_interval:
+            return
+        self._last_backstop_refresh = now
+
+        new_symbols = await fetch_movers_backstop(self.clients, self.settings, self.universe)
+        if new_symbols:
+            self.universe.update(new_symbols)
+
     async def _poll_once(self) -> None:
         symbols = list(self.universe.keys())
         batches = [
@@ -247,6 +267,7 @@ class ScannerEngine:
                 else self.settings.scanner_poll_interval_regular
             )
 
+            await self._refresh_movers_backstop()
             await self._poll_once()
 
             views = self._build_views()

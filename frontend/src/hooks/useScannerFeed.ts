@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getScanner } from "../api/http";
 import { scannerSocket } from "../api/ws";
 import type { ScannerRow } from "../types/alpaca";
+import { generateMockRows } from "../utils/mockScannerData";
 
 export interface ScannerFeedState {
   rows: ScannerRow[];
@@ -10,12 +11,22 @@ export interface ScannerFeedState {
   loading: boolean;
 }
 
-export function useScannerFeed(scanner: string): ScannerFeedState {
+const MOCK_REFRESH_MS = 4000;
+
+export function useScannerFeed(scanner: string, mock = false): ScannerFeedState {
   const [rows, setRows] = useState<ScannerRow[]>([]);
   const [session, setSession] = useState("closed");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (mock) {
+      setLoading(false);
+      setSession("regular");
+      setRows(generateMockRows());
+      const interval = setInterval(() => setRows(generateMockRows()), MOCK_REFRESH_MS);
+      return () => clearInterval(interval);
+    }
+
     let cancelled = false;
     setLoading(true);
 
@@ -40,7 +51,7 @@ export function useScannerFeed(scanner: string): ScannerFeedState {
       cancelled = true;
       unsubscribe();
     };
-  }, [scanner]);
+  }, [scanner, mock]);
 
   return { rows, session, loading };
 }
