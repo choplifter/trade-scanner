@@ -1,0 +1,66 @@
+/* Mirrors frontend/src/styles.css's light-theme tokens (Dash's assets/
+   folder is auto-served on every page -- no manual <link> needed). Covers
+   the Dash page shell (nav, headings, controls); the charts themselves are
+   styled via theme.py's Plotly template. */
+
+body {
+  margin: 0;
+  background: #f9f9f7;
+  color: #0b0b0b;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(11, 11, 11, 0.1);
+  background: #fcfcfb;
+}
+
+.page-nav a.nav-link {
+  color: #52514e;
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.page-nav a.nav-link:hover {
+  color: #2a78d6;
+}
+
+h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 16px;
+  color: #0b0b0b;
+}
+
+label {
+  font-size: 13px;
+  color: #52514e;
+}
+
+button {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #2a78d6;
+  background: transparent;
+  color: #2a78d6;
+  cursor: pointer;
+}
+
+button:hover {
+  background: rgba(42, 120, 214, 0.08);
+}
+
+div[id$="-timeframe"] label,
+div[id="heatmap-scanner-view"] label {
+  margin-right: 12px;
+}

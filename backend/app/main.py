@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import anthropic
+from a2wsgi import WSGIMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +12,8 @@ from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import build_universe
 from app.core.config import get_settings
 from app.core.logging import setup_logging
+from app.dash_app import dash_app
+from app.dash_app.state import bind as bind_dash_state
 from app.market_data.stream_manager import StreamManager
 from app.routers import meta, scanners, symbols, trade_ideas
 from app.scanners.engine import ScannerEngine
@@ -56,6 +59,7 @@ async def lifespan(app: FastAPI):
 
     engine = ScannerEngine(clients, settings, universe, manager)
     app.state.scanner_engine = engine
+    bind_dash_state(app)
 
     try:
         # So a same-day restart (or a first-ever start after the open)
@@ -64,6 +68,11 @@ async def lifespan(app: FastAPI):
         await engine.backfill_premarket_snapshot()
     except Exception:
         logger.exception("Premarket backfill failed -- premarket_gainers will mirror gainers")
+
+    try:
+        await engine.backfill_latest_session_gainers()
+    except Exception:
+        logger.exception("Latest-session gainers backfill failed -- scanner may show empty when closed")
 
     scanner_task = asyncio.create_task(engine.run_loop())
 
@@ -90,3 +99,5 @@ app.include_router(symbols.router)
 app.include_router(trade_ideas.router)
 app.include_router(scanner_ws.router)
 app.include_router(chart_ws.router)
+
+app.mount("/analytics", WSGIMiddleware(dash_app.server))

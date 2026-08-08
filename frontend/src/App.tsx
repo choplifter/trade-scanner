@@ -15,7 +15,6 @@ const SESSION_LABEL: Record<string, string> = {
 
 export default function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-  const [mockMode, setMockMode] = useState(false);
   const session = useMarketSession();
 
   return (
@@ -23,15 +22,15 @@ export default function App() {
       <header className="app-header">
         <h1>Stocks in Play</h1>
         <div className="header-actions">
-          <button
-            type="button"
-            className="mock-toggle"
-            aria-pressed={mockMode}
-            onClick={() => setMockMode((v) => !v)}
-            title="Show randomized mock scanner rows instead of live data -- useful for testing the UI while markets are closed."
+          <a
+            className="analytics-link"
+            href="/analytics"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open Plotly Dash analytics -- scanner heatmap, multi-panel symbol charts, seasonality, and cross-symbol comparison"
           >
-            Mock Data
-          </button>
+            Analytics ↗
+          </a>
           <span className="session-badge" data-session={session}>
             <span className="session-dot" />
             {SESSION_LABEL[session] ?? session}
@@ -51,11 +50,7 @@ export default function App() {
             defaultSizes={[0.45, 0.55]}
             minSizePx={220}
           >
-            <ScannerWidget
-              selectedSymbol={selectedSymbol}
-              onSelectSymbol={setSelectedSymbol}
-              mock={mockMode}
-            />
+            <ScannerWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
             <ChartWidget symbol={selectedSymbol} />
           </ResizablePanels>
           <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />

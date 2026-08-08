@@ -6,7 +6,6 @@ import { ScannerTable } from "./ScannerTable";
 interface ScannerWidgetProps {
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
-  mock: boolean;
 }
 
 const TABS = [
@@ -14,9 +13,9 @@ const TABS = [
   { key: "premarket_gainers", label: "Premarket Gainers" },
 ] as const;
 
-export function ScannerWidget({ selectedSymbol, onSelectSymbol, mock }: ScannerWidgetProps) {
+export function ScannerWidget({ selectedSymbol, onSelectSymbol }: ScannerWidgetProps) {
   const [activeKey, setActiveKey] = useState<(typeof TABS)[number]["key"]>(TABS[0].key);
-  const { rows, loading } = useScannerFeed(activeKey, mock);
+  const { rows, loading, isLatestSession } = useScannerFeed(activeKey);
 
   return (
     <div className="widget">
@@ -35,7 +34,14 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, mock }: ScannerW
           ))}
         </div>
         <div className="header-actions">
-          {mock && <span className="mock-badge">MOCK DATA</span>}
+          {isLatestSession && rows.length > 0 && (
+            <span
+              className="stale-badge"
+              title="Markets are closed -- showing the most recently completed session's real gap, not a live scan."
+            >
+              LAST SESSION
+            </span>
+          )}
           <span className="widget-count">{rows.length}</span>
         </div>
       </div>

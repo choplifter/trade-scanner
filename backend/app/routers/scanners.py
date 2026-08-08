@@ -11,5 +11,6 @@ async def get_scanner(name: str, request: Request) -> dict:
     return {
         "scanner": name,
         "session": engine.session,
+        "is_latest_session": engine.is_latest_session_fallback,
         "rows": [r.model_dump(mode="json") for r in rows],
     }

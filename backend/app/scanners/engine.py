@@ -11,6 +11,7 @@ from app.alpaca.universe import UniverseSymbol, fetch_movers_backstop
 from app.core.config import Settings
 from app.market_data.bars import today_premarket_start_utc
 from app.scanners import formulas
+from app.scanners.latest_session import compute_latest_session_gainers
 from app.scanners.schemas import ScannerRow
 from app.services.market_clock import ET, current_session, trading_hours_for
 from app.ws.connection_manager import ConnectionManager
@@ -58,6 +59,7 @@ class ScannerEngine:
         self.rows: dict[str, ScannerRow] = {}
         self.session: str = "closed"
         self._premarket_snapshot: list[ScannerRow] | None = None
+        self._latest_session_gainers: list[ScannerRow] | None = None
         self._last_backstop_refresh: float = 0.0
 
     def _compute_rows(self, snapshots: dict) -> None:
@@ -109,23 +111,53 @@ class ScannerEngine:
     def _live_gainers(self) -> list[ScannerRow]:
         return _rank_gainers(self.rows.values())
 
+    @property
+    def is_latest_session_fallback(self) -> bool:
+        """True when the current "gainers" view isn't live (e.g. markets
+        closed) and is instead the most recently completed session's real
+        data -- see backfill_latest_session_gainers."""
+        return not self._live_gainers()
+
     def _build_views(self) -> dict[str, list[ScannerRow]]:
-        gainers = self._live_gainers()
+        live = self._live_gainers()
+        fallback = self._latest_session_gainers or []
+        gainers = live or fallback
 
         if self.session == "premarket":
             premarket_gainers = gainers
         elif self._premarket_snapshot is not None:
             premarket_gainers = self._premarket_snapshot
-        else:
+        elif live:
             # No premarket session observed yet today (e.g. the app was
             # started mid-day) -- fall back to the live view rather than
             # showing an empty widget with no explanation.
-            premarket_gainers = gainers
+            premarket_gainers = live
+        else:
+            premarket_gainers = fallback
 
         return {"gainers": gainers, "premarket_gainers": premarket_gainers}
 
     def snapshot_view(self, name: str) -> list[ScannerRow]:
         return self._build_views().get(name, [])
+
+    async def backfill_latest_session_gainers(self) -> None:
+        """Real fallback for when live polling has nothing yet (e.g. the
+        app starts while markets are closed) -- computed once at startup
+        from the most recently completed session's real close-to-close
+        move, instead of showing an empty scanner or fabricating data.
+        """
+        if not self.universe or not self.clients.settings.has_credentials:
+            return
+        try:
+            self._latest_session_gainers = await compute_latest_session_gainers(
+                self.clients, self.universe
+            )
+        except Exception:
+            logger.exception("Latest-session gainers backfill failed")
+            return
+        logger.info(
+            "Backfilled latest-session gainers: %d symbols", len(self._latest_session_gainers)
+        )
 
     async def backfill_premarket_snapshot(self) -> None:
         """Retroactively compute today's premarket-gap snapshot from
@@ -271,6 +303,7 @@ class ScannerEngine:
             await self._poll_once()
 
             views = self._build_views()
+            is_fallback = self.is_latest_session_fallback
             for name, rows in views.items():
                 await self.manager.broadcast(
                     f"scanner:{name}",
@@ -278,6 +311,7 @@ class ScannerEngine:
                         "type": "scanner_update",
                         "scanner": name,
                         "session": self.session,
+                        "is_latest_session": is_fallback,
                         "rows": [r.model_dump(mode="json") for r in rows],
                     },
                 )

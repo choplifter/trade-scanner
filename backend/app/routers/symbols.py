@@ -1,29 +1,9 @@
-import asyncio
-from datetime import datetime, timedelta, timezone
-
-from alpaca.data.enums import Adjustment
-from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from app.market_data.bars import get_intraday_minute_bars
+from app.market_data.bars import HISTORICAL_TIMEFRAMES, get_historical_bars, get_intraday_minute_bars
 from app.market_data.vwap import SessionVwapState
 
 router = APIRouter(prefix="/api/symbols", tags=["symbols"])
-
-# Timeframes beyond 1-minute intraday are fetched at their native Alpaca
-# resolution over a lookback long enough to fill the chart, rather than
-# aggregated client-side from 1-minute bars (which would mean fetching and
-# shipping tens of thousands of bars for a monthly view). Session-anchored
-# VWAP doesn't carry meaning once a bar spans more than one session, so these
-# timeframes return an empty vwap series.
-_HISTORICAL_TIMEFRAMES: dict[str, tuple[TimeFrame, timedelta]] = {
-    "1Hour": (TimeFrame(1, TimeFrameUnit.Hour), timedelta(days=60)),
-    "4Hour": (TimeFrame(4, TimeFrameUnit.Hour), timedelta(days=200)),
-    "1Day": (TimeFrame(1, TimeFrameUnit.Day), timedelta(days=730)),
-    "1Week": (TimeFrame(1, TimeFrameUnit.Week), timedelta(days=365 * 5)),
-    "1Month": (TimeFrame(1, TimeFrameUnit.Month), timedelta(days=365 * 10)),
-}
 
 
 def _bar_to_dict(bar) -> dict:
@@ -55,20 +35,9 @@ async def get_symbol_bars(
         raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
 
     if timeframe != "1Min":
-        config = _HISTORICAL_TIMEFRAMES.get(timeframe)
-        if config is None:
+        if timeframe not in HISTORICAL_TIMEFRAMES:
             raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
-        alpaca_timeframe, lookback = config
-
-        bar_request = StockBarsRequest(
-            symbol_or_symbols=symbol,
-            timeframe=alpaca_timeframe,
-            start=datetime.now(timezone.utc) - lookback,
-            feed=clients.feed,
-            adjustment=Adjustment.RAW,
-        )
-        bar_set = await asyncio.to_thread(clients.data.get_stock_bars, bar_request)
-        bars = bar_set.data.get(symbol, [])
+        bars = await get_historical_bars(clients, symbol, timeframe)
         return {
             "symbol": symbol,
             "bars": [_bar_to_dict(b) for b in bars],

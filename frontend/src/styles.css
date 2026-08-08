@@ -86,7 +86,7 @@ body {
   gap: 10px;
 }
 
-.mock-toggle {
+.analytics-link {
   display: inline-flex;
   align-items: center;
   font-size: 12px;
@@ -96,19 +96,16 @@ body {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-secondary);
+  text-decoration: none;
   cursor: pointer;
 }
 
-.mock-toggle:hover {
+.analytics-link:hover {
   background: var(--row-hover);
+  color: var(--accent);
 }
 
-.mock-toggle[aria-pressed="true"] {
-  border-color: var(--status-warning);
-  color: var(--status-warning);
-}
-
-.mock-badge {
+.stale-badge {
   font-size: 9px;
   font-weight: 700;
   padding: 1px 6px;

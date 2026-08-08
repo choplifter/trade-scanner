@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Symbol Chart</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #fcfcfb;
+    color: #0b0b0b;
+    overflow: hidden;
+  }
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(11, 11, 11, 0.1);
+    box-sizing: border-box;
+  }
+  #symbol-label {
+    font-weight: 700;
+    font-size: 14px;
+  }
+  #last-price {
+    font-variant-numeric: tabular-nums;
+    color: #52514e;
+  }
+  .tf-group {
+    display: inline-flex;
+    border: 1px solid rgba(11, 11, 11, 0.1);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .tf-btn {
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    padding: 4px 9px;
+    border: none;
+    border-right: 1px solid rgba(11, 11, 11, 0.1);
+    background: transparent;
+    color: #52514e;
+    cursor: pointer;
+  }
+  .tf-btn:last-child {
+    border-right: none;
+  }
+  .tf-btn:hover {
+    background: rgba(42, 120, 214, 0.08);
+  }
+  .tf-btn.active {
+    background: rgba(42, 120, 214, 0.14);
+    color: #2a78d6;
+  }
+  #status {
+    padding: 8px 12px;
+    color: #898781;
+    font-size: 13px;
+  }
+  #chart-container {
+    position: absolute;
+    top: 42px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  }
+</style>
+<script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <div id="toolbar">
+    <span id="symbol-label">Select a symbol</span>
+    <span id="last-price"></span>
+    <div class="tf-group" id="tf-group"></div>
+  </div>
+  <div id="status"></div>
+  <div id="chart-container"></div>
+
+<script>
+// Same TIMEFRAME_OPTIONS/aggregateBars logic as
+// frontend/src/utils/aggregateBars.ts, ported to vanilla JS so this
+// standalone page can fetch/render with real lightweight-charts smoothness
+// (pan/zoom/crosshair) instead of approximating it through Plotly.
+const TIMEFRAME_OPTIONS = [
+  { key: "1m", label: "1m", kind: "intraday", minutes: 1 },
+  { key: "5m", label: "5m", kind: "intraday", minutes: 5 },
+  { key: "15m", label: "15m", kind: "intraday", minutes: 15 },
+  { key: "1h", label: "1h", kind: "historical", alpacaTimeframe: "1Hour" },
+  { key: "4h", label: "4h", kind: "historical", alpacaTimeframe: "4Hour" },
+  { key: "1D", label: "D", kind: "historical", alpacaTimeframe: "1Day" },
+  { key: "1W", label: "W", kind: "historical", alpacaTimeframe: "1Week" },
+  { key: "1M", label: "M", kind: "historical", alpacaTimeframe: "1Month" },
+];
+const DEFAULT_KEY = "5m";
+
+function aggregateBars(bars, vwap, minutes) {
+  if (minutes === 1) return { bars, vwap };
+  const bucketMs = minutes * 60000;
+  const outBars = [];
+  const outVwap = [];
+  for (let i = 0; i < bars.length; i++) {
+    const bar = bars[i];
+    const bucketStart = Math.floor(new Date(bar.t).getTime() / bucketMs) * bucketMs;
+    const current = outBars[outBars.length - 1];
+    if (current && new Date(current.t).getTime() === bucketStart) {
+      current.h = Math.max(current.h, bar.h);
+      current.l = Math.min(current.l, bar.l);
+      current.c = bar.c;
+      current.v += bar.v;
+      outVwap[outVwap.length - 1] = vwap[i] ?? outVwap[outVwap.length - 1];
+    } else {
+      outBars.push({ t: new Date(bucketStart).toISOString(), o: bar.o, h: bar.h, l: bar.l, c: bar.c, v: bar.v });
+      outVwap.push(vwap[i] ?? null);
+    }
+  }
+  return { bars: outBars, vwap: outVwap };
+}
+
+function toUnixSeconds(iso) {
+  return Math.floor(new Date(iso).getTime() / 1000);
+}
+function barToCandle(bar) {
+  return { time: toUnixSeconds(bar.t), open: bar.o, high: bar.h, low: bar.l, close: bar.c };
+}
+function barToVolume(bar) {
+  const up = bar.c >= bar.o;
+  return { time: toUnixSeconds(bar.t), value: bar.v, color: up ? "rgba(12,163,12,0.5)" : "rgba(208,59,59,0.5)" };
+}
+
+const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+const DAY_FORMAT = new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short" });
+const MONTH_FORMAT = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
+const YEAR_FORMAT = new Intl.DateTimeFormat(undefined, { year: "numeric" });
+const CROSSHAIR_FORMAT = new Intl.DateTimeFormat(undefined, {
+  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+});
+
+function tickMarkFormatter(time, tickMarkType) {
+  const date = new Date(time * 1000);
+  const TT = LightweightCharts.TickMarkType;
+  switch (tickMarkType) {
+    case TT.Year: return YEAR_FORMAT.format(date);
+    case TT.Month: return MONTH_FORMAT.format(date);
+    case TT.DayOfMonth: return DAY_FORMAT.format(date);
+    default: return TIME_FORMAT.format(date);
+  }
+}
+
+const params = new URLSearchParams(window.location.search);
+const symbol = (params.get("symbol") || "").toUpperCase();
+document.getElementById("symbol-label").textContent = symbol || "Select a symbol";
+
+const tfGroup = document.getElementById("tf-group");
+let activeKey = DEFAULT_KEY;
+TIMEFRAME_OPTIONS.forEach((opt) => {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "tf-btn" + (opt.key === activeKey ? " active" : "");
+  btn.textContent = opt.label;
+  btn.onclick = () => {
+    activeKey = opt.key;
+    Array.from(tfGroup.children).forEach((c) => c.classList.remove("active"));
+    btn.classList.add("active");
+    loadChart();
+  };
+  tfGroup.appendChild(btn);
+});
+
+const container = document.getElementById("chart-container");
+const statusEl = document.getElementById("status");
+
+const chart = LightweightCharts.createChart(container, {
+  layout: { background: { color: "transparent" }, textColor: "#52514e" },
+  grid: { vertLines: { color: "#e1e0d9" }, horzLines: { color: "#e1e0d9" } },
+  timeScale: { timeVisible: true, secondsVisible: false, minBarSpacing: 3, tickMarkFormatter },
+  localization: { timeFormatter: (time) => CROSSHAIR_FORMAT.format(new Date(time * 1000)) },
+  autoSize: true,
+});
+
+const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+  upColor: "#0ca30c",
+  downColor: "#d03b3b",
+  borderVisible: false,
+  wickUpColor: "#0ca30c",
+  wickDownColor: "#d03b3b",
+});
+candleSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.3 } });
+
+const volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+  priceScaleId: "volume",
+  priceFormat: { type: "volume" },
+});
+chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.75, bottom: 0 } });
+
+// VWAP overlays the same right-hand price scale as the candles -- the
+// day-trading reference line, not a secondary measure.
+const vwapSeries = chart.addSeries(LightweightCharts.LineSeries, {
+  color: "#eda100",
+  lineWidth: 2,
+  crosshairMarkerVisible: false,
+  lastValueVisible: false,
+});
+
+function setChartData(bars, vwap) {
+  candleSeries.setData(bars.map(barToCandle));
+  volumeSeries.setData(bars.map(barToVolume));
+
+  const vwapPoints = [];
+  bars.forEach((bar, i) => {
+    const v = vwap[i];
+    if (v != null) vwapPoints.push({ time: toUnixSeconds(bar.t), value: v });
+  });
+  vwapSeries.setData(vwapPoints);
+
+  if (bars.length > 0) {
+    const MIN_SPACING = 3;
+    const MAX_SPACING = 10;
+    const width = container.clientWidth || 1;
+    const spacing = Math.min(MAX_SPACING, Math.max(MIN_SPACING, width / bars.length));
+    const visibleCount = Math.min(bars.length, Math.max(1, Math.ceil(width / spacing)));
+    chart.timeScale().setVisibleLogicalRange({ from: bars.length - visibleCount, to: bars.length - 1 });
+    document.getElementById("last-price").textContent = bars[bars.length - 1].c.toFixed(2);
+  }
+}
+
+async function loadChart() {
+  if (!symbol) {
+    statusEl.textContent = "Select a symbol from the dropdown.";
+    return;
+  }
+  const option = TIMEFRAME_OPTIONS.find((o) => o.key === activeKey) || TIMEFRAME_OPTIONS[1];
+  statusEl.textContent = "Loading " + symbol + "…";
+  try {
+    const timeframeParam = option.kind === "intraday" ? "1Min" : option.alpacaTimeframe;
+    const res = await fetch("/api/symbols/" + encodeURIComponent(symbol) + "/bars?timeframe=" + timeframeParam);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    let bars = data.bars;
+    let vwap = data.vwap;
+    if (option.kind === "intraday" && option.minutes > 1) {
+      const agg = aggregateBars(bars, vwap, option.minutes);
+      bars = agg.bars;
+      vwap = agg.vwap;
+    }
+    if (!bars.length) {
+      statusEl.textContent = "No " + option.label + " data available for " + symbol + ".";
+      candleSeries.setData([]);
+      volumeSeries.setData([]);
+      vwapSeries.setData([]);
+      return;
+    }
+    statusEl.textContent = "";
+    setChartData(bars, vwap);
+  } catch (err) {
+    statusEl.textContent = "Failed to load chart: " + err.message;
+  }
+}
+
+loadChart();
+</script>
+</body>
+</html>

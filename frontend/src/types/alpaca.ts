@@ -19,6 +19,9 @@ export interface ScannerUpdateMessage {
   type: "scanner_update";
   scanner: string;
   session: string;
+  /** True when there's nothing live (e.g. markets closed) and these rows
+   * are the most recently completed session's real data instead. */
+  is_latest_session: boolean;
   rows: ScannerRow[];
 }
 

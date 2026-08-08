@@ -3,10 +3,23 @@ from datetime import datetime, timedelta, timezone
 
 from alpaca.data.enums import Adjustment
 from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from app.alpaca.client import AlpacaClients
 from app.services.market_clock import ET, PREMARKET_START, _NYSE
+
+# Timeframes beyond 1-minute intraday are fetched at their native Alpaca
+# resolution over a lookback long enough to fill a chart, rather than
+# aggregated client-side from 1-minute bars (which would mean fetching and
+# shipping tens of thousands of bars for a monthly view). Shared by the
+# REST bars endpoint (routers/symbols.py) and the Dash symbol-detail page.
+HISTORICAL_TIMEFRAMES: dict[str, tuple[TimeFrame, timedelta]] = {
+    "1Hour": (TimeFrame(1, TimeFrameUnit.Hour), timedelta(days=60)),
+    "4Hour": (TimeFrame(4, TimeFrameUnit.Hour), timedelta(days=200)),
+    "1Day": (TimeFrame(1, TimeFrameUnit.Day), timedelta(days=730)),
+    "1Week": (TimeFrame(1, TimeFrameUnit.Week), timedelta(days=365 * 5)),
+    "1Month": (TimeFrame(1, TimeFrameUnit.Month), timedelta(days=365 * 10)),
+}
 
 # How many trading sessions the 1m/5m/15m chart looks back over. >1 so the
 # chart isn't nearly empty in the early minutes of a session (or before
@@ -60,6 +73,23 @@ async def get_intraday_minute_bars(clients: AlpacaClients, symbol: str) -> list:
         symbol_or_symbols=symbol,
         timeframe=TimeFrame.Minute,
         start=intraday_chart_lookback_start_utc(),
+        feed=clients.feed,
+        adjustment=Adjustment.RAW,
+    )
+    bar_set = await asyncio.to_thread(clients.data.get_stock_bars, request)
+    return bar_set.data.get(symbol, [])
+
+
+async def get_historical_bars(clients: AlpacaClients, symbol: str, timeframe_key: str) -> list:
+    """Native-resolution historical bars for one of HISTORICAL_TIMEFRAMES'
+    keys (1Hour/4Hour/1Day/1Week/1Month). No VWAP -- it's not a
+    same-session concept once a bar spans more than one session.
+    """
+    alpaca_timeframe, lookback = HISTORICAL_TIMEFRAMES[timeframe_key]
+    request = StockBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=alpaca_timeframe,
+        start=datetime.now(timezone.utc) - lookback,
         feed=clients.feed,
         adjustment=Adjustment.RAW,
     )

@@ -31,6 +31,7 @@ async function postJson<T>(path: string): Promise<T> {
 export interface ScannerResponse {
   scanner: string;
   session: string;
+  is_latest_session: boolean;
   rows: ScannerRow[];
 }
 

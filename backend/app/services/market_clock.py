@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
@@ -50,3 +50,24 @@ def current_session(now: datetime | None = None) -> Session:
     if now < afterhours_end:
         return "afterhours"
     return "closed"
+
+
+def day_of_week(day: date) -> str:
+    """Weekday label ("Monday".."Sunday") for bucketing seasonality stats."""
+    return day.strftime("%A")
+
+
+def _third_friday(year: int, month: int) -> date:
+    first = date(year, month, 1)
+    first_friday = first + timedelta(days=(4 - first.weekday()) % 7)  # Mon=0..Fri=4
+    return first_friday + timedelta(days=14)
+
+
+def is_opex_week(day: date) -> bool:
+    """True if `day` falls in the Mon-Fri week containing the month's 3rd
+    Friday (the standard monthly options-expiration convention) -- pure
+    calendar arithmetic, no external calendar/data source needed.
+    """
+    third_friday = _third_friday(day.year, day.month)
+    week_start = third_friday - timedelta(days=third_friday.weekday())
+    return week_start <= day <= week_start + timedelta(days=4)
