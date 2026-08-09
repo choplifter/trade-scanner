@@ -24,13 +24,17 @@ from datetime import datetime, timezone
 import httpx
 
 from app.core.config import Settings
-from app.fundamentals.client import fetch_float_and_market_cap
+from app.fundamentals.client import ERROR_RETRY_SECONDS, fetch_float_and_market_cap
 from app.fundamentals.finra_short_interest import fetch_latest_short_interest
 from app.fundamentals.schemas import FundamentalsData
 
 logger = logging.getLogger(__name__)
 
-_MAX_CONCURRENT_FETCHES = 5
+# Kept low deliberately: FMP's free tier 429s (see app.fundamentals.client)
+# on what turned out to be a *daily* quota, not a per-second one, but firing
+# fewer requests at once still avoids tripping any secondary per-second
+# throttle FMP's free tier might also have on top of the daily cap.
+_MAX_CONCURRENT_FETCHES = 2
 
 
 class FundamentalsCache:
@@ -82,19 +86,32 @@ class FundamentalsCache:
         async with self._semaphore:
             float_shares: float | None = None
             market_cap: float | None = None
+            retry_after: float | None = None
             try:
-                float_shares, market_cap = await fetch_float_and_market_cap(
+                float_shares, market_cap, retry_after = await fetch_float_and_market_cap(
                     self._client, symbol, self.settings.fmp_api_key
                 )
             except Exception:
                 logger.exception("Fundamentals refresh (FMP) failed for %s", symbol)
+                retry_after = ERROR_RETRY_SECONDS
 
         short_interest_pct: float | None = None
         shares_short = self._short_interest_shares.get(symbol)
         if shares_short is not None and float_shares:
             short_interest_pct = shares_short / float_shares * 100
 
-        self._fetched_at[symbol] = time.monotonic()
+        now = time.monotonic()
+        # A clean fetch (retry_after None, even if the fields themselves
+        # came back empty) gets the full TTL -- there's nothing to retry
+        # sooner for. A failed one is backdated so it goes stale again
+        # after retry_after seconds instead of the full interval, without
+        # needing a second timestamp dict (see the ensure_fresh staleness
+        # check this has to satisfy).
+        self._fetched_at[symbol] = (
+            now
+            if retry_after is None
+            else now - self.settings.fundamentals_refresh_interval + retry_after
+        )
         self._data[symbol] = FundamentalsData(
             symbol=symbol,
             float_shares=float_shares,
