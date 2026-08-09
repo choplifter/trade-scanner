@@ -1,6 +1,21 @@
 import { CopyButton } from "../common/CopyButton";
 import type { ScannerRow } from "../../types/alpaca";
-import { formatPct, formatPrice, formatRvol, formatVolume, tradingViewSymbol } from "../../utils/format";
+import {
+  formatMarketCap,
+  formatPct,
+  formatPrice,
+  formatRvol,
+  formatShares,
+  formatShortInterestPct,
+  formatVolume,
+  tradingViewSymbol,
+} from "../../utils/format";
+
+/** Renders "—" for fundamentals fields that are null -- either no
+ * FMP_API_KEY/FINNHUB_API_KEY configured, or not fetched yet for this row. */
+function cell(value: number | null, format: (value: number) => string): string {
+  return value === null ? "—" : format(value);
+}
 
 interface ScannerTableProps {
   rows: ScannerRow[];
@@ -22,6 +37,9 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
           <th>Chg %</th>
           <th>Vol</th>
           <th>RVol</th>
+          <th>Float</th>
+          <th>Mkt Cap</th>
+          <th>Short %</th>
         </tr>
       </thead>
       <tbody>
@@ -46,6 +64,9 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
             </td>
             <td>{formatVolume(row.volume_today)}</td>
             <td>{formatRvol(row.rvol)}</td>
+            <td>{cell(row.float_shares, formatShares)}</td>
+            <td>{cell(row.market_cap, formatMarketCap)}</td>
+            <td>{cell(row.short_interest_pct, formatShortInterestPct)}</td>
           </tr>
         ))}
       </tbody>

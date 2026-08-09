@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import anthropic
+import httpx
 from a2wsgi import WSGIMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,7 @@ from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.dash_app import dash_app
 from app.dash_app.state import bind as bind_dash_state
+from app.fundamentals.cache import FundamentalsCache
 from app.market_data.stream_manager import StreamManager
 from app.routers import meta, scanners, symbols, trade_ideas
 from app.scanners.engine import ScannerEngine
@@ -43,6 +45,10 @@ async def lifespan(app: FastAPI):
     )
     app.state.trade_idea_tracker = TradeIdeaTracker()
 
+    fundamentals_client = httpx.AsyncClient(timeout=10.0)
+    fundamentals = FundamentalsCache(settings, fundamentals_client)
+    app.state.fundamentals = fundamentals
+
     if settings.has_credentials:
         try:
             universe = await build_universe(clients, settings)
@@ -57,7 +63,7 @@ async def lifespan(app: FastAPI):
         universe = {}
     app.state.universe = universe
 
-    engine = ScannerEngine(clients, settings, universe, manager)
+    engine = ScannerEngine(clients, settings, universe, manager, fundamentals)
     app.state.scanner_engine = engine
     bind_dash_state(app)
 
@@ -81,6 +87,7 @@ async def lifespan(app: FastAPI):
     finally:
         scanner_task.cancel()
         await clients.stop_stream()
+        await fundamentals.aclose()
 
 
 app = FastAPI(title="Trading Dashboard API", lifespan=lifespan)

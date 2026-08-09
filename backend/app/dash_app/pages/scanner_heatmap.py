@@ -55,6 +55,9 @@ _TABLE_COLUMNS = [
     {"name": "Chg %", "id": "chg"},
     {"name": "Vol", "id": "vol"},
     {"name": "RVol", "id": "rvol"},
+    {"name": "Float", "id": "float_shares"},
+    {"name": "Mkt Cap", "id": "market_cap"},
+    {"name": "Short %", "id": "short_interest_pct"},
 ]
 
 
@@ -79,6 +82,39 @@ def _format_rvol(value: float) -> str:
     return f"{value:.2f}x"
 
 
+# "—" (em dash) for float_shares/market_cap/short_interest_pct -- these
+# are only populated when FMP_API_KEY is configured (see
+# app.fundamentals.cache.FundamentalsCache), same as the React scanner table.
+def _format_shares(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return f"{value:.0f}"
+
+
+def _format_market_cap(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value >= 1_000_000_000_000:
+        return f"${value / 1_000_000_000_000:.2f}T"
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.1f}M"
+    return f"${value:.0f}"
+
+
+def _format_short_interest_pct(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.2f}%"
+
+
 def _table_rows(rows) -> list[dict]:
     return [
         {
@@ -87,6 +123,9 @@ def _table_rows(rows) -> list[dict]:
             "chg": _format_pct(r.pct_change),
             "vol": _format_volume(r.volume_today),
             "rvol": _format_rvol(r.rvol),
+            "float_shares": _format_shares(r.float_shares),
+            "market_cap": _format_market_cap(r.market_cap),
+            "short_interest_pct": _format_short_interest_pct(r.short_interest_pct),
             "pct_change_num": r.pct_change,
         }
         for r in rows
@@ -103,7 +142,7 @@ _TRADE_IDEAS_PROMPT = (
     "Click Generate to have Claude select today's 3 most notable setups from the "
     "gainers scanner, with reasons and a signal score based on gap %, relative "
     "volume, dollar volume, high-of-day status, news, VWAP, momentum, spread, "
-    "and multi-day context."
+    "multi-day context, float, and short interest."
 )
 
 
@@ -186,7 +225,11 @@ def layout(**_kwargs):
                                     # A plain table + CSS `position: sticky` header (below)
                                     # gets the same sticky-header effect and reflows for
                                     # free since it's just normal DOM/CSS.
-                                    style_table={"height": "100%", "overflowY": "auto"},
+                                    # overflowX: with 3 more columns (float/mkt
+                                    # cap/short %) the table can now be wider than
+                                    # a narrowed splitter panel -- scroll inside
+                                    # the table instead of blowing out the layout.
+                                    style_table={"height": "100%", "overflowY": "auto", "overflowX": "auto"},
                                     style_as_list_view=True,
                                     style_cell={
                                         "fontFamily": "system-ui, -apple-system, 'Segoe UI', sans-serif",
@@ -324,6 +367,9 @@ def update_home_panels(_n_intervals, view_name):
             "pct_change": ":.2f",
             "volume_today": ":,.0f",
             "rvol": ":.2f",
+            "float_shares": ":,.0f",
+            "market_cap": ":,.0f",
+            "short_interest_pct": ":.2f",
             "root": False,
         },
     )

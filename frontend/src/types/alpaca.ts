@@ -12,6 +12,9 @@ export interface ScannerRow {
   day_low: number | null;
   is_hod: boolean;
   is_lod: boolean;
+  float_shares: number | null;
+  market_cap: number | null;
+  short_interest_pct: number | null;
   updated_at: string;
 }
 

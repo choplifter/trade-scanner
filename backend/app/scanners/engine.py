@@ -9,6 +9,7 @@ from alpaca.data.timeframe import TimeFrame
 from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import UniverseSymbol, fetch_movers_backstop
 from app.core.config import Settings
+from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
 from app.scanners import formulas
 from app.scanners.latest_session import compute_latest_session_gainers
@@ -51,11 +52,13 @@ class ScannerEngine:
         settings: Settings,
         universe: dict[str, UniverseSymbol],
         manager: ConnectionManager,
+        fundamentals: FundamentalsCache,
     ):
         self.clients = clients
         self.settings = settings
         self.universe = universe
         self.manager = manager
+        self.fundamentals = fundamentals
         self.rows: dict[str, ScannerRow] = {}
         self.session: str = "closed"
         self._premarket_snapshot: list[ScannerRow] | None = None
@@ -254,6 +257,23 @@ class ScannerEngine:
         if new_symbols:
             self.universe.update(new_symbols)
 
+    async def _attach_fundamentals(self, views: dict[str, list[ScannerRow]]) -> None:
+        """Fill in float/market cap/short interest for whatever's actually
+        ranked right now -- see app.fundamentals.cache.FundamentalsCache for
+        why this is scoped to the ranked views instead of the whole universe.
+        """
+        symbols = {r.symbol for rows in views.values() for r in rows}
+        if not symbols:
+            return
+        await self.fundamentals.ensure_fresh(symbols)
+        for rows in views.values():
+            for row in rows:
+                data = self.fundamentals.get(row.symbol)
+                if data is not None:
+                    row.float_shares = data.float_shares
+                    row.market_cap = data.market_cap
+                    row.short_interest_pct = data.short_interest_pct
+
     async def _poll_once(self) -> None:
         symbols = list(self.universe.keys())
         batches = [
@@ -289,20 +309,29 @@ class ScannerEngine:
                 # live regular-session poll below.
                 self._premarket_snapshot = self._live_gainers()
 
-            if self.session == "closed" or not self.universe or not self.clients.settings.has_credentials:
-                await asyncio.sleep(self.settings.scanner_poll_interval_regular)
-                continue
-
-            interval = (
-                self.settings.scanner_poll_interval_premarket
-                if self.session == "premarket"
-                else self.settings.scanner_poll_interval_regular
+            can_poll = (
+                self.session != "closed"
+                and bool(self.universe)
+                and self.clients.settings.has_credentials
             )
 
-            await self._refresh_movers_backstop()
-            await self._poll_once()
+            if can_poll:
+                interval = (
+                    self.settings.scanner_poll_interval_premarket
+                    if self.session == "premarket"
+                    else self.settings.scanner_poll_interval_regular
+                )
+                await self._refresh_movers_backstop()
+                await self._poll_once()
+            else:
+                interval = self.settings.scanner_poll_interval_regular
 
+            # Runs even when markets are closed (can_poll False) -- otherwise
+            # the closed-market fallback view (see is_latest_session_fallback)
+            # would show blank float/market cap/short interest columns until
+            # the next live poll, instead of the fallback's real fundamentals.
             views = self._build_views()
+            await self._attach_fundamentals(views)
             is_fallback = self.is_latest_session_fallback
             for name, rows in views.items():
                 await self.manager.broadcast(

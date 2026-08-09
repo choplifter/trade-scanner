@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     # Everything else in the app works without this set.
     anthropic_api_key: str = ""
 
+    # Optional -- float + market cap that Alpaca doesn't provide at all,
+    # via Financial Modeling Prep's free tier. Short interest is derived
+    # from this same float plus FINRA's free public bulk data (no key
+    # needed for that part -- see app.fundamentals.finra_short_interest),
+    # so this one key drives all three fundamentals fields. Only fetched
+    # for symbols that actually appear in a ranked scanner view (a couple
+    # dozen at a time, cached per fundamentals_refresh_interval) so FMP's
+    # free-tier daily request cap isn't at risk even though the full scan
+    # universe can be thousands of symbols.
+    fmp_api_key: str = ""
+    fundamentals_refresh_interval: float = 21_600.0
+
     @property
     def has_credentials(self) -> bool:
         return bool(self.alpaca_api_key_id and self.alpaca_api_secret_key)
@@ -45,6 +57,10 @@ class Settings(BaseSettings):
     @property
     def has_anthropic_credentials(self) -> bool:
         return bool(self.anthropic_api_key)
+
+    @property
+    def has_fmp_credentials(self) -> bool:
+        return bool(self.fmp_api_key)
 
 
 @lru_cache
