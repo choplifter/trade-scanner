@@ -197,6 +197,50 @@ div[id="heatmap-scanner-view"] label {
   gap: 10px;
 }
 
+.symbol-info-empty {
+  font-size: 12px;
+  color: #898781;
+  line-height: 1.5;
+}
+
+.symbol-info-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #52514e;
+  margin: 0 0 4px;
+}
+
+.symbol-info-description {
+  font-size: 12px;
+  color: #52514e;
+  line-height: 1.4;
+  margin: 0 0 6px;
+}
+
+.symbol-news-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #898781;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 8px 0 6px;
+}
+
+.symbol-news-item {
+  font-size: 12px;
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.symbol-news-headline {
+  color: #2a78d6;
+}
+
+.symbol-news-source {
+  color: #898781;
+  font-size: 11px;
+}
+
 .home-idea-card {
   border: 1px solid rgba(11, 11, 11, 0.1);
   border-radius: 6px;
@@ -260,4 +304,36 @@ div[id="heatmap-scanner-view"] label {
   font-size: 11px;
   color: #898781;
   font-style: italic;
+}
+
+/* dash_table renders each header as
+   <th><div><div class="column-actions">(icon)</div><span class="column-header-name">TEXT</span></div></th>.
+   The icon always comes first in DOM order and, with no layout rule of its
+   own, sits at the LEFT of the header cell regardless of the column's own
+   text-align. Every column here except Symbol is right-aligned (see
+   style_cell's textAlign:"right" in scanner_heatmap.py), so the icon ends
+   up floating near the *previous* column's data instead of next to its own
+   header text -- easy to click thinking you're sorting the column the icon
+   visually sits next to, when it's actually the next one over.
+
+   Making the header's inner div flex + justify-content:flex-end alone
+   isn't enough: dash_table's own CSS gives .column-header-name
+   flex-grow:1, so it consumes 100% of the leftover space and right-aligns
+   its own text *inside itself*, leaving nothing for flex-end to pack the
+   icon against -- the icon stays pinned at the start regardless. Turning
+   flex-grow off on the name span first (so it shrinks to its own text
+   width) is what lets flex-end actually group icon + text together. */
+#home-scanner-table th.dash-header .column-header-name {
+  flex-grow: 0;
+}
+
+#home-scanner-table th.dash-header > div {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+#home-scanner-table th.dash-header.column-0 > div {
+  justify-content: flex-start;
 }
