@@ -115,6 +115,43 @@ def _format_short_interest_pct(value: float | None) -> str:
     return f"{value:.2f}%"
 
 
+# dash_table's sort_action="native" sorts whatever's in `data`, which for
+# this table is the formatted display strings ("1.25B", "250.0M", "800.0K")
+# -- lexicographic, not numeric, so e.g. "1.25B" < "250.0M" as strings even
+# though 1.25B is the bigger number. Every column here is formatted for
+# display (M/B/T suffixes, %, x), so native sort is wrong for all of them,
+# not just float/market cap. sort_action="custom" + this map lets us sort
+# the real ScannerRow values before formatting instead.
+_COLUMN_SORT_KEYS = {
+    "symbol": lambda r: r.symbol,
+    "last": lambda r: r.last_price,
+    "chg": lambda r: r.pct_change,
+    "vol": lambda r: r.volume_today,
+    "rvol": lambda r: r.rvol,
+    "float_shares": lambda r: r.float_shares,
+    "market_cap": lambda r: r.market_cap,
+    "short_interest_pct": lambda r: r.short_interest_pct,
+}
+
+
+def _sorted_rows(rows, sort_by):
+    if not sort_by:
+        return rows
+    key_fn = _COLUMN_SORT_KEYS.get(sort_by[0]["column_id"])
+    if key_fn is None:
+        return rows
+    reverse = sort_by[0].get("direction") == "desc"
+
+    # float_shares/market_cap/short_interest_pct are None when FMP_API_KEY
+    # isn't configured or a symbol hasn't been fetched yet -- sort those to
+    # the bottom regardless of direction (comparing None to a float raises
+    # TypeError, and burying unknowns matches how the "—" cell reads).
+    with_value = [r for r in rows if key_fn(r) is not None]
+    without_value = [r for r in rows if key_fn(r) is None]
+    with_value.sort(key=key_fn, reverse=reverse)
+    return with_value + without_value
+
+
 def _table_rows(rows) -> list[dict]:
     return [
         {
@@ -216,7 +253,12 @@ def layout(**_kwargs):
                                     columns=_TABLE_COLUMNS,
                                     data=_table_rows(initial_rows),
                                     row_deletable=False,
-                                    sort_action="native",
+                                    # "custom" (not "native"): see _sorted_rows --
+                                    # native sort would sort the formatted display
+                                    # strings lexicographically, not the underlying
+                                    # numbers.
+                                    sort_action="custom",
+                                    sort_mode="single",
                                     # No fixed_rows: that switches the table into a
                                     # JS-measured/virtualized layout that computes pixel
                                     # widths/heights once at mount and never re-measures
@@ -339,13 +381,17 @@ def layout(**_kwargs):
     Output("home-scanner-table", "data"),
     Input("heatmap-interval", "n_intervals"),
     Input("heatmap-scanner-view", "value"),
+    Input("home-scanner-table", "sort_by"),
 )
-def update_home_panels(_n_intervals, view_name):
+def update_home_panels(_n_intervals, view_name, sort_by):
     engine = backend_state.scanner_engine
     rows = engine.snapshot_view(view_name or "gainers") if engine is not None else []
     is_latest_session = engine.is_latest_session_fallback if engine is not None else False
 
-    table_data = _table_rows(rows)
+    # Table gets the user's chosen sort; the treemap below keeps the
+    # engine's own gap%-ranked order regardless -- sorting only makes
+    # sense for the flat table, not which tile is biggest in the heatmap.
+    table_data = _table_rows(_sorted_rows(rows, sort_by))
 
     if not rows:
         fig = px.treemap(names=["No symbols matching this scanner right now"], parents=[""])
