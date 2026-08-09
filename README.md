@@ -2,9 +2,11 @@
 
 A personal, locally-run "stocks in play" scanner + chart dashboard in the
 spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: live
-market-gainer / premarket-gainer scanners, and a click-to-chart candlestick
-widget with a session-anchored VWAP overlay, powered by Alpaca Markets'
-real-time IEX data feed.
+market-gainer / premarket-gainer scanners, a click-to-chart candlestick
+widget with a session-anchored VWAP overlay, AI-generated trade-idea
+annotations, and a Plotly Dash analytics app — powered by Alpaca Markets'
+real-time IEX data feed, with float/market cap/short interest layered in
+from Financial Modeling Prep and FINRA.
 
 ## 1. Get Alpaca API credentials (required for live data)
 
@@ -17,6 +19,20 @@ real-time IEX data feed.
 
 Without valid credentials the app still starts, but the universe stays empty
 and scanners will show no rows.
+
+### Optional keys
+
+Everything below is optional — the app runs fine without any of it, just
+with fewer annotations/columns.
+
+- **`ANTHROPIC_API_KEY`** — powers the "AI Trade Ideas" widget (Claude picks
+  and annotates the 3 most notable scanner setups). Get a key at
+  https://console.anthropic.com → API Keys.
+- **`FMP_API_KEY`** — free key at https://site.financialmodelingprep.com.
+  Fills in the **Float** and **Mkt Cap** scanner columns (Alpaca doesn't
+  expose either). Also required for **Short %**, since that's computed by
+  combining FMP's float with FINRA's free public short-interest data — no
+  separate key needed for FINRA itself.
 
 ## 2. Run the backend
 
@@ -32,6 +48,9 @@ Check `http://localhost:8000/api/meta/health` — `has_alpaca_credentials`
 should be `true`, and `universe_size` should be a few hundred/thousand once
 the startup universe build finishes (takes a few seconds).
 
+The Plotly Dash analytics app is served by the same backend process at
+`http://localhost:8000/analytics/` — no separate process to run.
+
 ## 3. Run the frontend
 
 ```
@@ -43,39 +62,57 @@ npm run dev
 Open `http://localhost:5173`. The dev server proxies `/api` and `/ws` to the
 backend on port 8000, so both must be running.
 
-## What v1 ships
+## What's included
 
 - Two live scanners: **Market Gainers** and **Premarket Gainers**, both
   ranked by % change from prior close, polled from Alpaca snapshots every
-  5s (regular hours) / 10s (premarket) and pushed over WebSocket.
+  5s (regular hours) / 10s (premarket) and pushed over WebSocket. A
+  movers-screener backstop periodically pulls in today's runners that
+  weren't in the trailing-volume-filtered universe to begin with.
+- Scanner columns: last price, gap %, volume, RVOL, and (when `FMP_API_KEY`
+  is set) float, market cap, and short interest % of float.
 - One chart widget: click any scanner row to load that symbol — candlestick
   chart, volume pane, and a session-anchored VWAP line (resets at 09:30 ET),
   fed by Alpaca's live minute-bar stream.
+- **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks the 3 most
+  notable current setups from gap %, RVOL, dollar volume, HOD status, news
+  catalyst, VWAP position, 15-minute momentum, spread, multi-day context,
+  float, and short interest — framed as descriptive scanner annotation, not
+  investment advice. A past-picks performance table tracks how prior AI
+  picks have actually moved since they were generated.
+- **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
+  heatmap + table + symbol detail + AI trade ideas view, plus separate pages
+  for cross-symbol correlation/comparison and seasonality.
 - Session badge (Premarket / Market Open / After Hours / Closed) in the
   header, computed from the NYSE trading calendar.
 
-## Known v1 limitations
+## Known limitations
 
 - **Feed**: uses Alpaca's free real-time **IEX** feed, which is a
   single-exchange view, not the consolidated SIP tape. Gap %/volume numbers
   will be directionally right but won't exactly match SIP-based tools like
   Trade-Ideas. Upgrading later is a one-line change: set `ALPACA_DATA_FEED=sip`
   in `backend/.env` once you have a paid Alpaca market-data subscription.
-- **RVOL / losers / gap scanners / new highs-lows**: not built yet — v1 is
-  intentionally just the two gainer scanners to prove out the full
-  Alpaca → FastAPI → WebSocket → React → chart pipeline end to end.
-- **EMA 9/20, multi-widget draggable grid, watchlists, alerts**: roadmap, see
-  the "Roadmap" section of the implementation plan this was built from
-  (`~/.claude/plans/encapsulated-sprouting-willow.md` on the machine this was
-  built on).
+- **Losers / dedicated gap or RVOL scanners / new highs-lows**: not built --
+  the two gainer scanners are both ranked by gap % (RVOL is shown as a
+  column, not a ranking of its own).
+- **Float/market cap/short interest**: only fetched for symbols currently in
+  a ranked scanner view (not the whole universe), so it's absent until a
+  symbol actually appears there. Short interest is FINRA's own biweekly
+  bulk file, which in practice runs noticeably behind FINRA's advertised
+  publish schedule -- expect it to reflect a settlement date roughly 2-4
+  weeks old, not this week's.
+- **EMA 9/20, multi-widget draggable grid (React app), watchlists, alerts**:
+  roadmap items, not built yet.
 - Scanners will show empty rows outside premarket/regular market hours (the
   scanner loop idles when the market is closed) and always show empty rows
-  if `backend/.env` doesn't have valid credentials.
+  if `backend/.env` doesn't have valid Alpaca credentials.
 
 ## Project layout
 
 ```
-backend/   FastAPI app: Alpaca integration, scanner engine, VWAP, WebSockets
+backend/   FastAPI app: Alpaca integration, scanner engine, VWAP, WebSockets,
+           fundamentals (FMP + FINRA), AI trade ideas, Plotly Dash analytics app
 frontend/  Vite + React + TypeScript dashboard, lightweight-charts for candles
 ```
 
