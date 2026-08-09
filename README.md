@@ -2,11 +2,11 @@
 
 A personal, locally-run "stocks in play" scanner + chart dashboard in the
 spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: live
-market-gainer / premarket-gainer scanners, a click-to-chart candlestick
-widget with a session-anchored VWAP overlay, AI-generated trade-idea
-annotations, and a Plotly Dash analytics app — powered by Alpaca Markets'
-real-time IEX data feed, with float/market cap/short interest layered in
-from Financial Modeling Prep and FINRA.
+gainers / premarket gainers / losers / most-active scanners, a
+click-to-chart candlestick widget with a session-anchored VWAP overlay,
+AI-generated trade-idea annotations, and a Plotly Dash analytics app —
+powered by Alpaca Markets' real-time IEX data feed, with float/market
+cap/short interest layered in from Financial Modeling Prep and FINRA.
 
 ## 1. Get Alpaca API credentials (required for live data)
 
@@ -64,11 +64,14 @@ backend on port 8000, so both must be running.
 
 ## What's included
 
-- Two live scanners: **Market Gainers** and **Premarket Gainers**, both
-  ranked by % change from prior close, polled from Alpaca snapshots every
-  5s (regular hours) / 10s (premarket) and pushed over WebSocket. A
-  movers-screener backstop periodically pulls in today's runners that
-  weren't in the trailing-volume-filtered universe to begin with.
+- Four live scanners: **Market Gainers**, **Premarket Gainers**, and
+  **Losers** (all ranked by % change from prior close), plus **Most Active**
+  (ranked by share volume, direction-agnostic) — polled from Alpaca
+  snapshots every 5s (regular hours) / 10s (premarket) and pushed over
+  WebSocket. A movers-screener backstop periodically pulls in today's
+  runners that weren't in the trailing-volume-filtered universe to begin
+  with, and keeps running even while the market's closed so a big mover
+  from the last session isn't invisible over a weekend/holiday.
 - Scanner columns: last price, gap %, volume, RVOL, and (when `FMP_API_KEY`
   is set) float, market cap, and short interest % of float.
 - One chart widget: click any scanner row to load that symbol — candlestick
@@ -93,9 +96,8 @@ backend on port 8000, so both must be running.
   will be directionally right but won't exactly match SIP-based tools like
   Trade-Ideas. Upgrading later is a one-line change: set `ALPACA_DATA_FEED=sip`
   in `backend/.env` once you have a paid Alpaca market-data subscription.
-- **Losers / dedicated gap or RVOL scanners / new highs-lows**: not built --
-  the two gainer scanners are both ranked by gap % (RVOL is shown as a
-  column, not a ranking of its own).
+- **Dedicated RVOL scanner / new highs-lows**: not built -- RVOL is shown
+  as a column on every scanner, not a ranking of its own.
 - **Float/market cap/short interest**: only fetched for symbols currently in
   a ranked scanner view (not the whole universe), so it's absent until a
   symbol actually appears there. Short interest is FINRA's own biweekly
@@ -104,9 +106,10 @@ backend on port 8000, so both must be running.
   weeks old, not this week's.
 - **EMA 9/20, multi-widget draggable grid (React app), watchlists, alerts**:
   roadmap items, not built yet.
-- Scanners will show empty rows outside premarket/regular market hours (the
-  scanner loop idles when the market is closed) and always show empty rows
-  if `backend/.env` doesn't have valid Alpaca credentials.
+- Outside premarket/regular market hours, scanners fall back to the most
+  recently completed session's real data instead of polling live (labeled
+  "LAST SESSION" in the UI) -- they only show empty rows if `backend/.env`
+  doesn't have valid Alpaca credentials.
 
 ## Project layout
 

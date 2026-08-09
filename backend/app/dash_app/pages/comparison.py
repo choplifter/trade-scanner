@@ -21,7 +21,7 @@ def layout(**_kwargs):
     universe = backend_state.universe or {}
     # engine.snapshot_view() itself falls back to the most recently
     # completed session's real gainers when markets are closed (see
-    # ScannerEngine.backfill_latest_session_gainers), so this default is
+    # ScannerEngine.backfill_latest_session_rows), so this default is
     # real data either way, not a placeholder.
     default_symbols = [r.symbol for r in engine.snapshot_view("gainers")[:5]] if engine else []
     options = sorted(set(universe.keys()) | set(default_symbols))

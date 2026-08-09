@@ -11,6 +11,8 @@ interface ScannerWidgetProps {
 const TABS = [
   { key: "gainers", label: "Market Gainers" },
   { key: "premarket_gainers", label: "Premarket Gainers" },
+  { key: "losers", label: "Losers" },
+  { key: "most_active", label: "Most Active" },
 ] as const;
 
 export function ScannerWidget({ selectedSymbol, onSelectSymbol }: ScannerWidgetProps) {

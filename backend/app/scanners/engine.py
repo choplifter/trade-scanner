@@ -12,7 +12,7 @@ from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
 from app.scanners import formulas
-from app.scanners.latest_session import compute_latest_session_gainers
+from app.scanners.latest_session import compute_latest_session_rows
 from app.scanners.schemas import ScannerRow
 from app.services.market_clock import ET, current_session, trading_hours_for
 from app.ws.connection_manager import ConnectionManager
@@ -32,18 +32,36 @@ def _rank_gainers(rows) -> list[ScannerRow]:
     )[:_TOP_N]
 
 
+def _rank_losers(rows) -> list[ScannerRow]:
+    tradable = [r for r in rows if r.volume_today > 0]
+    return sorted(
+        (r for r in tradable if r.pct_change < 0),
+        key=lambda r: r.pct_change,
+    )[:_TOP_N]
+
+
+def _rank_most_active(rows) -> list[ScannerRow]:
+    """By share volume traded today -- direction-agnostic, unlike
+    gainers/losers, so no pct_change filter."""
+    tradable = [r for r in rows if r.volume_today > 0]
+    return sorted(tradable, key=lambda r: r.volume_today, reverse=True)[:_TOP_N]
+
+
 class ScannerEngine:
     """Polls Alpaca snapshots for the whole universe and broadcasts ranked
     scanner views over the "scanner:<name>" WebSocket topics.
 
-    v1 ships exactly two views -- "gainers" and "premarket_gainers" -- both
-    computed from the identical %-change-from-prior-close ranking (that IS
-    what a "gap" is). During premarket they're intentionally the same live
-    list; the moment the regular session opens, "premarket_gainers" freezes
-    to a snapshot of the gap as it stood at 09:30 ET while "gainers" keeps
-    tracking the live session, so the two widgets diverge instead of staying
-    duplicates all day. losers/high_rvol/gap scanners reuse this same
-    pipeline and are a v2 addition, not a redesign.
+    Four views: "gainers" and "losers" (ranked by %-change from prior
+    close, opposite directions), "most_active" (ranked by share volume,
+    direction-agnostic), and "premarket_gainers". During premarket,
+    "premarket_gainers" is intentionally the same live list as "gainers";
+    the moment the regular session opens, it freezes to a snapshot of the
+    gap as it stood at 09:30 ET while "gainers" keeps tracking the live
+    session, so the two widgets diverge instead of staying duplicates all
+    day -- losers/most_active don't have a premarket-freeze variant, only
+    gainers does. Every view falls back to the most recently completed
+    session's real data when there's nothing live (see
+    backfill_latest_session_rows), ranked the same way as the live case.
     """
 
     def __init__(
@@ -62,7 +80,7 @@ class ScannerEngine:
         self.rows: dict[str, ScannerRow] = {}
         self.session: str = "closed"
         self._premarket_snapshot: list[ScannerRow] | None = None
-        self._latest_session_gainers: list[ScannerRow] | None = None
+        self._latest_session_rows: dict[str, ScannerRow] | None = None
         self._last_backstop_refresh: float = 0.0
 
     def _compute_rows(self, snapshots: dict) -> None:
@@ -116,51 +134,67 @@ class ScannerEngine:
 
     @property
     def is_latest_session_fallback(self) -> bool:
-        """True when the current "gainers" view isn't live (e.g. markets
-        closed) and is instead the most recently completed session's real
-        data -- see backfill_latest_session_gainers."""
-        return not self._live_gainers()
+        """True when there's no live snapshot data at all (e.g. markets
+        closed) and every view is instead the most recently completed
+        session's real data -- see backfill_latest_session_rows.
+
+        Deliberately keyed on self.rows itself, not any one view's ranked
+        result: a live but broadly red day can have zero live gainers (or
+        a broadly green one zero live losers) without that meaning the
+        *data* isn't live -- the flag is about live-vs-fallback data, not
+        about whether a specific view happens to be non-empty.
+        """
+        return not bool(self.rows)
 
     def _build_views(self) -> dict[str, list[ScannerRow]]:
-        live = self._live_gainers()
-        fallback = self._latest_session_gainers or []
-        gainers = live or fallback
+        fallback_rows = (self._latest_session_rows or {}).values()
+
+        live_gainers = self._live_gainers()
+        gainers = live_gainers or _rank_gainers(fallback_rows)
 
         if self.session == "premarket":
             premarket_gainers = gainers
         elif self._premarket_snapshot is not None:
             premarket_gainers = self._premarket_snapshot
-        elif live:
+        elif live_gainers:
             # No premarket session observed yet today (e.g. the app was
             # started mid-day) -- fall back to the live view rather than
             # showing an empty widget with no explanation.
-            premarket_gainers = live
+            premarket_gainers = live_gainers
         else:
-            premarket_gainers = fallback
+            premarket_gainers = _rank_gainers(fallback_rows)
 
-        return {"gainers": gainers, "premarket_gainers": premarket_gainers}
+        losers = _rank_losers(self.rows.values()) or _rank_losers(fallback_rows)
+        most_active = _rank_most_active(self.rows.values()) or _rank_most_active(fallback_rows)
+
+        return {
+            "gainers": gainers,
+            "premarket_gainers": premarket_gainers,
+            "losers": losers,
+            "most_active": most_active,
+        }
 
     def snapshot_view(self, name: str) -> list[ScannerRow]:
         return self._build_views().get(name, [])
 
-    async def backfill_latest_session_gainers(self) -> None:
+    async def backfill_latest_session_rows(self) -> None:
         """Real fallback for when live polling has nothing yet (e.g. the
         app starts while markets are closed) -- computed once at startup
         from the most recently completed session's real close-to-close
-        move, instead of showing an empty scanner or fabricating data.
+        move for every symbol, instead of showing an empty scanner or
+        fabricating data. Each view (gainers/losers/most_active) applies
+        its own ranking on top of this shared row set at build time -- see
+        _build_views.
         """
         if not self.universe or not self.clients.settings.has_credentials:
             return
         try:
-            self._latest_session_gainers = await compute_latest_session_gainers(
-                self.clients, self.universe
-            )
+            rows = await compute_latest_session_rows(self.clients, self.universe)
         except Exception:
-            logger.exception("Latest-session gainers backfill failed")
+            logger.exception("Latest-session rows backfill failed")
             return
-        logger.info(
-            "Backfilled latest-session gainers: %d symbols", len(self._latest_session_gainers)
-        )
+        self._latest_session_rows = {r.symbol: r for r in rows}
+        logger.info("Backfilled latest-session rows: %d symbols", len(self._latest_session_rows))
 
     async def backfill_premarket_snapshot(self) -> None:
         """Retroactively compute today's premarket-gap snapshot from
@@ -266,13 +300,14 @@ class ScannerEngine:
 
     async def _merge_backstop_into_fallback(self, new_symbols: dict[str, UniverseSymbol]) -> None:
         """Fold freshly backstop-admitted symbols into the closed-market
-        fallback view (see backfill_latest_session_gainers) -- only called
+        fallback row set (see backfill_latest_session_rows) -- only called
         from run_loop when can_poll is False, since live polling would
         otherwise pick these up on its own via the next full-universe
-        _poll_once instead.
+        _poll_once instead. Unranked here -- each view ranks the merged
+        set for itself at build time (see _build_views).
         """
         try:
-            new_rows = await compute_latest_session_gainers(self.clients, new_symbols)
+            new_rows = await compute_latest_session_rows(self.clients, new_symbols)
         except Exception:
             logger.exception(
                 "Failed computing latest-session data for %d backstop symbol(s)",
@@ -282,14 +317,12 @@ class ScannerEngine:
         if not new_rows:
             return
 
-        by_symbol = {r.symbol: r for r in (self._latest_session_gainers or [])}
+        if self._latest_session_rows is None:
+            self._latest_session_rows = {}
         for row in new_rows:
-            by_symbol[row.symbol] = row
-        self._latest_session_gainers = sorted(
-            by_symbol.values(), key=lambda r: r.pct_change, reverse=True
-        )[:_TOP_N]
+            self._latest_session_rows[row.symbol] = row
         logger.info(
-            "Merged %d backstop symbol(s) into the closed-market fallback view", len(new_rows)
+            "Merged %d backstop symbol(s) into the closed-market fallback data", len(new_rows)
         )
 
     async def _attach_fundamentals(self, views: dict[str, list[ScannerRow]]) -> None:

@@ -5,7 +5,7 @@ engine.snapshot_view() is synchronous and reads an in-memory dict -- no
 Alpaca I/O -- so this page can poll on the same cadence as the live
 scanner engine itself without adding real request load. When markets are
 closed, snapshot_view() itself falls back to the most recently completed
-session's real gainers (see ScannerEngine.backfill_latest_session_gainers)
+session's real data (see ScannerEngine.backfill_latest_session_rows)
 rather than returning nothing -- this page just labels that state.
 
 Layout is a 2x2 grid: scanner table top-left, heatmap bottom-left, symbol
@@ -47,7 +47,10 @@ _DEFAULT_POLL_MS = 5000
 _SCANNER_OPTIONS = [
     {"label": "Market Gainers", "value": "gainers"},
     {"label": "Premarket Gainers", "value": "premarket_gainers"},
+    {"label": "Losers", "value": "losers"},
+    {"label": "Most Active", "value": "most_active"},
 ]
+_SCANNER_LABELS = {opt["value"]: opt["label"] for opt in _SCANNER_OPTIONS}
 
 _TABLE_COLUMNS = [
     {"name": "Symbol", "id": "symbol"},
@@ -398,8 +401,9 @@ def update_home_panels(_n_intervals, view_name, sort_by):
         fig.update_layout(margin=dict(t=30, l=10, r=10, b=10))
         return fig, table_data
 
+    label = _SCANNER_LABELS.get(view_name, view_name or "gainers")
     df = pd.DataFrame([r.model_dump() for r in rows])
-    df["root"] = "Gainers"
+    df["root"] = label
 
     fig = px.treemap(
         df,
@@ -421,7 +425,7 @@ def update_home_panels(_n_intervals, view_name, sort_by):
     )
     suffix = " (Last Session)" if is_latest_session else ""
     fig.update_layout(
-        title=(view_name or "gainers") + suffix,
+        title=label + suffix,
         margin=dict(t=30, l=10, r=10, b=10),
     )
     return fig, table_data

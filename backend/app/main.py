@@ -76,9 +76,9 @@ async def lifespan(app: FastAPI):
         logger.exception("Premarket backfill failed -- premarket_gainers will mirror gainers")
 
     try:
-        await engine.backfill_latest_session_gainers()
+        await engine.backfill_latest_session_rows()
     except Exception:
-        logger.exception("Latest-session gainers backfill failed -- scanner may show empty when closed")
+        logger.exception("Latest-session rows backfill failed -- scanners may show empty when closed")
 
     scanner_task = asyncio.create_task(engine.run_loop())
 
