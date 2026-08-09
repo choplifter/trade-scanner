@@ -89,6 +89,7 @@ async def fetch_float_and_market_cap(
                 description=row.get("description"),
                 website=row.get("website"),
                 logo_url=row.get("image"),
+                country=row.get("country"),
             )
     except Exception as exc:
         logger.warning("FMP profile fetch failed for %s: %s", symbol, exc)

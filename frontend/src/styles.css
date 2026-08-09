@@ -318,6 +318,18 @@ body {
   letter-spacing: 0.02em;
 }
 
+.company-cell {
+  /* Right-aligned + ellipsis (the table's default) would truncate the
+     *start* of the name instead of the end -- explicitly left-align this
+     one column so a cut-off name still reads naturally. */
+  text-align: left !important;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
 .badge-hod {
   display: inline-block;
   margin-left: 6px;

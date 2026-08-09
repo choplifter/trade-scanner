@@ -15,6 +15,8 @@ export interface ScannerRow {
   float_shares: number | null;
   market_cap: number | null;
   short_interest_pct: number | null;
+  country: string | null;
+  company_name: string | null;
   updated_at: string;
 }
 

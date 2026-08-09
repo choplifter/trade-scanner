@@ -10,6 +10,7 @@ class CompanyProfile(BaseModel):
     description: str | None = None
     website: str | None = None
     logo_url: str | None = None
+    country: str | None = None
 
 
 class FundamentalsData(BaseModel):

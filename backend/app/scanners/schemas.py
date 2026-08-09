@@ -18,12 +18,14 @@ class ScannerRow(BaseModel):
     is_hod: bool = False
     is_lod: bool = False
     spread_pct: float | None = None
-    # Optional -- populated from app.fundamentals when FMP_API_KEY/
-    # FINNHUB_API_KEY are configured; None otherwise (Alpaca doesn't expose
-    # any of these). See app.fundamentals.cache.FundamentalsCache.
+    # Optional -- populated from app.fundamentals when FMP_API_KEY is
+    # configured; None otherwise (Alpaca doesn't expose any of these).
+    # See app.fundamentals.cache.FundamentalsCache.
     float_shares: float | None = None
     market_cap: float | None = None
     short_interest_pct: float | None = None
+    country: str | None = None
+    company_name: str | None = None
     updated_at: datetime
 
 

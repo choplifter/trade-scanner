@@ -326,9 +326,10 @@ class ScannerEngine:
         )
 
     async def _attach_fundamentals(self, views: dict[str, list[ScannerRow]]) -> None:
-        """Fill in float/market cap/short interest for whatever's actually
-        ranked right now -- see app.fundamentals.cache.FundamentalsCache for
-        why this is scoped to the ranked views instead of the whole universe.
+        """Fill in float/market cap/short interest/country/company name for
+        whatever's actually ranked right now -- see
+        app.fundamentals.cache.FundamentalsCache for why this is scoped to
+        the ranked views instead of the whole universe.
         """
         symbols = {r.symbol for rows in views.values() for r in rows}
         if not symbols:
@@ -341,6 +342,8 @@ class ScannerEngine:
                     row.float_shares = data.float_shares
                     row.market_cap = data.market_cap
                     row.short_interest_pct = data.short_interest_pct
+                    row.country = data.profile.country if data.profile else None
+                    row.company_name = data.profile.name if data.profile else None
 
     async def _poll_once(self) -> None:
         symbols = list(self.universe.keys())

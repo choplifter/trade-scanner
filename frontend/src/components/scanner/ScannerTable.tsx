@@ -12,9 +12,13 @@ import {
 } from "../../utils/format";
 
 /** Renders "—" for fundamentals fields that are null -- either no
- * FMP_API_KEY/FINNHUB_API_KEY configured, or not fetched yet for this row. */
+ * FMP_API_KEY configured, or not fetched yet for this row. */
 function cell(value: number | null, format: (value: number) => string): string {
   return value === null ? "—" : format(value);
+}
+
+function stringCell(value: string | null): string {
+  return value ? value : "—";
 }
 
 interface ScannerTableProps {
@@ -33,6 +37,7 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
       <thead>
         <tr>
           <th>Symbol</th>
+          <th>Company</th>
           <th>Last</th>
           <th>Chg %</th>
           <th>Vol</th>
@@ -40,6 +45,8 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
           <th>Float</th>
           <th>Mkt Cap</th>
           <th>Short %</th>
+          <th>Exchange</th>
+          <th>Country</th>
         </tr>
       </thead>
       <tbody>
@@ -58,6 +65,9 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
               {row.exchange && <span className="exchange-tag">{row.exchange}</span>}
               {row.is_hod && <span className="badge-hod">HOD</span>}
             </td>
+            <td className="company-cell" title={row.company_name ?? undefined}>
+              {stringCell(row.company_name)}
+            </td>
             <td>{formatPrice(row.last_price)}</td>
             <td className={row.pct_change >= 0 ? "delta-up" : "delta-down"}>
               {formatPct(row.pct_change)}
@@ -67,6 +77,8 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
             <td>{cell(row.float_shares, formatShares)}</td>
             <td>{cell(row.market_cap, formatMarketCap)}</td>
             <td>{cell(row.short_interest_pct, formatShortInterestPct)}</td>
+            <td>{stringCell(row.exchange)}</td>
+            <td>{stringCell(row.country)}</td>
           </tr>
         ))}
       </tbody>

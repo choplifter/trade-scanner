@@ -55,6 +55,13 @@ _SCANNER_LABELS = {opt["value"]: opt["label"] for opt in _SCANNER_OPTIONS}
 
 _TABLE_COLUMNS = [
     {"name": "Symbol", "id": "symbol"},
+    # Click copies EXCHANGE:SYMBOL (TradingView's unambiguous format) to the
+    # clipboard -- see the clientside_callback below. React's ScannerTable
+    # embeds this as a small button inside the Symbol cell itself; Dash's
+    # DataTable can't nest an independently-clickable element inside another
+    # cell, so it's its own column here instead.
+    {"name": "", "id": "copy"},
+    {"name": "Company", "id": "company_name"},
     {"name": "Last", "id": "last"},
     {"name": "Chg %", "id": "chg"},
     {"name": "Vol", "id": "vol"},
@@ -62,6 +69,8 @@ _TABLE_COLUMNS = [
     {"name": "Float", "id": "float_shares"},
     {"name": "Mkt Cap", "id": "market_cap"},
     {"name": "Short %", "id": "short_interest_pct"},
+    {"name": "Exchange", "id": "exchange"},
+    {"name": "Country", "id": "country"},
 ]
 
 
@@ -119,6 +128,10 @@ def _format_short_interest_pct(value: float | None) -> str:
     return f"{value:.2f}%"
 
 
+def _format_string(value: str | None) -> str:
+    return value if value else "—"
+
+
 # dash_table's sort_action="native" sorts whatever's in `data`, which for
 # this table is the formatted display strings ("1.25B", "250.0M", "800.0K")
 # -- lexicographic, not numeric, so e.g. "1.25B" < "250.0M" as strings even
@@ -135,6 +148,9 @@ _COLUMN_SORT_KEYS = {
     "float_shares": lambda r: r.float_shares,
     "market_cap": lambda r: r.market_cap,
     "short_interest_pct": lambda r: r.short_interest_pct,
+    "exchange": lambda r: r.exchange,
+    "country": lambda r: r.country,
+    "company_name": lambda r: r.company_name,
 }
 
 
@@ -160,6 +176,13 @@ def _table_rows(rows) -> list[dict]:
     return [
         {
             "symbol": r.symbol,
+            # "copy" is what's displayed; "tv_symbol" is what actually gets
+            # copied (see the clientside_callback below) -- kept separate so
+            # the cell can show a short icon/label instead of the full
+            # EXCHANGE:SYMBOL string.
+            "copy": "⧉",
+            "tv_symbol": f"{r.exchange}:{r.symbol}" if r.exchange else r.symbol,
+            "company_name": _format_string(r.company_name),
             "last": _format_price(r.last_price),
             "chg": _format_pct(r.pct_change),
             "vol": _format_volume(r.volume_today),
@@ -167,6 +190,8 @@ def _table_rows(rows) -> list[dict]:
             "float_shares": _format_shares(r.float_shares),
             "market_cap": _format_market_cap(r.market_cap),
             "short_interest_pct": _format_short_interest_pct(r.short_interest_pct),
+            "exchange": _format_string(r.exchange),
+            "country": _format_string(r.country),
             "pct_change_num": r.pct_change,
         }
         for r in rows
@@ -319,7 +344,24 @@ def layout(**_kwargs):
                                         "borderBottom": "1px solid #e1e0d9",
                                     },
                                     style_cell_conditional=[
-                                        {"if": {"column_id": "symbol"}, "textAlign": "left", "fontWeight": "600"}
+                                        {"if": {"column_id": "symbol"}, "textAlign": "left", "fontWeight": "600"},
+                                        {
+                                            "if": {"column_id": "copy"},
+                                            "textAlign": "center",
+                                            "width": "28px",
+                                            "minWidth": "28px",
+                                            "maxWidth": "28px",
+                                            "cursor": "pointer",
+                                            "color": TEXT_MUTED,
+                                        },
+                                        {
+                                            "if": {"column_id": "company_name"},
+                                            "textAlign": "left",
+                                            "maxWidth": "160px",
+                                            "overflow": "hidden",
+                                            "textOverflow": "ellipsis",
+                                            "whiteSpace": "nowrap",
+                                        },
                                     ],
                                     style_header={
                                         "position": "sticky",
@@ -348,6 +390,11 @@ def layout(**_kwargs):
                                 ),
                                 className="home-panel-body",
                             ),
+                            # Dash's clientside_callback requires a real
+                            # Output -- this is never read, it just gives
+                            # the copy-to-clipboard callback below somewhere
+                            # harmless to write to (see clipboard_copy_sink).
+                            html.Div(id="clipboard-copy-sink", style={"display": "none"}),
                         ],
                         className="home-panel home-panel-table",
                     ),
@@ -420,6 +467,37 @@ def layout(**_kwargs):
     )
 
 
+# Clientside (not @callback/run_async) because clipboard writes need to
+# happen synchronously inside the click's own event handler in most
+# browsers -- routing through a server round-trip risks losing that user-
+# gesture context and having the browser silently refuse the write.
+#
+# React's CopyButton (components/common/CopyButton.tsx) stops click
+# propagation so copying doesn't also select the row. dash_table's
+# active_cell is a single table-wide value with no per-cell propagation
+# control, so clicking "copy" here also fires update_home_symbol_detail
+# below and loads that row's chart -- a difference from React, accepted
+# as a reasonable side effect rather than something worth fighting Dash's
+# architecture over.
+dash.clientside_callback(
+    """
+    function(activeCell, data) {
+        if (!activeCell || activeCell.column_id !== 'copy' || !data) {
+            return window.dash_clientside.no_update;
+        }
+        const row = data[activeCell.row];
+        if (row && row.tv_symbol && navigator.clipboard) {
+            navigator.clipboard.writeText(row.tv_symbol).catch(function () {});
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("clipboard-copy-sink", "children"),
+    Input("home-scanner-table", "active_cell"),
+    State("home-scanner-table", "data"),
+)
+
+
 @callback(
     Output("heatmap-graph", "figure"),
     Output("home-scanner-table", "data"),
@@ -461,6 +539,9 @@ def update_home_panels(_n_intervals, view_name, sort_by):
             "float_shares": ":,.0f",
             "market_cap": ":,.0f",
             "short_interest_pct": ":.2f",
+            "exchange": True,
+            "country": True,
+            "company_name": True,
             "root": False,
         },
     )
