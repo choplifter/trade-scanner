@@ -239,23 +239,58 @@ class ScannerEngine:
         self._premarket_snapshot = _rank_gainers(rows.values())
         logger.info("Backfilled premarket snapshot: %d gainers", len(self._premarket_snapshot))
 
-    async def _refresh_movers_backstop(self) -> None:
+    async def _refresh_movers_backstop(self) -> dict[str, UniverseSymbol]:
         """Merge in any new symbols from the movers backstop (see
         fetch_movers_backstop) on a slower cadence than the regular poll --
-        the screener endpoint reflects the whole live tape, not a single
-        watchlist, so it doesn't need per-poll-interval freshness.
+        the screener endpoint reflects the whole live tape when the market's
+        open and the last completed session's close when it's not, so it
+        doesn't need per-poll-interval freshness and isn't gated on can_poll
+        (see run_loop) -- a backstop-only mover should still be findable
+        while the market's closed, not just invisible until the next open.
 
         self.universe is the same dict object main.py stored on app.state,
         so mutating it in place here is enough for both to see the update.
+        Returns whatever new symbols were actually added (possibly empty),
+        so run_loop can fold them into the closed-market fallback view when
+        live polling isn't running to pick them up on its own.
         """
         now = time.monotonic()
         if now - self._last_backstop_refresh < self.settings.movers_backstop_interval:
-            return
+            return {}
         self._last_backstop_refresh = now
 
         new_symbols = await fetch_movers_backstop(self.clients, self.settings, self.universe)
         if new_symbols:
             self.universe.update(new_symbols)
+        return new_symbols
+
+    async def _merge_backstop_into_fallback(self, new_symbols: dict[str, UniverseSymbol]) -> None:
+        """Fold freshly backstop-admitted symbols into the closed-market
+        fallback view (see backfill_latest_session_gainers) -- only called
+        from run_loop when can_poll is False, since live polling would
+        otherwise pick these up on its own via the next full-universe
+        _poll_once instead.
+        """
+        try:
+            new_rows = await compute_latest_session_gainers(self.clients, new_symbols)
+        except Exception:
+            logger.exception(
+                "Failed computing latest-session data for %d backstop symbol(s)",
+                len(new_symbols),
+            )
+            return
+        if not new_rows:
+            return
+
+        by_symbol = {r.symbol: r for r in (self._latest_session_gainers or [])}
+        for row in new_rows:
+            by_symbol[row.symbol] = row
+        self._latest_session_gainers = sorted(
+            by_symbol.values(), key=lambda r: r.pct_change, reverse=True
+        )[:_TOP_N]
+        logger.info(
+            "Merged %d backstop symbol(s) into the closed-market fallback view", len(new_rows)
+        )
 
     async def _attach_fundamentals(self, views: dict[str, list[ScannerRow]]) -> None:
         """Fill in float/market cap/short interest for whatever's actually
@@ -314,6 +349,13 @@ class ScannerEngine:
                 and bool(self.universe)
                 and self.clients.settings.has_credentials
             )
+            has_backstop_data = bool(self.universe) and self.clients.settings.has_credentials
+
+            # Not gated on can_poll -- see _refresh_movers_backstop for why
+            # this needs to keep running while the market's closed too.
+            new_symbols = (
+                await self._refresh_movers_backstop() if has_backstop_data else {}
+            )
 
             if can_poll:
                 interval = (
@@ -321,10 +363,15 @@ class ScannerEngine:
                     if self.session == "premarket"
                     else self.settings.scanner_poll_interval_regular
                 )
-                await self._refresh_movers_backstop()
                 await self._poll_once()
             else:
                 interval = self.settings.scanner_poll_interval_regular
+                if new_symbols:
+                    # Live polling isn't running to pick these up on its
+                    # own -- without this, a backstop-only mover found
+                    # while the market's closed would sit in self.universe
+                    # but never actually appear in any view.
+                    await self._merge_backstop_into_fallback(new_symbols)
 
             # Runs even when markets are closed (can_poll False) -- otherwise
             # the closed-market fallback view (see is_latest_session_fallback)
