@@ -1,4 +1,5 @@
 import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
+import type { SymbolInfoResponse } from "../types/symbolInfo";
 import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types/tradeIdeas";
 
 const API_BASE = "/api";
@@ -41,6 +42,10 @@ export function getScanner(name: string): Promise<ScannerResponse> {
 
 export function getSymbolBars(symbol: string, timeframe = "1Min"): Promise<SymbolBarsResponse> {
   return getJson<SymbolBarsResponse>(`/symbols/${symbol}/bars?timeframe=${encodeURIComponent(timeframe)}`);
+}
+
+export function getSymbolInfo(symbol: string): Promise<SymbolInfoResponse> {
+  return getJson<SymbolInfoResponse>(`/symbols/${symbol}/info`);
 }
 
 export interface SessionResponse {

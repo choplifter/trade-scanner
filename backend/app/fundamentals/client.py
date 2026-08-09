@@ -12,6 +12,8 @@ import logging
 
 import httpx
 
+from app.fundamentals.schemas import CompanyProfile
+
 logger = logging.getLogger(__name__)
 
 _FMP_BASE = "https://financialmodelingprep.com/stable"
@@ -28,11 +30,14 @@ ERROR_RETRY_SECONDS = 60.0
 
 async def fetch_float_and_market_cap(
     client: httpx.AsyncClient, symbol: str, api_key: str
-) -> tuple[float | None, float | None, float | None]:
-    """Float shares (FMP /shares-float) and market cap (FMP /profile), plus
-    a retry_after_seconds hint for the cache.
+) -> tuple[float | None, float | None, CompanyProfile | None, float | None]:
+    """Float shares (FMP /shares-float) and market cap + company profile
+    (both from the same FMP /profile call -- profile fields beyond
+    marketCap are otherwise-free, no extra HTTP request), plus a
+    retry_after_seconds hint for the cache.
 
-    Field names (floatShares, marketCap) are per FMP's published stable-API
+    Field names (floatShares, marketCap, companyName, sector, industry,
+    description, website, image) are per FMP's published stable-API
     docs/examples as of 2026 -- both endpoints return a one-element array.
 
     retry_after_seconds is None when both calls either succeeded or came
@@ -44,6 +49,7 @@ async def fetch_float_and_market_cap(
     """
     float_shares: float | None = None
     market_cap: float | None = None
+    profile: CompanyProfile | None = None
     retry_after: float | None = None
 
     def _note_failure(exc: Exception) -> None:
@@ -74,9 +80,18 @@ async def fetch_float_and_market_cap(
         resp.raise_for_status()
         rows = resp.json()
         if rows:
-            market_cap = rows[0].get("marketCap")
+            row = rows[0]
+            market_cap = row.get("marketCap")
+            profile = CompanyProfile(
+                name=row.get("companyName"),
+                sector=row.get("sector"),
+                industry=row.get("industry"),
+                description=row.get("description"),
+                website=row.get("website"),
+                logo_url=row.get("image"),
+            )
     except Exception as exc:
         logger.warning("FMP profile fetch failed for %s: %s", symbol, exc)
         _note_failure(exc)
 
-    return float_shares, market_cap, retry_after
+    return float_shares, market_cap, profile, retry_after

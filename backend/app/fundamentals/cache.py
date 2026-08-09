@@ -26,7 +26,7 @@ import httpx
 from app.core.config import Settings
 from app.fundamentals.client import ERROR_RETRY_SECONDS, fetch_float_and_market_cap
 from app.fundamentals.finra_short_interest import fetch_latest_short_interest
-from app.fundamentals.schemas import FundamentalsData
+from app.fundamentals.schemas import CompanyProfile, FundamentalsData
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,6 @@ class FundamentalsCache:
         self._client = client
         self._data: dict[str, FundamentalsData] = {}
         self._fetched_at: dict[str, float] = {}
-        self._semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
         self._short_interest_shares: dict[str, float] = {}
         self._short_interest_fetched_at: float = -float("inf")
 
@@ -51,6 +50,19 @@ class FundamentalsCache:
         return self._data.get(symbol)
 
     async def ensure_fresh(self, symbols: Iterable[str]) -> None:
+        """Called both from ScannerEngine's long-lived event loop (every
+        poll) and, for a single user-selected symbol, from Dash callbacks
+        via async_bridge.run_async -- which spins up a brand new event
+        loop per call (asyncio.run()). A Semaphore is bound to whichever
+        loop it was created in, so it MUST be created fresh here rather
+        than stored as an instance attribute: an instance-level one bound
+        at __init__ time to FastAPI's loop raised "bound to a different
+        event loop" the first time a Dash callback (a different loop)
+        tried to use it. Scoping it to this call's own batch is also
+        exactly right for what it's limiting (concurrency within one
+        ensure_fresh's worth of symbols), not something that needs to
+        persist across calls.
+        """
         if not self.settings.has_fmp_credentials:
             return
 
@@ -66,7 +78,8 @@ class FundamentalsCache:
         if not stale:
             return
 
-        await asyncio.gather(*(self._refresh_one(s) for s in stale))
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
+        await asyncio.gather(*(self._refresh_one(s, semaphore) for s in stale))
 
     async def _ensure_short_interest_file_fresh(self) -> None:
         now = time.monotonic()
@@ -82,13 +95,14 @@ class FundamentalsCache:
         if shares:
             self._short_interest_shares = shares
 
-    async def _refresh_one(self, symbol: str) -> None:
-        async with self._semaphore:
+    async def _refresh_one(self, symbol: str, semaphore: asyncio.Semaphore) -> None:
+        async with semaphore:
             float_shares: float | None = None
             market_cap: float | None = None
+            profile: CompanyProfile | None = None
             retry_after: float | None = None
             try:
-                float_shares, market_cap, retry_after = await fetch_float_and_market_cap(
+                float_shares, market_cap, profile, retry_after = await fetch_float_and_market_cap(
                     self._client, symbol, self.settings.fmp_api_key
                 )
             except Exception:
@@ -117,6 +131,7 @@ class FundamentalsCache:
             float_shares=float_shares,
             market_cap=market_cap,
             short_interest_pct=short_interest_pct,
+            profile=profile,
             updated_at=datetime.now(timezone.utc),
         )
 

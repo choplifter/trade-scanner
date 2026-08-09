@@ -37,6 +37,7 @@ from app.ai.trade_ideas import TradeIdea, generate_trade_ideas
 from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
 from app.dash_app.theme import DELTA_DOWN, DELTA_UP, TEXT_MUTED
+from app.symbols.info import SymbolInfoResponse, get_symbol_info
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,39 @@ def _iframe_src(symbol: str | None) -> str:
     if not symbol:
         return "/analytics/assets/lightweight_chart.html"
     return "/analytics/assets/lightweight_chart.html?symbol=" + urllib.parse.quote(symbol)
+
+
+def _render_symbol_info(info: SymbolInfoResponse | None) -> list:
+    if info is None:
+        return [html.P("Select a symbol to see company info and news.", className="symbol-info-empty")]
+
+    header_bits = [b for b in (info.company_name, info.sector, info.industry) if b]
+    children = []
+    if header_bits:
+        children.append(html.P(" · ".join(header_bits), className="symbol-info-header"))
+    if info.description:
+        children.append(html.P(info.description, className="symbol-info-description"))
+
+    if info.news:
+        children.append(html.H4("Recent News", className="symbol-news-title"))
+        for item in info.news:
+            headline = (
+                html.A(item.headline, href=item.url, target="_blank", className="symbol-news-headline")
+                if item.url
+                else html.Span(item.headline, className="symbol-news-headline")
+            )
+            children.append(
+                html.Div(
+                    [headline, html.Span(f" — {item.source}", className="symbol-news-source")],
+                    className="symbol-news-item",
+                )
+            )
+    elif not header_bits and not info.description:
+        # FMP_API_KEY unset, or FMP's daily quota exhausted, and no recent
+        # Alpaca news either -- distinct from "nothing selected" above.
+        children.append(html.P("No company info or news available right now.", className="symbol-info-empty"))
+
+    return children
 
 
 _TRADE_IDEAS_PROMPT = (
@@ -341,11 +375,18 @@ def layout(**_kwargs):
                                 className="home-panel-header",
                             ),
                             html.Div(
-                                html.Iframe(
-                                    id="home-symbol-frame",
-                                    src=_iframe_src(default_symbol),
-                                    style={"width": "100%", "height": "100%", "border": "none"},
-                                ),
+                                [
+                                    html.Iframe(
+                                        id="home-symbol-frame",
+                                        src=_iframe_src(default_symbol),
+                                        style={"width": "100%", "height": "60%", "border": "none"},
+                                    ),
+                                    html.Div(
+                                        _render_symbol_info(None),
+                                        id="home-symbol-info",
+                                        style={"marginTop": "8px"},
+                                    ),
+                                ],
                                 className="home-panel-body",
                             ),
                         ],
@@ -434,6 +475,7 @@ def update_home_panels(_n_intervals, view_name, sort_by):
 @callback(
     Output("home-symbol-frame", "src"),
     Output("home-symbol-label", "children"),
+    Output("home-symbol-info", "children"),
     Input("home-scanner-table", "active_cell"),
     Input("heatmap-graph", "clickData"),
     Input({"type": "trade-idea-row", "index": ALL}, "n_clicks"),
@@ -462,8 +504,18 @@ def update_home_symbol_detail(active_cell, click_data, _idea_clicks, table_data)
             symbol = triggered_id["index"]
 
     if not symbol:
-        return dash.no_update, dash.no_update
-    return _iframe_src(symbol), symbol
+        return dash.no_update, dash.no_update, dash.no_update
+
+    fundamentals = backend_state.fundamentals
+    alpaca = backend_state.alpaca_clients
+    info = None
+    if fundamentals is not None and alpaca is not None and alpaca.settings.has_credentials:
+        try:
+            info = run_async(get_symbol_info(fundamentals, alpaca, symbol))
+        except Exception:
+            logger.exception("Symbol info fetch failed for %s", symbol)
+
+    return _iframe_src(symbol), symbol, _render_symbol_info(info)
 
 
 @callback(

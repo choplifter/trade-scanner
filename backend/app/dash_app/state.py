@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from app.alpaca.client import AlpacaClients
     from app.alpaca.universe import UniverseSymbol
     from app.core.config import Settings
+    from app.fundamentals.cache import FundamentalsCache
     from app.scanners.engine import ScannerEngine
 
 
@@ -30,6 +31,7 @@ class BackendState:
         self.universe: "dict[str, UniverseSymbol] | None" = None
         self.anthropic_client: "anthropic.AsyncAnthropic | None" = None
         self.trade_idea_tracker: "TradeIdeaTracker | None" = None
+        self.fundamentals: "FundamentalsCache | None" = None
 
 
 backend_state = BackendState()
@@ -47,3 +49,4 @@ def bind(app: "FastAPI") -> None:
     backend_state.universe = app.state.universe
     backend_state.anthropic_client = app.state.anthropic_client
     backend_state.trade_idea_tracker = app.state.trade_idea_tracker
+    backend_state.fundamentals = app.state.fundamentals

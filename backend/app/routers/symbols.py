@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.market_data.bars import HISTORICAL_TIMEFRAMES, get_historical_bars, get_intraday_minute_bars
 from app.market_data.vwap import SessionVwapState
+from app.symbols.info import get_symbol_info
 
 router = APIRouter(prefix="/api/symbols", tags=["symbols"])
 
@@ -23,6 +24,17 @@ async def search_symbols(q: str, request: Request) -> dict:
     q_upper = q.upper()
     matches = [s for s in universe if s.startswith(q_upper)][:20]
     return {"matches": matches}
+
+
+@router.get("/{symbol}/info")
+async def get_symbol_info_endpoint(symbol: str, request: Request) -> dict:
+    symbol = symbol.upper()
+    clients = request.app.state.alpaca_clients
+    if not clients.settings.has_credentials:
+        raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
+
+    info = await get_symbol_info(request.app.state.fundamentals, clients, symbol)
+    return info.model_dump(mode="json")
 
 
 @router.get("/{symbol}/bars")

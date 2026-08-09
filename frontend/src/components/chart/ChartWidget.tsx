@@ -5,6 +5,7 @@ import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
 import { CandleChart } from "./CandleChart";
+import { SymbolInfoPanel } from "./SymbolInfoPanel";
 
 interface ChartWidgetProps {
   symbol: string | null;
@@ -94,6 +95,7 @@ export function ChartWidget({ symbol }: ChartWidgetProps) {
           <CandleChart bars={displayed.bars} vwap={displayed.vwap} />
         )}
       </div>
+      {symbol && <SymbolInfoPanel symbol={symbol} />}
     </div>
   );
 }
