@@ -31,6 +31,11 @@ class TrackedAppearance:
     # data before any live poll) -- callers should treat that as "no
     # benchmark comparison available for this entry", not zero.
     benchmark_entry_price: float | None
+    # Most recent news headline as of the moment this was flagged, if any
+    # (same fetch ScannerHistoryStore uses -- see engine.py's
+    # _record_new_appearances). None just means no recent headline was
+    # found, not that anything's wrong with this entry.
+    entry_headline: str | None
     first_seen_at: datetime
 
 
@@ -48,6 +53,7 @@ class ScannerBenchmarkTracker:
         entry_pct_change: float,
         entry_rvol: float,
         benchmark_entry_price: float | None,
+        entry_headline: str | None = None,
     ) -> None:
         if symbol in self._entries:
             return
@@ -58,6 +64,7 @@ class ScannerBenchmarkTracker:
             entry_pct_change=entry_pct_change,
             entry_rvol=entry_rvol,
             benchmark_entry_price=benchmark_entry_price,
+            entry_headline=entry_headline,
             first_seen_at=datetime.now(timezone.utc),
         )
         if len(self._entries) > self._MAX_ENTRIES:
@@ -112,6 +119,7 @@ def compute_performance(
                 "entry_price": round(entry.entry_price, 2),
                 "entry_pct_change": round(entry.entry_pct_change, 2),
                 "entry_rvol": round(entry.entry_rvol, 2),
+                "entry_headline": entry.entry_headline,
                 "current_price": round(current_price, 2) if current_price is not None else None,
                 "pct_change_since_entry": pct_change_since_entry,
                 "benchmark_pct_change_since_entry": benchmark_pct_change,

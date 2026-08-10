@@ -6,6 +6,7 @@ export interface ScannerBenchmarkPick {
   entry_price: number;
   entry_pct_change: number;
   entry_rvol: number;
+  entry_headline: string | null;
   current_price: number | null;
   pct_change_since_entry: number | null;
   benchmark_pct_change_since_entry: number | null;

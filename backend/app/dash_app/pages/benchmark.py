@@ -45,6 +45,7 @@ _COLUMNS = [
     {"name": "Change", "id": "change"},
     {"name": "Benchmark", "id": "benchmark"},
     {"name": "Alpha", "id": "alpha"},
+    {"name": "News", "id": "news"},
 ]
 
 # Sorts the raw picks (numeric fields from compute_performance) rather than
@@ -100,6 +101,7 @@ def _table_rows(picks: list[dict]) -> list[dict]:
             "benchmark": _format_pct(p["benchmark_pct_change_since_entry"]),
             "alpha": _format_pct(p["alpha_vs_benchmark"]),
             "alpha_num": p["alpha_vs_benchmark"],
+            "news": p["entry_headline"] or "—",
         }
         for p in picks
     ]
@@ -151,6 +153,14 @@ def layout(**_kwargs):
                 style_cell_conditional=[
                     {"if": {"column_id": "symbol"}, "textAlign": "left", "fontWeight": "600"},
                     {"if": {"column_id": "view"}, "textAlign": "left"},
+                    {
+                        "if": {"column_id": "news"},
+                        "textAlign": "left",
+                        "maxWidth": "260px",
+                        "overflow": "hidden",
+                        "textOverflow": "ellipsis",
+                        "whiteSpace": "nowrap",
+                    },
                 ],
                 style_header={
                     "backgroundColor": "#fcfcfb",

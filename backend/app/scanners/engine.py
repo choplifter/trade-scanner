@@ -416,22 +416,18 @@ class ScannerEngine:
         re-fetched on repeat ranks) as context for *why* it moved -- fetched
         only for candidates existing_keys_for_date says aren't already in
         the store today, so a fetch isn't wasted on the same ~150 ranked
-        symbols every 5-10s poll tick for the rest of the day.
+        symbols every 5-10s poll tick for the rest of the day. The same
+        headlines feed ScannerBenchmarkTracker too (it has its own, looser
+        "new" semantics -- see benchmark_tracker.py -- so right after a
+        restart it can consider a symbol new that history_store's
+        per-trading-day check doesn't; that symbol just won't have a
+        headline yet, same as any other best-effort-missing data here).
         """
         candidates = [
             (view_name, row)
             for view_name in ("gainers", "losers", "most_active")
             for row in views.get(view_name, [])
         ]
-        for view_name, row in candidates:
-            self.benchmark_tracker.record_if_new(
-                symbol=row.symbol,
-                view=view_name,
-                entry_price=row.last_price,
-                entry_pct_change=row.pct_change,
-                entry_rvol=row.rvol,
-                benchmark_entry_price=self.benchmark_price,
-            )
 
         trading_date = datetime.now(timezone.utc).astimezone(ET).date().isoformat()
         try:
@@ -447,6 +443,17 @@ class ScannerEngine:
                 headlines = await fetch_headlines(self.clients, sorted(new_symbols))
             except Exception:
                 logger.exception("Failed fetching news headlines for new scanner appearances")
+
+        for view_name, row in candidates:
+            self.benchmark_tracker.record_if_new(
+                symbol=row.symbol,
+                view=view_name,
+                entry_price=row.last_price,
+                entry_pct_change=row.pct_change,
+                entry_rvol=row.rvol,
+                benchmark_entry_price=self.benchmark_price,
+                entry_headline=headlines.get(row.symbol),
+            )
 
         new_entries = [
             NewAppearance(
