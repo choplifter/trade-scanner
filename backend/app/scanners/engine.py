@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
 from app.scanners import formulas
+from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.latest_session import compute_latest_session_rows
 from app.scanners.schemas import ScannerRow
 from app.services.market_clock import ET, current_session, trading_hours_for
@@ -71,12 +72,16 @@ class ScannerEngine:
         universe: dict[str, UniverseSymbol],
         manager: ConnectionManager,
         fundamentals: FundamentalsCache,
+        benchmark_tracker: ScannerBenchmarkTracker,
     ):
         self.clients = clients
         self.settings = settings
         self.universe = universe
         self.manager = manager
         self.fundamentals = fundamentals
+        self.benchmark_tracker = benchmark_tracker
+        self.benchmark_symbol = "SPY"
+        self.benchmark_price: float | None = None
         self.rows: dict[str, ScannerRow] = {}
         self.session: str = "closed"
         self._premarket_snapshot: list[ScannerRow] | None = None
@@ -364,6 +369,49 @@ class ScannerEngine:
             except Exception:
                 logger.exception("Snapshot poll failed for a batch of %d symbols", len(batch))
 
+    async def _poll_benchmark(self) -> None:
+        """Refresh self.benchmark_price (SPY) -- not part of self.universe
+        (it's outside the $1-$50 universe price filter and shouldn't show
+        up as a scanner row), so it needs its own small snapshot call
+        rather than riding along with _poll_once's batches.
+        """
+        try:
+            snap = await asyncio.to_thread(
+                self.clients.data.get_stock_snapshot,
+                StockSnapshotRequest(symbol_or_symbols=[self.benchmark_symbol], feed=self.clients.feed),
+            )
+            s = snap.get(self.benchmark_symbol)
+            if s is None:
+                return
+            price = formulas.resolve_last_price(
+                s.latest_trade.price if s.latest_trade else None,
+                s.daily_bar.close if s.daily_bar else None,
+                s.previous_daily_bar.close if s.previous_daily_bar else None,
+            )
+            if price is not None:
+                self.benchmark_price = price
+        except Exception:
+            logger.exception("Benchmark (%s) snapshot poll failed", self.benchmark_symbol)
+
+    def _record_new_appearances(self, views: dict[str, list[ScannerRow]]) -> None:
+        """Log the first time each symbol shows up in a *ranked* view (not
+        premarket_gainers, which mirrors/freezes "gainers" rather than
+        being an independent signal -- would just double-count the same
+        symbols) so ScannerBenchmarkTracker can compare its performance
+        since then against self.benchmark_price. See benchmark_tracker.py
+        for why only the first appearance counts.
+        """
+        for view_name in ("gainers", "losers", "most_active"):
+            for row in views.get(view_name, []):
+                self.benchmark_tracker.record_if_new(
+                    symbol=row.symbol,
+                    view=view_name,
+                    entry_price=row.last_price,
+                    entry_pct_change=row.pct_change,
+                    entry_rvol=row.rvol,
+                    benchmark_entry_price=self.benchmark_price,
+                )
+
     async def run_loop(self) -> None:
         if not self.clients.settings.has_credentials:
             logger.warning("No Alpaca credentials configured -- scanner loop idling")
@@ -400,6 +448,7 @@ class ScannerEngine:
                     else self.settings.scanner_poll_interval_regular
                 )
                 await self._poll_once()
+                await self._poll_benchmark()
             else:
                 interval = self.settings.scanner_poll_interval_regular
                 if new_symbols:
@@ -414,6 +463,7 @@ class ScannerEngine:
             # would show blank float/market cap/short interest columns until
             # the next live poll, instead of the fallback's real fundamentals.
             views = self._build_views()
+            self._record_new_appearances(views)
             await self._attach_fundamentals(views)
             is_fallback = self.is_latest_session_fallback
             for name, rows in views.items():

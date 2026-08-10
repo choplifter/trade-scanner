@@ -1,4 +1,5 @@
 import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
+import type { ScannerBenchmarkResponse } from "../types/scannerBenchmark";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
 import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types/tradeIdeas";
 
@@ -38,6 +39,10 @@ export interface ScannerResponse {
 
 export function getScanner(name: string): Promise<ScannerResponse> {
   return getJson<ScannerResponse>(`/scanners/${name}`);
+}
+
+export function getScannerBenchmarkPerformance(): Promise<ScannerBenchmarkResponse> {
+  return getJson<ScannerBenchmarkResponse>("/scanners/benchmark-performance");
 }
 
 export function getSymbolBars(symbol: string, timeframe = "1Min"): Promise<SymbolBarsResponse> {

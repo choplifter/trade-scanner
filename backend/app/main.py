@@ -18,6 +18,7 @@ from app.dash_app.state import bind as bind_dash_state
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.stream_manager import StreamManager
 from app.routers import meta, scanners, symbols, trade_ideas
+from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.engine import ScannerEngine
 from app.ws import chart_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
         else None
     )
     app.state.trade_idea_tracker = TradeIdeaTracker()
+    app.state.scanner_benchmark_tracker = ScannerBenchmarkTracker()
 
     fundamentals_client = httpx.AsyncClient(timeout=10.0)
     fundamentals = FundamentalsCache(settings, fundamentals_client)
@@ -63,7 +65,9 @@ async def lifespan(app: FastAPI):
         universe = {}
     app.state.universe = universe
 
-    engine = ScannerEngine(clients, settings, universe, manager, fundamentals)
+    engine = ScannerEngine(
+        clients, settings, universe, manager, fundamentals, app.state.scanner_benchmark_tracker
+    )
     app.state.scanner_engine = engine
     bind_dash_state(app)
 

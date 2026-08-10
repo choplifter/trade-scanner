@@ -3,6 +3,7 @@ import { useState } from "react";
 import { TradeIdeasWidget } from "./components/ai/TradeIdeasWidget";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
+import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
 import { useMarketSession } from "./hooks/useMarketSession";
 
@@ -53,7 +54,15 @@ export default function App() {
             <ScannerWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
             <ChartWidget symbol={selectedSymbol} />
           </ResizablePanels>
-          <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+          <ResizablePanels
+            direction="row"
+            storageKey="layout:bottom-row"
+            defaultSizes={[0.5, 0.5]}
+            minSizePx={220}
+          >
+            <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+            <ScannerBenchmarkWidget />
+          </ResizablePanels>
         </ResizablePanels>
       </main>
     </div>

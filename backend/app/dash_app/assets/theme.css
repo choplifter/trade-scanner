@@ -311,10 +311,13 @@ div[id="heatmap-scanner-view"] label {
    The icon always comes first in DOM order and, with no layout rule of its
    own, sits at the LEFT of the header cell regardless of the column's own
    text-align. Every column here except Symbol is right-aligned (see
-   style_cell's textAlign:"right" in scanner_heatmap.py), so the icon ends
-   up floating near the *previous* column's data instead of next to its own
-   header text -- easy to click thinking you're sorting the column the icon
-   visually sits next to, when it's actually the next one over.
+   style_cell's textAlign:"right" in scanner_heatmap.py/benchmark.py), so
+   the icon ends up floating near the *previous* column's data instead of
+   next to its own header text -- easy to click thinking you're sorting
+   the column the icon visually sits next to, when it's actually the next
+   one over. Applies to every dash_table with sort_action="custom" in this
+   app (currently the home scanner table and the benchmark table), not
+   just one -- same underlying dash_table CSS, same fix needed.
 
    Making the header's inner div flex + justify-content:flex-end alone
    isn't enough: dash_table's own CSS gives .column-header-name
@@ -323,17 +326,27 @@ div[id="heatmap-scanner-view"] label {
    icon against -- the icon stays pinned at the start regardless. Turning
    flex-grow off on the name span first (so it shrinks to its own text
    width) is what lets flex-end actually group icon + text together. */
-#home-scanner-table th.dash-header .column-header-name {
+#home-scanner-table th.dash-header .column-header-name,
+#benchmark-table th.dash-header .column-header-name {
   flex-grow: 0;
 }
 
-#home-scanner-table th.dash-header > div {
+#home-scanner-table th.dash-header > div,
+#benchmark-table th.dash-header > div {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
 }
 
-#home-scanner-table th.dash-header.column-0 > div {
+#home-scanner-table th.dash-header.column-0 > div,
+#benchmark-table th.dash-header.column-0 > div {
   justify-content: flex-start;
+}
+
+.benchmark-disclaimer {
+  margin: 10px 0 16px;
+  font-size: 11px;
+  color: #898781;
+  font-style: italic;
 }

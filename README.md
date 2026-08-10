@@ -3,10 +3,11 @@
 A personal, locally-run "stocks in play" scanner + chart dashboard in the
 spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: live
 gainers / premarket gainers / losers / most-active scanners, a
-click-to-chart candlestick widget with a session-anchored VWAP overlay,
-AI-generated trade-idea annotations, and a Plotly Dash analytics app —
-powered by Alpaca Markets' real-time IEX data feed, with float/market
-cap/short interest layered in from Financial Modeling Prep and FINRA.
+click-to-chart candlestick widget with a session-anchored VWAP overlay and
+company info/news, AI-generated trade-idea annotations, a scanner-wide
+benchmark against SPY, and a Plotly Dash analytics app — powered by Alpaca
+Markets' real-time IEX data feed, with float/market cap/short interest/
+company info layered in from Financial Modeling Prep and FINRA.
 
 ## 1. Get Alpaca API credentials (required for live data)
 
@@ -29,10 +30,12 @@ with fewer annotations/columns.
   and annotates the 3 most notable scanner setups). Get a key at
   https://console.anthropic.com → API Keys.
 - **`FMP_API_KEY`** — free key at https://site.financialmodelingprep.com.
-  Fills in the **Float** and **Mkt Cap** scanner columns (Alpaca doesn't
-  expose either). Also required for **Short %**, since that's computed by
-  combining FMP's float with FINRA's free public short-interest data — no
-  separate key needed for FINRA itself.
+  Fills in the **Float**, **Mkt Cap**, **Country**, and **Company** scanner
+  columns (Alpaca doesn't expose any of these), plus company
+  name/sector/industry/description/website in the symbol detail panel. Also
+  required for **Short %**, since that's computed by combining FMP's float
+  with FINRA's free public short-interest data — no separate key needed for
+  FINRA itself.
 
 ## 2. Run the backend
 
@@ -72,20 +75,30 @@ backend on port 8000, so both must be running.
   runners that weren't in the trailing-volume-filtered universe to begin
   with, and keeps running even while the market's closed so a big mover
   from the last session isn't invisible over a weekend/holiday.
-- Scanner columns: last price, gap %, volume, RVOL, and (when `FMP_API_KEY`
-  is set) float, market cap, and short interest % of float.
+- Scanner columns: symbol (click to copy its unambiguous `EXCHANGE:SYMBOL`
+  TradingView format), company name, last price, gap %, volume, RVOL, and
+  (when `FMP_API_KEY` is set) float, market cap, short interest % of float,
+  exchange, and country.
 - One chart widget: click any scanner row to load that symbol — candlestick
   chart, volume pane, and a session-anchored VWAP line (resets at 09:30 ET),
-  fed by Alpaca's live minute-bar stream.
+  fed by Alpaca's live minute-bar stream, plus a company info + recent news
+  panel (name/sector/industry/description from FMP, headlines from Alpaca's
+  news feed).
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks the 3 most
   notable current setups from gap %, RVOL, dollar volume, HOD status, news
   catalyst, VWAP position, 15-minute momentum, spread, multi-day context,
   float, and short interest — framed as descriptive scanner annotation, not
   investment advice. A past-picks performance table tracks how prior AI
   picks have actually moved since they were generated.
+- **Scanner benchmark**: every symbol the scanner itself has ever flagged
+  (gainers/losers/most active — not just the 3 AI picks above) gets logged
+  the moment it first appears, then tracked against SPY from that instant —
+  the real check on whether the scanner's own criteria (gap %, RVOL, the
+  movers backstop) find stocks that keep moving, not just noise.
 - **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
-  for cross-symbol correlation/comparison and seasonality.
+  for the scanner benchmark, cross-symbol correlation/comparison, and
+  seasonality.
 - Session badge (Premarket / Market Open / After Hours / Closed) in the
   header, computed from the NYSE trading calendar.
 
@@ -106,6 +119,12 @@ backend on port 8000, so both must be running.
   weeks old, not this week's.
 - **EMA 9/20, multi-widget draggable grid (React app), watchlists, alerts**:
   roadmap items, not built yet.
+- **Scanner benchmark**: entries are still recorded from closed-market
+  fallback data, but the actual price/SPY comparison columns only populate
+  once live polling resumes (they need a live SPY price and a live price
+  for the flagged symbol) -- expect "—" for those specifically outside
+  market hours, same as float/market cap. The log itself isn't persisted
+  across backend restarts, same as the AI trade-ideas performance table.
 - Outside premarket/regular market hours, scanners fall back to the most
   recently completed session's real data instead of polling live (labeled
   "LAST SESSION" in the UI) -- they only show empty rows if `backend/.env`

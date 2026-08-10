@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from app.alpaca.universe import UniverseSymbol
     from app.core.config import Settings
     from app.fundamentals.cache import FundamentalsCache
+    from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
     from app.scanners.engine import ScannerEngine
 
 
@@ -32,6 +33,7 @@ class BackendState:
         self.anthropic_client: "anthropic.AsyncAnthropic | None" = None
         self.trade_idea_tracker: "TradeIdeaTracker | None" = None
         self.fundamentals: "FundamentalsCache | None" = None
+        self.scanner_benchmark_tracker: "ScannerBenchmarkTracker | None" = None
 
 
 backend_state = BackendState()
@@ -50,3 +52,4 @@ def bind(app: "FastAPI") -> None:
     backend_state.anthropic_client = app.state.anthropic_client
     backend_state.trade_idea_tracker = app.state.trade_idea_tracker
     backend_state.fundamentals = app.state.fundamentals
+    backend_state.scanner_benchmark_tracker = app.state.scanner_benchmark_tracker
