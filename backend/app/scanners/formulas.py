@@ -1,10 +1,24 @@
 """Pure scanner math. Kept free of Alpaca SDK types so it's easy to unit test."""
 
 
+# How far outside the day's own recorded [day_low, day_high] range a single
+# latest_trade print is allowed to sit before it's treated as a bad/stale
+# tick rather than a real move -- a genuine trade prices into that same
+# day's aggregated high/low by definition, so anything wildly outside it
+# (seen in practice: a thin backstop-admitted penny name reporting a single
+# ~20-40x-off print on IEX, then correcting on the next poll) almost
+# certainly isn't real. 2x is generous on purpose: real penny-stock
+# intraday moves of 50-100% happen and shouldn't get discarded, only the
+# implausible multi-hundred-percent single-tick discontinuities should.
+_LAST_TRADE_SANITY_MULTIPLE = 2.0
+
+
 def resolve_last_price(
     latest_trade_price: float | None,
     daily_bar_close: float | None,
     previous_daily_bar_close: float | None,
+    day_low: float | None = None,
+    day_high: float | None = None,
 ) -> float | None:
     """Best available "current" price, in order of freshness.
 
@@ -12,7 +26,27 @@ def resolve_last_price(
     reflect yet; daily_bar.close covers regular-session symbols with no very
     recent print; previous_daily_bar.close is the last resort for a symbol
     that hasn't traded at all today (e.g. still closed/illiquid).
+
+    latest_trade_price is discarded in favor of daily_bar_close if it falls
+    outside day_low/day_high by more than _LAST_TRADE_SANITY_MULTIPLE -- see
+    that constant's docstring. day_low/day_high are only meaningful once the
+    regular session has started (Alpaca's daily bar doesn't aggregate
+    premarket), so the check is skipped whenever either is missing rather
+    than rejecting legitimate premarket/afterhours prints.
     """
+    if (
+        latest_trade_price is not None
+        and latest_trade_price > 0
+        and day_low is not None
+        and day_high is not None
+        and day_low > 0
+        and (
+            latest_trade_price > day_high * _LAST_TRADE_SANITY_MULTIPLE
+            or latest_trade_price < day_low / _LAST_TRADE_SANITY_MULTIPLE
+        )
+    ):
+        latest_trade_price = None
+
     for price in (latest_trade_price, daily_bar_close, previous_daily_bar_close):
         if price is not None and price > 0:
             return price

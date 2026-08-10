@@ -105,7 +105,13 @@ class ScannerEngine:
                 snap.previous_daily_bar.close if snap.previous_daily_bar else uni.prev_close
             )
 
-            last = formulas.resolve_last_price(latest_trade_price, daily_close, prev_close)
+            volume_today = snap.daily_bar.volume if snap.daily_bar else 0.0
+            day_high = snap.daily_bar.high if snap.daily_bar else None
+            day_low = snap.daily_bar.low if snap.daily_bar else None
+
+            last = formulas.resolve_last_price(
+                latest_trade_price, daily_close, prev_close, day_low, day_high
+            )
             if last is None or not prev_close:
                 continue
 
@@ -113,9 +119,6 @@ class ScannerEngine:
             if pct is None:
                 continue
 
-            volume_today = snap.daily_bar.volume if snap.daily_bar else 0.0
-            day_high = snap.daily_bar.high if snap.daily_bar else None
-            day_low = snap.daily_bar.low if snap.daily_bar else None
             quote = snap.latest_quote
 
             self.rows[symbol] = ScannerRow(

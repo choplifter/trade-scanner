@@ -229,10 +229,22 @@ async def fetch_movers_backstop(
         # legitimate signal even without an rvol baseline (rvol just reads
         # as 0 downstream, see formulas.rvol).
         avg_vol_20d = sum(b.volume for b in bars) / len(bars) if bars else 0.0
+        # Prefer the real daily-bar close over mover.price - mover.change:
+        # the screener's own price/change fields can be stale for the thin,
+        # normally-quiet names this backstop specifically exists to catch
+        # (see this function's docstring), and a stale value here silently
+        # becomes ScannerRow.last_price via formulas.resolve_last_price's
+        # last-resort fallback to prev_close whenever the live snapshot
+        # hasn't printed a trade or daily bar for the symbol yet -- observed
+        # in practice as implausible 10-40x "moves" once a real trade
+        # finally came through on a later poll. Only fall back to the
+        # screener's own math when there's no bar history at all (a listing
+        # too new for build_universe's 40-day window either).
+        prev_close = bars[-1].close if bars else (mover.price - mover.change)
         result[symbol] = UniverseSymbol(
             symbol=symbol,
             exchange=exchange,
-            prev_close=mover.price - mover.change,
+            prev_close=prev_close,
             avg_vol_20d=avg_vol_20d,
             avg_dollar_vol_20d=avg_vol_20d * mover.price,
         )
