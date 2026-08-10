@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     # universe above (see fetch_movers_backstop in app.alpaca.universe).
     movers_backstop_interval: float = 300.0
 
+    # How often to re-check for same-day stock splits (see fetch_split_ratios
+    # in app.alpaca.universe) -- corrects prev_close for the one day a split
+    # takes effect, since Alpaca's live snapshot endpoint has no
+    # split-adjustment option. Splits are a per-day fact set once the market
+    # opens, so this doesn't need to be frequent -- 30 min balances catching
+    # one that posts intraday against not hammering the endpoint.
+    split_ratio_refresh_interval: float = 1800.0
+
     # Persistent SQLite log of scanner appearances + periodic follow-up price
     # snapshots (see app.scanners.history_store), so "which scanner matches
     # performed best" survives restarts -- unlike ScannerBenchmarkTracker,

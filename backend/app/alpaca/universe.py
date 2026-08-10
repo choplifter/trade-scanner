@@ -2,12 +2,12 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from alpaca.data.requests import MarketMoversRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
-from alpaca.trading.enums import AssetClass, AssetStatus
-from alpaca.trading.requests import GetAssetsRequest
+from alpaca.trading.enums import AssetClass, AssetStatus, CorporateActionType
+from alpaca.trading.requests import GetAssetsRequest, GetCorporateAnnouncementsRequest
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
@@ -251,3 +251,49 @@ async def fetch_movers_backstop(
 
     logger.info("Movers backstop qualified %d new symbol(s): %s", len(result), sorted(result))
     return result
+
+
+async def fetch_split_ratios(clients: AlpacaClients, trading_date: date) -> dict[str, float]:
+    """Symbol -> multiplier to rescale a stale prev_close so it's comparable
+    to today's price, for every stock split whose ex_date is `trading_date`.
+
+    Alpaca's snapshot endpoint (StockSnapshotRequest, what the live poll
+    loop uses for previous_daily_bar.close) has no split-adjustment option
+    -- unlike the historical bars endpoint's `adjustment` param, there's no
+    way to ask it for an already-adjusted prev_close. Observed in practice:
+    a stock that reverse-splits overnight shows a nonsensical multi-
+    thousand-percent "gap" the next session, since prev_close is still on
+    the pre-split share basis while every live price is post-split (e.g.
+    TNON's 2026-08-10 1-for-35 reverse split: prev_close $0.1316 vs. a
+    real price near $6 -- a +4600% "move" that's actually close to flat
+    once rescaled: $0.1316 * 35 = ~$4.61).
+
+    old_rate/new_rate is the correct multiplier for both directions: a
+    2-for-1 forward split (old_rate=1, new_rate=2) halves prev_close
+    (1/2 = 0.5); a 1-for-35 reverse split (old_rate=35, new_rate=1)
+    multiplies it by 35.
+
+    One market-wide query (not per-symbol) -- splits are rare enough
+    across the whole market (order of ~10/day) that this is cheap
+    regardless of universe size, unlike a per-symbol lookup would be.
+    """
+    try:
+        request = GetCorporateAnnouncementsRequest(
+            ca_types=[CorporateActionType.SPLIT],
+            since=trading_date,
+            until=trading_date,
+        )
+        announcements = await asyncio.to_thread(clients.trading.get_corporate_announcements, request)
+    except Exception:
+        logger.exception("Corporate announcements (split) fetch failed")
+        return {}
+
+    ratios: dict[str, float] = {}
+    for a in announcements:
+        if not a.target_symbol or a.ex_date != trading_date or not a.old_rate or not a.new_rate:
+            continue
+        ratios[a.target_symbol] = a.old_rate / a.new_rate
+
+    if ratios:
+        logger.info("Split adjustments for %s: %s", trading_date.isoformat(), ratios)
+    return ratios

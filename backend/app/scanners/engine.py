@@ -7,7 +7,7 @@ from alpaca.data.requests import StockBarsRequest, StockSnapshotRequest
 from alpaca.data.timeframe import TimeFrame
 
 from app.alpaca.client import AlpacaClients
-from app.alpaca.universe import UniverseSymbol, fetch_movers_backstop
+from app.alpaca.universe import UniverseSymbol, fetch_movers_backstop, fetch_split_ratios
 from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
@@ -92,6 +92,8 @@ class ScannerEngine:
         self._latest_session_rows: dict[str, ScannerRow] | None = None
         self._last_backstop_refresh: float = 0.0
         self._last_history_snapshot: float = 0.0
+        self._split_ratios: dict[str, float] = {}
+        self._last_split_refresh: float = 0.0
 
     def _compute_rows(self, snapshots: dict) -> None:
         now = datetime.now(timezone.utc)
@@ -105,6 +107,12 @@ class ScannerEngine:
             prev_close = (
                 snap.previous_daily_bar.close if snap.previous_daily_bar else uni.prev_close
             )
+            # Rescale a same-day-split symbol's prev_close onto today's
+            # share basis -- see fetch_split_ratios' docstring for why this
+            # can't just be an `adjustment` param on the request instead.
+            split_ratio = self._split_ratios.get(symbol)
+            if split_ratio and prev_close:
+                prev_close = prev_close * split_ratio
 
             volume_today = snap.daily_bar.volume if snap.daily_bar else 0.0
             day_high = snap.daily_bar.high if snap.daily_bar else None
@@ -310,6 +318,29 @@ class ScannerEngine:
         if new_symbols:
             self.universe.update(new_symbols)
         return new_symbols
+
+    async def _refresh_split_ratios(self) -> None:
+        """Refresh today's same-day stock-split adjustments (see
+        fetch_split_ratios) on a slower cadence than the regular poll.
+        Not gated on can_poll so the ratios are already warm the moment
+        live polling resumes, rather than every symbol's first live tick
+        of the day briefly showing an unadjusted gap%.
+
+        Only applied to the live path (_compute_rows) below -- the
+        closed-market fallback (latest_session.py) computes its own
+        prev_close straight from historical bars and isn't corrected here;
+        a stale gap% there is a narrower edge case (only matters for a
+        symbol that both split very recently *and* is being shown from
+        fallback data, e.g. right after a fresh app start with markets
+        closed) than the live path this fixes.
+        """
+        now = time.monotonic()
+        if now - self._last_split_refresh < self.settings.split_ratio_refresh_interval:
+            return
+        self._last_split_refresh = now
+
+        trading_date = datetime.now(ET).date()
+        self._split_ratios = await fetch_split_ratios(self.clients, trading_date)
 
     async def _merge_backstop_into_fallback(self, new_symbols: dict[str, UniverseSymbol]) -> None:
         """Fold freshly backstop-admitted symbols into the closed-market
@@ -519,6 +550,7 @@ class ScannerEngine:
             new_symbols = (
                 await self._refresh_movers_backstop() if has_backstop_data else {}
             )
+            await self._refresh_split_ratios()
 
             if can_poll:
                 interval = (
