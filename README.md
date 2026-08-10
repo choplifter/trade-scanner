@@ -108,8 +108,12 @@ backend on port 8000, so both must be running.
   win-rate/avg-return/avg-alpha per scanner view, best/worst leaderboards,
   and a fade-risk breakdown (does a bigger entry gap % or higher RVOL
   predict *worse* subsequent performance — i.e. "gap and crap" — rather
-  than better?) bucketed by gap size and RVOL. Available as a widget in the
-  React dashboard and a page in the Dash analytics app.
+  than better?) bucketed by gap size and RVOL. Each entry also carries the
+  most recent news headline (if any, Alpaca's news feed, 48h lookback) as
+  of the moment it was first flagged, shown in a News column on the
+  leaderboards — context for *why* it moved, fetched once per symbol per
+  day rather than on every poll tick. Available as a widget in the React
+  dashboard and a page in the Dash analytics app.
 - **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
   for the scanner benchmark, scanner match history, cross-symbol
@@ -151,7 +155,9 @@ backend on port 8000, so both must be running.
   the AI trade-ideas performance table -- use **scanner match history**
   (SQLite-backed) for the persistent version. Match history's fade-risk
   buckets are still statistically thin in the first few days of a fresh
-  install; treat early numbers as directional, not conclusive.
+  install; treat early numbers as directional, not conclusive. News
+  headlines are also best-effort -- expect "—" for a fair share of entries,
+  since not every mover has a story behind it within the 48h lookback.
 - Outside premarket/regular market hours, scanners fall back to the most
   recently completed session's real data instead of polling live (labeled
   "LAST SESSION" in the UI) -- they only show empty rows if `backend/.env`
