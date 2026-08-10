@@ -697,6 +697,16 @@ a.symbol-news-headline {
   border-bottom: 1px solid var(--gridline);
 }
 
+.performance-table th.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.performance-table th.sortable-header:hover {
+  color: var(--accent);
+}
+
 .performance-table th:first-child,
 .performance-table td:first-child {
   text-align: left;
