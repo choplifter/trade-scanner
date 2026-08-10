@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     scanner_poll_interval_regular: float = 5.0
     scanner_poll_interval_premarket: float = 10.0
 
-    universe_min_price: float = 1.0
+    # $5 is the SEC's own definition of a "penny stock" -- below it, thin
+    # liquidity and wide spreads make for erratic/manipulable prints (see
+    # the bad-tick guard in app.scanners.formulas.resolve_last_price) and
+    # trading that's closer to gambling than a real edge-driven setup.
+    universe_min_price: float = 5.0
     universe_max_price: float = 50.0
     universe_min_avg_volume: int = 300_000
     max_universe_size: int = 2000
