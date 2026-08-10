@@ -709,6 +709,14 @@ a.symbol-news-headline {
   white-space: nowrap;
 }
 
+.performance-table td.news-cell {
+  text-align: left;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
 .performance-table tbody tr {
   cursor: pointer;
 }

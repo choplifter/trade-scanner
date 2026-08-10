@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS appearances (
     entry_pct_change REAL NOT NULL,
     entry_rvol REAL NOT NULL,
     benchmark_entry_price REAL,
+    entry_headline TEXT,
     first_seen_at TEXT NOT NULL,
     UNIQUE(symbol, view, trading_date)
 );
@@ -46,6 +47,16 @@ CREATE TABLE IF NOT EXISTS snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_appearance_id ON snapshots(appearance_id);
 """
+
+# Migrates a pre-existing DB from before entry_headline existed -- the
+# CREATE TABLE above is a no-op against an already-created table, so this
+# is what actually adds the column for an install that predates it. A no-op
+# on a fresh DB, since the CREATE TABLE already includes the column. SQLite's
+# ALTER TABLE has no ADD COLUMN IF NOT EXISTS, so the existence check has to
+# happen in Python via PRAGMA table_info instead.
+_COLUMN_MIGRATIONS = [
+    ("appearances", "entry_headline", "TEXT"),
+]
 
 # Target checkpoints for the aggregated performance view -- "latest" isn't a
 # fixed offset, it's whatever the most recent snapshot for that appearance
@@ -72,6 +83,7 @@ class NewAppearance:
     entry_pct_change: float
     entry_rvol: float
     benchmark_entry_price: float | None
+    entry_headline: str | None = None
 
 
 class ScannerHistoryStore:
@@ -86,6 +98,10 @@ class ScannerHistoryStore:
     def _init_schema_sync(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            for table, column, col_type in _COLUMN_MIGRATIONS:
+                existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
     async def init_schema(self) -> None:
         await asyncio.to_thread(self._init_schema_sync)
@@ -97,8 +113,8 @@ class ScannerHistoryStore:
             conn.executemany(
                 """INSERT OR IGNORE INTO appearances
                    (symbol, view, trading_date, entry_price, entry_pct_change,
-                    entry_rvol, benchmark_entry_price, first_seen_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    entry_rvol, benchmark_entry_price, entry_headline, first_seen_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         e.symbol,
@@ -108,6 +124,7 @@ class ScannerHistoryStore:
                         e.entry_pct_change,
                         e.entry_rvol,
                         e.benchmark_entry_price,
+                        e.entry_headline,
                         first_seen_at,
                     )
                     for e in entries
@@ -122,6 +139,23 @@ class ScannerHistoryStore:
         if not entries:
             return
         await asyncio.to_thread(self._record_appearances_sync, entries, datetime.now(timezone.utc))
+
+    def _existing_keys_for_date_sync(self, trading_date: str) -> set[tuple[str, str]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT symbol, view FROM appearances WHERE trading_date = ?", (trading_date,)
+            ).fetchall()
+        return {(symbol, view) for symbol, view in rows}
+
+    async def existing_keys_for_date(self, trading_date: str) -> set[tuple[str, str]]:
+        """(symbol, view) pairs already recorded for `trading_date` (an ET
+        date, ISO format) -- lets a caller cheaply figure out which
+        candidates in a batch are genuinely new before doing more expensive
+        work (e.g. a news fetch) for them, rather than doing that work for
+        every ranked symbol on every poll tick regardless of whether
+        record_appearances would just ignore it as a duplicate.
+        """
+        return await asyncio.to_thread(self._existing_keys_for_date_sync, trading_date)
 
     def _write_snapshots_sync(
         self, prices: dict[str, float], benchmark_price: float | None, now: datetime, lookback_days: int
@@ -233,6 +267,7 @@ class ScannerHistoryStore:
                         "entry_price": round(entry_price, 2),
                         "entry_pct_change": round(appearance["entry_pct_change"], 2),
                         "entry_rvol": round(appearance["entry_rvol"], 2),
+                        "entry_headline": appearance["entry_headline"],
                         "minutes_since_entry": round(minutes_since, 1),
                         "current_price": round(price, 2),
                         "pct_change_since_entry": round(pct_change, 2) if pct_change is not None else None,

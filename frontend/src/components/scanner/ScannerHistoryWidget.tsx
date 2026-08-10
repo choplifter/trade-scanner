@@ -57,6 +57,7 @@ function LeaderboardTable({ title, picks, selectedSymbol, onSelectSymbol }: Lead
               <th>Entry RVol</th>
               <th>Change</th>
               <th>Alpha</th>
+              <th>News</th>
             </tr>
           </thead>
           <tbody>
@@ -79,6 +80,9 @@ function LeaderboardTable({ title, picks, selectedSymbol, onSelectSymbol }: Lead
                   title="This symbol's move since being flagged, minus SPY's move over the same window"
                 >
                   {pctText(p.alpha_vs_benchmark)}
+                </td>
+                <td className="news-cell" title={p.entry_headline ?? undefined}>
+                  {p.entry_headline ?? "—"}
                 </td>
               </tr>
             ))}

@@ -17,6 +17,7 @@ export interface ScannerHistoryPick {
   entry_price: number;
   entry_pct_change: number;
   entry_rvol: number;
+  entry_headline: string | null;
   minutes_since_entry: number;
   current_price: number;
   pct_change_since_entry: number | null;

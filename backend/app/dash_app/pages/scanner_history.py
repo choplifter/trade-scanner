@@ -55,6 +55,7 @@ _PICK_COLUMNS = [
     {"name": "Entry RVol", "id": "entry_rvol"},
     {"name": "Change", "id": "change"},
     {"name": "Alpha", "id": "alpha"},
+    {"name": "News", "id": "news"},
 ]
 
 _SUMMARY_SORT_KEYS = {
@@ -171,6 +172,7 @@ def _pick_rows(picks: list[dict]) -> list[dict]:
             "pct_change_since_entry": p["pct_change_since_entry"],
             "alpha": _format_pct(p["alpha_vs_benchmark"]),
             "alpha_vs_benchmark": p["alpha_vs_benchmark"],
+            "news": p["entry_headline"] or "—",
         }
         for p in picks
     ]
@@ -191,6 +193,14 @@ _TABLE_STYLE = dict(
         {"if": {"column_id": "symbol"}, "textAlign": "left", "fontWeight": "600"},
         {"if": {"column_id": "view"}, "textAlign": "left"},
         {"if": {"column_id": "trading_date"}, "textAlign": "left"},
+        {
+            "if": {"column_id": "news"},
+            "textAlign": "left",
+            "maxWidth": "260px",
+            "overflow": "hidden",
+            "textOverflow": "ellipsis",
+            "whiteSpace": "nowrap",
+        },
     ],
     style_header={
         "backgroundColor": "#fcfcfb",

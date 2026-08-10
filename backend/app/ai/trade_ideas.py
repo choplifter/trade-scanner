@@ -1,15 +1,14 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import anthropic
-from alpaca.common.enums import Sort
-from alpaca.data.requests import NewsRequest
 from pydantic import BaseModel, Field
 
 from app.alpaca.client import AlpacaClients
 from app.market_data.bars import get_daily_bars_multi, get_intraday_minute_bars_multi
+from app.market_data.news import fetch_headlines
 from app.market_data.vwap import SessionVwapState
 from app.scanners.schemas import ScannerRow
 from app.services.market_clock import ET
@@ -19,7 +18,6 @@ logger = logging.getLogger(__name__)
 _MODEL = "claude-opus-5"
 _CANDIDATE_POOL = 15
 _TOP_N = 3
-_NEWS_LOOKBACK = timedelta(hours=48)
 _MOMENTUM_WINDOW = timedelta(minutes=15)
 _CONTINUATION_LOOKBACK_DAYS = 20
 _CONTINUATION_WINDOW = 5
@@ -88,40 +86,12 @@ def _row_to_payload(
     }
 
 
-async def _fetch_headlines(alpaca: AlpacaClients, symbols: list[str]) -> dict[str, str]:
-    """Most recent news headline per candidate symbol, best-effort: a fetch
-    failure (rate limit, transient API error) degrades to no headlines
-    rather than failing idea generation outright.
-    """
-    if not symbols:
-        return {}
-    try:
-        request = NewsRequest(
-            symbols=",".join(symbols),
-            start=datetime.now(timezone.utc) - _NEWS_LOOKBACK,
-            sort=Sort.DESC,
-            limit=50,
-        )
-        news_set = await asyncio.to_thread(alpaca.news.get_news, request)
-    except Exception:
-        logger.exception("News fetch failed for trade ideas")
-        return {}
-
-    wanted = set(symbols)
-    headlines: dict[str, str] = {}
-    for article in news_set.data.get("news", []):
-        for symbol in article.symbols:
-            if symbol in wanted and symbol not in headlines:
-                headlines[symbol] = article.headline
-    return headlines
-
-
 async def _fetch_intraday_context(
     alpaca: AlpacaClients, symbols: list[str], last_prices: dict[str, float]
 ) -> dict[str, dict]:
     """Today's session VWAP and ~15-minute momentum per candidate, both
     derived from the same batch of today's minute bars (one HTTP call, not
-    two). Best-effort for the same reason as `_fetch_headlines`. VWAP is
+    two). Best-effort for the same reason as `fetch_headlines`. VWAP is
     None before the regular session opens (see SessionVwapState), and
     15-minute momentum is None when there isn't yet 15 minutes of bars to
     compare against (e.g. just after premarket open) -- both are normal,
@@ -240,7 +210,7 @@ async def generate_trade_ideas(
     last_prices = {r.symbol: r.last_price for r in candidates}
 
     headlines, intraday_context, continuation_context = await asyncio.gather(
-        _fetch_headlines(alpaca, symbols),
+        fetch_headlines(alpaca, symbols),
         _fetch_intraday_context(alpaca, symbols, last_prices),
         _fetch_continuation_context(alpaca, symbols),
     )

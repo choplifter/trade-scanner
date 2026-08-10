@@ -11,6 +11,7 @@ from app.alpaca.universe import UniverseSymbol, fetch_movers_backstop
 from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
+from app.market_data.news import fetch_headlines
 from app.scanners import formulas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.history_store import NewAppearance, ScannerHistoryStore
@@ -410,28 +411,55 @@ class ScannerEngine:
         self.benchmark_price. See benchmark_tracker.py for why only the
         first appearance counts; history_store dedupes per trading day
         instead, via its own UNIQUE constraint.
+
+        A news headline is attached to each newly-recorded appearance (not
+        re-fetched on repeat ranks) as context for *why* it moved -- fetched
+        only for candidates existing_keys_for_date says aren't already in
+        the store today, so a fetch isn't wasted on the same ~150 ranked
+        symbols every 5-10s poll tick for the rest of the day.
         """
-        new_entries = []
-        for view_name in ("gainers", "losers", "most_active"):
-            for row in views.get(view_name, []):
-                self.benchmark_tracker.record_if_new(
-                    symbol=row.symbol,
-                    view=view_name,
-                    entry_price=row.last_price,
-                    entry_pct_change=row.pct_change,
-                    entry_rvol=row.rvol,
-                    benchmark_entry_price=self.benchmark_price,
-                )
-                new_entries.append(
-                    NewAppearance(
-                        symbol=row.symbol,
-                        view=view_name,
-                        entry_price=row.last_price,
-                        entry_pct_change=row.pct_change,
-                        entry_rvol=row.rvol,
-                        benchmark_entry_price=self.benchmark_price,
-                    )
-                )
+        candidates = [
+            (view_name, row)
+            for view_name in ("gainers", "losers", "most_active")
+            for row in views.get(view_name, [])
+        ]
+        for view_name, row in candidates:
+            self.benchmark_tracker.record_if_new(
+                symbol=row.symbol,
+                view=view_name,
+                entry_price=row.last_price,
+                entry_pct_change=row.pct_change,
+                entry_rvol=row.rvol,
+                benchmark_entry_price=self.benchmark_price,
+            )
+
+        trading_date = datetime.now(timezone.utc).astimezone(ET).date().isoformat()
+        try:
+            existing_keys = await self.history_store.existing_keys_for_date(trading_date)
+        except Exception:
+            logger.exception("Failed reading existing scanner history keys")
+            existing_keys = set()
+
+        new_symbols = {row.symbol for view_name, row in candidates if (row.symbol, view_name) not in existing_keys}
+        headlines: dict[str, str] = {}
+        if new_symbols:
+            try:
+                headlines = await fetch_headlines(self.clients, sorted(new_symbols))
+            except Exception:
+                logger.exception("Failed fetching news headlines for new scanner appearances")
+
+        new_entries = [
+            NewAppearance(
+                symbol=row.symbol,
+                view=view_name,
+                entry_price=row.last_price,
+                entry_pct_change=row.pct_change,
+                entry_rvol=row.rvol,
+                benchmark_entry_price=self.benchmark_price,
+                entry_headline=headlines.get(row.symbol),
+            )
+            for view_name, row in candidates
+        ]
         try:
             await self.history_store.record_appearances(new_entries)
         except Exception:
