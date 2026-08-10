@@ -13,6 +13,7 @@ from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
 from app.scanners import formulas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
+from app.scanners.history_store import NewAppearance, ScannerHistoryStore
 from app.scanners.latest_session import compute_latest_session_rows
 from app.scanners.schemas import ScannerRow
 from app.services.market_clock import ET, current_session, trading_hours_for
@@ -73,6 +74,7 @@ class ScannerEngine:
         manager: ConnectionManager,
         fundamentals: FundamentalsCache,
         benchmark_tracker: ScannerBenchmarkTracker,
+        history_store: ScannerHistoryStore,
     ):
         self.clients = clients
         self.settings = settings
@@ -80,6 +82,7 @@ class ScannerEngine:
         self.manager = manager
         self.fundamentals = fundamentals
         self.benchmark_tracker = benchmark_tracker
+        self.history_store = history_store
         self.benchmark_symbol = "SPY"
         self.benchmark_price: float | None = None
         self.rows: dict[str, ScannerRow] = {}
@@ -87,6 +90,7 @@ class ScannerEngine:
         self._premarket_snapshot: list[ScannerRow] | None = None
         self._latest_session_rows: dict[str, ScannerRow] | None = None
         self._last_backstop_refresh: float = 0.0
+        self._last_history_snapshot: float = 0.0
 
     def _compute_rows(self, snapshots: dict) -> None:
         now = datetime.now(timezone.utc)
@@ -393,14 +397,18 @@ class ScannerEngine:
         except Exception:
             logger.exception("Benchmark (%s) snapshot poll failed", self.benchmark_symbol)
 
-    def _record_new_appearances(self, views: dict[str, list[ScannerRow]]) -> None:
+    async def _record_new_appearances(self, views: dict[str, list[ScannerRow]]) -> None:
         """Log the first time each symbol shows up in a *ranked* view (not
         premarket_gainers, which mirrors/freezes "gainers" rather than
         being an independent signal -- would just double-count the same
-        symbols) so ScannerBenchmarkTracker can compare its performance
-        since then against self.benchmark_price. See benchmark_tracker.py
-        for why only the first appearance counts.
+        symbols) so ScannerBenchmarkTracker (in-memory, this process only)
+        and ScannerHistoryStore (SQLite, survives restarts -- see
+        history_store.py) can compare performance since then against
+        self.benchmark_price. See benchmark_tracker.py for why only the
+        first appearance counts; history_store dedupes per trading day
+        instead, via its own UNIQUE constraint.
         """
+        new_entries = []
         for view_name in ("gainers", "losers", "most_active"):
             for row in views.get(view_name, []):
                 self.benchmark_tracker.record_if_new(
@@ -411,6 +419,39 @@ class ScannerEngine:
                     entry_rvol=row.rvol,
                     benchmark_entry_price=self.benchmark_price,
                 )
+                new_entries.append(
+                    NewAppearance(
+                        symbol=row.symbol,
+                        view=view_name,
+                        entry_price=row.last_price,
+                        entry_pct_change=row.pct_change,
+                        entry_rvol=row.rvol,
+                        benchmark_entry_price=self.benchmark_price,
+                    )
+                )
+        try:
+            await self.history_store.record_appearances(new_entries)
+        except Exception:
+            logger.exception("Failed recording scanner appearances to history store")
+
+    async def _write_periodic_snapshots(self) -> None:
+        """Follow-up price check for symbols with a recent open appearance
+        in the history store, throttled to
+        settings.scanner_history_snapshot_interval -- same throttle pattern
+        as _refresh_movers_backstop.
+        """
+        now = time.monotonic()
+        if now - self._last_history_snapshot < self.settings.scanner_history_snapshot_interval:
+            return
+        self._last_history_snapshot = now
+
+        prices = {symbol: row.last_price for symbol, row in self.rows.items()}
+        if not prices:
+            return
+        try:
+            await self.history_store.write_snapshots(prices, self.benchmark_price)
+        except Exception:
+            logger.exception("Failed writing periodic scanner history snapshots")
 
     async def run_loop(self) -> None:
         if not self.clients.settings.has_credentials:
@@ -463,7 +504,8 @@ class ScannerEngine:
             # would show blank float/market cap/short interest columns until
             # the next live poll, instead of the fallback's real fundamentals.
             views = self._build_views()
-            self._record_new_appearances(views)
+            await self._record_new_appearances(views)
+            await self._write_periodic_snapshots()
             await self._attach_fundamentals(views)
             is_fallback = self.is_latest_session_fallback
             for name, rows in views.items():

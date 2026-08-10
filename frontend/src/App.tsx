@@ -4,6 +4,7 @@ import { TradeIdeasWidget } from "./components/ai/TradeIdeasWidget";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
+import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
 import { useMarketSession } from "./hooks/useMarketSession";
 
@@ -57,11 +58,12 @@ export default function App() {
           <ResizablePanels
             direction="row"
             storageKey="layout:bottom-row"
-            defaultSizes={[0.5, 0.5]}
+            defaultSizes={[0.34, 0.33, 0.33]}
             minSizePx={220}
           >
             <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
-            <ScannerBenchmarkWidget />
+            <ScannerBenchmarkWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+            <ScannerHistoryWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
           </ResizablePanels>
         </ResizablePanels>
       </main>

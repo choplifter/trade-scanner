@@ -25,6 +25,22 @@ async def get_benchmark_performance(request: Request) -> dict:
     return {"benchmark_symbol": engine.benchmark_symbol, "picks": picks}
 
 
+@router.get("/history/performance")
+async def get_history_performance(
+    request: Request, days: int = 7, view: str | None = None
+) -> dict:
+    """Aggregated performance of every scanner match logged to the
+    persistent SQLite history store (see app.scanners.history_store) --
+    unlike /benchmark-performance above, this survives backend restarts and
+    covers everything flagged in the last `days` trading days, not just
+    whatever's still resident in the in-memory tracker. Registered before
+    GET /{name} for the same reason /benchmark-performance is: both are
+    single-segment paths under /api/scanners.
+    """
+    store = request.app.state.scanner_history_store
+    return await store.compute_performance(days=days, view=view)
+
+
 @router.get("/{name}")
 async def get_scanner(name: str, request: Request) -> dict:
     """One-shot fetch for initial page load, before the WebSocket connects."""

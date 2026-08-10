@@ -600,6 +600,10 @@ a.symbol-news-headline {
   font-style: italic;
 }
 
+.scanner-history-widget .timeframe-selector {
+  margin: 10px 12px;
+}
+
 .ai-ideas-performance {
   margin-top: 16px;
   padding-top: 12px;

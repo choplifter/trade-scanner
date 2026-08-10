@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from app.fundamentals.cache import FundamentalsCache
     from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
     from app.scanners.engine import ScannerEngine
+    from app.scanners.history_store import ScannerHistoryStore
 
 
 class BackendState:
@@ -34,6 +35,7 @@ class BackendState:
         self.trade_idea_tracker: "TradeIdeaTracker | None" = None
         self.fundamentals: "FundamentalsCache | None" = None
         self.scanner_benchmark_tracker: "ScannerBenchmarkTracker | None" = None
+        self.scanner_history_store: "ScannerHistoryStore | None" = None
 
 
 backend_state = BackendState()
@@ -53,3 +55,4 @@ def bind(app: "FastAPI") -> None:
     backend_state.trade_idea_tracker = app.state.trade_idea_tracker
     backend_state.fundamentals = app.state.fundamentals
     backend_state.scanner_benchmark_tracker = app.state.scanner_benchmark_tracker
+    backend_state.scanner_history_store = app.state.scanner_history_store

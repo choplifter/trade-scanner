@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # universe above (see fetch_movers_backstop in app.alpaca.universe).
     movers_backstop_interval: float = 300.0
 
+    # Persistent SQLite log of scanner appearances + periodic follow-up price
+    # snapshots (see app.scanners.history_store), so "which scanner matches
+    # performed best" survives restarts -- unlike ScannerBenchmarkTracker,
+    # which is in-memory-only. Snapshot interval trades off DB growth against
+    # how finely performance can be checkpointed after a symbol is flagged.
+    scanner_history_db_path: str = "scanner_history.sqlite3"
+    scanner_history_snapshot_interval: float = 900.0
+
     max_stream_symbols: int = 30
 
     cors_origins: list[str] = ["http://localhost:5173"]

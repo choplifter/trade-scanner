@@ -20,6 +20,7 @@ from app.market_data.stream_manager import StreamManager
 from app.routers import meta, scanners, symbols, trade_ideas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.engine import ScannerEngine
+from app.scanners.history_store import ScannerHistoryStore
 from app.ws import chart_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
 
@@ -47,6 +48,10 @@ async def lifespan(app: FastAPI):
     app.state.trade_idea_tracker = TradeIdeaTracker()
     app.state.scanner_benchmark_tracker = ScannerBenchmarkTracker()
 
+    scanner_history_store = ScannerHistoryStore(settings.scanner_history_db_path)
+    await scanner_history_store.init_schema()
+    app.state.scanner_history_store = scanner_history_store
+
     fundamentals_client = httpx.AsyncClient(timeout=10.0)
     fundamentals = FundamentalsCache(settings, fundamentals_client)
     app.state.fundamentals = fundamentals
@@ -66,7 +71,13 @@ async def lifespan(app: FastAPI):
     app.state.universe = universe
 
     engine = ScannerEngine(
-        clients, settings, universe, manager, fundamentals, app.state.scanner_benchmark_tracker
+        clients,
+        settings,
+        universe,
+        manager,
+        fundamentals,
+        app.state.scanner_benchmark_tracker,
+        scanner_history_store,
     )
     app.state.scanner_engine = engine
     bind_dash_state(app)
