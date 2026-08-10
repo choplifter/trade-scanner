@@ -132,6 +132,15 @@ backend on port 8000, so both must be running.
   thin names; `resolve_last_price` (`app/scanners/formulas.py`) discards a
   print that falls outside 2x the day's own recorded high/low range, but
   this is a sanity check, not a substitute for the consolidated tape.
+- **Same-day stock splits**: Alpaca's live snapshot endpoint has no
+  split-adjustment option, so a symbol that splits overnight would show a
+  nonsensical gap % (prev_close on the old share basis vs. a post-split
+  price) without correction. `fetch_split_ratios`
+  (`app/alpaca/universe.py`) rescales `prev_close` for every split whose
+  ex_date is today, refreshed every 30 min -- this only covers the live
+  poll path, not the closed-market fallback (a narrower edge case: a
+  symbol would need to have split very recently *and* be shown from
+  fallback data, e.g. right after a fresh start with markets closed).
 - **Universe price floor**: `UNIVERSE_MIN_PRICE` defaults to **$5** (the
   SEC's own "penny stock" threshold) rather than $1 — sub-$5 names carry the
   thinnest liquidity, the widest spreads, and are the most prone to bad
