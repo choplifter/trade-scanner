@@ -648,3 +648,15 @@ a.symbol-news-headline {
   border-bottom: 1px solid var(--gridline);
   white-space: nowrap;
 }
+
+.performance-table tbody tr {
+  cursor: pointer;
+}
+
+.performance-table tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.performance-table tbody tr[aria-selected="true"] {
+  background: var(--row-selected);
+}

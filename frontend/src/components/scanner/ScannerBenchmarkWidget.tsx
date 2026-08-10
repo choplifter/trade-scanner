@@ -22,11 +22,16 @@ function pctClass(pct: number | null): string {
   return pct > 0 ? "delta-up" : "delta-down";
 }
 
+interface ScannerBenchmarkWidgetProps {
+  selectedSymbol: string | null;
+  onSelectSymbol: (symbol: string) => void;
+}
+
 /** Whether the symbols the *scanner itself* first flags (gap %/RVOL/movers
  * backstop -- every ranked view, not just the 3 AI picks TradeIdeasWidget
  * tracks) actually keep moving afterward, versus the broad market. The
  * real self-check on the scanner's own selection criteria. */
-export function ScannerBenchmarkWidget() {
+export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: ScannerBenchmarkWidgetProps) {
   const [picks, setPicks] = useState<ScannerBenchmarkPick[]>([]);
   const [benchmarkSymbol, setBenchmarkSymbol] = useState("SPY");
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +88,11 @@ export function ScannerBenchmarkWidget() {
               </thead>
               <tbody>
                 {picks.map((p) => (
-                  <tr key={p.symbol}>
+                  <tr
+                    key={p.symbol}
+                    aria-selected={p.symbol === selectedSymbol}
+                    onClick={() => onSelectSymbol(p.symbol)}
+                  >
                     <td className="symbol-cell">{p.symbol}</td>
                     <td>{VIEW_LABEL[p.view] ?? p.view}</td>
                     <td>{p.minutes_since < 1 ? "just now" : `${Math.round(p.minutes_since)}m ago`}</td>

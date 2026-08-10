@@ -71,10 +71,22 @@ def _render_symbol_info(info: SymbolInfoResponse | None) -> list:
     return children
 
 
-def layout(**_kwargs):
+def layout(symbol: str | None = None, **_kwargs):
+    """`symbol` arrives as a URL query param (Dash Pages passes query-string
+    params to layout() as kwargs) -- lets every other page link a symbol
+    cell straight to "?symbol=XXX" here instead of duplicating the home
+    page's own embedded iframe+info panel (see scanner_heatmap.py) on every
+    page that lists symbols.
+    """
     universe = backend_state.universe or {}
     options = sorted(universe.keys())
-    default_symbol = options[0] if options else None
+    # The linked-in symbol might be outside the live-polled universe (e.g.
+    # a historical scanner match from a symbol no longer actively tracked)
+    # -- still add it as a selectable option so the dropdown shows it
+    # correctly instead of silently reverting to the first universe symbol.
+    if symbol and symbol not in options:
+        options = sorted([*options, symbol])
+    default_symbol = symbol if symbol else (options[0] if options else None)
 
     return html.Div(
         [

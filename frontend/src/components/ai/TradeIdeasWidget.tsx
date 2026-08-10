@@ -115,7 +115,11 @@ export function TradeIdeasWidget({ selectedSymbol, onSelectSymbol }: TradeIdeasW
               </thead>
               <tbody>
                 {performance.map((p, i) => (
-                  <tr key={`${p.symbol}-${p.generated_at}-${i}`}>
+                  <tr
+                    key={`${p.symbol}-${p.generated_at}-${i}`}
+                    aria-selected={p.symbol === selectedSymbol}
+                    onClick={() => onSelectSymbol(p.symbol)}
+                  >
                     <td className="symbol-cell">{p.symbol}</td>
                     <td>{p.minutes_since < 1 ? "just now" : `${Math.round(p.minutes_since)}m ago`}</td>
                     <td>{formatPrice(p.entry_price)}</td>

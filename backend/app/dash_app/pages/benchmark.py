@@ -11,6 +11,8 @@ GET /api/scanners/benchmark-performance uses -- rather than an HTTP round
 trip to its own backend, same pattern as every other Dash page here.
 """
 
+import urllib.parse
+
 import dash
 from dash import Input, Output, callback, dash_table, dcc, html
 
@@ -24,8 +26,16 @@ _POLL_MS = 30_000
 
 _VIEW_LABEL = {"gainers": "Gainers", "losers": "Losers", "most_active": "Most Active"}
 
+
+def _symbol_link(symbol: str) -> str:
+    """Markdown link to the shared /symbol page (see symbol_detail.py's
+    `symbol` query-param support) -- opens in a new tab so following it
+    doesn't lose this table's current sort/scroll position."""
+    return f"[{symbol}](/analytics/symbol?symbol={urllib.parse.quote(symbol)})"
+
+
 _COLUMNS = [
-    {"name": "Symbol", "id": "symbol"},
+    {"name": "Symbol", "id": "symbol", "presentation": "markdown"},
     {"name": "Via", "id": "view"},
     {"name": "Flagged", "id": "flagged"},
     {"name": "Entry Gap%", "id": "entry_gap"},
@@ -78,7 +88,7 @@ def _format_pct(value: float | None) -> str:
 def _table_rows(picks: list[dict]) -> list[dict]:
     return [
         {
-            "symbol": p["symbol"],
+            "symbol": _symbol_link(p["symbol"]),
             "view": _VIEW_LABEL.get(p["view"], p["view"]),
             "flagged": "just now" if p["minutes_since"] < 1 else f"{round(p['minutes_since'])}m ago",
             "entry_gap": _format_pct(p["entry_pct_change"]),
@@ -127,6 +137,7 @@ def layout(**_kwargs):
                 data=_table_rows(picks),
                 sort_action="custom",
                 sort_mode="single",
+                markdown_options={"link_target": "_blank"},
                 style_table={"overflowX": "auto"},
                 style_as_list_view=True,
                 style_cell={
