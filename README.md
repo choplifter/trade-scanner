@@ -2,12 +2,14 @@
 
 A personal, locally-run "stocks in play" scanner + chart dashboard in the
 spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: live
-gainers / premarket gainers / losers / most-active scanners, a
-click-to-chart candlestick widget with a session-anchored VWAP overlay and
-company info/news, AI-generated trade-idea annotations, a scanner-wide
-benchmark against SPY, and a Plotly Dash analytics app — powered by Alpaca
-Markets' real-time IEX data feed, with float/market cap/short interest/
-company info layered in from Financial Modeling Prep and FINRA.
+gainers / premarket gainers / losers / most-active scanners (table or
+treemap heatmap view), a click-to-chart candlestick widget with a
+session-anchored VWAP overlay and company info/news, AI-generated
+trade-idea annotations, a scanner-wide benchmark against SPY, a persistent
+scanner match history with fade-risk analysis, and a Plotly Dash analytics
+app — powered by Alpaca Markets' real-time IEX data feed, with
+float/market cap/short interest/company info layered in from Financial
+Modeling Prep and FINRA.
 
 ## 1. Get Alpaca API credentials (required for live data)
 
@@ -78,27 +80,40 @@ backend on port 8000, so both must be running.
 - Scanner columns: symbol (click to copy its unambiguous `EXCHANGE:SYMBOL`
   TradingView format), company name, last price, gap %, volume, RVOL, and
   (when `FMP_API_KEY` is set) float, market cap, short interest % of float,
-  exchange, and country.
-- One chart widget: click any scanner row to load that symbol — candlestick
-  chart, volume pane, and a session-anchored VWAP line (resets at 09:30 ET),
-  fed by Alpaca's live minute-bar stream, plus a company info + recent news
-  panel (name/sector/industry/description from FMP, headlines from Alpaca's
-  news feed).
+  exchange, and country. A **Table / Heatmap** toggle switches the same live
+  feed to a treemap view (tile size = dollar volume, color = gap %,
+  click-to-chart same as the table).
+- One chart widget: click any symbol anywhere in the app to load it —
+  candlestick chart, volume pane, and a session-anchored VWAP line (resets
+  at 09:30 ET), fed by Alpaca's live minute-bar stream, plus a company info
+  + recent news panel (name/sector/industry/description from FMP, headlines
+  from Alpaca's news feed). Every symbol is clickable, not just the main
+  scanner table — the AI past-picks table, the scanner benchmark table, and
+  the scanner match history leaderboards all load into the same chart.
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks the 3 most
   notable current setups from gap %, RVOL, dollar volume, HOD status, news
   catalyst, VWAP position, 15-minute momentum, spread, multi-day context,
   float, and short interest — framed as descriptive scanner annotation, not
   investment advice. A past-picks performance table tracks how prior AI
   picks have actually moved since they were generated.
-- **Scanner benchmark**: every symbol the scanner itself has ever flagged
-  (gainers/losers/most active — not just the 3 AI picks above) gets logged
-  the moment it first appears, then tracked against SPY from that instant —
-  the real check on whether the scanner's own criteria (gap %, RVOL, the
-  movers backstop) find stocks that keep moving, not just noise.
+- **Scanner benchmark**: every symbol the scanner itself has flagged during
+  this process's uptime (gainers/losers/most active — not just the 3 AI
+  picks above) gets logged the moment it first appears, then tracked live against
+  SPY from that instant. In-memory only, resets on restart — see **Scanner
+  match history** below for the persistent version of this same check.
+- **Scanner match history**: a SQLite-backed log of every scanner match,
+  keyed per symbol per trading day, so it survives backend restarts and
+  accumulates over weeks instead of resetting. Tracks performance at
+  30-minute, 60-minute, and latest-known checkpoints vs. SPY, with
+  win-rate/avg-return/avg-alpha per scanner view, best/worst leaderboards,
+  and a fade-risk breakdown (does a bigger entry gap % or higher RVOL
+  predict *worse* subsequent performance — i.e. "gap and crap" — rather
+  than better?) bucketed by gap size and RVOL. Available as a widget in the
+  React dashboard and a page in the Dash analytics app.
 - **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
-  for the scanner benchmark, cross-symbol correlation/comparison, and
-  seasonality.
+  for the scanner benchmark, scanner match history, cross-symbol
+  correlation/comparison, and seasonality.
 - Session badge (Premarket / Market Open / After Hours / Closed) in the
   header, computed from the NYSE trading calendar.
 
@@ -109,6 +124,14 @@ backend on port 8000, so both must be running.
   will be directionally right but won't exactly match SIP-based tools like
   Trade-Ideas. Upgrading later is a one-line change: set `ALPACA_DATA_FEED=sip`
   in `backend/.env` once you have a paid Alpaca market-data subscription.
+  IEX can also occasionally return a stale/erroneous single-trade print for
+  thin names; `resolve_last_price` (`app/scanners/formulas.py`) discards a
+  print that falls outside 2x the day's own recorded high/low range, but
+  this is a sanity check, not a substitute for the consolidated tape.
+- **Universe price floor**: `UNIVERSE_MIN_PRICE` defaults to **$5** (the
+  SEC's own "penny stock" threshold) rather than $1 — sub-$5 names carry the
+  thinnest liquidity, the widest spreads, and are the most prone to bad
+  prints. Lower it in `backend/.env` if you want penny stocks back.
 - **Dedicated RVOL scanner / new highs-lows**: not built -- RVOL is shown
   as a column on every scanner, not a ranking of its own.
 - **Float/market cap/short interest**: only fetched for symbols currently in
@@ -119,12 +142,16 @@ backend on port 8000, so both must be running.
   weeks old, not this week's.
 - **EMA 9/20, multi-widget draggable grid (React app), watchlists, alerts**:
   roadmap items, not built yet.
-- **Scanner benchmark**: entries are still recorded from closed-market
-  fallback data, but the actual price/SPY comparison columns only populate
-  once live polling resumes (they need a live SPY price and a live price
-  for the flagged symbol) -- expect "—" for those specifically outside
-  market hours, same as float/market cap. The log itself isn't persisted
-  across backend restarts, same as the AI trade-ideas performance table.
+- **Scanner benchmark / match history**: entries are still recorded from
+  closed-market fallback data, but the actual price/SPY comparison columns
+  only populate once live polling resumes (they need a live SPY price and a
+  live price for the flagged symbol) -- expect "—" for those specifically
+  outside market hours, same as float/market cap. The live **scanner
+  benchmark** log itself isn't persisted across backend restarts, same as
+  the AI trade-ideas performance table -- use **scanner match history**
+  (SQLite-backed) for the persistent version. Match history's fade-risk
+  buckets are still statistically thin in the first few days of a fresh
+  install; treat early numbers as directional, not conclusive.
 - Outside premarket/regular market hours, scanners fall back to the most
   recently completed session's real data instead of polling live (labeled
   "LAST SESSION" in the UI) -- they only show empty rows if `backend/.env`
