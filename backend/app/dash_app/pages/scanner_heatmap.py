@@ -176,7 +176,11 @@ def _sorted_rows(rows, sort_by):
 def _table_rows(rows) -> list[dict]:
     return [
         {
-            "symbol": r.symbol,
+            # "⚠" flags a row whose price isn't backed by a recently
+            # confirmed trade/bar (see ScannerRow.is_stale) -- the row
+            # still ranks normally, this just warns the price shown may be
+            # older than it looks. Matching tooltip in _tooltip_data below.
+            "symbol": f"{r.symbol} ⚠" if r.is_stale else r.symbol,
             # "copy" is what's displayed; "tv_symbol" is what actually gets
             # copied (see the clientside_callback below) -- kept separate so
             # the cell can show a short icon/label instead of the full
@@ -207,7 +211,20 @@ def _tooltip_data(rows) -> list[dict]:
     gets for free. Must stay row-order-aligned with whatever `_table_rows`
     call it accompanies (same `rows` argument, same sort applied first).
     """
-    return [{"news": {"value": r.recent_headline or "", "type": "text"}} for r in rows]
+    return [
+        {
+            "news": {"value": r.recent_headline or "", "type": "text"},
+            "symbol": {
+                "value": (
+                    "No confirmed trade recently -- this price may be older than it looks"
+                    if r.is_stale
+                    else ""
+                ),
+                "type": "text",
+            },
+        }
+        for r in rows
+    ]
 
 
 def _iframe_src(symbol: str | None) -> str:

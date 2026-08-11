@@ -1,5 +1,7 @@
 """Pure scanner math. Kept free of Alpaca SDK types so it's easy to unit test."""
 
+from datetime import datetime
+
 
 # How far outside the day's own recorded [day_low, day_high] range a single
 # latest_trade print is allowed to sit before it's treated as a bad/stale
@@ -80,6 +82,25 @@ def is_hod(last: float, day_high: float | None) -> bool:
 
 def is_lod(last: float, day_low: float | None) -> bool:
     return day_low is not None and last <= day_low
+
+
+def is_stale(last_trade_at: datetime | None, now: datetime, threshold_seconds: float) -> bool:
+    """True when a row's price isn't backed by a recently-confirmed trade
+    or daily bar (or has no such backing at all).
+
+    The engine recomputes every row on every poll tick regardless of
+    whether the feed actually reported anything new, so a symbol whose
+    feed has stopped seeing prints (e.g. it's genuinely trading elsewhere
+    on the tape, outside single-exchange IEX coverage) keeps producing the
+    same price/pct_change every tick, indistinguishable from a symbol that
+    printed a fresh trade seconds ago. Without this check that stuck value
+    can sit at the top of a ranked view (e.g. "gainers") indefinitely,
+    looking exactly as current as rows the feed is actually still
+    confirming.
+    """
+    if last_trade_at is None:
+        return True
+    return (now - last_trade_at).total_seconds() > threshold_seconds
 
 
 def spread_pct(bid: float | None, ask: float | None) -> float | None:

@@ -18,6 +18,10 @@ export interface ScannerRow {
   country: string | null;
   company_name: string | null;
   recent_headline: string | null;
+  /** True when the feed hasn't confirmed this price via a real trade/bar
+   * recently -- the row still ranks normally, but the price shown may be
+   * older than it looks. */
+  is_stale: boolean;
   updated_at: string;
 }
 

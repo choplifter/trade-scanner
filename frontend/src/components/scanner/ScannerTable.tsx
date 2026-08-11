@@ -64,6 +64,14 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
               />
               {row.exchange && <span className="exchange-tag">{row.exchange}</span>}
               {row.is_hod && <span className="badge-hod">HOD</span>}
+              {row.is_stale && (
+                <span
+                  className="badge-stale"
+                  title="No confirmed trade recently -- this price may be older than it looks"
+                >
+                  STALE
+                </span>
+              )}
               {row.recent_headline && (
                 <span className="badge-news" title={row.recent_headline}>
                   📰

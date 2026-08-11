@@ -118,6 +118,17 @@ class ScannerEngine:
 
             latest_trade_price = snap.latest_trade.price if snap.latest_trade else None
             daily_close = snap.daily_bar.close if snap.daily_bar else None
+            # Timestamp of whatever's actually backing last_price below --
+            # mirrors resolve_last_price's own priority (latest_trade over
+            # daily_bar) closely enough for staleness purposes without
+            # needing that function to report which source it picked.
+            # None (only the previous-day close was available) means no
+            # live confirmation at all today.
+            last_trade_at = (
+                snap.latest_trade.timestamp
+                if snap.latest_trade
+                else (snap.daily_bar.timestamp if snap.daily_bar else None)
+            )
             prev_close = (
                 snap.previous_daily_bar.close if snap.previous_daily_bar else uni.prev_close
             )
@@ -167,6 +178,10 @@ class ScannerEngine:
                 is_lod=formulas.is_lod(last, day_low),
                 spread_pct=formulas.spread_pct(
                     quote.bid_price if quote else None, quote.ask_price if quote else None
+                ),
+                last_trade_at=last_trade_at,
+                is_stale=formulas.is_stale(
+                    last_trade_at, now, self.settings.scanner_stale_row_seconds
                 ),
                 updated_at=now,
             )

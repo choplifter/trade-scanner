@@ -19,6 +19,23 @@ class Settings(BaseSettings):
     scanner_poll_interval_regular: float = 5.0
     scanner_poll_interval_premarket: float = 10.0
 
+    # A row is marked ScannerRow.is_stale once this long has passed since
+    # the feed last actually confirmed its price via a trade or daily bar
+    # -- see app.scanners.formulas.is_stale. The engine recomputes every
+    # row on every poll tick regardless of whether the feed reported
+    # anything new, so without this a thin/illiquid name the feed has
+    # stopped seeing prints for keeps the same price/pct_change
+    # indefinitely and looks exactly as current as a symbol still printing
+    # every tick. Deliberately just a warning flag, not an exclusion from
+    # ranking -- premarket liquidity is thin enough market-wide that most
+    # of the universe can legitimately go several minutes between prints,
+    # so dropping stale rows from views entirely was observed emptying
+    # them down to a handful even though most of that universe was still
+    # genuinely live, just quiet. 10 minutes catches a feed-coverage gap
+    # well before it can look current for tens of minutes, without being
+    # so tight it flags normal quiet stretches as if something's wrong.
+    scanner_stale_row_seconds: float = 600.0
+
     # $5 is the SEC's own definition of a "penny stock" -- below it, thin
     # liquidity and wide spreads make for erratic/manipulable prints (see
     # the bad-tick guard in app.scanners.formulas.resolve_last_price) and
