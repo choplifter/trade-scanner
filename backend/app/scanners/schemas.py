@@ -26,6 +26,9 @@ class ScannerRow(BaseModel):
     short_interest_pct: float | None = None
     country: str | None = None
     company_name: str | None = None
+    # Most recent news headline, if any, refreshed on a slow cadence for
+    # whatever's currently ranked -- see app.market_data.news_cache.NewsCache.
+    recent_headline: str | None = None
     updated_at: datetime
 
 

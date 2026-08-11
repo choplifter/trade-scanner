@@ -402,6 +402,14 @@ body {
   vertical-align: middle;
 }
 
+.badge-news {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  vertical-align: middle;
+  cursor: default;
+}
+
 .delta-up {
   color: var(--delta-up);
   font-weight: 600;

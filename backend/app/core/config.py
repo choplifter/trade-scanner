@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     # one that posts intraday against not hammering the endpoint.
     split_ratio_refresh_interval: float = 1800.0
 
+    # How often a symbol's news headline is refreshed while it stays in a
+    # ranked scanner view -- see app.market_data.news_cache.NewsCache. Kept
+    # well above the poll interval so live scanning doesn't hammer the news
+    # endpoint on every 5-10s tick for the same ~150 ranked symbols.
+    scanner_news_refresh_interval: float = 900.0
+
     # Persistent SQLite log of scanner appearances + periodic follow-up price
     # snapshots (see app.scanners.history_store), so "which scanner matches
     # performed best" survives restarts -- unlike ScannerBenchmarkTracker,

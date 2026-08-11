@@ -16,6 +16,7 @@ from app.core.logging import setup_logging
 from app.dash_app import dash_app
 from app.dash_app.state import bind as bind_dash_state
 from app.fundamentals.cache import FundamentalsCache
+from app.market_data.news_cache import NewsCache
 from app.market_data.stream_manager import StreamManager
 from app.routers import meta, scanners, symbols, trade_ideas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
@@ -56,6 +57,9 @@ async def lifespan(app: FastAPI):
     fundamentals = FundamentalsCache(settings, fundamentals_client)
     app.state.fundamentals = fundamentals
 
+    news_cache = NewsCache(settings, clients)
+    app.state.news_cache = news_cache
+
     if settings.has_credentials:
         try:
             universe = await build_universe(clients, settings)
@@ -78,6 +82,7 @@ async def lifespan(app: FastAPI):
         fundamentals,
         app.state.scanner_benchmark_tracker,
         scanner_history_store,
+        news_cache,
     )
     app.state.scanner_engine = engine
     bind_dash_state(app)

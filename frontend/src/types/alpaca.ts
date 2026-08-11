@@ -17,6 +17,7 @@ export interface ScannerRow {
   short_interest_pct: number | null;
   country: string | null;
   company_name: string | null;
+  recent_headline: string | null;
   updated_at: string;
 }
 

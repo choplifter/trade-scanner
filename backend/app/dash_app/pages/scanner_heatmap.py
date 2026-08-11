@@ -61,6 +61,7 @@ _TABLE_COLUMNS = [
     # DataTable can't nest an independently-clickable element inside another
     # cell, so it's its own column here instead.
     {"name": "", "id": "copy"},
+    {"name": "News", "id": "news"},
     {"name": "Company", "id": "company_name"},
     {"name": "Last", "id": "last"},
     {"name": "Chg %", "id": "chg"},
@@ -182,6 +183,7 @@ def _table_rows(rows) -> list[dict]:
             # EXCHANGE:SYMBOL string.
             "copy": "⧉",
             "tv_symbol": f"{r.exchange}:{r.symbol}" if r.exchange else r.symbol,
+            "news": "📰" if r.recent_headline else "—",
             "company_name": _format_string(r.company_name),
             "last": _format_price(r.last_price),
             "chg": _format_pct(r.pct_change),
@@ -196,6 +198,16 @@ def _table_rows(rows) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def _tooltip_data(rows) -> list[dict]:
+    """dash_table's per-cell tooltips: one dict per row, keyed by column id
+    -- gives the "news" flag column a hover tooltip with the full headline,
+    matching the native `title` tooltip the React scanner table's badge
+    gets for free. Must stay row-order-aligned with whatever `_table_rows`
+    call it accompanies (same `rows` argument, same sort applied first).
+    """
+    return [{"news": {"value": r.recent_headline or "", "type": "text"}} for r in rows]
 
 
 def _iframe_src(symbol: str | None) -> str:
@@ -314,6 +326,7 @@ def layout(**_kwargs):
                                     id="home-scanner-table",
                                     columns=_TABLE_COLUMNS,
                                     data=_table_rows(initial_rows),
+                                    tooltip_data=_tooltip_data(initial_rows),
                                     row_deletable=False,
                                     # "custom" (not "native"): see _sorted_rows --
                                     # native sort would sort the formatted display
@@ -353,6 +366,13 @@ def layout(**_kwargs):
                                             "maxWidth": "28px",
                                             "cursor": "pointer",
                                             "color": TEXT_MUTED,
+                                        },
+                                        {
+                                            "if": {"column_id": "news"},
+                                            "textAlign": "center",
+                                            "width": "36px",
+                                            "minWidth": "36px",
+                                            "maxWidth": "36px",
                                         },
                                         {
                                             "if": {"column_id": "company_name"},
@@ -501,6 +521,7 @@ dash.clientside_callback(
 @callback(
     Output("heatmap-graph", "figure"),
     Output("home-scanner-table", "data"),
+    Output("home-scanner-table", "tooltip_data"),
     Input("heatmap-interval", "n_intervals"),
     Input("heatmap-scanner-view", "value"),
     Input("home-scanner-table", "sort_by"),
@@ -513,12 +534,14 @@ def update_home_panels(_n_intervals, view_name, sort_by):
     # Table gets the user's chosen sort; the treemap below keeps the
     # engine's own gap%-ranked order regardless -- sorting only makes
     # sense for the flat table, not which tile is biggest in the heatmap.
-    table_data = _table_rows(_sorted_rows(rows, sort_by))
+    sorted_rows = _sorted_rows(rows, sort_by)
+    table_data = _table_rows(sorted_rows)
+    tooltip_data = _tooltip_data(sorted_rows)
 
     if not rows:
         fig = px.treemap(names=["No symbols matching this scanner right now"], parents=[""])
         fig.update_layout(margin=dict(t=30, l=10, r=10, b=10))
-        return fig, table_data
+        return fig, table_data, tooltip_data
 
     label = _SCANNER_LABELS.get(view_name, view_name or "gainers")
     df = pd.DataFrame([r.model_dump() for r in rows])
@@ -550,7 +573,7 @@ def update_home_panels(_n_intervals, view_name, sort_by):
         title=label + suffix,
         margin=dict(t=30, l=10, r=10, b=10),
     )
-    return fig, table_data
+    return fig, table_data, tooltip_data
 
 
 @callback(

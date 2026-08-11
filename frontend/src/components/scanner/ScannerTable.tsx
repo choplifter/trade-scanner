@@ -64,6 +64,11 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
               />
               {row.exchange && <span className="exchange-tag">{row.exchange}</span>}
               {row.is_hod && <span className="badge-hod">HOD</span>}
+              {row.recent_headline && (
+                <span className="badge-news" title={row.recent_headline}>
+                  📰
+                </span>
+              )}
             </td>
             <td className="company-cell" title={row.company_name ?? undefined}>
               {stringCell(row.company_name)}

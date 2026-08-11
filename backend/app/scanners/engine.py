@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
 from app.market_data.news import fetch_headlines
+from app.market_data.news_cache import NewsCache
 from app.scanners import formulas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.history_store import NewAppearance, ScannerHistoryStore
@@ -76,6 +77,7 @@ class ScannerEngine:
         fundamentals: FundamentalsCache,
         benchmark_tracker: ScannerBenchmarkTracker,
         history_store: ScannerHistoryStore,
+        news_cache: NewsCache,
     ):
         self.clients = clients
         self.settings = settings
@@ -84,6 +86,7 @@ class ScannerEngine:
         self.fundamentals = fundamentals
         self.benchmark_tracker = benchmark_tracker
         self.history_store = history_store
+        self.news_cache = news_cache
         self.benchmark_symbol = "SPY"
         self.benchmark_price: float | None = None
         self.rows: dict[str, ScannerRow] = {}
@@ -395,6 +398,20 @@ class ScannerEngine:
                     row.country = data.profile.country if data.profile else None
                     row.company_name = data.profile.name if data.profile else None
 
+    async def _attach_news(self, views: dict[str, list[ScannerRow]]) -> None:
+        """Fill in each row's most recent news headline for whatever's
+        actually ranked right now -- see app.market_data.news_cache.NewsCache
+        for why this is scoped to the ranked views (and refreshed on a slow
+        cadence) instead of fetched per symbol on every poll tick.
+        """
+        symbols = {r.symbol for rows in views.values() for r in rows}
+        if not symbols:
+            return
+        await self.news_cache.ensure_fresh(symbols)
+        for rows in views.values():
+            for row in rows:
+                row.recent_headline = self.news_cache.get(row.symbol)
+
     async def _poll_once(self) -> None:
         symbols = list(self.universe.keys())
         batches = [
@@ -583,6 +600,7 @@ class ScannerEngine:
             await self._record_new_appearances(views)
             await self._write_periodic_snapshots()
             await self._attach_fundamentals(views)
+            await self._attach_news(views)
             is_fallback = self.is_latest_session_fallback
             for name, rows in views.items():
                 await self.manager.broadcast(
