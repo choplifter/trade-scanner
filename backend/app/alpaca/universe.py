@@ -253,20 +253,33 @@ async def fetch_movers_backstop(
     return result
 
 
-async def fetch_split_ratios(clients: AlpacaClients, trading_date: date) -> dict[str, float]:
-    """Symbol -> multiplier to rescale a stale prev_close so it's comparable
-    to today's price, for every stock split whose ex_date is `trading_date`.
+async def fetch_split_ratios(clients: AlpacaClients, lookback_days: int = 7) -> dict[str, tuple[float, date]]:
+    """Symbol -> (multiplier, ex_date) to rescale a stale prev_close so
+    it's comparable to today's price, for every stock split in the last
+    `lookback_days` days.
 
     Alpaca's snapshot endpoint (StockSnapshotRequest, what the live poll
     loop uses for previous_daily_bar.close) has no split-adjustment option
     -- unlike the historical bars endpoint's `adjustment` param, there's no
     way to ask it for an already-adjusted prev_close. Observed in practice:
-    a stock that reverse-splits overnight shows a nonsensical multi-
-    thousand-percent "gap" the next session, since prev_close is still on
-    the pre-split share basis while every live price is post-split (e.g.
-    TNON's 2026-08-10 1-for-35 reverse split: prev_close $0.1316 vs. a
-    real price near $6 -- a +4600% "move" that's actually close to flat
-    once rescaled: $0.1316 * 35 = ~$4.61).
+    a stock that reverse-splits shows a nonsensical multi-thousand-percent
+    "gap" (e.g. TNON's 2026-08-10 1-for-35 reverse split: prev_close
+    $0.1316 vs. a real price near $6 -- a +4600% "move" that's actually
+    close to flat once rescaled: $0.1316 * 35 = ~$4.61) for as long as
+    prev_close still comes from a session before the split.
+
+    The caller (ScannerEngine._compute_rows) is the one that decides
+    *whether* a given ratio actually applies to a given prev_close, by
+    comparing the returned ex_date against that snapshot's own
+    previous_daily_bar date -- not this function, and deliberately not
+    keyed to "today": the market can be closed for hours (evenings,
+    weekends) while the calendar date has already rolled over, during
+    which previous_daily_bar still lags the split by more than a single
+    calendar day. A week-wide lookback comfortably covers that gap
+    (weekends, holidays, and this cache's own refresh cadence) without the
+    caller needing to special-case any of it -- it just needs to know each
+    split's ex_date, in a window definitely wider than any believable
+    gap between two consecutive sessions.
 
     old_rate/new_rate is the correct multiplier for both directions: a
     2-for-1 forward split (old_rate=1, new_rate=2) halves prev_close
@@ -277,23 +290,24 @@ async def fetch_split_ratios(clients: AlpacaClients, trading_date: date) -> dict
     across the whole market (order of ~10/day) that this is cheap
     regardless of universe size, unlike a per-symbol lookup would be.
     """
+    today = datetime.now(timezone.utc).date()
     try:
         request = GetCorporateAnnouncementsRequest(
             ca_types=[CorporateActionType.SPLIT],
-            since=trading_date,
-            until=trading_date,
+            since=today - timedelta(days=lookback_days),
+            until=today,
         )
         announcements = await asyncio.to_thread(clients.trading.get_corporate_announcements, request)
     except Exception:
         logger.exception("Corporate announcements (split) fetch failed")
         return {}
 
-    ratios: dict[str, float] = {}
+    ratios: dict[str, tuple[float, date]] = {}
     for a in announcements:
-        if not a.target_symbol or a.ex_date != trading_date or not a.old_rate or not a.new_rate:
+        if not a.target_symbol or not a.ex_date or not a.old_rate or not a.new_rate:
             continue
-        ratios[a.target_symbol] = a.old_rate / a.new_rate
+        ratios[a.target_symbol] = (a.old_rate / a.new_rate, a.ex_date)
 
     if ratios:
-        logger.info("Split adjustments for %s: %s", trading_date.isoformat(), ratios)
+        logger.info("Split adjustments (last %d days): %s", lookback_days, ratios)
     return ratios

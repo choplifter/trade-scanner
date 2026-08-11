@@ -125,9 +125,24 @@ async def get_daily_bars_multi(
 ) -> dict[str, list]:
     """Daily bars for several symbols in one request -- used to compute
     multi-day continuation context (e.g. "3rd straight up day") for trade
-    idea candidates. `lookback_days` is calendar days, not trading days, so
-    the default of 14 comfortably covers the ~9-10 trading days needed for a
-    5-day-window continuation signal even across a long weekend.
+    idea candidates, and as the closed-market scanner fallback's source of
+    prev_close/last_close (see app.scanners.latest_session). `lookback_days`
+    is calendar days, not trading days, so the default of 14 comfortably
+    covers the ~9-10 trading days needed for a 5-day-window continuation
+    signal even across a long weekend.
+
+    adjustment=SPLIT (not the RAW every other bars call here uses): unlike
+    the live snapshot endpoint (StockSnapshotRequest, no adjustment option
+    at all -- see ScannerEngine._refresh_split_ratios for how that path is
+    corrected instead), the historical bars endpoint can just be asked for
+    already-adjusted closes directly. Without this, a stock that reverse-
+    split shows a nonsensical multi-thousand-percent single-day "move"
+    here whenever the split falls inside the lookback window -- both for
+    the scanner fallback's gap% and for trade-idea continuation signals
+    (a split would otherwise look like an enormous, fake "up" or "down"
+    day). Deliberately SPLIT, not ALL: a dividend's ex-date price dip is a
+    real traded price, not a share-count artifact, so it shouldn't be
+    smoothed away here the way a split's share-count discontinuity should.
     """
     if not symbols:
         return {}
@@ -136,7 +151,7 @@ async def get_daily_bars_multi(
         timeframe=TimeFrame.Day,
         start=datetime.now(timezone.utc) - timedelta(days=lookback_days),
         feed=clients.feed,
-        adjustment=Adjustment.RAW,
+        adjustment=Adjustment.SPLIT,
     )
     bar_set = await asyncio.to_thread(clients.data.get_stock_bars, request)
     return dict(bar_set.data)

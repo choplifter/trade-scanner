@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from alpaca.data.requests import StockBarsRequest, StockSnapshotRequest
 from alpaca.data.timeframe import TimeFrame
@@ -92,7 +92,7 @@ class ScannerEngine:
         self._latest_session_rows: dict[str, ScannerRow] | None = None
         self._last_backstop_refresh: float = 0.0
         self._last_history_snapshot: float = 0.0
-        self._split_ratios: dict[str, float] = {}
+        self._split_ratios: dict[str, tuple[float, date]] = {}
         self._last_split_refresh: float = 0.0
 
     def _compute_rows(self, snapshots: dict) -> None:
@@ -107,12 +107,19 @@ class ScannerEngine:
             prev_close = (
                 snap.previous_daily_bar.close if snap.previous_daily_bar else uni.prev_close
             )
-            # Rescale a same-day-split symbol's prev_close onto today's
-            # share basis -- see fetch_split_ratios' docstring for why this
-            # can't just be an `adjustment` param on the request instead.
-            split_ratio = self._split_ratios.get(symbol)
-            if split_ratio and prev_close:
-                prev_close = prev_close * split_ratio
+            # Rescale prev_close onto the post-split share basis if it
+            # still comes from a session before the split -- see
+            # fetch_split_ratios' docstring for why this can't just be an
+            # `adjustment` param on the request instead, and why this has
+            # to compare against previous_daily_bar's own date rather than
+            # assuming "today" (the market can be closed for hours after
+            # the calendar date rolls over, during which previous_daily_bar
+            # still correctly lags the split by more than a day).
+            split_info = self._split_ratios.get(symbol)
+            if split_info and snap.previous_daily_bar and prev_close:
+                ratio, ex_date = split_info
+                if snap.previous_daily_bar.timestamp.date() < ex_date:
+                    prev_close = prev_close * ratio
 
             volume_today = snap.daily_bar.volume if snap.daily_bar else 0.0
             day_high = snap.daily_bar.high if snap.daily_bar else None
@@ -320,11 +327,11 @@ class ScannerEngine:
         return new_symbols
 
     async def _refresh_split_ratios(self) -> None:
-        """Refresh today's same-day stock-split adjustments (see
-        fetch_split_ratios) on a slower cadence than the regular poll.
-        Not gated on can_poll so the ratios are already warm the moment
-        live polling resumes, rather than every symbol's first live tick
-        of the day briefly showing an unadjusted gap%.
+        """Refresh recent stock-split adjustments (see fetch_split_ratios)
+        on a slower cadence than the regular poll. Not gated on can_poll so
+        the ratios are already warm the moment live polling resumes,
+        rather than every symbol's first live tick of the day briefly
+        showing an unadjusted gap%.
 
         Only applied to the live path (_compute_rows) below -- the
         closed-market fallback (latest_session.py) computes its own
@@ -339,8 +346,7 @@ class ScannerEngine:
             return
         self._last_split_refresh = now
 
-        trading_date = datetime.now(ET).date()
-        self._split_ratios = await fetch_split_ratios(self.clients, trading_date)
+        self._split_ratios = await fetch_split_ratios(self.clients)
 
     async def _merge_backstop_into_fallback(self, new_symbols: dict[str, UniverseSymbol]) -> None:
         """Fold freshly backstop-admitted symbols into the closed-market
