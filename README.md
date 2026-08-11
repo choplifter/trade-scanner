@@ -37,7 +37,9 @@ with fewer annotations/columns.
   name/sector/industry/description/website in the symbol detail panel. Also
   required for **Short %**, since that's computed by combining FMP's float
   with FINRA's free public short-interest data — no separate key needed for
-  FINRA itself.
+  FINRA itself. This same key also powers the **market-conditions traffic
+  light** (real VIX index + economic calendar — Alpaca has no index-data
+  endpoint at all).
 
 ## 2. Run the backend
 
@@ -122,6 +124,15 @@ backend on port 8000, so both must be running.
   correlation/comparison, and seasonality.
 - Session badge (Premarket / Market Open / After Hours / Closed) in the
   header, computed from the NYSE trading calendar.
+- **Market-conditions traffic light** (needs `FMP_API_KEY`): a red/yellow/
+  green badge next to the session indicator (React header and Dash nav)
+  combining the real CBOE VIX index level, today's high-impact global
+  economic calendar events (CPI, GDP, rate decisions -- US/EU/UK/China/
+  Japan), and scanner breadth (% of today's universe currently green) by
+  "worst signal wins" -- red if any one factor is bad, yellow if any is
+  borderline, green only if all three are calm. Hover for the specific
+  reasons. Purely descriptive market weather, not a trade signal -- same
+  non-advisory framing as AI Trade Ideas.
 
 ## Known limitations
 
