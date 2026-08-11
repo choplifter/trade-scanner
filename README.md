@@ -78,11 +78,13 @@ backend on port 8000, so both must be running.
   with, and keeps running even while the market's closed so a big mover
   from the last session isn't invisible over a weekend/holiday.
 - Scanner columns: symbol (click to copy its unambiguous `EXCHANGE:SYMBOL`
-  TradingView format), company name, last price, gap %, volume, RVOL, and
-  (when `FMP_API_KEY` is set) float, market cap, short interest % of float,
-  exchange, and country. A **Table / Heatmap** toggle switches the same live
-  feed to a treemap view (tile size = dollar volume, color = gap %,
-  click-to-chart same as the table).
+  TradingView format), a 📰 flag when there's a recent news headline
+  (hover for the headline; refreshed every 15 min for whatever's currently
+  ranked, not fetched per poll tick), company name, last price, gap %,
+  volume, RVOL, and (when `FMP_API_KEY` is set) float, market cap, short
+  interest % of float, exchange, and country. A **Table / Heatmap** toggle
+  switches the same live feed to a treemap view (tile size = dollar
+  volume, color = gap %, click-to-chart same as the table).
 - One chart widget: click any symbol anywhere in the app to load it —
   candlestick chart, volume pane, and a session-anchored VWAP line (resets
   at 09:30 ET), fed by Alpaca's live minute-bar stream, plus a company info
@@ -132,15 +134,16 @@ backend on port 8000, so both must be running.
   thin names; `resolve_last_price` (`app/scanners/formulas.py`) discards a
   print that falls outside 2x the day's own recorded high/low range, but
   this is a sanity check, not a substitute for the consolidated tape.
-- **Same-day stock splits**: Alpaca's live snapshot endpoint has no
-  split-adjustment option, so a symbol that splits overnight would show a
+- **Recent stock splits**: Alpaca's live snapshot endpoint has no
+  split-adjustment option, so a symbol that split recently would show a
   nonsensical gap % (prev_close on the old share basis vs. a post-split
-  price) without correction. `fetch_split_ratios`
-  (`app/alpaca/universe.py`) rescales `prev_close` for every split whose
-  ex_date is today, refreshed every 30 min -- this only covers the live
-  poll path, not the closed-market fallback (a narrower edge case: a
-  symbol would need to have split very recently *and* be shown from
-  fallback data, e.g. right after a fresh start with markets closed).
+  price) without correction. `fetch_split_ratios` (`app/alpaca/universe.py`)
+  tracks the last 7 days of splits, refreshed every 30 min, and
+  `ScannerEngine._compute_rows` rescales `prev_close` whenever it's older
+  than the split's ex_date -- correct however long the market's been
+  closed, not just "today." The closed-market fallback
+  (`app/scanners/latest_session.py`) gets the same correction for free via
+  Alpaca's own `adjustment=SPLIT` param on the historical bars it reads.
 - **Universe price floor**: `UNIVERSE_MIN_PRICE` defaults to **$5** (the
   SEC's own "penny stock" threshold) rather than $1 — sub-$5 names carry the
   thinnest liquidity, the widest spreads, and are the most prone to bad
