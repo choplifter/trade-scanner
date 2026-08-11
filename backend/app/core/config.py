@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # endpoint on every 5-10s tick for the same ~150 ranked symbols.
     scanner_news_refresh_interval: float = 900.0
 
+    # How often the red/yellow/green market-conditions readout (VIX,
+    # today's high-impact global economic events, scanner breadth) is
+    # refreshed -- see app.market_data.market_conditions. None of these
+    # signals need poll-tick freshness, so this is deliberately slow.
+    market_conditions_refresh_interval: float = 1800.0
+
     # Persistent SQLite log of scanner appearances + periodic follow-up price
     # snapshots (see app.scanners.history_store), so "which scanner matches
     # performed best" survives restarts -- unlike ScannerBenchmarkTracker,

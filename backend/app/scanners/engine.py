@@ -3,6 +3,7 @@ import logging
 import time
 from datetime import date, datetime, timezone
 
+import httpx
 from alpaca.data.requests import StockBarsRequest, StockSnapshotRequest
 from alpaca.data.timeframe import TimeFrame
 
@@ -11,6 +12,12 @@ from app.alpaca.universe import UniverseSymbol, fetch_movers_backstop, fetch_spl
 from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
+from app.market_data.market_conditions import (
+    MarketConditions,
+    compute_market_conditions,
+    fetch_high_impact_events_today,
+    fetch_vix,
+)
 from app.market_data.news import fetch_headlines
 from app.market_data.news_cache import NewsCache
 from app.scanners import formulas
@@ -78,6 +85,7 @@ class ScannerEngine:
         benchmark_tracker: ScannerBenchmarkTracker,
         history_store: ScannerHistoryStore,
         news_cache: NewsCache,
+        http_client: httpx.AsyncClient,
     ):
         self.clients = clients
         self.settings = settings
@@ -87,6 +95,9 @@ class ScannerEngine:
         self.benchmark_tracker = benchmark_tracker
         self.history_store = history_store
         self.news_cache = news_cache
+        self.http_client = http_client
+        self.market_conditions: MarketConditions | None = None
+        self._last_market_conditions_refresh: float = 0.0
         self.benchmark_symbol = "SPY"
         self.benchmark_price: float | None = None
         self.rows: dict[str, ScannerRow] = {}
@@ -351,6 +362,43 @@ class ScannerEngine:
 
         self._split_ratios = await fetch_split_ratios(self.clients)
 
+    async def _refresh_market_conditions(self) -> None:
+        """Refresh the red/yellow/green market-conditions readout (VIX,
+        today's high-impact global economic events, scanner breadth) on a
+        slow cadence -- none of these need poll-tick freshness. Not gated
+        on can_poll, same reasoning as the other slow refreshers here: the
+        reading stays useful (and warm for whenever polling resumes) even
+        while the market's closed. Gated on has_fmp_credentials since both
+        external signals ride on FMP -- degrades to "unavailable"
+        (self.market_conditions stays None) rather than an error when no
+        FMP_API_KEY is configured, same as every other FMP-dependent
+        feature in this app.
+        """
+        if not self.settings.has_fmp_credentials:
+            return
+        now = time.monotonic()
+        if now - self._last_market_conditions_refresh < self.settings.market_conditions_refresh_interval:
+            return
+        self._last_market_conditions_refresh = now
+
+        try:
+            vix, events = await asyncio.gather(
+                fetch_vix(self.http_client, self.settings.fmp_api_key),
+                fetch_high_impact_events_today(
+                    self.http_client, self.settings.fmp_api_key, datetime.now(ET).date()
+                ),
+            )
+        except Exception:
+            logger.exception("Market conditions refresh failed")
+            return
+
+        breadth_pct = None
+        if self.rows:
+            up = sum(1 for r in self.rows.values() if r.pct_change > 0)
+            breadth_pct = up / len(self.rows) * 100
+
+        self.market_conditions = compute_market_conditions(vix, events, breadth_pct)
+
     async def _merge_backstop_into_fallback(self, new_symbols: dict[str, UniverseSymbol]) -> None:
         """Fold freshly backstop-admitted symbols into the closed-market
         fallback row set (see backfill_latest_session_rows) -- only called
@@ -574,6 +622,7 @@ class ScannerEngine:
                 await self._refresh_movers_backstop() if has_backstop_data else {}
             )
             await self._refresh_split_ratios()
+            await self._refresh_market_conditions()
 
             if can_poll:
                 interval = (

@@ -6,6 +6,7 @@ import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
+import { useMarketConditions } from "./hooks/useMarketConditions";
 import { useMarketSession } from "./hooks/useMarketSession";
 
 const SESSION_LABEL: Record<string, string> = {
@@ -15,9 +16,16 @@ const SESSION_LABEL: Record<string, string> = {
   closed: "Closed",
 };
 
+const CONDITIONS_LABEL: Record<string, string> = {
+  green: "Calm",
+  yellow: "Caution",
+  red: "Elevated Risk",
+};
+
 export default function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const session = useMarketSession();
+  const conditions = useMarketConditions();
 
   return (
     <div className="app-shell">
@@ -33,6 +41,16 @@ export default function App() {
           >
             Analytics ↗
           </a>
+          {conditions.available && conditions.level && (
+            <span
+              className="market-conditions-badge"
+              data-level={conditions.level}
+              title={conditions.reasons?.join(" · ")}
+            >
+              <span className="market-conditions-dot" />
+              {CONDITIONS_LABEL[conditions.level] ?? conditions.level}
+            </span>
+          )}
           <span className="session-badge" data-session={session}>
             <span className="session-dot" />
             {SESSION_LABEL[session] ?? session}

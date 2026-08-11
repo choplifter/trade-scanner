@@ -143,6 +143,38 @@ body {
   background: var(--status-good);
 }
 
+.market-conditions-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.market-conditions-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.market-conditions-badge[data-level="green"] .market-conditions-dot {
+  background: var(--status-good);
+}
+
+.market-conditions-badge[data-level="yellow"] .market-conditions-dot {
+  background: var(--status-warning);
+}
+
+.market-conditions-badge[data-level="red"] .market-conditions-dot {
+  background: var(--status-critical);
+}
+
 .dashboard-main {
   flex: 1;
   min-height: 0;

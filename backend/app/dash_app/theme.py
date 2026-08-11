@@ -25,6 +25,9 @@ DELTA_UP = "#006300"
 DELTA_DOWN = "#d03b3b"
 ACCENT = "#2a78d6"
 VWAP_COLOR = "#eda100"
+STATUS_GOOD = "#0ca30c"
+STATUS_WARNING = "#fab219"
+STATUS_CRITICAL = "#d03b3b"
 
 _FONT = dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", color=TEXT_PRIMARY, size=12)
 

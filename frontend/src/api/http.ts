@@ -1,4 +1,5 @@
 import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
+import type { MarketConditionsResponse } from "../types/marketConditions";
 import type { ScannerBenchmarkResponse } from "../types/scannerBenchmark";
 import type { ScannerHistoryResponse } from "../types/scannerHistory";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
@@ -65,6 +66,10 @@ export interface SessionResponse {
 
 export function getSession(): Promise<SessionResponse> {
   return getJson<SessionResponse>("/meta/session");
+}
+
+export function getMarketConditions(): Promise<MarketConditionsResponse> {
+  return getJson<MarketConditionsResponse>("/meta/market-conditions");
 }
 
 export function postTradeIdeas(): Promise<TradeIdeasResponse> {

@@ -83,6 +83,7 @@ async def lifespan(app: FastAPI):
         app.state.scanner_benchmark_tracker,
         scanner_history_store,
         news_cache,
+        fundamentals_client,
     )
     app.state.scanner_engine = engine
     bind_dash_state(app)
