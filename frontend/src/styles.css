@@ -374,6 +374,22 @@ body {
   text-align: left;
 }
 
+.scanner-table th.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.scanner-table th.sortable-header:hover {
+  color: var(--text-secondary);
+}
+
+.sort-indicator {
+  display: inline-block;
+  color: var(--accent);
+  font-size: 9px;
+}
+
 .scanner-table td {
   padding: 6px 10px;
   text-align: right;

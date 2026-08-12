@@ -1,3 +1,5 @@
+import { useMemo, useState } from "react";
+
 import { CopyButton } from "../common/CopyButton";
 import type { ScannerRow } from "../../types/alpaca";
 import {
@@ -21,6 +23,82 @@ function stringCell(value: string | null): string {
   return value ? value : "—";
 }
 
+type SortKey =
+  | "symbol"
+  | "company_name"
+  | "last"
+  | "chg"
+  | "vol"
+  | "rvol"
+  | "float"
+  | "market_cap"
+  | "short_interest_pct"
+  | "exchange"
+  | "country";
+
+type SortValue = string | number | null;
+
+/** Sorts on the real underlying ScannerRow value, not the formatted
+ * display string -- same reasoning as the Dash table's _COLUMN_SORT_KEYS:
+ * "1.25B" < "250.0M" lexicographically even though 1.25B is the bigger
+ * number, so every formatted column needs its own accessor here rather
+ * than a native string sort. */
+const SORT_ACCESSORS: Record<SortKey, (row: ScannerRow) => SortValue> = {
+  symbol: (r) => r.symbol,
+  company_name: (r) => r.company_name,
+  last: (r) => r.last_price,
+  chg: (r) => r.pct_change,
+  vol: (r) => r.dollar_volume_today,
+  rvol: (r) => r.rvol,
+  float: (r) => r.float_shares,
+  market_cap: (r) => r.market_cap,
+  short_interest_pct: (r) => r.short_interest_pct,
+  exchange: (r) => r.exchange,
+  country: (r) => r.country,
+};
+
+const COLUMNS: { id: SortKey; label: string }[] = [
+  { id: "symbol", label: "Symbol" },
+  { id: "company_name", label: "Company" },
+  { id: "last", label: "Last" },
+  { id: "chg", label: "Chg %" },
+  { id: "vol", label: "$ Vol" },
+  { id: "rvol", label: "RVol" },
+  { id: "float", label: "Float" },
+  { id: "market_cap", label: "Mkt Cap" },
+  { id: "short_interest_pct", label: "Short %" },
+  { id: "exchange", label: "Exchange" },
+  { id: "country", label: "Country" },
+];
+
+interface SortState {
+  key: SortKey;
+  direction: "asc" | "desc";
+}
+
+/** Rows with a null value for the sort column always sort to the bottom
+ * regardless of direction -- comparing null against a real value isn't
+ * meaningful, and burying unknowns matches how the "—" cell reads (same
+ * behavior as the Dash table's _sorted_rows). */
+function sortRows(rows: ScannerRow[], sort: SortState): ScannerRow[] {
+  const accessor = SORT_ACCESSORS[sort.key];
+  const withValue: ScannerRow[] = [];
+  const withoutValue: ScannerRow[] = [];
+  for (const row of rows) {
+    (accessor(row) === null ? withoutValue : withValue).push(row);
+  }
+  const dir = sort.direction === "asc" ? 1 : -1;
+  withValue.sort((a, b) => {
+    const av = accessor(a);
+    const bv = accessor(b);
+    if (typeof av === "string" || typeof bv === "string") {
+      return String(av).localeCompare(String(bv)) * dir;
+    }
+    return ((av as number) - (bv as number)) * dir;
+  });
+  return [...withValue, ...withoutValue];
+}
+
 interface ScannerTableProps {
   rows: ScannerRow[];
   selectedSymbol: string | null;
@@ -28,6 +106,17 @@ interface ScannerTableProps {
 }
 
 export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTableProps) {
+  const [sort, setSort] = useState<SortState | null>(null);
+
+  const sortedRows = useMemo(() => (sort ? sortRows(rows, sort) : rows), [rows, sort]);
+
+  function toggleSort(key: SortKey) {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, direction: "asc" };
+      return prev.direction === "asc" ? { key, direction: "desc" } : null;
+    });
+  }
+
   if (rows.length === 0) {
     return <div className="widget-empty">No symbols matching this scanner right now.</div>;
   }
@@ -36,21 +125,24 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
     <table className="scanner-table">
       <thead>
         <tr>
-          <th>Symbol</th>
-          <th>Company</th>
-          <th>Last</th>
-          <th>Chg %</th>
-          <th>$ Vol</th>
-          <th>RVol</th>
-          <th>Float</th>
-          <th>Mkt Cap</th>
-          <th>Short %</th>
-          <th>Exchange</th>
-          <th>Country</th>
+          {COLUMNS.map((col) => {
+            const active = sort?.key === col.id;
+            return (
+              <th
+                key={col.id}
+                className="sortable-header"
+                aria-sort={active ? (sort!.direction === "asc" ? "ascending" : "descending") : "none"}
+                onClick={() => toggleSort(col.id)}
+              >
+                {col.label}
+                <span className="sort-indicator">{active ? (sort!.direction === "asc" ? " ▲" : " ▼") : ""}</span>
+              </th>
+            );
+          })}
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
+        {sortedRows.map((row) => (
           <tr
             key={row.symbol}
             aria-selected={row.symbol === selectedSymbol}
