@@ -1,9 +1,15 @@
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.alpaca.client import AlpacaClients
 from app.indicators.context import build_context
 from app.indicators.loader import run_indicators
-from app.market_data.bars import HISTORICAL_TIMEFRAMES, get_historical_bars, get_intraday_minute_bars
+from app.market_data.bars import (
+    HISTORICAL_TIMEFRAMES,
+    get_historical_bars,
+    get_intraday_minute_bars,
+)
 from app.market_data.vwap import SessionVwapState
 from app.symbols.info import get_symbol_info
 
@@ -25,9 +31,17 @@ async def _compute_indicators(clients: AlpacaClients, symbol: str, minute_bars: 
     """Indicators (premarket/weekly/monthly range) are reference lines
     independent of the chart's own zoom -- always computed the same way
     regardless of which timeframe the caller actually requested.
+
+    Weekly/monthly bars are two independent Alpaca calls -- run them
+    concurrently rather than sequentially so this doesn't add up to two
+    extra round-trips' worth of latency on top of the bars fetch on every
+    single chart load (this endpoint fires on every symbol click,
+    including rapid ones from the heatmap).
     """
-    weekly_bars = await get_historical_bars(clients, symbol, "1Week")
-    monthly_bars = await get_historical_bars(clients, symbol, "1Month")
+    weekly_bars, monthly_bars = await asyncio.gather(
+        get_historical_bars(clients, symbol, "1Week"),
+        get_historical_bars(clients, symbol, "1Month"),
+    )
     ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars)
     return run_indicators(ctx)
 
@@ -63,10 +77,14 @@ async def get_symbol_bars(
     if timeframe != "1Min":
         if timeframe not in HISTORICAL_TIMEFRAMES:
             raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
-        bars = await get_historical_bars(clients, symbol, timeframe)
         # bars here are hourly/daily/etc, not minute bars -- indicators need
-        # today's minute bars regardless, so fetch those separately.
-        minute_bars = await get_intraday_minute_bars(clients, symbol)
+        # today's minute bars regardless, so fetch those separately. The two
+        # are independent Alpaca calls -- run concurrently, same reasoning
+        # as _compute_indicators' own weekly/monthly gather below.
+        bars, minute_bars = await asyncio.gather(
+            get_historical_bars(clients, symbol, timeframe),
+            get_intraday_minute_bars(clients, symbol),
+        )
         indicators = await _compute_indicators(clients, symbol, minute_bars)
         return {
             "symbol": symbol,
