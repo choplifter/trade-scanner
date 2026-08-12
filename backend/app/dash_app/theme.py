@@ -29,6 +29,16 @@ STATUS_GOOD = "#0ca30c"
 STATUS_WARNING = "#fab219"
 STATUS_CRITICAL = "#d03b3b"
 
+# Shared between the nav badge (dash_app/__init__.py) and the market
+# conditions detail page (pages/market_conditions.py) -- kept here rather
+# than defined in __init__.py so the detail page can import them without
+# risking a circular import (Dash's use_pages=True auto-discovers page
+# modules during the Dash(...) constructor call in __init__.py itself, so
+# anything a page imports back from __init__ would need to already be
+# defined above that line).
+MARKET_CONDITIONS_LEVEL_LABEL = {"green": "Calm", "yellow": "Caution", "red": "Elevated Risk"}
+MARKET_CONDITIONS_LEVEL_COLOR = {"green": STATUS_GOOD, "yellow": STATUS_WARNING, "red": STATUS_CRITICAL}
+
 _FONT = dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", color=TEXT_PRIMARY, size=12)
 
 _template = go.layout.Template()

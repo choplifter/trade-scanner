@@ -152,8 +152,14 @@ body {
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
+  background: transparent;
   color: var(--text-secondary);
-  cursor: default;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.market-conditions-badge:hover {
+  background: var(--row-hover);
 }
 
 .market-conditions-dot {

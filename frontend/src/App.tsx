@@ -42,14 +42,17 @@ export default function App() {
             Analytics ↗
           </a>
           {conditions.available && conditions.level && (
-            <span
+            <a
               className="market-conditions-badge"
               data-level={conditions.level}
-              title={conditions.reasons?.join(" · ")}
+              href="/analytics/market-conditions"
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`${conditions.reasons?.join(" · ")} -- click for details`}
             >
               <span className="market-conditions-dot" />
               {CONDITIONS_LABEL[conditions.level] ?? conditions.level}
-            </span>
+            </a>
           )}
           <span className="session-badge" data-session={session}>
             <span className="session-dot" />

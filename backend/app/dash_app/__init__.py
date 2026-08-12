@@ -22,7 +22,11 @@ from dash import Dash, Input, Output, callback, dcc, html
 
 from app.dash_app import theme  # noqa: F401 -- import for its pio.templates side effect
 from app.dash_app.state import backend_state
-from app.dash_app.theme import STATUS_CRITICAL, STATUS_GOOD, STATUS_WARNING, TEXT_MUTED
+from app.dash_app.theme import (
+    MARKET_CONDITIONS_LEVEL_COLOR,
+    MARKET_CONDITIONS_LEVEL_LABEL,
+    TEXT_MUTED,
+)
 
 dash_app = Dash(
     __name__,
@@ -33,8 +37,6 @@ dash_app = Dash(
 )
 
 _CONDITIONS_POLL_MS = 60_000
-_LEVEL_LABEL = {"green": "Calm", "yellow": "Caution", "red": "Elevated Risk"}
-_LEVEL_COLOR = {"green": STATUS_GOOD, "yellow": STATUS_WARNING, "red": STATUS_CRITICAL}
 
 _BADGE_STYLE = {
     "display": "inline-flex",
@@ -58,7 +60,10 @@ dash_app.layout = html.Div(
                     for page in dash.page_registry.values()
                 ),
                 dcc.Interval(id="market-conditions-interval", interval=_CONDITIONS_POLL_MS, n_intervals=0),
-                html.Span(id="market-conditions-badge", style={"display": "none"}),
+                dcc.Link(
+                    html.Span(id="market-conditions-badge", style={"display": "none"}),
+                    href="/market-conditions",
+                ),
             ],
             className="page-nav",
         ),
@@ -91,8 +96,8 @@ def update_market_conditions_badge(_n_intervals):
         "width": "8px",
         "height": "8px",
         "borderRadius": "50%",
-        "background": _LEVEL_COLOR.get(conditions.level, TEXT_MUTED),
+        "background": MARKET_CONDITIONS_LEVEL_COLOR.get(conditions.level, TEXT_MUTED),
     }
-    label = _LEVEL_LABEL.get(conditions.level, conditions.level)
+    label = MARKET_CONDITIONS_LEVEL_LABEL.get(conditions.level, conditions.level)
     children = [html.Span(style=dot_style), label]
     return children, _BADGE_STYLE, " · ".join(conditions.reasons)
