@@ -103,6 +103,42 @@ def is_stale(last_trade_at: datetime | None, now: datetime, threshold_seconds: f
     return (now - last_trade_at).total_seconds() > threshold_seconds
 
 
+# A magnitude multiplier for symbols with a recent news headline attached --
+# a catalyst behind a move makes it more likely to persist/continue than an
+# unexplained one, per this app's own scanner_history.sqlite3 win-rate
+# analysis (news-catalyst picks ran ~8.5pp higher win rate across all three
+# ranked views).
+_CATALYST_BOOST = 1.15
+
+# Above this RVOL, the same history analysis found win rate *drops*
+# (25.6% win rate, -10.38% avg return vs. the overall average) rather than
+# rising further -- consistent with "gap and crap": an extreme, sudden
+# volume spike is as often exhaustion/a blow-off top as it is genuine
+# continuation. So past this point extreme RVOL is treated as a fade-risk
+# warning, not an extra bullish signal.
+_FADE_RISK_RVOL = 15.0
+_FADE_RISK_DISCOUNT = 0.7
+
+
+def is_fade_risk(rvol: float | None) -> bool:
+    return rvol is not None and rvol > _FADE_RISK_RVOL
+
+
+def rank_score(magnitude: float, has_headline: bool, rvol: float | None) -> float:
+    """Ranking magnitude adjusted for the two data-backed signals above.
+
+    `magnitude` is whatever the view already ranks by (pct_change for
+    gainers/losers, dollar volume for most-active) -- this only rescales it,
+    it never changes sign or reorders which symbols even qualify for a view.
+    """
+    score = magnitude
+    if has_headline:
+        score *= _CATALYST_BOOST
+    if is_fade_risk(rvol):
+        score *= _FADE_RISK_DISCOUNT
+    return score
+
+
 def spread_pct(bid: float | None, ask: float | None) -> float | None:
     """Bid-ask spread as a % of the midpoint -- a liquidity/fill-quality
     proxy independent of price level. A stock can have a huge gap and rvol

@@ -164,6 +164,14 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
                   STALE
                 </span>
               )}
+              {row.is_fade_risk && (
+                <span
+                  className="badge-fade-risk"
+                  title="RVol >15x -- historically more often a blow-off/exhaustion move than a continuation (this app's own scanner history shows a lower win rate at this RVol range)"
+                >
+                  FADE RISK
+                </span>
+              )}
               {row.recent_headline && (
                 <span className="badge-news" title={row.recent_headline}>
                   📰

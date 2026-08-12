@@ -48,6 +48,7 @@ async def compute_latest_session_rows(
             if pct is None:
                 continue
             volume = last_bar.volume
+            row_rvol = formulas.rvol(volume, uni.avg_vol_20d) or 0.0
             rows.append(
                 ScannerRow(
                     symbol=symbol,
@@ -57,13 +58,14 @@ async def compute_latest_session_rows(
                     pct_change=pct,
                     volume_today=volume,
                     avg_vol_20d=uni.avg_vol_20d,
-                    rvol=formulas.rvol(volume, uni.avg_vol_20d) or 0.0,
+                    rvol=row_rvol,
                     dollar_volume_today=formulas.dollar_volume(volume, last_bar.close),
                     day_high=last_bar.high,
                     day_low=last_bar.low,
                     is_hod=formulas.is_hod(last_bar.close, last_bar.high),
                     is_lod=formulas.is_lod(last_bar.close, last_bar.low),
                     spread_pct=None,
+                    is_fade_risk=formulas.is_fade_risk(row_rvol),
                     updated_at=now,
                 )
             )

@@ -36,7 +36,13 @@ from app.ai.trade_idea_tracker import TrackedIdea
 from app.ai.trade_ideas import TradeIdea, generate_trade_ideas
 from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
-from app.dash_app.theme import DELTA_DOWN, DELTA_UP, STATUS_WARNING, TEXT_MUTED
+from app.dash_app.theme import (
+    DELTA_DOWN,
+    DELTA_UP,
+    STATUS_CRITICAL,
+    STATUS_WARNING,
+    TEXT_MUTED,
+)
 from app.symbols.info import SymbolInfoResponse, get_symbol_info
 
 logger = logging.getLogger(__name__)
@@ -178,6 +184,7 @@ def _table_rows(rows) -> list[dict]:
             # 1/0 rather than a bool -- dash_table's filter_query syntax
             # compares more reliably against numbers than JSON booleans.
             "is_stale": 1 if r.is_stale else 0,
+            "is_fade_risk": 1 if r.is_fade_risk else 0,
             # "copy" is what's displayed; "tv_symbol" is what actually gets
             # copied (see the clientside_callback below) -- kept separate so
             # the cell can show a short icon/label instead of the full
@@ -208,17 +215,22 @@ def _tooltip_data(rows) -> list[dict]:
     gets for free. Must stay row-order-aligned with whatever `_table_rows`
     call it accompanies (same `rows` argument, same sort applied first).
     """
+    def _symbol_tooltip(r) -> str:
+        bits = []
+        if r.is_stale:
+            bits.append("No confirmed trade recently -- this price may be older than it looks")
+        if r.is_fade_risk:
+            bits.append(
+                "RVol >15x -- historically more often a blow-off/exhaustion move than a "
+                "continuation (this app's own scanner history shows a lower win rate at this "
+                "RVol range)"
+            )
+        return " · ".join(bits)
+
     return [
         {
             "news": {"value": r.recent_headline or "", "type": "text"},
-            "symbol": {
-                "value": (
-                    "No confirmed trade recently -- this price may be older than it looks"
-                    if r.is_stale
-                    else ""
-                ),
-                "type": "text",
-            },
+            "symbol": {"value": _symbol_tooltip(r), "type": "text"},
         }
         for r in rows
     ]
@@ -422,6 +434,11 @@ def layout(**_kwargs):
                                         {
                                             "if": {"filter_query": "{is_stale} = 1", "column_id": "symbol"},
                                             "color": STATUS_WARNING,
+                                            "fontWeight": "700",
+                                        },
+                                        {
+                                            "if": {"filter_query": "{is_fade_risk} = 1", "column_id": "symbol"},
+                                            "color": STATUS_CRITICAL,
                                             "fontWeight": "700",
                                         },
                                     ],

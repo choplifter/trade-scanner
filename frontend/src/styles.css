@@ -490,6 +490,19 @@ body {
   cursor: default;
 }
 
+.badge-fade-risk {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--status-critical);
+  border: 1px solid var(--status-critical);
+  vertical-align: middle;
+  cursor: default;
+}
+
 .delta-up {
   color: var(--delta-up);
   font-weight: 600;

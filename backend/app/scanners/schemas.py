@@ -43,6 +43,14 @@ class ScannerRow(BaseModel):
     # that the price shown may not reflect what the symbol is actually
     # doing right now. See app.scanners.formulas.is_stale.
     is_stale: bool = False
+    # True when rvol > formulas._FADE_RISK_RVOL -- this app's own
+    # scanner_history.sqlite3 win-rate analysis found extreme RVOL predicts
+    # a *worse* outcome (25.6% win rate, -10.38% avg return), consistent
+    # with "gap and crap" exhaustion rather than continuation. Ranking
+    # already discounts for this (see formulas.rank_score); this field lets
+    # the frontend also warn the user directly rather than only showing it
+    # indirectly via rank order. See app.scanners.formulas.is_fade_risk.
+    is_fade_risk: bool = False
     updated_at: datetime
 
 

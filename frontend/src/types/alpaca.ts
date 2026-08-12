@@ -22,6 +22,10 @@ export interface ScannerRow {
    * recently -- the row still ranks normally, but the price shown may be
    * older than it looks. */
   is_stale: boolean;
+  /** True when rvol > 15x -- historically a fade-risk signal (lower win
+   * rate) rather than an extra-bullish one; ranking already discounts for
+   * it, this flags it directly too. */
+  is_fade_risk: boolean;
   updated_at: string;
 }
 
