@@ -15,6 +15,9 @@ const DEFAULT_TIMEFRAME_KEY = "5m";
 
 export function ChartWidget({ symbol }: ChartWidgetProps) {
   const [timeframeKey, setTimeframeKey] = useState(DEFAULT_TIMEFRAME_KEY);
+  // Off by default -- these are reference lines, not something every chart
+  // view needs cluttered onto it.
+  const [showIndicators, setShowIndicators] = useState(false);
   const option =
     TIMEFRAME_OPTIONS.find((o) => o.key === timeframeKey) ??
     TIMEFRAME_OPTIONS.find((o) => o.key === DEFAULT_TIMEFRAME_KEY)!;
@@ -30,10 +33,19 @@ export function ChartWidget({ symbol }: ChartWidgetProps) {
 
   const displayed = useMemo(() => {
     if (option.kind === "intraday") {
-      return aggregateBars(intraday.bars, intraday.vwap, option.minutes ?? 1);
+      return aggregateBars(intraday.bars, intraday.vwap, option.minutes ?? 1, intraday.indicators);
     }
-    return { bars: historical.bars, vwap: historical.vwap };
-  }, [option, intraday.bars, intraday.vwap, historical.bars, historical.vwap]);
+    // "series"-kind indicators (e.g. an EMA) are minute-resolution -- on an
+    // hourly/daily/weekly/monthly chart that's both semantically odd to
+    // overlay and, left unaggregated, would trip the same
+    // resolution-mismatch zoom bug aggregateBars exists to avoid. "level"
+    // lines are flat values, unaffected either way, so only those show here.
+    return {
+      bars: historical.bars,
+      vwap: historical.vwap,
+      indicators: intraday.indicators.filter((i) => i.kind === "level"),
+    };
+  }, [option, intraday.bars, intraday.vwap, intraday.indicators, historical.bars, historical.vwap]);
 
   const lastPrice =
     intraday.bars[intraday.bars.length - 1]?.c ??
@@ -75,6 +87,15 @@ export function ChartWidget({ symbol }: ChartWidgetProps) {
               <span className="vwap-swatch" /> VWAP
             </span>
           )}
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={showIndicators}
+            onClick={() => setShowIndicators((v) => !v)}
+            title="Toggle premarket/weekly/monthly range lines"
+          >
+            Levels
+          </button>
         </div>
       </div>
       <div className="widget-body">
@@ -92,7 +113,12 @@ export function ChartWidget({ symbol }: ChartWidgetProps) {
         ) : noHistoricalData ? (
           <div className="widget-empty">No {option.label} history available for {symbol}.</div>
         ) : (
-          <CandleChart bars={displayed.bars} vwap={displayed.vwap} />
+          <CandleChart
+            bars={displayed.bars}
+            vwap={displayed.vwap}
+            indicators={displayed.indicators}
+            showIndicators={showIndicators}
+          />
         )}
       </div>
       {symbol && <SymbolInfoPanel symbol={symbol} />}

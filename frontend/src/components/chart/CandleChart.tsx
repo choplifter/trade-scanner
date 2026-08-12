@@ -4,21 +4,25 @@ import {
   createChart,
   HistogramSeries,
   LineSeries,
+  LineStyle,
   TickMarkType,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type LineData,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 
-import type { Bar } from "../../types/alpaca";
+import type { Bar, IndicatorResult } from "../../types/alpaca";
 
 interface CandleChartProps {
   bars: Bar[];
   vwap: (number | null)[];
+  indicators: IndicatorResult[];
+  showIndicators: boolean;
 }
 
 function toUnixSeconds(iso: string): UTCTimestamp {
@@ -73,12 +77,14 @@ function barToVolume(bar: Bar): HistogramData {
 // lightweight-charts API rather than re-rendered through React, since it
 // owns its own canvas and re-creating it per tick would be far too slow for
 // live data.
-export function CandleChart({ bars, vwap }: CandleChartProps) {
+export function CandleChart({ bars, vwap, indicators, showIndicators }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const priceLinesRef = useRef<IPriceLine[]>([]);
+  const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -188,6 +194,72 @@ export function CandleChart({ bars, vwap }: CandleChartProps) {
       });
     }
   }, [bars, vwap]);
+
+  // Separate from the bars/vwap effect above: indicators only change when
+  // the symbol changes or the toggle flips, not on every live tick, and
+  // price lines/series have to be explicitly removed -- unlike
+  // series.setData, there's no bulk "replace" for createPriceLine, and a
+  // "series"-kind indicator (e.g. an EMA) is its own chart series, not
+  // just a value on the existing candle series.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const candleSeries = candleSeriesRef.current;
+    if (!chart || !candleSeries) return;
+
+    // Adding/removing a "series"-kind indicator (e.g. an EMA, sourced from
+    // 1-minute bars regardless of the displayed timeframe) can be a much
+    // higher time-resolution than the currently-displayed candles -- that
+    // changes what a *logical* bar index even means, so preserving by
+    // logical index (as opposed to by actual time) still lets the visible
+    // window jump. Time-based range is immune to that: it's the same wall-
+    // clock window regardless of how many logical points now exist inside
+    // it.
+    const preservedRange = chart.timeScale().getVisibleRange();
+
+    priceLinesRef.current.forEach((line) => candleSeries.removePriceLine(line));
+    priceLinesRef.current = [];
+    indicatorSeriesRef.current.forEach((series) => chart.removeSeries(series));
+    indicatorSeriesRef.current = [];
+
+    if (showIndicators) {
+      indicators.forEach((indicator) => {
+        Object.entries(indicator.series).forEach(([subName, value]) => {
+          const color = indicator.colors[subName] ?? "#898781";
+          const title = `${indicator.name} ${subName}`;
+
+          if (indicator.kind === "level") {
+            if (typeof value !== "number") return;
+            const line = candleSeries.createPriceLine({
+              price: value,
+              color,
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              axisLabelVisible: true,
+              title,
+            });
+            priceLinesRef.current.push(line);
+          } else if (indicator.kind === "series" && Array.isArray(value)) {
+            const series = chart.addSeries(LineSeries, {
+              color,
+              lineWidth: 2,
+              crosshairMarkerVisible: false,
+              lastValueVisible: true,
+              title,
+            });
+            const points: LineData[] = value
+              .filter((p) => p.value != null)
+              .map((p) => ({ time: toUnixSeconds(p.t), value: p.value as number }));
+            series.setData(points);
+            indicatorSeriesRef.current.push(series);
+          }
+        });
+      });
+    }
+
+    if (preservedRange) {
+      chart.timeScale().setVisibleRange(preservedRange);
+    }
+  }, [indicators, showIndicators]);
 
   return <div ref={containerRef} className="chart-container" />;
 }

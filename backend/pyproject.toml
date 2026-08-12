@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "pandas>=2.2",
+    "pandas_ta>=0.3",
     "numpy>=2.0",
     "pandas_market_calendars>=4.4",
     "orjson>=3.10",

@@ -1,5 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from app.alpaca.client import AlpacaClients
+from app.indicators.context import build_context
+from app.indicators.loader import run_indicators
 from app.market_data.bars import HISTORICAL_TIMEFRAMES, get_historical_bars, get_intraday_minute_bars
 from app.market_data.vwap import SessionVwapState
 from app.symbols.info import get_symbol_info
@@ -16,6 +19,17 @@ def _bar_to_dict(bar) -> dict:
         "c": bar.close,
         "v": bar.volume,
     }
+
+
+async def _compute_indicators(clients: AlpacaClients, symbol: str, minute_bars: list) -> list[dict]:
+    """Indicators (premarket/weekly/monthly range) are reference lines
+    independent of the chart's own zoom -- always computed the same way
+    regardless of which timeframe the caller actually requested.
+    """
+    weekly_bars = await get_historical_bars(clients, symbol, "1Week")
+    monthly_bars = await get_historical_bars(clients, symbol, "1Month")
+    ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars)
+    return run_indicators(ctx)
 
 
 @router.get("/search")
@@ -50,15 +64,20 @@ async def get_symbol_bars(
         if timeframe not in HISTORICAL_TIMEFRAMES:
             raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
         bars = await get_historical_bars(clients, symbol, timeframe)
+        # bars here are hourly/daily/etc, not minute bars -- indicators need
+        # today's minute bars regardless, so fetch those separately.
+        minute_bars = await get_intraday_minute_bars(clients, symbol)
+        indicators = await _compute_indicators(clients, symbol, minute_bars)
         return {
             "symbol": symbol,
             "bars": [_bar_to_dict(b) for b in bars],
             "vwap": [None] * len(bars),
+            "indicators": indicators,
         }
 
     bars = await get_intraday_minute_bars(clients, symbol)
     if not bars:
-        return {"symbol": symbol, "bars": [], "vwap": []}
+        return {"symbol": symbol, "bars": [], "vwap": [], "indicators": []}
 
     # Replay bars through a fresh accumulator to build the VWAP series for
     # the chart backfill...
@@ -84,8 +103,11 @@ async def get_symbol_bars(
     live_state.cum_vol = vwap_state.cum_vol
     live_state.session_date = vwap_state.session_date
 
+    indicators = await _compute_indicators(clients, symbol, bars)
+
     return {
         "symbol": symbol,
         "bars": [_bar_to_dict(b) for b in bars],
         "vwap": vwap_series,
+        "indicators": indicators,
     }

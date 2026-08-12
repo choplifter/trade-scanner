@@ -61,6 +61,15 @@
     color: #898781;
     font-size: 13px;
   }
+  #indicators-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #52514e;
+    cursor: pointer;
+  }
   #chart-container {
     position: absolute;
     top: 42px;
@@ -76,6 +85,9 @@
     <span id="symbol-label">Select a symbol</span>
     <span id="last-price"></span>
     <div class="tf-group" id="tf-group"></div>
+    <label id="indicators-toggle">
+      <input type="checkbox" id="indicators-checkbox" /> Levels
+    </label>
   </div>
   <div id="status"></div>
   <div id="chart-container"></div>
@@ -97,11 +109,30 @@ const TIMEFRAME_OPTIONS = [
 ];
 const DEFAULT_KEY = "5m";
 
-function aggregateBars(bars, vwap, minutes) {
-  if (minutes === 1) return { bars, vwap };
+// "series"-kind indicator sub-series (e.g. an EMA) carry the same per-bar
+// cardinality as `bars` -- both come from the same backend minute-bar fetch
+// -- so they need bucketing the same way vwap does (last known value per
+// bucket) whenever the chart is showing an aggregated timeframe. Left
+// unaggregated, a 1-minute-resolution line squeezed into a view built for
+// much coarser bars packs far more bars into the same visible time window
+// than the candles have, which trips lightweight-charts' own minBarSpacing
+// and silently narrows the visible range out from under the user the
+// moment the indicator is toggled on.
+function aggregateBars(bars, vwap, minutes, indicators) {
+  indicators = indicators || [];
+  if (minutes === 1) return { bars, vwap, indicators };
   const bucketMs = minutes * 60000;
   const outBars = [];
   const outVwap = [];
+
+  const slots = [];
+  indicators.forEach((indicator, i) => {
+    if (indicator.kind !== "series") return;
+    Object.entries(indicator.series).forEach(([subName, points]) => {
+      if (Array.isArray(points)) slots.push({ key: i + ":" + subName, points, out: [] });
+    });
+  });
+
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
     const bucketStart = Math.floor(new Date(bar.t).getTime() / bucketMs) * bucketMs;
@@ -112,12 +143,34 @@ function aggregateBars(bars, vwap, minutes) {
       current.c = bar.c;
       current.v += bar.v;
       outVwap[outVwap.length - 1] = vwap[i] ?? outVwap[outVwap.length - 1];
+      slots.forEach((slot) => {
+        const v = slot.points[i] && slot.points[i].value;
+        slot.out[slot.out.length - 1] = v != null ? v : slot.out[slot.out.length - 1];
+      });
     } else {
       outBars.push({ t: new Date(bucketStart).toISOString(), o: bar.o, h: bar.h, l: bar.l, c: bar.c, v: bar.v });
       outVwap.push(vwap[i] ?? null);
+      slots.forEach((slot) => {
+        slot.out.push(slot.points[i] ? slot.points[i].value : null);
+      });
     }
   }
-  return { bars: outBars, vwap: outVwap };
+
+  const slotsByKey = {};
+  slots.forEach((s) => { slotsByKey[s.key] = s; });
+  const outIndicators = indicators.map((indicator, i) => {
+    if (indicator.kind !== "series") return indicator;
+    const newSeries = {};
+    Object.keys(indicator.series).forEach((subName) => {
+      const slot = slotsByKey[i + ":" + subName];
+      newSeries[subName] = slot
+        ? outBars.map((b, idx) => ({ t: b.t, value: slot.out[idx] }))
+        : indicator.series[subName];
+    });
+    return Object.assign({}, indicator, { series: newSeries });
+  });
+
+  return { bars: outBars, vwap: outVwap, indicators: outIndicators };
 }
 
 function toUnixSeconds(iso) {
@@ -205,7 +258,76 @@ const vwapSeries = chart.addSeries(LightweightCharts.LineSeries, {
   lastValueVisible: false,
 });
 
-function setChartData(bars, vwap) {
+// Toggling the checkbox redraws from the last-fetched indicators without a
+// full reload -- these don't change bar to bar, only on symbol/timeframe
+// switch, so there's no need to re-fetch just to flip visibility. A
+// "series"-kind indicator (e.g. an EMA) is its own chart series, not just
+// a value on the existing candle series, so it needs addSeries/removeSeries
+// rather than createPriceLine/removePriceLine.
+let lastIndicators = [];
+let priceLines = [];
+let indicatorLineSeries = [];
+const indicatorsCheckbox = document.getElementById("indicators-checkbox");
+
+function drawIndicatorLines(indicators) {
+  // Adding/removing a "series"-kind indicator (e.g. an EMA, sourced from
+  // 1-minute bars regardless of the displayed timeframe) can be a much
+  // higher time-resolution than the currently-displayed candles -- that
+  // changes what a *logical* bar index even means, so preserving by
+  // logical index (as opposed to by actual time) still lets the visible
+  // window jump. Time-based range is immune to that: it's the same wall-
+  // clock window regardless of how many logical points now exist inside it.
+  const preservedRange = chart.timeScale().getVisibleRange();
+
+  priceLines.forEach((line) => candleSeries.removePriceLine(line));
+  priceLines = [];
+  indicatorLineSeries.forEach((series) => chart.removeSeries(series));
+  indicatorLineSeries = [];
+
+  if (indicatorsCheckbox.checked) {
+    indicators.forEach((indicator) => {
+      Object.entries(indicator.series).forEach(([subName, value]) => {
+        const color = (indicator.colors || {})[subName] || "#898781";
+        const title = indicator.name + " " + subName;
+
+        if (indicator.kind === "level") {
+          if (typeof value !== "number") return;
+          const line = candleSeries.createPriceLine({
+            price: value,
+            color,
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title,
+          });
+          priceLines.push(line);
+        } else if (indicator.kind === "series" && Array.isArray(value)) {
+          const series = chart.addSeries(LightweightCharts.LineSeries, {
+            color,
+            lineWidth: 2,
+            crosshairMarkerVisible: false,
+            lastValueVisible: true,
+            title,
+          });
+          series.setData(
+            value
+              .filter((p) => p.value != null)
+              .map((p) => ({ time: toUnixSeconds(p.t), value: p.value }))
+          );
+          indicatorLineSeries.push(series);
+        }
+      });
+    });
+  }
+
+  if (preservedRange) {
+    chart.timeScale().setVisibleRange(preservedRange);
+  }
+}
+
+indicatorsCheckbox.onchange = () => drawIndicatorLines(lastIndicators);
+
+function setChartData(bars, vwap, indicators) {
   candleSeries.setData(bars.map(barToCandle));
   volumeSeries.setData(bars.map(barToVolume));
 
@@ -215,6 +337,9 @@ function setChartData(bars, vwap) {
     if (v != null) vwapPoints.push({ time: toUnixSeconds(bar.t), value: v });
   });
   vwapSeries.setData(vwapPoints);
+
+  lastIndicators = indicators || [];
+  drawIndicatorLines(lastIndicators);
 
   if (bars.length > 0) {
     const MIN_SPACING = 3;
@@ -241,20 +366,32 @@ async function loadChart() {
     const data = await res.json();
     let bars = data.bars;
     let vwap = data.vwap;
+    // "series"-kind indicators (e.g. an EMA) are minute-resolution -- on an
+    // hourly/daily/weekly/monthly chart that's both semantically odd to
+    // overlay and, left unaggregated, would trip the same
+    // resolution-mismatch zoom bug aggregateBars exists to avoid. "level"
+    // lines are flat values, unaffected either way, so only those show
+    // outside the intraday view.
+    let indicators = option.kind === "intraday"
+      ? data.indicators
+      : (data.indicators || []).filter((i) => i.kind === "level");
     if (option.kind === "intraday" && option.minutes > 1) {
-      const agg = aggregateBars(bars, vwap, option.minutes);
+      const agg = aggregateBars(bars, vwap, option.minutes, indicators);
       bars = agg.bars;
       vwap = agg.vwap;
+      indicators = agg.indicators;
     }
     if (!bars.length) {
       statusEl.textContent = "No " + option.label + " data available for " + symbol + ".";
       candleSeries.setData([]);
       volumeSeries.setData([]);
       vwapSeries.setData([]);
+      lastIndicators = [];
+      drawIndicatorLines(lastIndicators);
       return;
     }
     statusEl.textContent = "";
-    setChartData(bars, vwap);
+    setChartData(bars, vwap, indicators);
   } catch (err) {
     statusEl.textContent = "Failed to load chart: " + err.message;
   }

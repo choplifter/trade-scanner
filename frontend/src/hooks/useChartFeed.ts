@@ -2,11 +2,14 @@ import { useEffect, useState } from "react";
 
 import { getSymbolBars } from "../api/http";
 import { chartSocket } from "../api/ws";
-import type { Bar } from "../types/alpaca";
+import type { Bar, IndicatorResult } from "../types/alpaca";
 
 export interface ChartFeedState {
   bars: Bar[];
   vwap: (number | null)[];
+  /** From the initial REST fetch only -- not refreshed per live WS tick,
+   * since these (premarket/weekly/monthly range) don't change bar to bar. */
+  indicators: IndicatorResult[];
   error: string | null;
   loading: boolean;
 }
@@ -14,6 +17,7 @@ export interface ChartFeedState {
 const EMPTY_STATE: ChartFeedState = {
   bars: [],
   vwap: [],
+  indicators: [],
   error: null,
   loading: false,
 };
@@ -39,7 +43,13 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
     getSymbolBars(symbol)
       .then((res) => {
         if (!cancelled) {
-          setState((s) => ({ ...s, bars: res.bars, vwap: res.vwap, loading: false }));
+          setState((s) => ({
+            ...s,
+            bars: res.bars,
+            vwap: res.vwap,
+            indicators: res.indicators,
+            loading: false,
+          }));
         }
       })
       .catch((err: unknown) => {

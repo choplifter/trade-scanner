@@ -59,10 +59,24 @@ export interface ChartErrorMessage {
 
 export type ChartSocketMessage = ChartBarMessage | ChartErrorMessage;
 
+/** One named indicator's computed result -- "level" is a static horizontal
+ * reference price per sub-series (e.g. {High, Low}), "series" is a
+ * value-per-bar line (unused by any built-in indicator yet, but the shape
+ * both frontends draw generically either way). Backed by whatever .py files
+ * currently exist in backend/app/indicators/ -- this list is not a fixed
+ * set of names. */
+export interface IndicatorResult {
+  name: string;
+  kind: "level" | "series";
+  series: Record<string, number | null | { t: string; value: number | null }[]>;
+  colors: Record<string, string>;
+}
+
 export interface SymbolBarsResponse {
   symbol: string;
   bars: Bar[];
   vwap: (number | null)[];
+  indicators: IndicatorResult[];
 }
 
 export type MarketSession = "premarket" | "regular" | "afterhours" | "closed";
