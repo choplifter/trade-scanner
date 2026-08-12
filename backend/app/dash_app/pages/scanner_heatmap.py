@@ -36,7 +36,7 @@ from app.ai.trade_idea_tracker import TrackedIdea
 from app.ai.trade_ideas import TradeIdea, generate_trade_ideas
 from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
-from app.dash_app.theme import DELTA_DOWN, DELTA_UP, TEXT_MUTED
+from app.dash_app.theme import DELTA_DOWN, DELTA_UP, STATUS_WARNING, TEXT_MUTED
 from app.symbols.info import SymbolInfoResponse, get_symbol_info
 
 logger = logging.getLogger(__name__)
@@ -176,11 +176,16 @@ def _sorted_rows(rows, sort_by):
 def _table_rows(rows) -> list[dict]:
     return [
         {
-            # "⚠" flags a row whose price isn't backed by a recently
-            # confirmed trade/bar (see ScannerRow.is_stale) -- the row
-            # still ranks normally, this just warns the price shown may be
-            # older than it looks. Matching tooltip in _tooltip_data below.
-            "symbol": f"{r.symbol} ⚠" if r.is_stale else r.symbol,
+            # Kept as the plain ticker -- update_home_symbol_detail below
+            # reads this value straight back out to load the chart/fetch
+            # fundamentals, so anything decorative here would get sent to
+            # Alpaca/FMP as the symbol itself. The stale warning is a cell
+            # *style* (style_data_conditional below) instead, driven by
+            # is_stale, not baked into the value.
+            "symbol": r.symbol,
+            # 1/0 rather than a bool -- dash_table's filter_query syntax
+            # compares more reliably against numbers than JSON booleans.
+            "is_stale": 1 if r.is_stale else 0,
             # "copy" is what's displayed; "tv_symbol" is what actually gets
             # copied (see the clientside_callback below) -- kept separate so
             # the cell can show a short icon/label instead of the full
@@ -421,6 +426,11 @@ def layout(**_kwargs):
                                         {
                                             "if": {"filter_query": "{pct_change_num} < 0", "column_id": "chg"},
                                             "color": DELTA_DOWN,
+                                        },
+                                        {
+                                            "if": {"filter_query": "{is_stale} = 1", "column_id": "symbol"},
+                                            "color": STATUS_WARNING,
+                                            "fontWeight": "700",
                                         },
                                     ],
                                     cell_selectable=True,
