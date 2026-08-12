@@ -1,13 +1,13 @@
 import { CopyButton } from "../common/CopyButton";
 import type { ScannerRow } from "../../types/alpaca";
 import {
+  formatDollarVolume,
   formatMarketCap,
   formatPct,
   formatPrice,
   formatRvol,
   formatShares,
   formatShortInterestPct,
-  formatVolume,
   tradingViewSymbol,
 } from "../../utils/format";
 
@@ -40,7 +40,7 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
           <th>Company</th>
           <th>Last</th>
           <th>Chg %</th>
-          <th>Vol</th>
+          <th>$ Vol</th>
           <th>RVol</th>
           <th>Float</th>
           <th>Mkt Cap</th>
@@ -85,7 +85,7 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
             <td className={row.pct_change >= 0 ? "delta-up" : "delta-down"}>
               {formatPct(row.pct_change)}
             </td>
-            <td>{formatVolume(row.volume_today)}</td>
+            <td>{formatDollarVolume(row.dollar_volume_today)}</td>
             <td>{formatRvol(row.rvol)}</td>
             <td>{cell(row.float_shares, formatShares)}</td>
             <td>{cell(row.market_cap, formatMarketCap)}</td>

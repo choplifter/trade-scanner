@@ -34,6 +34,13 @@ export function formatMarketCap(value: number): string {
   return `$${value.toFixed(0)}`;
 }
 
+/** Same scale/precision as formatMarketCap -- kept as its own named
+ * function since dollar volume and market cap are different metrics that
+ * just happen to format the same way. */
+export function formatDollarVolume(value: number): string {
+  return formatMarketCap(value);
+}
+
 export function formatShortInterestPct(value: number): string {
   return `${value.toFixed(2)}%`;
 }

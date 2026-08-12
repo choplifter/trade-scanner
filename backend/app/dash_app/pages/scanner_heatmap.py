@@ -65,7 +65,7 @@ _TABLE_COLUMNS = [
     {"name": "Company", "id": "company_name"},
     {"name": "Last", "id": "last"},
     {"name": "Chg %", "id": "chg"},
-    {"name": "Vol", "id": "vol"},
+    {"name": "$ Vol", "id": "vol"},
     {"name": "RVol", "id": "rvol"},
     {"name": "Float", "id": "float_shares"},
     {"name": "Mkt Cap", "id": "market_cap"},
@@ -82,14 +82,6 @@ def _format_price(value: float) -> str:
 def _format_pct(value: float) -> str:
     sign = "+" if value > 0 else ""
     return f"{sign}{value:.2f}%"
-
-
-def _format_volume(value: float) -> str:
-    if value >= 1_000_000:
-        return f"{value / 1_000_000:.2f}M"
-    if value >= 1_000:
-        return f"{value / 1_000:.1f}K"
-    return f"{value:.0f}"
 
 
 def _format_rvol(value: float) -> str:
@@ -144,7 +136,7 @@ _COLUMN_SORT_KEYS = {
     "symbol": lambda r: r.symbol,
     "last": lambda r: r.last_price,
     "chg": lambda r: r.pct_change,
-    "vol": lambda r: r.volume_today,
+    "vol": lambda r: r.dollar_volume_today,
     "rvol": lambda r: r.rvol,
     "float_shares": lambda r: r.float_shares,
     "market_cap": lambda r: r.market_cap,
@@ -196,7 +188,7 @@ def _table_rows(rows) -> list[dict]:
             "company_name": _format_string(r.company_name),
             "last": _format_price(r.last_price),
             "chg": _format_pct(r.pct_change),
-            "vol": _format_volume(r.volume_today),
+            "vol": _format_market_cap(r.dollar_volume_today),
             "rvol": _format_rvol(r.rvol),
             "float_shares": _format_shares(r.float_shares),
             "market_cap": _format_market_cap(r.market_cap),

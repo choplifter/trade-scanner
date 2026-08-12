@@ -281,6 +281,19 @@ body {
   position: relative;
   flex: 1;
   min-height: 0;
+  /* Tiles are exactly-sized to fill this container by construction (the
+     squarified treemap algorithm distributes precisely width*height of
+     area), but floating-point rounding in that row-packing math can leave
+     a tile a subpixel past the edge. Absolutely-positioned children still
+     count toward an ancestor's *scrollable* overflow even though they
+     don't affect layout size, so that subpixel overflow could reach
+     .widget-body's own overflow:auto and toggle a scrollbar -- which
+     shrinks the measured size here, triggers a relayout, and can flip the
+     scrollbar back off, repeating indefinitely (a ResizeObserver <->
+     overflow:auto feedback loop, seen in practice as the heatmap flicker-
+     resizing on selection). Clipping here keeps that subpixel overflow
+     from ever reaching the scrolling ancestor. */
+  overflow: hidden;
 }
 
 .heatmap-tile {
