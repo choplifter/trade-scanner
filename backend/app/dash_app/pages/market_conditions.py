@@ -11,6 +11,8 @@ app.market_data.market_conditions rather than restated as separate numbers
 color.
 """
 
+from datetime import datetime
+
 import dash
 from dash import Input, Output, callback, dcc, html
 
@@ -41,6 +43,29 @@ _DISCLAIMER = (
 )
 
 
+def _offset_label(moment: datetime) -> str:
+    """Explicit UTC offset (e.g. "UTC+02:00") rather than the OS-provided
+    %Z name (e.g. "Mitteleuropäische Sommerzeit" on a German-locale
+    Windows host) so it's unambiguous regardless of host locale/language
+    settings.
+    """
+    offset = moment.strftime("%z")
+    return f"UTC{offset[:3]}:{offset[3:]}" if offset else "local time"
+
+
+def _as_of_line() -> html.P:
+    """Current date/time in whatever timezone this backend process is
+    actually running in -- for this app's single-user, same-machine
+    deployment (backend and browser both on the user's own PC) that's the
+    same as the viewer's local time.
+    """
+    now = datetime.now().astimezone()
+    return html.P(
+        f"As of {now.strftime('%A, %B %d, %Y')} · {now.strftime('%H:%M')} ({_offset_label(now)})",
+        style={"color": TEXT_MUTED, "marginBottom": "20px"},
+    )
+
+
 def _section(title: str, children: list) -> html.Div:
     return html.Div(
         [html.H3(title), *children],
@@ -62,11 +87,12 @@ def layout(**_kwargs):
 def _unavailable() -> html.Div:
     return html.Div(
         [
+            _as_of_line(),
             html.P(
                 "Not available -- FMP_API_KEY isn't configured, or the first refresh "
                 "hasn't landed yet. Add FMP_API_KEY to backend/.env to enable this "
                 "(the same key that powers float/market cap/short interest)."
-            )
+            ),
         ]
     )
 
@@ -136,19 +162,24 @@ def _events_section(events: list) -> html.Div:
     if not events:
         body = html.P("No high-impact events scheduled today.", style={"color": TEXT_MUTED})
     else:
+        # Events come from FMP in UTC -- converted to this host's local
+        # timezone here (see _as_of_line) so the times line up with "now"
+        # as the viewer actually experiences it, not a raw UTC print.
+        local_events = [(e["date"].astimezone(), e["country"], e["event"]) for e in events]
+        time_label = f"Time ({_offset_label(local_events[0][0])})"
         body = html.Table(
             [
-                html.Thead(html.Tr([html.Th("Time (UTC)"), html.Th("Country"), html.Th("Event")])),
+                html.Thead(html.Tr([html.Th(time_label), html.Th("Country"), html.Th("Event")])),
                 html.Tbody(
                     [
                         html.Tr(
                             [
-                                html.Td(e["date"][11:16] if len(e["date"]) >= 16 else e["date"]),
-                                html.Td(e["country"]),
-                                html.Td(e["event"]),
+                                html.Td(local_dt.strftime("%H:%M")),
+                                html.Td(country),
+                                html.Td(event),
                             ]
                         )
-                        for e in events
+                        for local_dt, country, event in local_events
                     ]
                 ),
             ],
@@ -188,6 +219,7 @@ def update_market_conditions_page(_n_intervals):
 
     return html.Div(
         [
+            _as_of_line(),
             html.Div(
                 [_level_badge(conditions.level), html.P(_DISCLAIMER, style={"color": TEXT_MUTED, "marginTop": "10px"})],
                 style={"marginBottom": "20px"},
@@ -200,7 +232,7 @@ def update_market_conditions_page(_n_intervals):
             ),
             _events_section(
                 [
-                    {"date": e.date.isoformat(), "country": e.country, "event": e.event}
+                    {"date": e.date, "country": e.country, "event": e.event}
                     for e in conditions.high_impact_events_today
                 ]
             ),
