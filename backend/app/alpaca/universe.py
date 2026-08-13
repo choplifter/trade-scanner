@@ -136,6 +136,8 @@ async def build_universe(
                 continue
             if avg_vol_20d < settings.universe_min_avg_volume:
                 continue
+            if avg_dollar_vol_20d < settings.universe_min_dollar_volume:
+                continue
 
             universe[symbol] = UniverseSymbol(
                 symbol=symbol,
