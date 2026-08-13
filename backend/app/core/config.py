@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     universe_min_avg_volume: int = 300_000
     max_universe_size: int = 2000
 
+    # Minimum *today's* dollar volume (price x shares actually traded so
+    # far today, not a trailing average) a row needs to appear in a ranked
+    # scanner view -- distinct from universe_min_avg_volume, which gates
+    # which symbols get polled at all based on trailing 20-day history. A
+    # symbol can clear that trailing bar and still be quiet so far today
+    # (e.g. early premarket); this keeps the "$ Vol" column in both
+    # frontends' scanner tables from showing rows that technically qualify
+    # but haven't actually traded much yet.
+    scanner_min_dollar_volume: float = 1_000_000.0
+
     # How often to re-check Alpaca's movers screener for symbols that are
     # moving big today but never qualified for the trailing-volume-filtered
     # universe above (see fetch_movers_backstop in app.alpaca.universe).

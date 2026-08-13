@@ -38,8 +38,16 @@ def _has_headline(row: ScannerRow, news_cache: NewsCache | None) -> bool:
     return news_cache is not None and news_cache.get(row.symbol) is not None
 
 
-def _rank_gainers(rows, news_cache: NewsCache | None = None) -> list[ScannerRow]:
-    tradable = [r for r in rows if r.volume_today > 0]
+def _tradable(rows, min_dollar_volume: float) -> list[ScannerRow]:
+    return [
+        r for r in rows if r.volume_today > 0 and r.dollar_volume_today >= min_dollar_volume
+    ]
+
+
+def _rank_gainers(
+    rows, news_cache: NewsCache | None = None, min_dollar_volume: float = 0.0
+) -> list[ScannerRow]:
+    tradable = _tradable(rows, min_dollar_volume)
     return sorted(
         (r for r in tradable if r.pct_change > 0),
         key=lambda r: formulas.rank_score(r.pct_change, _has_headline(r, news_cache), r.rvol),
@@ -47,23 +55,27 @@ def _rank_gainers(rows, news_cache: NewsCache | None = None) -> list[ScannerRow]
     )[:_TOP_N]
 
 
-def _rank_losers(rows, news_cache: NewsCache | None = None) -> list[ScannerRow]:
+def _rank_losers(
+    rows, news_cache: NewsCache | None = None, min_dollar_volume: float = 0.0
+) -> list[ScannerRow]:
     # rank_score's boost/discount multiplies whatever magnitude it's given,
     # so applying it directly to pct_change (negative here) still sorts
     # correctly ascending: a catalyst makes a negative number more negative
     # (ranks higher), a fade-risk discount pulls it toward zero (ranks
     # lower) -- same as it does for the positive gainers case.
-    tradable = [r for r in rows if r.volume_today > 0]
+    tradable = _tradable(rows, min_dollar_volume)
     return sorted(
         (r for r in tradable if r.pct_change < 0),
         key=lambda r: formulas.rank_score(r.pct_change, _has_headline(r, news_cache), r.rvol),
     )[:_TOP_N]
 
 
-def _rank_most_active(rows, news_cache: NewsCache | None = None) -> list[ScannerRow]:
+def _rank_most_active(
+    rows, news_cache: NewsCache | None = None, min_dollar_volume: float = 0.0
+) -> list[ScannerRow]:
     """By share volume traded today -- direction-agnostic, unlike
     gainers/losers, so no pct_change filter."""
-    tradable = [r for r in rows if r.volume_today > 0]
+    tradable = _tradable(rows, min_dollar_volume)
     return sorted(
         tradable,
         key=lambda r: formulas.rank_score(r.volume_today, _has_headline(r, news_cache), r.rvol),
@@ -202,7 +214,9 @@ class ScannerEngine:
             )
 
     def _live_gainers(self) -> list[ScannerRow]:
-        return _rank_gainers(self.rows.values(), self.news_cache)
+        return _rank_gainers(
+            self.rows.values(), self.news_cache, self.settings.scanner_min_dollar_volume
+        )
 
     @property
     def is_latest_session_fallback(self) -> bool:
@@ -220,9 +234,10 @@ class ScannerEngine:
 
     def _build_views(self) -> dict[str, list[ScannerRow]]:
         fallback_rows = (self._latest_session_rows or {}).values()
+        min_dollar_volume = self.settings.scanner_min_dollar_volume
 
         live_gainers = self._live_gainers()
-        gainers = live_gainers or _rank_gainers(fallback_rows, self.news_cache)
+        gainers = live_gainers or _rank_gainers(fallback_rows, self.news_cache, min_dollar_volume)
 
         if self.session == "premarket":
             premarket_gainers = gainers
@@ -234,14 +249,14 @@ class ScannerEngine:
             # showing an empty widget with no explanation.
             premarket_gainers = live_gainers
         else:
-            premarket_gainers = _rank_gainers(fallback_rows, self.news_cache)
+            premarket_gainers = _rank_gainers(fallback_rows, self.news_cache, min_dollar_volume)
 
-        losers = _rank_losers(self.rows.values(), self.news_cache) or _rank_losers(
-            fallback_rows, self.news_cache
+        losers = _rank_losers(self.rows.values(), self.news_cache, min_dollar_volume) or _rank_losers(
+            fallback_rows, self.news_cache, min_dollar_volume
         )
-        most_active = _rank_most_active(self.rows.values(), self.news_cache) or _rank_most_active(
-            fallback_rows, self.news_cache
-        )
+        most_active = _rank_most_active(
+            self.rows.values(), self.news_cache, min_dollar_volume
+        ) or _rank_most_active(fallback_rows, self.news_cache, min_dollar_volume)
 
         return {
             "gainers": gainers,
@@ -348,7 +363,9 @@ class ScannerEngine:
                     updated_at=datetime.now(timezone.utc),
                 )
 
-        self._premarket_snapshot = _rank_gainers(rows.values(), self.news_cache)
+        self._premarket_snapshot = _rank_gainers(
+            rows.values(), self.news_cache, self.settings.scanner_min_dollar_volume
+        )
         logger.info("Backfilled premarket snapshot: %d gainers", len(self._premarket_snapshot))
 
     async def _refresh_movers_backstop(self) -> dict[str, UniverseSymbol]:
