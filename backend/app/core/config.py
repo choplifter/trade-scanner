@@ -43,13 +43,6 @@ class Settings(BaseSettings):
     universe_min_price: float = 5.0
     universe_max_price: float = 50.0
     universe_min_avg_volume: int = 300_000
-    # A share-count minimum alone doesn't guarantee real liquidity once
-    # universe_min_price can go as low as $2 -- 300k shares/day at $2 is
-    # only $600k of actual dollar volume traded, thin enough for wide
-    # spreads and erratic fills even though the share-count filter above
-    # passes it. $1M/day is a light additional floor on top of (not a
-    # replacement for) the share-count filter.
-    universe_min_dollar_volume: float = 1_000_000.0
     max_universe_size: int = 2000
 
     # How often to re-check Alpaca's movers screener for symbols that are
