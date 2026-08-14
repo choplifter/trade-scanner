@@ -1,11 +1,14 @@
 import { useState } from "react";
 
 import { TradeIdeasWidget } from "./components/ai/TradeIdeasWidget";
+import { AlarmsOverlay } from "./components/alarms/AlarmsOverlay";
+import { AlarmsToggle } from "./components/alarms/AlarmsToggle";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
+import { useAlarms } from "./hooks/useAlarms";
 import { useMarketConditions } from "./hooks/useMarketConditions";
 import { useMarketSession } from "./hooks/useMarketSession";
 
@@ -26,6 +29,7 @@ export default function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const session = useMarketSession();
   const conditions = useMarketConditions();
+  const alarms = useAlarms();
 
   return (
     <div className="app-shell">
@@ -58,8 +62,20 @@ export default function App() {
             <span className="session-dot" />
             {SESSION_LABEL[session] ?? session}
           </span>
+          <AlarmsToggle
+            enabled={alarms.enabled}
+            onToggle={alarms.setEnabled}
+            activeCount={alarms.alarms.length}
+            onClickCount={alarms.openOverlay}
+          />
         </div>
       </header>
+      <AlarmsOverlay
+        open={alarms.overlayOpen}
+        alarms={alarms.alarms}
+        onClose={alarms.closeOverlay}
+        onSelectSymbol={setSelectedSymbol}
+      />
       <main className="dashboard-main">
         <ResizablePanels
           direction="column"

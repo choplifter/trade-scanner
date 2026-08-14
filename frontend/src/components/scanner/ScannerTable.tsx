@@ -28,6 +28,7 @@ type SortKey =
   | "company_name"
   | "last"
   | "chg"
+  | "mom15"
   | "vol"
   | "rvol"
   | "float"
@@ -48,6 +49,7 @@ const SORT_ACCESSORS: Record<SortKey, (row: ScannerRow) => SortValue> = {
   company_name: (r) => r.company_name,
   last: (r) => r.last_price,
   chg: (r) => r.pct_change,
+  mom15: (r) => r.pct_change_last_15m,
   vol: (r) => r.dollar_volume_today,
   rvol: (r) => r.rvol,
   float: (r) => r.float_shares,
@@ -62,6 +64,7 @@ const COLUMNS: { id: SortKey; label: string }[] = [
   { id: "company_name", label: "Company" },
   { id: "last", label: "Last" },
   { id: "chg", label: "Chg %" },
+  { id: "mom15", label: "15m %" },
   { id: "vol", label: "$ Vol" },
   { id: "rvol", label: "RVol" },
   { id: "float", label: "Float" },
@@ -172,6 +175,14 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
                   FADE RISK
                 </span>
               )}
+              {row.is_momentum_alert && (
+                <span
+                  className="badge-momentum-alert"
+                  title="Fast, wick-less move -- a large 15-minute price change with almost no pullback candle"
+                >
+                  ⚡ MOMENTUM
+                </span>
+              )}
               {row.recent_headline && (
                 <span className="badge-news" title={row.recent_headline}>
                   📰
@@ -184,6 +195,18 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
             <td>{formatPrice(row.last_price)}</td>
             <td className={row.pct_change >= 0 ? "delta-up" : "delta-down"}>
               {formatPct(row.pct_change)}
+            </td>
+            <td
+              className={
+                row.pct_change_last_15m === null
+                  ? undefined
+                  : row.pct_change_last_15m >= 0
+                    ? "delta-up"
+                    : "delta-down"
+              }
+              title="Price change over just the trailing 15 minutes -- distinct from Chg %, which is since prior close"
+            >
+              {cell(row.pct_change_last_15m, formatPct)}
             </td>
             <td>{formatDollarVolume(row.dollar_volume_today)}</td>
             <td>{formatRvol(row.rvol)}</td>

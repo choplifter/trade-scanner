@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app.scanners.formulas import is_fade_risk, is_stale, rank_score
+from app.scanners.formulas import is_fade_risk, is_momentum_alert, is_stale, rank_score
 
 
 def test_is_stale_true_when_no_last_trade_at():
@@ -62,3 +62,28 @@ def test_rank_score_preserves_sign_for_losers():
     discounted = rank_score(-10.0, False, 20.0)
     assert boosted < -10.0
     assert -10.0 < discounted < 0.0
+
+
+def test_is_momentum_alert_none_pct_change_is_false():
+    assert is_momentum_alert(None, True, threshold=5.0) is False
+
+
+def test_is_momentum_alert_below_threshold_is_false():
+    assert is_momentum_alert(3.0, True, threshold=5.0) is False
+
+
+def test_is_momentum_alert_above_threshold_but_not_marubozu_is_false():
+    assert is_momentum_alert(8.0, False, threshold=5.0) is False
+
+
+def test_is_momentum_alert_above_threshold_and_marubozu_is_true():
+    assert is_momentum_alert(8.0, True, threshold=5.0) is True
+
+
+def test_is_momentum_alert_negative_direction_uses_magnitude():
+    assert is_momentum_alert(-8.0, True, threshold=5.0) is True
+    assert is_momentum_alert(-3.0, True, threshold=5.0) is False
+
+
+def test_is_momentum_alert_exactly_at_threshold_is_true():
+    assert is_momentum_alert(5.0, True, threshold=5.0) is True

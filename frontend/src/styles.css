@@ -181,6 +181,141 @@ body {
   background: var(--status-critical);
 }
 
+.alarms-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.alarms-toggle {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.alarms-toggle:hover {
+  background: var(--row-hover);
+}
+
+.alarms-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.alarms-count-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--status-critical);
+  background: transparent;
+  color: var(--status-critical);
+  cursor: pointer;
+}
+
+.alarms-count-badge:hover {
+  background: var(--row-hover);
+}
+
+.alarms-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.alarms-panel {
+  width: min(480px, 90vw);
+  max-height: min(560px, 80vh);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.alarms-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 4px;
+}
+
+.alarms-panel-header h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.alarms-close {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.alarms-close:hover {
+  color: var(--text-primary);
+}
+
+.alarms-panel-subtitle {
+  margin: 4px 16px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.alarms-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 8px;
+  overflow-y: auto;
+}
+
+.alarms-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.alarms-list-item:hover {
+  background: var(--row-hover);
+}
+
+.alarms-symbol {
+  font-weight: 700;
+  min-width: 56px;
+}
+
+.alarms-price {
+  color: var(--text-secondary);
+  min-width: 64px;
+}
+
+.alarms-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .dashboard-main {
   flex: 1;
   min-height: 0;
@@ -499,6 +634,19 @@ body {
   border-radius: 3px;
   color: var(--status-critical);
   border: 1px solid var(--status-critical);
+  vertical-align: middle;
+  cursor: default;
+}
+
+.badge-momentum-alert {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
   vertical-align: middle;
   cursor: default;
 }

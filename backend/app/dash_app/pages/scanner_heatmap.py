@@ -37,6 +37,7 @@ from app.ai.trade_ideas import TradeIdea, generate_trade_ideas
 from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
 from app.dash_app.theme import (
+    ACCENT,
     DELTA_DOWN,
     DELTA_UP,
     STATUS_CRITICAL,
@@ -71,6 +72,7 @@ _TABLE_COLUMNS = [
     {"name": "Company", "id": "company_name"},
     {"name": "Last", "id": "last"},
     {"name": "Chg %", "id": "chg"},
+    {"name": "15m %", "id": "mom15"},
     {"name": "$ Vol", "id": "vol"},
     {"name": "RVol", "id": "rvol"},
     {"name": "Float", "id": "float_shares"},
@@ -88,6 +90,14 @@ def _format_price(value: float) -> str:
 def _format_pct(value: float) -> str:
     sign = "+" if value > 0 else ""
     return f"{sign}{value:.2f}%"
+
+
+# "—" for pct_change_last_15m -- None until the momentum cache has fetched
+# it, or when there isn't yet 15 minutes of bars to compare against (see
+# app.scanners.momentum_cache.MomentumCache), same "—" convention as the
+# fundamentals fields below.
+def _format_pct_or_dash(value: float | None) -> str:
+    return "—" if value is None else _format_pct(value)
 
 
 def _format_rvol(value: float) -> str:
@@ -142,6 +152,7 @@ _COLUMN_SORT_KEYS = {
     "symbol": lambda r: r.symbol,
     "last": lambda r: r.last_price,
     "chg": lambda r: r.pct_change,
+    "mom15": lambda r: r.pct_change_last_15m,
     "vol": lambda r: r.dollar_volume_today,
     "rvol": lambda r: r.rvol,
     "float_shares": lambda r: r.float_shares,
@@ -185,6 +196,7 @@ def _table_rows(rows) -> list[dict]:
             # compares more reliably against numbers than JSON booleans.
             "is_stale": 1 if r.is_stale else 0,
             "is_fade_risk": 1 if r.is_fade_risk else 0,
+            "is_momentum_alert": 1 if r.is_momentum_alert else 0,
             # "copy" is what's displayed; "tv_symbol" is what actually gets
             # copied (see the clientside_callback below) -- kept separate so
             # the cell can show a short icon/label instead of the full
@@ -195,6 +207,7 @@ def _table_rows(rows) -> list[dict]:
             "company_name": _format_string(r.company_name),
             "last": _format_price(r.last_price),
             "chg": _format_pct(r.pct_change),
+            "mom15": _format_pct_or_dash(r.pct_change_last_15m),
             "vol": _format_market_cap(r.dollar_volume_today),
             "rvol": _format_rvol(r.rvol),
             "float_shares": _format_shares(r.float_shares),
@@ -203,6 +216,7 @@ def _table_rows(rows) -> list[dict]:
             "exchange": _format_string(r.exchange),
             "country": _format_string(r.country),
             "pct_change_num": r.pct_change,
+            "mom15_num": r.pct_change_last_15m,
         }
         for r in rows
     ]
@@ -224,6 +238,11 @@ def _tooltip_data(rows) -> list[dict]:
                 "RVol >15x -- historically more often a blow-off/exhaustion move than a "
                 "continuation (this app's own scanner history shows a lower win rate at this "
                 "RVol range)"
+            )
+        if r.is_momentum_alert:
+            bits.append(
+                "Fast, wick-less move -- a large 15-minute price change with almost no "
+                "pullback candle"
             )
         return " · ".join(bits)
 
@@ -432,6 +451,14 @@ def layout(**_kwargs):
                                             "color": DELTA_DOWN,
                                         },
                                         {
+                                            "if": {"filter_query": "{mom15_num} >= 0", "column_id": "mom15"},
+                                            "color": DELTA_UP,
+                                        },
+                                        {
+                                            "if": {"filter_query": "{mom15_num} < 0", "column_id": "mom15"},
+                                            "color": DELTA_DOWN,
+                                        },
+                                        {
                                             "if": {"filter_query": "{is_stale} = 1", "column_id": "symbol"},
                                             "color": STATUS_WARNING,
                                             "fontWeight": "700",
@@ -439,6 +466,11 @@ def layout(**_kwargs):
                                         {
                                             "if": {"filter_query": "{is_fade_risk} = 1", "column_id": "symbol"},
                                             "color": STATUS_CRITICAL,
+                                            "fontWeight": "700",
+                                        },
+                                        {
+                                            "if": {"filter_query": "{is_momentum_alert} = 1", "column_id": "symbol"},
+                                            "color": ACCENT,
                                             "fontWeight": "700",
                                         },
                                     ],

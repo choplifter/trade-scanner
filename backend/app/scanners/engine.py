@@ -23,6 +23,7 @@ from app.market_data.news_cache import NewsCache
 from app.scanners import formulas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.history_store import NewAppearance, ScannerHistoryStore
+from app.scanners.momentum_cache import MomentumCache
 from app.scanners.latest_session import compute_latest_session_rows
 from app.scanners.schemas import ScannerRow
 from app.services.market_clock import ET, current_session, trading_hours_for
@@ -110,6 +111,7 @@ class ScannerEngine:
         benchmark_tracker: ScannerBenchmarkTracker,
         history_store: ScannerHistoryStore,
         news_cache: NewsCache,
+        momentum_cache: MomentumCache,
         http_client: httpx.AsyncClient,
     ):
         self.clients = clients
@@ -120,6 +122,7 @@ class ScannerEngine:
         self.benchmark_tracker = benchmark_tracker
         self.history_store = history_store
         self.news_cache = news_cache
+        self.momentum_cache = momentum_cache
         self.http_client = http_client
         self.market_conditions: MarketConditions | None = None
         self._last_market_conditions_refresh: float = 0.0
@@ -513,6 +516,26 @@ class ScannerEngine:
             for row in rows:
                 row.recent_headline = self.news_cache.get(row.symbol)
 
+    async def _attach_momentum(self, views: dict[str, list[ScannerRow]]) -> None:
+        """Fill in each row's trailing-15-minute pct change for whatever's
+        actually ranked right now -- see
+        app.scanners.momentum_cache.MomentumCache for why this is scoped to
+        the ranked views (and refreshed on its own slow cadence) instead of
+        fetching minute bars for every poll tick.
+        """
+        symbols = {r.symbol for rows in views.values() for r in rows}
+        if not symbols:
+            return
+        await self.momentum_cache.ensure_fresh(symbols)
+        for rows in views.values():
+            for row in rows:
+                row.pct_change_last_15m = self.momentum_cache.get(row.symbol)
+                row.is_momentum_alert = formulas.is_momentum_alert(
+                    row.pct_change_last_15m,
+                    self.momentum_cache.is_marubozu(row.symbol),
+                    self.settings.alarm_momentum_pct_threshold,
+                )
+
     async def _poll_once(self) -> None:
         symbols = list(self.universe.keys())
         batches = [
@@ -703,6 +726,7 @@ class ScannerEngine:
             await self._write_periodic_snapshots()
             await self._attach_fundamentals(views)
             await self._attach_news(views)
+            await self._attach_momentum(views)
             is_fallback = self.is_latest_session_fallback
             for name, rows in views.items():
                 await self.manager.broadcast(

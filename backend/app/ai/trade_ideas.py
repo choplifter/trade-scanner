@@ -1,13 +1,14 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import anthropic
 from pydantic import BaseModel, Field
 
 from app.alpaca.client import AlpacaClients
 from app.market_data.bars import get_daily_bars_multi, get_intraday_minute_bars_multi
+from app.market_data.momentum import MOMENTUM_WINDOW, pct_change_over_window
 from app.market_data.news import fetch_headlines
 from app.market_data.vwap import SessionVwapState
 from app.scanners.schemas import ScannerRow
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 _MODEL = "claude-opus-5"
 _CANDIDATE_POOL = 15
 _TOP_N = 3
-_MOMENTUM_WINDOW = timedelta(minutes=15)
 _CONTINUATION_LOOKBACK_DAYS = 20
 _CONTINUATION_WINDOW = 5
 _ATR_WINDOW = 10
@@ -117,13 +117,9 @@ async def _fetch_intraday_context(
             entry["vwap_price"] = round(vwap, 2)
             entry["pct_from_vwap"] = round((last - vwap) / vwap * 100, 2)
 
-        latest_bar = bars[-1]
-        cutoff = latest_bar.timestamp - _MOMENTUM_WINDOW
-        reference_bar = next((b for b in reversed(bars) if b.timestamp <= cutoff), None)
-        if reference_bar is not None and reference_bar.close:
-            entry["pct_change_last_15m"] = round(
-                (latest_bar.close - reference_bar.close) / reference_bar.close * 100, 2
-            )
+        momentum = pct_change_over_window(bars, MOMENTUM_WINDOW)
+        if momentum is not None:
+            entry["pct_change_last_15m"] = momentum
 
         if entry:
             context[symbol] = entry

@@ -18,6 +18,18 @@ export interface ScannerRow {
   country: string | null;
   company_name: string | null;
   recent_headline: string | null;
+  /** % price change over just the trailing 15 minutes -- distinct from
+   * pct_change (since prior close): a symbol can carry a huge pct_change
+   * from earlier in the session while this reads ~0 because it's since
+   * gone flat, or vice versa for a fresh late-session breakout. Null
+   * until fetched, or when there isn't yet 15 minutes of bars to compare
+   * against. */
+  pct_change_last_15m: number | null;
+  /** True when pct_change_last_15m exceeds the alarm threshold in
+   * magnitude *and* the latest 1-minute candle is a marubozu (almost no
+   * wick) -- see backend app.scanners.formulas.is_momentum_alert. Drives
+   * the momentum-alarm overlay (see hooks/useAlarms), off by default. */
+  is_momentum_alert: boolean;
   /** True when the feed hasn't confirmed this price via a real trade/bar
    * recently -- the row still ranks normally, but the price shown may be
    * older than it looks. */

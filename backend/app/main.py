@@ -22,6 +22,7 @@ from app.routers import meta, scanners, symbols, trade_ideas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.engine import ScannerEngine
 from app.scanners.history_store import ScannerHistoryStore
+from app.scanners.momentum_cache import MomentumCache
 from app.ws import chart_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
 
@@ -60,6 +61,9 @@ async def lifespan(app: FastAPI):
     news_cache = NewsCache(settings, clients)
     app.state.news_cache = news_cache
 
+    momentum_cache = MomentumCache(settings, clients)
+    app.state.momentum_cache = momentum_cache
+
     if settings.has_credentials:
         try:
             universe = await build_universe(clients, settings)
@@ -83,6 +87,7 @@ async def lifespan(app: FastAPI):
         app.state.scanner_benchmark_tracker,
         scanner_history_store,
         news_cache,
+        momentum_cache,
         fundamentals_client,
     )
     app.state.scanner_engine = engine

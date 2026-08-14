@@ -74,6 +74,26 @@ class Settings(BaseSettings):
     # endpoint on every 5-10s tick for the same ~150 ranked symbols.
     scanner_news_refresh_interval: float = 900.0
 
+    # How often a symbol's trailing-15-minute momentum (pct_change_last_15m)
+    # is refreshed while it stays in a ranked scanner view -- see
+    # app.scanners.momentum_cache.MomentumCache. Much tighter than the news
+    # refresh above: the whole point of this field is to catch a symbol
+    # accelerating *right now*, so refreshing only every 15 minutes (one
+    # sample per window) would defeat the purpose. Still well above the
+    # 5-10s poll interval so scanning doesn't fetch minute bars for ~150
+    # symbols on every tick.
+    scanner_momentum_refresh_interval: float = 120.0
+
+    # Absolute-value threshold for "suspicious" 15-minute momentum used by
+    # the momentum alarm (see app.scanners.formulas.is_momentum_alert) -- a
+    # fixed % rather than normalized against each symbol's own typical daily
+    # range. Simpler to ship first and revisit once there's real trigger
+    # data to check the false-positive rate against, same spirit as
+    # formulas.rvol's own time-of-day-normalization TODO and how the
+    # catalyst/fade-risk multipliers were tuned from scanner_history.sqlite3
+    # rather than guessed at upfront.
+    alarm_momentum_pct_threshold: float = 5.0
+
     # How often the red/yellow/green market-conditions readout (VIX,
     # today's high-impact global economic events, scanner breadth) is
     # refreshed -- see app.market_data.market_conditions. None of these

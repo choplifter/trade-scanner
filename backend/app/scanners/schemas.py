@@ -29,6 +29,19 @@ class ScannerRow(BaseModel):
     # Most recent news headline, if any, refreshed on a slow cadence for
     # whatever's currently ranked -- see app.market_data.news_cache.NewsCache.
     recent_headline: str | None = None
+    # % price change over just the trailing 15 minutes, refreshed on a slow
+    # cadence for whatever's currently ranked -- see
+    # app.scanners.momentum_cache.MomentumCache. Distinct from pct_change
+    # (since prior close): a symbol can have a huge pct_change from earlier
+    # in the session while this reads ~0 because it's since gone flat, or
+    # vice versa for a fresh late-session breakout. None until fetched, or
+    # when there isn't yet 15 minutes of bars to compare against.
+    pct_change_last_15m: float | None = None
+    # True when pct_change_last_15m exceeds settings.alarm_momentum_pct_threshold
+    # in magnitude *and* the latest 1-minute candle is a marubozu (almost no
+    # wick) -- see app.scanners.formulas.is_momentum_alert. Drives the
+    # frontend's momentum-alarm overlay (off by default).
+    is_momentum_alert: bool = False
     # When the underlying trade/bar backing last_price was actually printed
     # -- distinct from updated_at, which is when *we* last recomputed the
     # row (that happens every poll tick regardless of whether the feed

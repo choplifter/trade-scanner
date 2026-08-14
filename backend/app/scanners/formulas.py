@@ -139,6 +139,22 @@ def rank_score(magnitude: float, has_headline: bool, rvol: float | None) -> floa
     return score
 
 
+def is_momentum_alert(pct_change_last_15m: float | None, is_marubozu: bool, threshold: float) -> bool:
+    """A fast, wick-less move: the trailing-15-minute price change exceeds
+    `threshold` in magnitude (either direction) *and* the most recent
+    1-minute candle shows almost no pullback (see
+    app.market_data.candle_shape.is_marubozu) -- i.e. still actively
+    printing in one direction right now, not just a big number left over
+    from earlier in the session. Distinct from is_fade_risk (extreme RVOL,
+    which historically predicts a *worse* outcome) -- this is about
+    catching a move while it's actively happening, not judging whether
+    it'll continue.
+    """
+    if pct_change_last_15m is None:
+        return False
+    return abs(pct_change_last_15m) >= threshold and is_marubozu
+
+
 def spread_pct(bid: float | None, ask: float | None) -> float | None:
     """Bid-ask spread as a % of the midpoint -- a liquidity/fill-quality
     proxy independent of price level. A stock can have a huge gap and rvol
