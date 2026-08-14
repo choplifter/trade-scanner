@@ -74,6 +74,24 @@ _LEADERBOARD_SIZE = 15
 _GAP_BUCKETS = [("<15%", 0.0, 15.0), ("15-30%", 15.0, 30.0), ("30-60%", 30.0, 60.0), (">60%", 60.0, None)]
 _RVOL_BUCKETS = [("<2x", 0.0, 2.0), ("2-5x", 2.0, 5.0), ("5-15x", 5.0, 15.0), (">15x", 15.0, None)]
 
+# Baseline correlations the catalyst-boost/fade-risk ranking change
+# (commit 1ce30a2, "Boost catalyst headlines and flag RVOL fade-risk in
+# scanner ranking") was based on -- a one-off analysis of 1447 historical
+# picks in this same table, on 2026-08-12. See compute_ranking_drift: this
+# is a comparison point for re-checking whether fresh data since deploy
+# still supports the same direction/magnitude, not a certainty that should
+# be assumed to hold forever.
+_DEPLOY_DATE = "2026-08-12"
+_BASELINE_CATALYST_WIN_RATE_DELTA_PP = 8.5
+_BASELINE_FADE_RISK_WIN_RATE = 25.6
+_BASELINE_FADE_RISK_AVG_RETURN = -10.38
+# Must match formulas._FADE_RISK_RVOL -- duplicated rather than imported,
+# same as _RVOL_BUCKETS' own ">15x" boundary above.
+_FADE_RISK_RVOL_THRESHOLD = 15.0
+# Below this many picks in a bucket, win rate/avg return are too noisy to
+# call drift one way or the other either way.
+_DRIFT_MIN_SAMPLE_SIZE = 30
+
 
 @dataclass
 class NewAppearance:
@@ -362,3 +380,117 @@ class ScannerHistoryStore:
 
     async def compute_performance(self, days: int = 7, view: str | None = None) -> dict:
         return await asyncio.to_thread(self._compute_performance_sync, days, view)
+
+    @staticmethod
+    def _bucket_stats(picks: list[dict]) -> dict:
+        wins = sum(1 for p in picks if p["pct_change_since_entry"] > 0)
+        return {
+            "sample_size": len(picks),
+            "win_rate": round(wins / len(picks) * 100, 1) if picks else None,
+            "avg_return": (
+                round(sum(p["pct_change_since_entry"] for p in picks) / len(picks), 2)
+                if picks
+                else None
+            ),
+        }
+
+    @classmethod
+    def _catalyst_drift(cls, picks: list[dict]) -> dict:
+        with_headline = [p for p in picks if p["has_headline"]]
+        without_headline = [p for p in picks if not p["has_headline"]]
+        with_stats = cls._bucket_stats(with_headline)
+        without_stats = cls._bucket_stats(without_headline)
+        delta_pp = (
+            round(with_stats["win_rate"] - without_stats["win_rate"], 1)
+            if with_stats["win_rate"] is not None and without_stats["win_rate"] is not None
+            else None
+        )
+        return {
+            "with_headline": with_stats,
+            "without_headline": without_stats,
+            "win_rate_delta_pp": delta_pp,
+            "baseline_win_rate_delta_pp": _BASELINE_CATALYST_WIN_RATE_DELTA_PP,
+            "sufficient_sample": (
+                len(with_headline) >= _DRIFT_MIN_SAMPLE_SIZE
+                and len(without_headline) >= _DRIFT_MIN_SAMPLE_SIZE
+            ),
+        }
+
+    @classmethod
+    def _fade_risk_drift(cls, picks: list[dict]) -> dict:
+        above = [p for p in picks if p["entry_rvol"] > _FADE_RISK_RVOL_THRESHOLD]
+        at_or_below = [p for p in picks if p["entry_rvol"] <= _FADE_RISK_RVOL_THRESHOLD]
+        return {
+            "rvol_above_threshold": cls._bucket_stats(above),
+            "rvol_at_or_below_threshold": cls._bucket_stats(at_or_below),
+            "threshold": _FADE_RISK_RVOL_THRESHOLD,
+            "baseline_win_rate": _BASELINE_FADE_RISK_WIN_RATE,
+            "baseline_avg_return": _BASELINE_FADE_RISK_AVG_RETURN,
+            "sufficient_sample": len(above) >= _DRIFT_MIN_SAMPLE_SIZE,
+        }
+
+    def _compute_ranking_drift_sync(self, since_date: str) -> dict:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            appearances = conn.execute(
+                "SELECT * FROM appearances WHERE trading_date >= ?", (since_date,)
+            ).fetchall()
+
+            if not appearances:
+                return {"since": since_date, "sample_size": 0, "catalyst": None, "fade_risk": None}
+
+            appearance_ids = [a["id"] for a in appearances]
+            placeholders = ",".join("?" * len(appearance_ids))
+            snap_rows = conn.execute(
+                f"SELECT appearance_id, minutes_since_entry, price "
+                f"FROM snapshots WHERE appearance_id IN ({placeholders}) "
+                f"ORDER BY minutes_since_entry",
+                appearance_ids,
+            ).fetchall()
+
+        snaps_by_appearance: dict[int, list[tuple[float, float]]] = {}
+        for row in snap_rows:
+            snaps_by_appearance.setdefault(row["appearance_id"], []).append(
+                (row["minutes_since_entry"], row["price"])
+            )
+
+        picks = []
+        for appearance in appearances:
+            snaps = snaps_by_appearance.get(appearance["id"])
+            if not snaps:
+                continue
+            entry_price = appearance["entry_price"]
+            if not entry_price:
+                continue
+            _, latest_price = max(snaps, key=lambda s: s[0])
+            picks.append(
+                {
+                    "has_headline": bool(appearance["entry_headline"]),
+                    "entry_rvol": appearance["entry_rvol"],
+                    "pct_change_since_entry": (latest_price - entry_price) / entry_price * 100,
+                }
+            )
+
+        return {
+            "since": since_date,
+            "sample_size": len(picks),
+            "catalyst": self._catalyst_drift(picks),
+            "fade_risk": self._fade_risk_drift(picks),
+        }
+
+    async def compute_ranking_drift(self, since_date: str = _DEPLOY_DATE) -> dict:
+        """Re-checks the catalyst-boost/fade-risk ranking multipliers in
+        formulas.py (_CATALYST_BOOST, _FADE_RISK_RVOL/_FADE_RISK_DISCOUNT)
+        against fresh appearances since `since_date` (default: the date
+        that ranking change deployed), comparing current win rate/avg
+        return by catalyst presence and by RVOL bucket against the one-off
+        historical analysis those multipliers were originally based on.
+
+        Uses each appearance's *latest* recorded snapshot (approximates
+        end-of-day) -- same "win = positive return" convention as
+        _compute_performance_sync. Reports the raw
+        numbers rather than a single pass/fail verdict: whether a given gap
+        from baseline counts as "drift" worth acting on is a judgment call,
+        not something to hardcode a threshold for.
+        """
+        return await asyncio.to_thread(self._compute_ranking_drift_sync, since_date)
