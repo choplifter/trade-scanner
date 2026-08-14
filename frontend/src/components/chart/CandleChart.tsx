@@ -156,6 +156,15 @@ export function CandleChart({ bars, vwap, indicators, showIndicators }: CandleCh
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
       vwapSeriesRef.current = null;
+      // chart.remove() above already disposed every series/price-line that
+      // was attached to it, including whatever the indicators effect added
+      // -- without this, those refs would still point at now-disposed
+      // objects, and the indicators effect's next run (against a new chart,
+      // e.g. after a StrictMode dev remount) would call removeSeries on a
+      // series that was never added to it, which lightweight-charts throws
+      // on ("Value is undefined" from its internal ensureDefined check).
+      priceLinesRef.current = [];
+      indicatorSeriesRef.current = [];
     };
   }, []);
 
