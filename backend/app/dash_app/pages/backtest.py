@@ -6,7 +6,7 @@ drift tool in this app.
 
 Three independent, separately-triggered sections rather than one combined
 run: each fetches a different resolution/amount of historical data (daily
-bars for the ranking backtest, minute bars -- disk-cached, see
+bars for the ranking backtest, 5-minute bars -- disk-cached, see
 app.scanners.bar_cache -- for the momentum backtest and parameter sweep)
 and can take real wall-clock time, so nothing here runs on page load or a
 shared poll interval -- only a click. Dash callbacks block the requesting
@@ -34,7 +34,7 @@ from app.dash_app.state import backend_state
 from app.dash_app.theme import DELTA_DOWN, DELTA_UP, TEXT_MUTED
 from app.scanners import bucket_analysis
 from app.scanners.backtest import run_backtest
-from app.scanners.bar_cache import get_cached_minute_bars_multi
+from app.scanners.bar_cache import get_cached_5m_bars_multi
 from app.scanners.momentum_backtest import run_momentum_backtest, sweep_momentum_params
 
 dash.register_page(__name__, path="/backtest", name="Backtest")
@@ -65,6 +65,15 @@ _TABLE_STYLE = dict(
         {"if": {"column_id": "trading_date"}, "textAlign": "left"},
         {"if": {"column_id": "timestamp"}, "textAlign": "left"},
         {"if": {"column_id": "result"}, "textAlign": "left", "fontWeight": "600"},
+        {
+            "if": {"column_id": "copy"},
+            "textAlign": "center",
+            "width": "28px",
+            "minWidth": "28px",
+            "maxWidth": "28px",
+            "cursor": "pointer",
+            "color": TEXT_MUTED,
+        },
     ],
     style_header={
         "backgroundColor": "#fcfcfb",
@@ -123,7 +132,7 @@ def _iframe_src(symbol: str | None, target_time: int | None = None, timeframe: s
     through as a "time" query param so lightweight_chart.html can jump the
     view to that exact bar. `timeframe` is the resolution *that specific
     backtest actually replayed* ("1D" for the daily ranking backtest, "5m"
-    for the minute-resolution momentum backtest) -- passed through as "tf"
+    for the 5-minute-resolution momentum backtest) -- passed through as "tf"
     so the chart opens on the same resolution the win/loss was computed at,
     rather than always starting from the chart's own default and possibly
     settling on a resolution neither backtest ever looked at. Still widens
@@ -179,8 +188,103 @@ _WIN_LOSS_OPTIONS = [
 
 
 def _win_loss_filter(filter_id: str):
-    return dcc.RadioItems(
-        id=filter_id, options=_WIN_LOSS_OPTIONS, value="all", inline=True, style={"marginBottom": "8px"}
+    return dcc.RadioItems(id=filter_id, options=_WIN_LOSS_OPTIONS, value="all", inline=True)
+
+
+def _picks_controls(filter_id: str, copy_button_id: str):
+    return html.Div(
+        [
+            _win_loss_filter(filter_id),
+            html.Button("Copy Picks", id=copy_button_id, n_clicks=0, title="Copy the rows shown below to the clipboard"),
+        ],
+        style={"display": "flex", "alignItems": "center", "gap": "16px", "marginBottom": "8px"},
+    )
+
+
+def _register_copy_picks_callback(button_id: str, table_id: str, sink_id: str) -> None:
+    """Copies every row currently shown in `table_id` (respecting whatever
+    the win/loss filter and sort currently have it displaying) to the
+    clipboard as a tab-separated block -- one header line straight from
+    the table's own column definitions, one line per row -- so a handful
+    of interesting candidates can be pasted straight into another chat
+    (e.g. Claude Code) instead of retyped by hand. Only real columns are
+    included (State reads the table's "columns" prop, not each row's raw
+    dict, so hidden fields like the packed "id"/"*_num" sort helpers never
+    leak into the copied text) -- and the "copy" column itself (see
+    _register_copy_single_pick_callback) is excluded too, since its own
+    value is just a clipboard icon, not data worth copying.
+
+    Clientside (not a normal @callback) for the same reason
+    scanner_heatmap.py's own clipboard copy is: a clipboard write has to
+    happen synchronously inside the click's own event handler in most
+    browsers, or the browser silently refuses it.
+    """
+    dash.clientside_callback(
+        """
+        function(n_clicks, data, columns) {
+            if (!n_clicks || !data || !data.length || !columns) {
+                return window.dash_clientside.no_update;
+            }
+            const cols = columns.filter((c) => c.id !== "copy");
+            const lines = [cols.map((c) => c.name).join("\\t")];
+            data.forEach((row) => {
+                lines.push(cols.map((c) => (row[c.id] != null ? String(row[c.id]) : "")).join("\\t"));
+            });
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(lines.join("\\n")).catch(function () {});
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output(sink_id, "children"),
+        Input(button_id, "n_clicks"),
+        State(table_id, "data"),
+        State(table_id, "columns"),
+        prevent_initial_call=True,
+    )
+
+
+def _register_copy_single_pick_callback(table_id: str, sink_id: str) -> None:
+    """Per-row twin of _register_copy_picks_callback: clicking a row's
+    "copy" cell (see the "copy" column added to _DAILY_PICK_COLUMNS/
+    _MOMENTUM_PICK_COLUMNS) copies just that one pick, same tab-separated
+    single-line format the bulk copy uses per row, so one specific
+    candidate can be grabbed without copying (and then trimming down) the
+    whole filtered list.
+
+    Looks the clicked row up by its packed "id" (see _pick_row_id), not
+    active_cell.row's index, for the same reason update_backtest_
+    symbol_panel does -- native pagination makes indexing into "data" by
+    position unreliable.
+
+    Also fires update_backtest_symbol_panel (both callbacks listen to the
+    same table's active_cell) -- clicking "copy" loads that pick's chart
+    too, a harmless side effect accepted elsewhere in this app already
+    (see scanner_heatmap.py's own copy column).
+    """
+    dash.clientside_callback(
+        """
+        function(activeCell, data, columns) {
+            if (!activeCell || activeCell.column_id !== "copy" || !data || !columns) {
+                return window.dash_clientside.no_update;
+            }
+            const row = data.find((r) => r.id === activeCell.row_id);
+            if (!row) {
+                return window.dash_clientside.no_update;
+            }
+            const cols = columns.filter((c) => c.id !== "copy");
+            const line = cols.map((c) => (row[c.id] != null ? String(row[c.id]) : "")).join("\\t");
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(line).catch(function () {});
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output(sink_id, "children"),
+        Input(table_id, "active_cell"),
+        State(table_id, "data"),
+        State(table_id, "columns"),
+        prevent_initial_call=True,
     )
 
 
@@ -315,7 +419,7 @@ def _daily_section():
             ),
             dcc.Loading(html.Div(id="backtest-daily-output"), type="circle"),
             html.H4("Picks", style={"marginTop": "16px"}),
-            _win_loss_filter("backtest-daily-picks-filter"),
+            _picks_controls("backtest-daily-picks-filter", "backtest-daily-picks-copy"),
             dash_table.DataTable(
                 id="backtest-daily-picks-table",
                 columns=_DAILY_PICK_COLUMNS,
@@ -330,6 +434,8 @@ def _daily_section():
                 **_TABLE_STYLE,
             ),
             dcc.Store(id="backtest-daily-picks-store", data=[]),
+            html.Div(id="backtest-daily-picks-copy-sink", style={"display": "none"}),
+            html.Div(id="backtest-daily-picks-copy-row-sink", style={"display": "none"}),
         ],
         style={"marginTop": "24px", "paddingTop": "16px", "borderTop": "1px solid #e1e0d9"},
     )
@@ -344,6 +450,7 @@ _DAILY_PICK_COLUMNS = [
     {"name": "Shaved Top", "id": "shaved_top"},
     {"name": "Outcome", "id": "outcome"},
     {"name": "Result", "id": "result"},
+    {"name": "", "id": "copy"},
 ]
 
 _DAILY_PICK_SORT_KEYS = {
@@ -377,6 +484,7 @@ def _daily_pick_rows(picks: list[dict]) -> list[dict]:
             "outcome": _format_pct(p["pct_change_since_entry"]),
             "outcome_num": p["pct_change_since_entry"],
             "result": "Win" if p["pct_change_since_entry"] > 0 else "Loss",
+            "copy": "📋",
         }
         for p in picks
     ]
@@ -391,6 +499,10 @@ def _daily_pick_rows(picks: list[dict]) -> list[dict]:
 def update_daily_picks_table(picks, filter_value, sort_by):
     rows = _filter_by_result(_daily_pick_rows(picks or []), filter_value)
     return _sorted_rows(rows, sort_by, _DAILY_PICK_SORT_KEYS)
+
+
+_register_copy_picks_callback("backtest-daily-picks-copy", "backtest-daily-picks-table", "backtest-daily-picks-copy-sink")
+_register_copy_single_pick_callback("backtest-daily-picks-table", "backtest-daily-picks-copy-row-sink")
 
 
 def _daily_report_layout(report: dict):
@@ -471,7 +583,7 @@ def _momentum_section():
         [
             html.H3("Momentum Alarm Backtest"),
             html.P(
-                "Minute-resolution replay of the live momentum alarm (formulas.is_momentum_alert) -- "
+                "5-minute-resolution replay of the live momentum alarm (formulas.is_momentum_alert) -- "
                 "does requiring the shaved-top/green/above-VWAP entry confirmation actually improve on "
                 "the 15m% threshold alone? Long side only, matching the live alarm itself. Fetches are "
                 "disk-cached (up to 12h old reused automatically).",
@@ -494,7 +606,7 @@ def _momentum_section():
                 f"Timestamps shown in your local time ({_offset_label(datetime.now().astimezone())}).",
                 className="benchmark-disclaimer",
             ),
-            _win_loss_filter("backtest-momentum-picks-filter"),
+            _picks_controls("backtest-momentum-picks-filter", "backtest-momentum-picks-copy"),
             dash_table.DataTable(
                 id="backtest-momentum-picks-table",
                 columns=_MOMENTUM_PICK_COLUMNS,
@@ -509,6 +621,8 @@ def _momentum_section():
                 **_TABLE_STYLE,
             ),
             dcc.Store(id="backtest-momentum-picks-store", data=[]),
+            html.Div(id="backtest-momentum-picks-copy-sink", style={"display": "none"}),
+            html.Div(id="backtest-momentum-picks-copy-row-sink", style={"display": "none"}),
         ],
         style={"marginTop": "24px", "paddingTop": "16px", "borderTop": "1px solid #e1e0d9"},
     )
@@ -522,6 +636,7 @@ _MOMENTUM_PICK_COLUMNS = [
     {"name": "Timestamp", "id": "timestamp"},
     {"name": "Outcome", "id": "outcome"},
     {"name": "Result", "id": "result"},
+    {"name": "", "id": "copy"},
 ]
 
 _MOMENTUM_PICK_SORT_KEYS = {
@@ -542,6 +657,7 @@ def _momentum_pick_rows(picks: list[dict]) -> list[dict]:
             "outcome": _format_pct(p["pct_change_since_entry"]),
             "outcome_num": p["pct_change_since_entry"],
             "result": "Win" if p["pct_change_since_entry"] > 0 else "Loss",
+            "copy": "📋",
         }
         for p in picks
     ]
@@ -556,6 +672,12 @@ def _momentum_pick_rows(picks: list[dict]) -> list[dict]:
 def update_momentum_picks_table(picks, filter_value, sort_by):
     rows = _filter_by_result(_momentum_pick_rows(picks or []), filter_value)
     return _sorted_rows(rows, sort_by, _MOMENTUM_PICK_SORT_KEYS)
+
+
+_register_copy_picks_callback(
+    "backtest-momentum-picks-copy", "backtest-momentum-picks-table", "backtest-momentum-picks-copy-sink"
+)
+_register_copy_single_pick_callback("backtest-momentum-picks-table", "backtest-momentum-picks-copy-row-sink")
 
 
 def _momentum_report_layout(report: dict):
@@ -645,7 +767,7 @@ def _sweep_section():
         [
             html.H3("Parameter Sweep"),
             html.P(
-                "Fetches minute bars once, then cheaply re-simulates every (threshold, horizon) "
+                "Fetches 5-minute bars once, then cheaply re-simulates every (threshold, horizon) "
                 "combination in memory -- widening the grid only costs more simulation time, not more "
                 "network time. Ranked by full-alert avg return, with combinations under the "
                 f"n={bucket_analysis.MIN_SAMPLE_SIZE} sample floor pushed to the bottom regardless of "
@@ -773,7 +895,7 @@ def run_sweep_callback(_n_clicks, lookback_days, thresholds_str, horizons_str, m
     lookback = int(lookback_days or 30)
     try:
         bars_by_symbol = run_async(
-            get_cached_minute_bars_multi(clients, symbols, lookback, force_refresh="refresh" in (force_refresh or []))
+            get_cached_5m_bars_multi(clients, symbols, lookback, force_refresh="refresh" in (force_refresh or []))
         )
         results = sweep_momentum_params(bars_by_symbol, thresholds, horizons)
     except Exception:
@@ -838,7 +960,9 @@ def layout(**_kwargs):
                 "reimplementations -- to check whether the live scanner's assumptions hold up. Each "
                 "section below fetches its own data on click and can take real time (tens of seconds "
                 "to a couple minutes for larger runs); nothing here runs automatically. Click any row "
-                "in a Picks table to load that symbol's chart on the right.",
+                "in a Picks table to load that symbol's chart on the right. \"Copy Picks\" copies everything "
+                "currently shown (respecting the win/loss filter and sort) to the clipboard; the 📋 on a "
+                "single row copies just that one pick.",
                 className="benchmark-disclaimer",
             ),
             html.Div(

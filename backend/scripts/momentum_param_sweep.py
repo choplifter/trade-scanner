@@ -1,6 +1,6 @@
 """Parameter sweep for the momentum backtest's long side: which 15m%
 threshold and forward-return horizon combination looks best against
-history? Fetches minute bars ONCE (cached, see app.scanners.bar_cache)
+history? Fetches 5-minute bars ONCE (cached, see app.scanners.bar_cache)
 then cheaply re-simulates app.scanners.momentum_backtest.
 simulate_momentum_alerts in memory for every (threshold, horizon)
 combination in the grid -- no re-fetching per combination, so widening
@@ -32,7 +32,7 @@ from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import build_universe
 from app.core.config import get_settings
 from app.scanners import bucket_analysis
-from app.scanners.bar_cache import DEFAULT_CACHE_DIR, get_cached_minute_bars_multi
+from app.scanners.bar_cache import DEFAULT_CACHE_DIR, get_cached_5m_bars_multi
 from app.scanners.momentum_backtest import sweep_momentum_params
 
 
@@ -95,7 +95,7 @@ async def _main(args: argparse.Namespace) -> None:
         ranked = sorted(universe.values(), key=lambda u: u.avg_dollar_vol_20d, reverse=True)
         symbols = [u.symbol for u in ranked[: args.max_symbols]]
 
-    bars_by_symbol = await get_cached_minute_bars_multi(
+    bars_by_symbol = await get_cached_5m_bars_multi(
         clients,
         symbols,
         args.lookback_days,
@@ -113,14 +113,15 @@ async def _main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--lookback-days", type=int, default=30, help="Calendar days of minute-bar history to replay (default: 30)")
+    parser.add_argument("--lookback-days", type=int, default=30, help="Calendar days of 5-minute-bar history to replay (default: 30)")
     parser.add_argument(
         "--thresholds", default="1,2,3,5,7,10", help="Comma-separated 15m%% thresholds to test (default: 1,2,3,5,7,10)"
     )
     parser.add_argument(
         "--horizons",
         default="5,10,15,30,60",
-        help="Comma-separated forward-return horizons in bars/minutes (default: 5,10,15,30,60)",
+        help="Comma-separated forward-return horizons in minutes, each rounded to the nearest "
+        "5-minute bar (default: 5,10,15,30,60)",
     )
     parser.add_argument(
         "--max-symbols",

@@ -110,15 +110,22 @@ backend on port 8000, so both must be running.
 - **Momentum alarm** (React app only, off by default, long setups only):
   a dashboard-wide alert for a fast, still-confirming *upward* move -- 15m
   % at least a threshold (5% default, `ALARM_MOMENTUM_PCT_THRESHOLD`)
-  *and* the latest 1-minute candle confirms it three ways: closed at/near
+  *and* the latest 5-minute candle confirms it three ways: closed at/near
   its high (shaved top, near-zero upper wick, `app/market_data/candle_shape.py`),
   closed green (close > open), and price trading above the session VWAP
   (`app/market_data/vwap.py`) -- the standard day-trading reference for
   "buyers are still in control." Long side only on purpose: a green-candle-
   and-above-VWAP requirement doesn't have a sign-flipped short-side
-  equivalent, so downward moves aren't alerted at all. Unlike a chart
-  indicator (which only ever watches whatever symbol's chart happens to be
-  open), this watches every ranked view continuously. Toggle in the header
+  equivalent, so downward moves aren't alerted at all. Only regular-session
+  (09:30-16:00 ET) candles can trigger, and the trailing 15-minute window
+  never crosses a day boundary -- without both guards a "15-minute move"
+  is really a session-boundary artifact: a thin after-hours print measured
+  against the last regular-session close, or an overnight gap measured
+  against the previous day. Same-day premarket *is* allowed as the
+  reference price, so the opening range still works
+  (`app/market_data/momentum.py`). Unlike a chart indicator (which only
+  ever watches whatever symbol's chart happens to be open), this watches
+  every ranked view continuously. Toggle in the header
   ("Alarms Off/On", state persisted across reloads); once on, a new
   trigger auto-opens a center overlay listing every currently active alarm
   (click one to load its chart), collapsing to a small count badge you can
@@ -241,7 +248,7 @@ backend on port 8000, so both must be running.
   page-reload-driven callbacks the same way; the Dash Backtest page does
   cover the underlying alert condition's historical win rate, see below).
   Both scanner tables do show the underlying ⚡ MOMENTUM badge regardless.
-  The 5% threshold and 10% shaved-top wick tolerance are unvalidated
+  The 5% threshold and 5% shaved-top wick tolerance are unvalidated
   starting heuristics -- worth checking against `scanner_history.sqlite3`
   (same way the catalyst/fade-risk multipliers were validated and
   re-validated) once enough real triggers have accumulated. A 180-day

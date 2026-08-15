@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -9,11 +10,27 @@ from app.market_data.bars import (
     HISTORICAL_TIMEFRAMES,
     get_historical_bars,
     get_intraday_minute_bars,
+    intraday_chart_lookback_start_utc,
 )
 from app.market_data.vwap import SessionVwapState
 from app.symbols.info import get_symbol_info
 
 router = APIRouter(prefix="/api/symbols", tags=["symbols"])
+
+# How far back an `around` request (see get_symbol_bars) will widen the
+# 1-minute fetch to reach a specific historical moment -- beyond this,
+# minute-level detail is rarely useful and the payload gets large, so the
+# chart falls back to its normal default window and a coarser timeframe
+# instead (see lightweight_chart.html's ESCALATION_ORDER).
+_AROUND_MAX_LOOKBACK_DAYS = 60
+
+# Extra trading sessions fetched *before* the `around` moment's own
+# session -- without this, the fetch would start right at the target bar
+# with nothing earlier in the array, and the chart's own centering logic
+# (lightweight_chart.html's setChartData) can only clamp to showing the
+# target at the left edge, never centered, since there'd be no bars to its
+# left to center against.
+_AROUND_LEFT_PADDING_SESSIONS = 5
 
 
 def _bar_to_dict(bar) -> dict:
@@ -67,7 +84,18 @@ async def get_symbol_info_endpoint(symbol: str, request: Request) -> dict:
 
 @router.get("/{symbol}/bars")
 async def get_symbol_bars(
-    symbol: str, request: Request, timeframe: str = Query(default="1Min")
+    symbol: str,
+    request: Request,
+    timeframe: str = Query(default="1Min"),
+    around: int | None = Query(
+        default=None,
+        description=(
+            "Unix seconds -- for timeframe=1Min, widens the fetch's start "
+            "far enough back to include this specific moment (capped at "
+            "_AROUND_MAX_LOOKBACK_DAYS), instead of just the default "
+            "recent-sessions window."
+        ),
+    ),
 ) -> dict:
     symbol = symbol.upper()
     clients = request.app.state.alpaca_clients
@@ -93,7 +121,19 @@ async def get_symbol_bars(
             "indicators": indicators,
         }
 
-    bars = await get_intraday_minute_bars(clients, symbol)
+    start = None
+    if around is not None:
+        around_dt = datetime.fromtimestamp(around, tz=timezone.utc)
+        if (datetime.now(timezone.utc) - around_dt).days <= _AROUND_MAX_LOOKBACK_DAYS:
+            # Premarket open of the Nth session before (and including)
+            # around_dt's own session -- see _AROUND_LEFT_PADDING_SESSIONS
+            # for why this needs left padding, not just the target's own
+            # session start. `end` isn't passed, so this still fetches all
+            # the way through to right now, same as the default window
+            # just starting earlier, not a narrow slice.
+            start = intraday_chart_lookback_start_utc(now=around_dt, sessions=_AROUND_LEFT_PADDING_SESSIONS)
+
+    bars = await get_intraday_minute_bars(clients, symbol, start=start)
     if not bars:
         return {"symbol": symbol, "bars": [], "vwap": [], "indicators": []}
 

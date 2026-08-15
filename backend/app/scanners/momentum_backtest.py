@@ -1,19 +1,24 @@
-"""Minute-resolution historical backtest for the live momentum alarm
+"""5-minute-bar historical backtest for the live momentum alarm
 (app.scanners.formulas.is_momentum_alert, long setups only) -- replays
-historical minute bars through the *actual* production functions
-(pct_change_over_window, aggregate_last_n_minutes, is_shaved_top,
-SessionVwapState, is_momentum_alert itself, not reimplementations) to
-check whether requiring the shaved-top/green/above-VWAP confirmation
-(checked on a rolled-up CONFIRMATION_CANDLE_MINUTES-minute candle, not a
-single noisy 1-minute print -- same as the live cache) actually improves
-on the 15m% threshold alone, by comparing two conditions side by side:
-"15m% crossed the threshold" vs. "15m% crossed the threshold AND the
-candle confirms it." The confirmation checks are only ever evaluated
-*after* the 15m% threshold is already reached -- never on their own --
-both because that's the actual question being asked (is confirmation
-useful once momentum's already there, not whether it predicts anything by
-itself) and because it means skipping those checks entirely for the vast
-majority of bars that never cross the threshold at all.
+historical bars at app.market_data.bars.MOMENTUM_BAR_TIMEFRAME resolution
+through the *actual* production functions (pct_change_over_window,
+is_shaved_top, SessionVwapState, is_momentum_alert itself, not
+reimplementations) to check whether requiring the shaved-top/green/
+above-VWAP confirmation actually improves on the 15m% threshold alone, by
+comparing two conditions side by side: "15m% crossed the threshold" vs.
+"15m% crossed the threshold AND the candle confirms it." The confirmation
+checks are only ever evaluated *after* the 15m% threshold is already
+reached -- never on their own -- both because that's the actual question
+being asked (is confirmation useful once momentum's already there, not
+whether it predicts anything by itself) and because it means skipping
+those checks entirely for the vast majority of bars that never cross the
+threshold at all.
+
+Bars are fetched natively at 5-minute resolution (not 1-minute rolled up
+client-side) -- same bars.MOMENTUM_BAR_TIMEFRAME the live MomentumCache
+now reads from, so a "confirmation candle" here is simply the bar itself,
+not a derived aggregate. 1-minute bars were noisier and, being 5x more of
+them, slower to fetch and walk for the same calendar lookback.
 
 Long side only, by design -- matches the live alarm itself, which no
 longer evaluates downward moves at all (a green-candle-and-above-VWAP
@@ -31,19 +36,23 @@ from pathlib import Path
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
-from app.market_data.bars import aggregate_last_n_minutes
+from app.market_data.bars import MOMENTUM_BAR_MINUTES
 from app.market_data.candle_shape import is_shaved_top
-from app.market_data.momentum import MOMENTUM_WINDOW, pct_change_over_window
+from app.market_data.momentum import (
+    MOMENTUM_WINDOW,
+    is_regular_session_bar,
+    pct_change_over_window,
+    same_trading_day,
+)
 from app.market_data.vwap import SessionVwapState
 from app.scanners import bucket_analysis, formulas
-from app.scanners.bar_cache import DEFAULT_CACHE_DIR, get_cached_minute_bars_multi
-from app.scanners.momentum_cache import CONFIRMATION_CANDLE_MINUTES
+from app.scanners.bar_cache import DEFAULT_CACHE_DIR, get_cached_5m_bars_multi
 
-# How many trailing bars to hand pct_change_over_window/aggregate_last_n_minutes
-# at each step -- comfortably more than either window needs, without
-# re-slicing the full history-so-far on every single bar (which would be
-# O(n^2) over a multi-week walk).
-_TRAILING_WINDOW_BARS = 30
+# How many trailing bars to hand pct_change_over_window at each step --
+# comfortably more than the 15-minute window it looks for (3 bars at
+# MOMENTUM_BAR_MINUTES=5), without re-slicing the full history-so-far on
+# every single bar (which would be O(n^2) over a multi-week walk).
+_TRAILING_WINDOW_BARS = 6
 
 
 def simulate_momentum_alerts(
@@ -51,7 +60,7 @@ def simulate_momentum_alerts(
     threshold: float,
     horizon_minutes: int = 15,
 ) -> list[dict]:
-    """Pure, network-free. Walks each symbol's minute bars in order,
+    """Pure, network-free. Walks each symbol's 5-minute bars in order,
     computing the same pct_change_last_15m / is_shaved_top / is_green /
     is_above_vwap inputs the live MomentumCache computes, then evaluates
     two conditions at each bar: "threshold_only" (just the 15m% magnitude
@@ -70,7 +79,7 @@ def simulate_momentum_alerts(
     Only the *first* bar of a consecutive run where a given condition
     holds counts as a pick for that condition (a rising-edge trigger) --
     a real move often keeps a condition true for several consecutive
-    minutes, and counting every one of those as a separate, independent
+    bars, and counting every one of those as a separate, independent
     sample would pseudo-replicate a single event into many highly-
     correlated ones, inflating the apparent sample size. This mirrors the
     live frontend's own semantics too (useAlarms.ts tracks "first seen,"
@@ -78,21 +87,22 @@ def simulate_momentum_alerts(
     "full_alert" pick can fire more than once inside one ongoing
     "threshold_only" streak if the confirmation drops and returns.
 
-    horizon_minutes is a bar-count offset (looks `horizon_minutes` bars
-    ahead, not bars exactly `horizon_minutes` wall-clock minutes later --
-    minute bars are sparse during quiet stretches, same simplification
-    app.scanners.backtest's horizon_days already makes for daily bars).
+    horizon_minutes is wall-clock minutes, same as the CLI/Dash UI expose
+    it -- converted here to a bar-count offset (rounded to the nearest
+    MOMENTUM_BAR_MINUTES-minute bar, minimum 1) since the underlying walk
+    is bar-indexed. A horizon that isn't a clean multiple of
+    MOMENTUM_BAR_MINUTES rounds to the nearest bar rather than erroring --
+    exact-minute precision isn't meaningful at this resolution anyway.
     """
+    horizon_bars = max(1, round(horizon_minutes / MOMENTUM_BAR_MINUTES))
     picks: list[dict] = []
 
     for symbol, bars in bars_by_symbol.items():
         threshold_only_active = False
         full_alert_active = False
         vwap_state = SessionVwapState(symbol=symbol)
-        for i in range(len(bars) - horizon_minutes):
+        for i in range(len(bars) - horizon_bars):
             bar = bars[i]
-            window = bars[max(0, i - _TRAILING_WINDOW_BARS) : i + 1]
-            pct_15m = pct_change_over_window(window, MOMENTUM_WINDOW)
             vwap = vwap_state.update(
                 timestamp=bar.timestamp,
                 high=bar.high,
@@ -101,6 +111,23 @@ def simulate_momentum_alerts(
                 volume=bar.volume,
                 bar_vwap=getattr(bar, "vwap", None),
             )
+
+            # Regular session only (see momentum.is_regular_session_bar for
+            # why). Streak state resets rather than carrying across the
+            # gap, so the first qualifying bar of the next session counts
+            # as a fresh rising edge instead of being swallowed by a
+            # streak that started before the close.
+            if not is_regular_session_bar(bar):
+                threshold_only_active = False
+                full_alert_active = False
+                continue
+
+            # Window restricted to this same trading day, so a trailing 15
+            # minutes never reaches back across a market close into the
+            # previous session. Same-day premarket stays in, which is what
+            # keeps the opening range measurable (see same_trading_day).
+            window = [b for b in bars[max(0, i - _TRAILING_WINDOW_BARS) : i + 1] if same_trading_day(b, bar)]
+            pct_15m = pct_change_over_window(window, MOMENTUM_WINDOW)
 
             # Long side only: a downward move (or no move at all) never
             # counts as momentum here, regardless of magnitude. Requiring
@@ -113,23 +140,29 @@ def simulate_momentum_alerts(
             # reached -- is_momentum_alert would short-circuit on the same
             # threshold check anyway, so this produces identical results
             # while skipping the extra work for the vast majority of bars
-            # that never cross the threshold at all.
+            # that never cross the threshold at all. The bar itself *is*
+            # the confirmation candle at this resolution -- no aggregation
+            # needed, unlike when this walked 1-minute bars.
             full_alert = False
             if threshold_only:
-                # window already covers comfortably more than
-                # CONFIRMATION_CANDLE_MINUTES (see _TRAILING_WINDOW_BARS),
-                # and its last bar is bars[i] -- same "as of right now"
-                # candle the live cache would see.
-                candle = aggregate_last_n_minutes(window, CONFIRMATION_CANDLE_MINUTES)
-                shaved_top = is_shaved_top(candle.open, candle.high, candle.low, candle.close)
-                is_green = candle.close > candle.open
-                is_above_vwap = vwap is not None and candle.close > vwap
+                shaved_top = is_shaved_top(bar.open, bar.high, bar.low, bar.close)
+                is_green = bar.close > bar.open
+                is_above_vwap = vwap is not None and bar.close > vwap
                 full_alert = formulas.is_momentum_alert(pct_15m, shaved_top, is_green, is_above_vwap, threshold)
 
             if (threshold_only and not threshold_only_active) or (full_alert and not full_alert_active):
                 entry_price = bar.close
-                exit_price = bars[i + horizon_minutes].close
-                if entry_price > 0:
+                exit_bar = bars[i + horizon_bars]
+                # The outcome has to be measurable inside the same regular
+                # session too -- otherwise a clean late-session entry gets
+                # scored against a thin after-hours print (or the next
+                # day's open). Near the close there simply isn't a full
+                # forward window, so those entries are dropped rather than
+                # scored against bad data. Stricter than the lookback
+                # window above on purpose: premarket is an acceptable
+                # *reference* price but not an acceptable *exit* fill.
+                if entry_price > 0 and is_regular_session_bar(exit_bar) and same_trading_day(exit_bar, bar):
+                    exit_price = exit_bar.close
                     outcome = (exit_price - entry_price) / entry_price * 100
                     if threshold_only and not threshold_only_active:
                         picks.append(
@@ -168,12 +201,12 @@ async def run_momentum_backtest(
     max_age_hours: float = 12.0,
 ) -> dict:
     """Fetch (via the disk cache)/orchestration wrapper, mirroring
-    app.scanners.backtest.run_backtest's shape at minute resolution.
+    app.scanners.backtest.run_backtest's shape at 5-minute-bar resolution.
     `threshold` overrides settings.alarm_momentum_pct_threshold for just
     this run -- lets a caller try several threshold values against the
     same cached bars without touching backend/.env each time.
     """
-    bars_by_symbol = await get_cached_minute_bars_multi(
+    bars_by_symbol = await get_cached_5m_bars_multi(
         clients,
         symbols,
         lookback_days,
@@ -215,7 +248,7 @@ def sweep_momentum_params(
     """Pure, network-free -- runs simulate_momentum_alerts once per
     (threshold, horizon) combination against the SAME already-fetched
     bars, so exploring a parameter grid costs one fetch (see
-    get_cached_minute_bars_multi) plus len(thresholds) * len(horizons)
+    get_cached_5m_bars_multi) plus len(thresholds) * len(horizons)
     cheap in-memory simulations, not one fetch per combination. Returns
     one row per combination, in grid order (thresholds outer loop,
     horizons inner) -- not ranked; see

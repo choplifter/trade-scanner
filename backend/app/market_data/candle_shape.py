@@ -12,9 +12,13 @@ whichever one matches the move's direction.
 """
 
 # Wick below this fraction of the bar's high-low range counts as "no
-# wick." A starting heuristic, not backtested -- see is_momentum_alert's
-# own docstring for the same caveat on the paired pct-change threshold.
-_DEFAULT_MAX_WICK_RATIO = 0.1
+# wick." Tightened from an initial 10% after a live momentum-alarm pick
+# (APLD, 2026-07-20) turned out to have a real, visible 7.1% upper wick
+# that 10% still waved through as "shaved" -- 5% still tolerates a
+# genuinely small wick without being as loose as that. Still a starting
+# heuristic, not backtested -- see is_momentum_alert's own docstring for
+# the same caveat on the paired pct-change threshold.
+_DEFAULT_MAX_WICK_RATIO = 0.05
 
 
 def is_shaved_top(

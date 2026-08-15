@@ -1,5 +1,4 @@
 import asyncio
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from alpaca.data.enums import Adjustment
@@ -64,70 +63,35 @@ def intraday_chart_lookback_start_utc(
     return start_et.astimezone(timezone.utc)
 
 
-@dataclass
-class AggregatedBar:
-    """A synthetic OHLCV candle built by combining several consecutive
-    1-minute bars -- duck-types the same open/high/low/close/volume/
-    timestamp attributes a real Alpaca Bar has, so it drops straight into
-    anything that only reads those (is_shaved_top, a green-candle check,
-    SessionVwapState.update, ...).
-    """
-
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    timestamp: datetime
-
-
-def aggregate_last_n_minutes(bars: list, minutes: int) -> AggregatedBar | None:
-    """Combine the 1-minute bars falling in the *latest* clock-aligned
-    N-minute bucket (e.g. 5m buckets at :00, :05, :10, ...) into one
-    candle -- same bucketing convention the chart widget's own
-    aggregateBars() (assets/lightweight_chart.html) uses, so "the latest
-    5m candle" means the same thing here as it would on a 5m chart, not an
-    arbitrary trailing-5-minutes window. Used by the momentum alarm (see
-    app.scanners.momentum_cache) to confirm shape/color on a candle that's
-    actually been fully built up over N minutes, rather than a single
-    noisy 1-minute print. None only when `bars` itself is empty.
-
-    `minutes` must evenly divide 60 (1/2/3/4/5/6/10/12/15/20/30/60) for the
-    bucket boundary to land on a clean clock time -- the only values this
-    app actually uses.
-    """
-    if not bars:
-        return None
-    latest = bars[-1]
-    bucket_start = latest.timestamp.replace(
-        minute=(latest.timestamp.minute // minutes) * minutes, second=0, microsecond=0
-    )
-    # Only the trailing `minutes` bars can possibly fall in the latest
-    # bucket -- slicing first keeps this cheap even over a multi-day,
-    # multi-thousand-bar fetch.
-    window = [b for b in bars[-minutes:] if b.timestamp >= bucket_start]
-    if not window:
-        window = [latest]
-    return AggregatedBar(
-        open=window[0].open,
-        high=max(b.high for b in window),
-        low=min(b.low for b in window),
-        close=window[-1].close,
-        volume=sum(b.volume for b in window),
-        timestamp=bucket_start,
-    )
+# Native Alpaca resolution the momentum alarm computes its 15m%/VWAP/
+# shape-and-color confirmation from -- see app.scanners.momentum_cache and
+# app.scanners.momentum_backtest. Was 1-minute bars; a single 1-minute
+# print is noisy, and 5-minute is the smallest size that still reads as a
+# real, chart-recognizable candle for the shape/color check (matches this
+# app's own chart default, see lightweight_chart.html's DEFAULT_KEY).
+# Fetched natively at this resolution (not aggregated client-side from
+# 1-minute bars) so it's also ~5x fewer bars over the wire. Exposed as a
+# plain int too (not just baked into the TimeFrame object below) so
+# app.scanners.momentum_backtest can convert its own wall-clock-minutes
+# `horizon_minutes` parameter into a bar-count offset without a second,
+# possibly-drifting "5" hardcoded elsewhere.
+MOMENTUM_BAR_MINUTES = 5
+MOMENTUM_BAR_TIMEFRAME = TimeFrame(MOMENTUM_BAR_MINUTES, TimeFrameUnit.Minute)
 
 
-async def get_intraday_minute_bars(clients: AlpacaClients, symbol: str) -> list:
+async def get_intraday_minute_bars(clients: AlpacaClients, symbol: str, start: datetime | None = None) -> list:
     """Minute bars for the last few trading sessions (premarket open through
-    now), used both to render chart history on widget-open and to seed the
-    VWAP/EMA accumulators so those lines are continuous instead of starting
-    flat.
+    now) by default, used both to render chart history on widget-open and
+    to seed the VWAP/EMA accumulators so those lines are continuous instead
+    of starting flat. `start` overrides that default -- e.g. to reach back
+    to a specific historical session instead (see routers/symbols.py's
+    `around` query param, used when a Dash backtest pick's chart needs to
+    show a moment further back than the default window covers).
     """
     request = StockBarsRequest(
         symbol_or_symbols=symbol,
         timeframe=TimeFrame.Minute,
-        start=intraday_chart_lookback_start_utc(),
+        start=start or intraday_chart_lookback_start_utc(),
         feed=clients.feed,
         adjustment=Adjustment.RAW,
     )
@@ -175,6 +139,25 @@ async def get_intraday_minute_bars_multi(
     return dict(bar_set.data)
 
 
+async def get_intraday_5m_bars_multi(clients: AlpacaClients, symbols: list[str]) -> dict[str, list]:
+    """Same as get_intraday_minute_bars_multi but at MOMENTUM_BAR_TIMEFRAME
+    (5-minute) resolution -- feeds the live momentum alarm (see
+    app.scanners.momentum_cache), not the AI-trade-idea VWAP/momentum
+    context, which stays on 1-minute bars via get_intraday_minute_bars_multi.
+    """
+    if not symbols:
+        return {}
+    request = StockBarsRequest(
+        symbol_or_symbols=symbols,
+        timeframe=MOMENTUM_BAR_TIMEFRAME,
+        start=intraday_chart_lookback_start_utc(sessions=1),
+        feed=clients.feed,
+        adjustment=Adjustment.RAW,
+    )
+    bar_set = await asyncio.to_thread(clients.data.get_stock_bars, request)
+    return dict(bar_set.data)
+
+
 async def get_daily_bars_multi(
     clients: AlpacaClients, symbols: list[str], lookback_days: int = 14
 ) -> dict[str, list]:
@@ -212,19 +195,19 @@ async def get_daily_bars_multi(
     return dict(bar_set.data)
 
 
-async def get_minute_bars_multi(
+async def get_5m_bars_multi(
     clients: AlpacaClients, symbols: list[str], lookback_days: int = 30
 ) -> dict[str, list]:
-    """Minute bars for several symbols over an explicit multi-week/month
-    calendar-day lookback -- unlike get_intraday_minute_bars_multi (hard-
-    coded to 1 session, for seeding today's live VWAP/momentum), this is
-    for historical backtesting (see app.scanners.momentum_backtest) over
-    weeks of history. Alpaca paginates internally for a range this large;
-    a multi-week, multi-hundred-symbol call can take real wall-clock time
-    (potentially minutes, not seconds) and return millions of bars -- see
-    app.scanners.bar_cache for why callers doing this more than once
-    should go through its disk cache instead of calling this directly
-    every time.
+    """MOMENTUM_BAR_TIMEFRAME (5-minute) bars for several symbols over an
+    explicit multi-week/month calendar-day lookback -- unlike
+    get_intraday_5m_bars_multi (hard-coded to 1 session, for seeding
+    today's live momentum alarm), this is for historical backtesting (see
+    app.scanners.momentum_backtest) over weeks of history. Alpaca
+    paginates internally for a range this large; a multi-week,
+    multi-hundred-symbol call can take real wall-clock time (potentially
+    minutes, not seconds) -- see app.scanners.bar_cache for why callers
+    doing this more than once should go through its disk cache instead of
+    calling this directly every time.
 
     adjustment=SPLIT, same reasoning as get_daily_bars_multi: a split
     inside the lookback window would otherwise show as a nonsensical
@@ -234,7 +217,7 @@ async def get_minute_bars_multi(
         return {}
     request = StockBarsRequest(
         symbol_or_symbols=symbols,
-        timeframe=TimeFrame.Minute,
+        timeframe=MOMENTUM_BAR_TIMEFRAME,
         start=datetime.now(timezone.utc) - timedelta(days=lookback_days),
         feed=clients.feed,
         adjustment=Adjustment.SPLIT,

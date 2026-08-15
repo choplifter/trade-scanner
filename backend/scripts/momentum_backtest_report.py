@@ -1,6 +1,6 @@
-"""Minute-resolution historical backtest for the live momentum alarm: does
+"""5-minute-bar historical backtest for the live momentum alarm: does
 requiring the shaved-top/green/above-VWAP confirmation actually improve
-on the 15m% threshold alone? Replays historical minute bars through the
+on the 15m% threshold alone? Replays historical 5-minute bars through the
 *actual* production functions (see app.scanners.momentum_backtest) -- not
 a reimplementation of the live alarm's logic, the literal same
 formulas.is_momentum_alert call. Long side only, matching the live alarm
@@ -18,15 +18,15 @@ independent, so a cache hit still applies even if only --threshold
 changed between runs).
 
 Fetches are cached to disk (see app.scanners.bar_cache) since a multi-
-week minute-bar pull for a few hundred symbols can take real wall-clock
-time (potentially minutes) and return millions of bars -- re-fetching on
-every parameter tweak would make iterating painful. Pass
---force-refresh-cache to bypass a cached fetch.
+week 5-minute-bar pull for a few hundred symbols can take real wall-clock
+time (potentially minutes) -- re-fetching on every parameter tweak would
+make iterating painful. Pass --force-refresh-cache to bypass a cached
+fetch.
 
 Defaults are intentionally modest (30 days, 100 symbols) compared to the
-daily-bar backtest's 180 days / 300 symbols -- minute-resolution data
-volume scales with lookback-days x symbol-count much more steeply, so
-start small and widen only once a run has proven out at this scale.
+daily-bar backtest's 180 days / 300 symbols -- intraday data volume
+scales with lookback-days x symbol-count much more steeply, so start
+small and widen only once a run has proven out at this scale.
 
 NOT covered: catalyst/headline boost (needs historical news, unbuilt),
 and there's no cross-sectional ranking check the way the daily backtest
@@ -115,8 +115,8 @@ async def _main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--lookback-days", type=int, default=30, help="Calendar days of minute-bar history to replay (default: 30)")
-    parser.add_argument("--horizon-minutes", type=int, default=15, help="Bars forward to measure the outcome (default: 15)")
+    parser.add_argument("--lookback-days", type=int, default=30, help="Calendar days of 5-minute-bar history to replay (default: 30)")
+    parser.add_argument("--horizon-minutes", type=int, default=15, help="Minutes forward to measure the outcome, rounded to the nearest 5-minute bar (default: 15)")
     parser.add_argument(
         "--threshold",
         type=float,

@@ -442,20 +442,34 @@ function setChartData(bars, vwap, indicators) {
   }
 }
 
-// Widening order tried when a target time isn't covered by the *starting*
-// timeframe's native lookback (see bars.py's
-// _INTRADAY_SESSION_LOOKBACK/HISTORICAL_TIMEFRAMES for what each one
-// actually covers: ~10 sessions / 60 days / 200 days / 730 days) --
-// starts from requestedTimeframe when the caller specified one (so e.g.
-// "1D" already covers virtually any pick and never needs to widen
-// further), otherwise from DEFAULT_KEY. Only consulted on the automatic
-// initial load a "time" query param triggers, never overriding a
-// timeframe the user clicked themselves afterward.
+// Widening order tried as a fallback when a target time still isn't
+// covered by the *starting* timeframe -- fetchTimeframeData's own `around`
+// param already asks the server to widen an intraday (1m/5m/15m) fetch's
+// start far enough to include targetTime, up to
+// routers/symbols.py's _AROUND_MAX_LOOKBACK_DAYS cap, so this chain is
+// really only reached for a pick older than that cap, or for the
+// non-intraday timeframes (which HISTORICAL_TIMEFRAMES already covers
+// natively: 60/200/730 days for 1h/4h/1D). Starts from requestedTimeframe
+// when the caller specified one (so e.g. "1D" already covers virtually
+// any pick and never needs to widen further), otherwise from DEFAULT_KEY.
+// Only consulted on the automatic initial load a "time" query param
+// triggers, never overriding a timeframe the user clicked themselves
+// afterward.
 const ESCALATION_ORDER = ["5m", "1h", "4h", "1D"];
 
 async function fetchTimeframeData(option) {
   const timeframeParam = option.kind === "intraday" ? "1Min" : option.alpacaTimeframe;
-  const res = await fetch("/api/symbols/" + encodeURIComponent(symbol) + "/bars?timeframe=" + timeframeParam);
+  let url = "/api/symbols/" + encodeURIComponent(symbol) + "/bars?timeframe=" + timeframeParam;
+  // Widens the *server's* fetch to reach back to targetTime (see
+  // routers/symbols.py's `around`, capped there at _AROUND_MAX_LOOKBACK_
+  // DAYS) instead of relying solely on the ESCALATION_ORDER walk below --
+  // without this, a backtest pick older than the default ~10-session
+  // window would always fall through to a coarser timeframe even though
+  // the caller explicitly asked to stay on an intraday one.
+  if (option.kind === "intraday" && targetTime != null) {
+    url += "&around=" + targetTime;
+  }
+  const res = await fetch(url);
   if (!res.ok) throw new Error("HTTP " + res.status);
   const data = await res.json();
   let bars = data.bars;
