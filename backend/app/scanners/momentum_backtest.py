@@ -140,12 +140,16 @@ async def run_momentum_backtest(
     symbols: list[str],
     lookback_days: int = 30,
     horizon_minutes: int = 15,
+    threshold: float | None = None,
     cache_dir: Path = DEFAULT_CACHE_DIR,
     force_refresh: bool = False,
     max_age_hours: float = 12.0,
 ) -> dict:
     """Fetch (via the disk cache)/orchestration wrapper, mirroring
     app.scanners.backtest.run_backtest's shape at minute resolution.
+    `threshold` overrides settings.alarm_momentum_pct_threshold for just
+    this run -- lets a caller try several threshold values against the
+    same cached bars without touching backend/.env each time.
     """
     bars_by_symbol = await get_cached_minute_bars_multi(
         clients,
@@ -156,7 +160,8 @@ async def run_momentum_backtest(
         max_age_hours=max_age_hours,
     )
 
-    threshold = settings.alarm_momentum_pct_threshold
+    if threshold is None:
+        threshold = settings.alarm_momentum_pct_threshold
     picks = simulate_momentum_alerts(bars_by_symbol, threshold, horizon_minutes)
 
     comparison = {

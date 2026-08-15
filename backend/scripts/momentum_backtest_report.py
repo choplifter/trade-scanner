@@ -10,8 +10,14 @@ both directions.
 
 Run from backend/ (after `pip install -e ".[dev]"`):
     python -m scripts.momentum_backtest_report [--lookback-days 30]
-        [--horizon-minutes 15] [--max-symbols 100] [--symbols AAPL,TSLA,NVDA]
-        [--force-refresh-cache] [--cache-max-age-hours 12]
+        [--horizon-minutes 15] [--threshold 7.0] [--max-symbols 100]
+        [--symbols AAPL,TSLA,NVDA] [--force-refresh-cache] [--cache-max-age-hours 12]
+
+--threshold overrides ALARM_MOMENTUM_PCT_THRESHOLD for just this run --
+the same cached bars can be replayed against several threshold values
+without touching backend/.env each time (the fetch is threshold-
+independent, so a cache hit still applies even if only --threshold
+changed between runs).
 
 Fetches are cached to disk (see app.scanners.bar_cache) since a multi-
 week minute-bar pull for a few hundred symbols can take real wall-clock
@@ -101,6 +107,7 @@ async def _main(args: argparse.Namespace) -> None:
         symbols,
         lookback_days=args.lookback_days,
         horizon_minutes=args.horizon_minutes,
+        threshold=args.threshold,
         cache_dir=Path(args.cache_dir),
         force_refresh=args.force_refresh_cache,
         max_age_hours=args.cache_max_age_hours,
@@ -112,6 +119,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--lookback-days", type=int, default=30, help="Calendar days of minute-bar history to replay (default: 30)")
     parser.add_argument("--horizon-minutes", type=int, default=15, help="Bars forward to measure the outcome (default: 15)")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="15m%% momentum threshold to test, overriding ALARM_MOMENTUM_PCT_THRESHOLD "
+        "for just this run (default: whatever Settings.alarm_momentum_pct_threshold resolves to, 5.0 unless overridden in .env)",
+    )
     parser.add_argument(
         "--max-symbols",
         type=int,
