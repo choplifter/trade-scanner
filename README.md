@@ -3,11 +3,14 @@
 A personal, locally-run "stocks in play" scanner + chart dashboard in the
 spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: live
 gainers / premarket gainers / losers / most-active scanners (table or
-treemap heatmap view), a click-to-chart candlestick widget with a
-session-anchored VWAP overlay and company info/news, AI-generated
-trade-idea annotations, a scanner-wide benchmark against SPY, a persistent
-scanner match history with fade-risk analysis, and a Plotly Dash analytics
-app — powered by Alpaca Markets' real-time IEX data feed, with
+treemap heatmap view) ranked with a catalyst-boost/fade-risk-aware scoring
+formula, a click-to-chart candlestick widget with a session-anchored VWAP
+overlay, EMA/premarket/weekly/monthly range indicators, and company
+info/news, a dashboard-wide momentum alarm, AI-generated trade-idea
+annotations, a scanner-wide benchmark against SPY, a persistent scanner
+match history with fade-risk analysis, CLI tools for re-validating the
+ranking formula against live and historical data, and a Plotly Dash
+analytics app — powered by Alpaca Markets' real-time IEX data feed, with
 float/market cap/short interest/company info layered in from Financial
 Modeling Prep and FINRA.
 
@@ -78,22 +81,58 @@ backend on port 8000, so both must be running.
   WebSocket. A movers-screener backstop periodically pulls in today's
   runners that weren't in the trailing-volume-filtered universe to begin
   with, and keeps running even while the market's closed so a big mover
-  from the last session isn't invisible over a weekend/holiday.
+  from the last session isn't invisible over a weekend/holiday. Rows need
+  at least $1M of today's own dollar volume to appear in a ranked view
+  (`SCANNER_MIN_DOLLAR_VOLUME`), so a thin name that technically clears the
+  universe filters but hasn't traded much yet today doesn't clutter the
+  list.
+- **Ranking formula**: gap %/volume magnitude is boosted 1.15x when a
+  genuine news catalyst is behind the move, and discounted 0.7x when RVOL
+  exceeds 15x -- both tuned from this app's own scanner-history win-rate
+  data (`app/scanners/formulas.py`'s `rank_score`). A roundup headline that
+  just lists a symbol alongside a dozen others ("12 Health Care Stocks
+  Moving...") doesn't count as a catalyst, only a story actually about that
+  symbol does (`is_roundup_headline` in `app/market_data/news.py`). **FADE RISK**
+  and **⚡ MOMENTUM** badges on the symbol cell surface the RVOL and
+  momentum-alarm flags directly, not just indirectly via rank order.
 - Scanner columns: symbol (click to copy its unambiguous `EXCHANGE:SYMBOL`
   TradingView format), a 📰 flag when there's a recent news headline
   (hover for the headline; refreshed every 15 min for whatever's currently
   ranked, not fetched per poll tick), company name, last price, gap %,
-  volume, RVOL, and (when `FMP_API_KEY` is set) float, market cap, short
-  interest % of float, exchange, and country. A **Table / Heatmap** toggle
-  switches the same live feed to a treemap view (tile size = dollar
-  volume, color = gap %, click-to-chart same as the table).
+  **15m %** (trailing-15-minute price change, refreshed every 2 min --
+  distinct from gap %, which is since prior close, so a symbol that already
+  ran earlier and has since gone flat reads differently from one still
+  actively moving right now), volume, RVOL, and (when `FMP_API_KEY` is set)
+  float, market cap, short interest % of float, exchange, and country. A
+  **Table / Heatmap** toggle switches the same live feed to a treemap view
+  (tile size = dollar volume, color = gap %, click-to-chart same as the
+  table).
+- **Momentum alarm** (React app only, off by default): a dashboard-wide
+  alert for a fast, wick-less move -- 15m % exceeding a threshold (5%
+  default, `ALARM_MOMENTUM_PCT_THRESHOLD`) *and* the latest 1-minute candle
+  being a marubozu (near-zero wick either side, `app/market_data/
+  candle_shape.py`), i.e. still actively printing in one direction, not a
+  stale number left over from earlier. Unlike a chart indicator (which only
+  ever watches whatever symbol's chart happens to be open), this watches
+  every ranked view continuously. Toggle in the header ("Alarms Off/On",
+  state persisted across reloads); once on, a new trigger auto-opens a
+  center overlay listing every currently active alarm (click one to load
+  its chart), collapsing to a small count badge you can reopen manually.
+  The threshold and marubozu wick tolerance are starting heuristics, not
+  yet backtested the way the catalyst/fade-risk multipliers were.
 - One chart widget: click any symbol anywhere in the app to load it —
   candlestick chart, volume pane, and a session-anchored VWAP line (resets
   at 09:30 ET), fed by Alpaca's live minute-bar stream, plus a company info
   + recent news panel (name/sector/industry/description from FMP, headlines
   from Alpaca's news feed). Every symbol is clickable, not just the main
   scanner table — the AI past-picks table, the scanner benchmark table, and
-  the scanner match history leaderboards all load into the same chart.
+  the scanner match history leaderboards all load into the same chart. A
+  **Levels** toggle overlays EMA 9/20 (sourced from 1-minute bars
+  regardless of the displayed timeframe) plus premarket/weekly/monthly
+  range lines — a small pluggable indicator system
+  (`backend/app/indicators/`): drop a new file in that directory exposing a
+  `compute(ctx)` function and it shows up on the chart on the next
+  request, no backend restart needed.
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks the 3 most
   notable current setups from gap %, RVOL, dollar volume, HOD status, news
   catalyst, VWAP position, 15-minute momentum, spread, multi-day context,
@@ -118,6 +157,25 @@ backend on port 8000, so both must be running.
   leaderboards — context for *why* it moved, fetched once per symbol per
   day rather than on every poll tick. Available as a widget in the React
   dashboard and a page in the Dash analytics app.
+- **Ranking validation CLI tools** (`backend/scripts/`, run via
+  `python -m scripts.<name>` from `backend/`): `ranking_drift_report.py`
+  re-checks the catalyst-boost/fade-risk multipliers against fresh
+  `scanner_history.sqlite3` data since they were deployed, reporting win
+  rate/avg return per bucket next to the original baseline rather than a
+  hardcoded pass/fail (flags buckets under a 30-sample floor as noisy
+  instead of overstating a thin result). `backtest_report.py` goes further
+  back by replaying months of historical **daily** bars through the same
+  live ranking functions (`engine._rank_gainers`/`_rank_losers`, not a
+  reimplementation) to reconstruct what would have ranked as a gainer/
+  loser on past trading days -- a much bigger sample than however many
+  days of live history have accumulated so far. Both share
+  `app/scanners/bucket_analysis.py`'s bucketing so a live check and a
+  historical one measure things identically. The backtest is daily-bar-
+  only: no catalyst backtesting (needs historical news, unbuilt), no
+  minute-resolution signals (time-of-day RVOL, the momentum alarm's
+  marubozu check), and it applies today's universe membership across the
+  whole lookback window (survivorship bias) -- all stated up front in its
+  own report output.
 - **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
   for the scanner benchmark, scanner match history, cross-symbol
@@ -167,8 +225,25 @@ backend on port 8000, so both must be running.
   bulk file, which in practice runs noticeably behind FINRA's advertised
   publish schedule -- expect it to reflect a settlement date roughly 2-4
   weeks old, not this week's.
-- **EMA 9/20, multi-widget draggable grid (React app), watchlists, alerts**:
-  roadmap items, not built yet.
+- **Multi-widget draggable grid (React app), watchlists**: roadmap items,
+  not built yet -- panels resize (drag the splitters) but aren't
+  freely repositionable.
+- **Momentum alarm**: React app only, not in the Dash analytics app (the
+  center-overlay/toggle interaction pattern doesn't translate to Dash's
+  page-reload-driven callbacks the same way). Both scanner tables do show
+  the underlying ⚡ MOMENTUM badge regardless. The 5% threshold and 10%
+  marubozu-wick tolerance are unvalidated starting heuristics -- worth
+  checking against `scanner_history.sqlite3` (same way the catalyst/
+  fade-risk multipliers were validated and re-validated) once enough real
+  triggers have accumulated.
+- **Backtest harness**: daily-bar resolution only -- can validate the gap%/
+  RVOL-based parts of the ranking formula against months of history, but
+  not the catalyst boost (needs historical news, unbuilt) or the momentum
+  alarm (needs historical minute bars, unbuilt). A 180-day run found ~0
+  RVOL>15x events at daily resolution even across ~240 symbols -- that
+  specific threshold is fundamentally an intraday phenomenon daily bars
+  smooth away, so this tool can't validate it either; only live/intraday
+  history can.
 - **Scanner benchmark / match history**: entries are still recorded from
   closed-market fallback data, but the actual price/SPY comparison columns
   only populate once live polling resumes (they need a live SPY price and a
@@ -189,9 +264,11 @@ backend on port 8000, so both must be running.
 ## Project layout
 
 ```
-backend/   FastAPI app: Alpaca integration, scanner engine, VWAP, WebSockets,
-           fundamentals (FMP + FINRA), AI trade ideas, Plotly Dash analytics app
-frontend/  Vite + React + TypeScript dashboard, lightweight-charts for candles
+backend/           FastAPI app: Alpaca integration, scanner engine, VWAP, WebSockets,
+                    fundamentals (FMP + FINRA), AI trade ideas, Plotly Dash analytics app
+backend/scripts/   Standalone CLI tools (ranking drift report, backtest) -- run via
+                    `python -m scripts.<name>` from backend/, not part of the running app
+frontend/          Vite + React + TypeScript dashboard, lightweight-charts for candles
 ```
 
 See `backend/app/` and `frontend/src/` for the module breakdown — each file
