@@ -139,20 +139,28 @@ def rank_score(magnitude: float, has_headline: bool, rvol: float | None) -> floa
     return score
 
 
-def is_momentum_alert(pct_change_last_15m: float | None, is_marubozu: bool, threshold: float) -> bool:
-    """A fast, wick-less move: the trailing-15-minute price change exceeds
-    `threshold` in magnitude (either direction) *and* the most recent
-    1-minute candle shows almost no pullback (see
-    app.market_data.candle_shape.is_marubozu) -- i.e. still actively
-    printing in one direction right now, not just a big number left over
-    from earlier in the session. Distinct from is_fade_risk (extreme RVOL,
-    which historically predicts a *worse* outcome) -- this is about
-    catching a move while it's actively happening, not judging whether
-    it'll continue.
+def is_momentum_alert(
+    pct_change_last_15m: float | None, is_shaved_top: bool, is_shaved_bottom: bool, threshold: float
+) -> bool:
+    """A fast, still-confirming move: the trailing-15-minute price change
+    exceeds `threshold` in magnitude *and* the most recent 1-minute candle
+    closed at/near the extreme matching that direction -- shaved top
+    (closed at its high, see app.market_data.candle_shape.is_shaved_top)
+    for an upward move, shaved bottom for a downward one. Direction-aware
+    on purpose: a candle closing at its high is confirmation for a move
+    that's going up, but says nothing about one going down (and vice
+    versa), so using a single direction-agnostic shape check (e.g. a
+    marubozu) would accept the wrong evidence for whichever direction
+    it doesn't match. Distinct from is_fade_risk (extreme RVOL, which
+    historically predicts a *worse* outcome) -- this is about catching a
+    move while it's actively happening, not judging whether it'll
+    continue.
     """
     if pct_change_last_15m is None:
         return False
-    return abs(pct_change_last_15m) >= threshold and is_marubozu
+    if abs(pct_change_last_15m) < threshold:
+        return False
+    return is_shaved_top if pct_change_last_15m > 0 else is_shaved_bottom
 
 
 def spread_pct(bid: float | None, ask: float | None) -> float | None:

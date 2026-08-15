@@ -9,12 +9,28 @@ class _Bar:
     close: float
     volume: float
     timestamp: datetime
+    open: float = None  # type: ignore[assignment]
+    high: float = None  # type: ignore[assignment]
+    low: float = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        # Defaults to a zero-range bar (open=high=low=close) for tests that
+        # don't care about wick shape, so existing fixtures don't need to
+        # specify OHLC explicitly.
+        if self.open is None:
+            self.open = self.close
+        if self.high is None:
+            self.high = self.close
+        if self.low is None:
+            self.low = self.close
 
 
 def _daily_bars(start: date, closes: list[float], volume: float = 100_000.0) -> list[_Bar]:
     """One bar per calendar day starting at `start` (no weekend-skipping --
     the date-keyed grouping under test doesn't care about real trading
-    calendars, just that each bar carries a distinct date).
+    calendars, just that each bar carries a distinct date). Zero-range
+    (open=high=low=close) -- fine for tests that don't care about wick
+    shape; see _shaved_top_bar/_non_shaved_top_bar for ones that do.
     """
     return [
         _Bar(close=c, volume=volume, timestamp=datetime.combine(start + timedelta(days=i), datetime.min.time(), tzinfo=timezone.utc))
@@ -88,6 +104,34 @@ def test_simulate_from_bars_groups_by_calendar_date_not_list_index():
     assert aaa_pick["trading_date"] == (start + timedelta(days=20)).isoformat()
     assert bbb_pick["trading_date"] == (bbb_start + timedelta(days=20)).isoformat()
     assert aaa_pick["trading_date"] != bbb_pick["trading_date"]
+
+
+def test_simulate_from_bars_flags_shaved_top_entry_candle():
+    closes = [100.0] * 20 + [110.0, 111.0]
+    bars = _daily_bars(date(2026, 1, 1), closes)
+    # Override the entry day (index 20) with a real candle shape: gapped up
+    # to 105, dipped to 95 intraday, then rallied to close right at the
+    # day's high -- a shaved top (upper wick ~0) despite a big lower wick.
+    bars[20] = _Bar(
+        close=110.0, volume=100_000.0, timestamp=bars[20].timestamp, open=105.0, high=110.0, low=95.0
+    )
+    picks = simulate_from_bars({"AAA": bars}, min_dollar_volume=0.0, horizon_days=1)
+
+    assert len(picks) == 1
+    assert picks[0]["is_shaved_top"] is True
+
+
+def test_simulate_from_bars_flags_non_shaved_top_entry_candle():
+    closes = [100.0] * 20 + [110.0, 111.0]
+    bars = _daily_bars(date(2026, 1, 1), closes)
+    # Closed well off the day's high -- not a shaved top.
+    bars[20] = _Bar(
+        close=110.0, volume=100_000.0, timestamp=bars[20].timestamp, open=100.0, high=115.0, low=99.0
+    )
+    picks = simulate_from_bars({"AAA": bars}, min_dollar_volume=0.0, horizon_days=1)
+
+    assert len(picks) == 1
+    assert picks[0]["is_shaved_top"] is False
 
 
 def test_simulate_from_bars_respects_horizon_days():

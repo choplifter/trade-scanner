@@ -4,13 +4,21 @@ _rank_losers, not a reimplementation) to reconstruct what would have
 ranked as a gainer/loser, then buckets win-rate/avg-return with the same
 methodology already trusted for live data (bucket_analysis.py).
 
+Also checks each entry day's own candle shape via is_shaved_top (see
+app.market_data.candle_shape) -- did the pick close at/near that day's
+high, regardless of how it got there? Wick-shape analysis works on any
+OHLC bar, daily included, so this doesn't need minute data the way the
+momentum alarm's 15m % check does.
+
 Deliberately out of scope for this pass:
 - Catalyst/headline backtesting -- needs historical news data (a harder,
   separate phase), so every row here is ranked with has_headline=False
   (news_cache=None passed to _rank_gainers/_rank_losers).
-- Minute-resolution signals (time-of-day RVOL, the momentum alarm's
-  marubozu check) -- would need historical minute bars, far more data
-  volume than a daily-bar pass.
+- The momentum alarm itself (15m % + shaved top/bottom) -- 15m % is
+  inherently a minute-resolution concept (a trailing-15-*minute* delta),
+  so it can't be reconstructed from daily bars at all, unlike
+  is_shaved_top above (checked here without any 15m % gate). Would need
+  historical minute bars, far more data volume than a daily-bar pass.
 - Point-in-time universe reconstruction -- this backtests today's live
   universe membership against past dates, which has survivorship bias
   (a stock that doesn't qualify for today's universe might have
@@ -25,6 +33,7 @@ from statistics import mean
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
 from app.market_data.bars import get_daily_bars_multi
+from app.market_data.candle_shape import is_shaved_top
 from app.scanners import bucket_analysis, formulas
 from app.scanners.engine import _rank_gainers, _rank_losers
 
@@ -49,7 +58,8 @@ class _BacktestRow:
     and formulas.rank_score to work -- those functions are duck-typed over
     any object with these attributes, not tied to the full ScannerRow
     pydantic model (which would need fabricating unused fields like
-    updated_at for no benefit here).
+    updated_at for no benefit here). is_shaved_top rides along unused by
+    ranking itself, just carried through to the final picks for analysis.
     """
 
     symbol: str
@@ -58,6 +68,7 @@ class _BacktestRow:
     volume_today: float
     dollar_volume_today: float
     rvol: float
+    is_shaved_top: bool
 
 
 def simulate_from_bars(
@@ -106,6 +117,7 @@ def simulate_from_bars(
                     volume_today=bar.volume,
                     dollar_volume_today=formulas.dollar_volume(bar.volume, bar.close),
                     rvol=row_rvol,
+                    is_shaved_top=is_shaved_top(bar.open, bar.high, bar.low, bar.close),
                 )
             )
             exit_price_by_symbol_date[(symbol, trading_date)] = bars[i + horizon_days].close
@@ -127,6 +139,7 @@ def simulate_from_bars(
                         "view": view_name,
                         "entry_pct_change": row.pct_change,
                         "entry_rvol": row.rvol,
+                        "is_shaved_top": row.is_shaved_top,
                         "pct_change_since_entry": (exit_price - row.last_price) / row.last_price * 100,
                     }
                 )
@@ -171,6 +184,23 @@ async def run_backtest(
         "sufficient_sample": len(above) >= bucket_analysis.MIN_SAMPLE_SIZE,
     }
 
+    shaved_top: list[dict] = []
+    for view_name in ("gainers", "losers"):
+        view_picks = [p for p in picks if p["view"] == view_name]
+        shaved = [p for p in view_picks if p["is_shaved_top"]]
+        not_shaved = [p for p in view_picks if not p["is_shaved_top"]]
+        shaved_top.append(
+            {
+                "view": view_name,
+                "shaved_top": bucket_analysis.bucket_stats(shaved),
+                "not_shaved_top": bucket_analysis.bucket_stats(not_shaved),
+                "sufficient_sample": (
+                    len(shaved) >= bucket_analysis.MIN_SAMPLE_SIZE
+                    and len(not_shaved) >= bucket_analysis.MIN_SAMPLE_SIZE
+                ),
+            }
+        )
+
     return {
         "symbol_count": len(symbols),
         "symbols_with_bars": len(bars_by_symbol),
@@ -179,6 +209,7 @@ async def run_backtest(
         "sample_size": len(picks),
         "gap_buckets": gap_buckets,
         "rvol_buckets": rvol_buckets,
+        "shaved_top": shaved_top,
         "fade_risk": fade_risk,
         "min_sample_size": bucket_analysis.MIN_SAMPLE_SIZE,
     }

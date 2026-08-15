@@ -10,10 +10,16 @@ Run from backend/ (after `pip install -e ".[dev]"`):
 NOT covered by this report -- see app.scanners.backtest's module
 docstring for why each is out of scope for this pass:
   - Catalyst/headline boost (needs historical news data, a separate phase)
-  - Minute-resolution signals: time-of-day RVOL, the momentum alarm's
-    marubozu check (needs historical minute bars, far more data volume)
+  - The momentum alarm itself: 15m % + shaved top/bottom (15m % is
+    inherently a minute-resolution concept, needs historical minute bars)
   - Point-in-time universe membership -- this backtests TODAY's universe
     against past dates, which has survivorship bias.
+
+Does cover is_shaved_top (app.market_data.candle_shape) on its own,
+without the 15m % gate the live momentum alarm pairs it with: did the
+entry day's own candle close at/near its high, regardless of how it got
+there? This only needs the daily bar already being fetched, not minute
+data.
 """
 
 import argparse
@@ -47,9 +53,9 @@ def _print_report(report: dict) -> None:
     print(f"Total ranked picks reconstructed: {report['sample_size']}\n")
 
     print("** NOT covered by this report: catalyst/headline boost (needs historical")
-    print("   news, a separate phase), minute-resolution signals (time-of-day RVOL,")
-    print("   the momentum alarm's marubozu check), and today's universe membership")
-    print("   is applied across the whole lookback window (survivorship bias). **\n")
+    print("   news, a separate phase), the momentum alarm itself (15m % is a minute-")
+    print("   resolution concept), and today's universe membership is applied across")
+    print("   the whole lookback window (survivorship bias). **\n")
 
     if report["sample_size"] == 0:
         print("No picks reconstructed -- nothing to report.")
@@ -82,6 +88,15 @@ def _print_report(report: dict) -> None:
     print(_fmt_bucket(f"rvol <= {threshold}x", fade_risk["rvol_at_or_below_threshold"]))
     if not fade_risk["sufficient_sample"]:
         print(f"  ** sample size below {min_n} for the >threshold group -- treat as noisy **")
+    print()
+
+    print(f"Shaved top (entry day's candle closed at/near its high, avg {report['horizon_days']}-day-forward return):")
+    for row in report["shaved_top"]:
+        print(f"  {row['view']}:")
+        print(_fmt_bucket("    shaved top", row["shaved_top"]))
+        print(_fmt_bucket("    not shaved top", row["not_shaved_top"]))
+        if not row["sufficient_sample"]:
+            print(f"    ** below n={min_n} floor in at least one group -- treat as noisy **")
 
 
 async def _main(args: argparse.Namespace) -> None:

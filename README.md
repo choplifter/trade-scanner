@@ -108,18 +108,20 @@ backend on port 8000, so both must be running.
   (tile size = dollar volume, color = gap %, click-to-chart same as the
   table).
 - **Momentum alarm** (React app only, off by default): a dashboard-wide
-  alert for a fast, wick-less move -- 15m % exceeding a threshold (5%
-  default, `ALARM_MOMENTUM_PCT_THRESHOLD`) *and* the latest 1-minute candle
-  being a marubozu (near-zero wick either side, `app/market_data/
-  candle_shape.py`), i.e. still actively printing in one direction, not a
-  stale number left over from earlier. Unlike a chart indicator (which only
-  ever watches whatever symbol's chart happens to be open), this watches
-  every ranked view continuously. Toggle in the header ("Alarms Off/On",
-  state persisted across reloads); once on, a new trigger auto-opens a
-  center overlay listing every currently active alarm (click one to load
-  its chart), collapsing to a small count badge you can reopen manually.
-  The threshold and marubozu wick tolerance are starting heuristics, not
-  yet backtested the way the catalyst/fade-risk multipliers were.
+  alert for a fast, still-confirming move -- 15m % exceeding a threshold
+  (5% default, `ALARM_MOMENTUM_PCT_THRESHOLD`) *and* the latest 1-minute
+  candle closed at/near the extreme matching that direction: shaved top
+  (near-zero upper wick) for a move up, shaved bottom for a move down
+  (`app/market_data/candle_shape.py`) -- direction-aware on purpose, since
+  a candle closing at its high confirms an upward move but says nothing
+  about a downward one. Unlike a chart indicator (which only ever watches
+  whatever symbol's chart happens to be open), this watches every ranked
+  view continuously. Toggle in the header ("Alarms Off/On", state
+  persisted across reloads); once on, a new trigger auto-opens a center
+  overlay listing every currently active alarm (click one to load its
+  chart), collapsing to a small count badge you can reopen manually. The
+  threshold and shaved-top/bottom wick tolerance are starting heuristics,
+  not yet backtested the way the catalyst/fade-risk multipliers were.
 - One chart widget: click any symbol anywhere in the app to load it —
   candlestick chart, volume pane, and a session-anchored VWAP line (resets
   at 09:30 ET), fed by Alpaca's live minute-bar stream, plus a company info
@@ -170,12 +172,15 @@ backend on port 8000, so both must be running.
   loser on past trading days -- a much bigger sample than however many
   days of live history have accumulated so far. Both share
   `app/scanners/bucket_analysis.py`'s bucketing so a live check and a
-  historical one measure things identically. The backtest is daily-bar-
-  only: no catalyst backtesting (needs historical news, unbuilt), no
-  minute-resolution signals (time-of-day RVOL, the momentum alarm's
-  marubozu check), and it applies today's universe membership across the
-  whole lookback window (survivorship bias) -- all stated up front in its
-  own report output.
+  historical one measure things identically. Also breaks down win rate by
+  `is_shaved_top` (did the entry day's own candle close at/near its high?
+  -- wick-shape analysis works on any OHLC bar, so this doesn't need
+  minute data). The backtest is daily-bar-only: no catalyst backtesting
+  (needs historical news, unbuilt), no minute-resolution signals (time-of-
+  day RVOL, the momentum alarm itself -- 15m % is inherently a minute-
+  resolution concept), and it applies today's universe membership across
+  the whole lookback window (survivorship bias) -- all stated up front in
+  its own report output.
 - **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
   for the scanner benchmark, scanner match history, cross-symbol
@@ -232,18 +237,23 @@ backend on port 8000, so both must be running.
   center-overlay/toggle interaction pattern doesn't translate to Dash's
   page-reload-driven callbacks the same way). Both scanner tables do show
   the underlying ⚡ MOMENTUM badge regardless. The 5% threshold and 10%
-  marubozu-wick tolerance are unvalidated starting heuristics -- worth
-  checking against `scanner_history.sqlite3` (same way the catalyst/
+  shaved-top/bottom wick tolerance are unvalidated starting heuristics --
+  worth checking against `scanner_history.sqlite3` (same way the catalyst/
   fade-risk multipliers were validated and re-validated) once enough real
-  triggers have accumulated.
+  triggers have accumulated. A 180-day daily-bar backtest of `is_shaved_top`
+  *on its own* (no 15m % gate, since that needs minute data -- see below)
+  found no meaningful standalone edge at a 1-day horizon for either
+  gainers or losers, despite large samples -- doesn't confirm or refute
+  the *combined* 15m %-and-shape signal the live alarm actually checks,
+  just that shape alone isn't doing much work by itself.
 - **Backtest harness**: daily-bar resolution only -- can validate the gap%/
-  RVOL-based parts of the ranking formula against months of history, but
-  not the catalyst boost (needs historical news, unbuilt) or the momentum
-  alarm (needs historical minute bars, unbuilt). A 180-day run found ~0
-  RVOL>15x events at daily resolution even across ~240 symbols -- that
-  specific threshold is fundamentally an intraday phenomenon daily bars
-  smooth away, so this tool can't validate it either; only live/intraday
-  history can.
+  RVOL-based parts of the ranking formula against months of history, plus
+  `is_shaved_top` on its own, but not the catalyst boost (needs historical
+  news, unbuilt) or the momentum alarm as a whole (15m % needs historical
+  minute bars, unbuilt). A 180-day run found ~0 RVOL>15x events at daily
+  resolution even across ~240 symbols -- that specific threshold is
+  fundamentally an intraday phenomenon daily bars smooth away, so this
+  tool can't validate it either; only live/intraday history can.
 - **Scanner benchmark / match history**: entries are still recorded from
   closed-market fallback data, but the actual price/SPY comparison columns
   only populate once live polling resumes (they need a live SPY price and a

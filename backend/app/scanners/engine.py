@@ -544,7 +544,8 @@ class ScannerEngine:
                 row.pct_change_last_15m = self.momentum_cache.get(row.symbol)
                 row.is_momentum_alert = formulas.is_momentum_alert(
                     row.pct_change_last_15m,
-                    self.momentum_cache.is_marubozu(row.symbol),
+                    self.momentum_cache.is_shaved_top(row.symbol),
+                    self.momentum_cache.is_shaved_bottom(row.symbol),
                     self.settings.alarm_momentum_pct_threshold,
                 )
 

@@ -25,7 +25,7 @@ from collections.abc import Iterable
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
 from app.market_data.bars import get_intraday_minute_bars_multi
-from app.market_data.candle_shape import is_marubozu as _is_marubozu_bar
+from app.market_data.candle_shape import is_shaved_bottom, is_shaved_top
 from app.market_data.momentum import MOMENTUM_WINDOW, pct_change_over_window
 
 logger = logging.getLogger(__name__)
@@ -36,17 +36,25 @@ class MomentumCache:
         self.settings = settings
         self.clients = clients
         self._pct_change_15m: dict[str, float | None] = {}
-        # Whether the latest 1-minute bar was a marubozu (see
-        # app.market_data.candle_shape) -- computed from the same bar fetch
-        # as pct_change_15m above, no extra API call.
-        self._is_marubozu: dict[str, bool] = {}
+        # Whether the latest 1-minute bar closed at/near its high or low
+        # (see app.market_data.candle_shape) -- computed from the same bar
+        # fetch as pct_change_15m above, no extra API call. Both are kept
+        # (not just whichever direction pct_change_15m currently is) since
+        # is_momentum_alert picks the one matching the move's own
+        # direction, and that can differ from the shape check's own timing
+        # by the time a caller reads it.
+        self._is_shaved_top: dict[str, bool] = {}
+        self._is_shaved_bottom: dict[str, bool] = {}
         self._fetched_at: dict[str, float] = {}
 
     def get(self, symbol: str) -> float | None:
         return self._pct_change_15m.get(symbol)
 
-    def is_marubozu(self, symbol: str) -> bool:
-        return self._is_marubozu.get(symbol, False)
+    def is_shaved_top(self, symbol: str) -> bool:
+        return self._is_shaved_top.get(symbol, False)
+
+    def is_shaved_bottom(self, symbol: str) -> bool:
+        return self._is_shaved_bottom.get(symbol, False)
 
     async def ensure_fresh(self, symbols: Iterable[str]) -> None:
         now = time.monotonic()
@@ -68,13 +76,19 @@ class MomentumCache:
         for symbol in stale:
             self._fetched_at[symbol] = now
             bars = bars_by_symbol.get(symbol) or []
-            # Explicitly set both (not just when there's enough data) so a
-            # value that's no longer computable (e.g. a feed gap) correctly
-            # clears instead of sticking at a stale reading forever.
+            # Explicitly set all three (not just when there's enough data)
+            # so a value that's no longer computable (e.g. a feed gap)
+            # correctly clears instead of sticking at a stale reading
+            # forever.
             self._pct_change_15m[symbol] = pct_change_over_window(bars, MOMENTUM_WINDOW)
             latest_bar = bars[-1] if bars else None
-            self._is_marubozu[symbol] = (
-                _is_marubozu_bar(latest_bar.open, latest_bar.high, latest_bar.low, latest_bar.close)
-                if latest_bar is not None
-                else False
-            )
+            if latest_bar is not None:
+                self._is_shaved_top[symbol] = is_shaved_top(
+                    latest_bar.open, latest_bar.high, latest_bar.low, latest_bar.close
+                )
+                self._is_shaved_bottom[symbol] = is_shaved_bottom(
+                    latest_bar.open, latest_bar.high, latest_bar.low, latest_bar.close
+                )
+            else:
+                self._is_shaved_top[symbol] = False
+                self._is_shaved_bottom[symbol] = False
