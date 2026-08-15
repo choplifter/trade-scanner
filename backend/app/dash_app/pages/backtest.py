@@ -113,7 +113,7 @@ def _local_timestamp(iso_ts: str) -> str:
     return datetime.fromisoformat(iso_ts).astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _iframe_src(symbol: str | None, target_time: int | None = None) -> str:
+def _iframe_src(symbol: str | None, target_time: int | None = None, timeframe: str | None = None) -> str:
     """Same embedded-chart iframe the scanner heatmap's Symbol Detail panel
     uses (see scanner_heatmap.py's _iframe_src) -- clicking a pick here
     loads it into this page's own panel rather than navigating away, same
@@ -121,15 +121,23 @@ def _iframe_src(symbol: str | None, target_time: int | None = None) -> str:
 
     `target_time` (unix seconds, UTC) is the pick's own entry time -- passed
     through as a "time" query param so lightweight_chart.html can jump the
-    view to that exact bar, widening to a longer-lookback timeframe first if
-    the default intraday view doesn't reach back that far (see that file's
-    loadChart()/ESCALATION_ORDER).
+    view to that exact bar. `timeframe` is the resolution *that specific
+    backtest actually replayed* ("1D" for the daily ranking backtest, "5m"
+    for the minute-resolution momentum backtest) -- passed through as "tf"
+    so the chart opens on the same resolution the win/loss was computed at,
+    rather than always starting from the chart's own default and possibly
+    settling on a resolution neither backtest ever looked at. Still widens
+    further (see lightweight_chart.html's loadChart()/ESCALATION_ORDER) if
+    that specific resolution's native lookback doesn't reach back far
+    enough for this particular pick.
     """
     if not symbol:
         return "/analytics/assets/lightweight_chart.html"
     src = "/analytics/assets/lightweight_chart.html?symbol=" + urllib.parse.quote(symbol)
     if target_time is not None:
         src += "&time=" + str(target_time)
+    if timeframe is not None:
+        src += "&tf=" + urllib.parse.quote(timeframe)
     return src
 
 
@@ -810,12 +818,15 @@ def _symbol_panel():
 )
 def update_backtest_symbol_panel(daily_active_cell, momentum_active_cell):
     triggered_id = dash.ctx.triggered_id
-    active_cell = daily_active_cell if triggered_id == "backtest-daily-picks-table" else momentum_active_cell
+    if triggered_id == "backtest-daily-picks-table":
+        active_cell, timeframe = daily_active_cell, "1D"
+    else:
+        active_cell, timeframe = momentum_active_cell, "5m"
     row_id = active_cell.get("row_id") if active_cell else None
     if not row_id:
         return dash.no_update, dash.no_update
     symbol, target_time = _parse_row_id(row_id)
-    return _iframe_src(symbol, target_time), symbol
+    return _iframe_src(symbol, target_time, timeframe), symbol
 
 
 def layout(**_kwargs):
