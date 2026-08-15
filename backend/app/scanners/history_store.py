@@ -19,6 +19,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.scanners import bucket_analysis
 from app.services.market_clock import ET
 
 _SCHEMA = """
@@ -66,14 +67,6 @@ _COLUMN_MIGRATIONS = [
 _HORIZON_MINUTES = {"30m": 30.0, "60m": 60.0}
 _LEADERBOARD_SIZE = 15
 
-# Fade-risk buckets: does a bigger entry gap / higher RVOL predict worse
-# subsequent performance ("gap and crap") rather than better? Bounds are
-# upper-exclusive except the last, open-ended bucket. Bucketed on |gap%|
-# (direction-agnostic -- losers' gaps are negative) and on entry_rvol
-# directly (already direction-agnostic).
-_GAP_BUCKETS = [("<15%", 0.0, 15.0), ("15-30%", 15.0, 30.0), ("30-60%", 30.0, 60.0), (">60%", 60.0, None)]
-_RVOL_BUCKETS = [("<2x", 0.0, 2.0), ("2-5x", 2.0, 5.0), ("5-15x", 5.0, 15.0), (">15x", 15.0, None)]
-
 # Baseline correlations the catalyst-boost/fade-risk ranking change
 # (commit 1ce30a2, "Boost catalyst headlines and flag RVOL fade-risk in
 # scanner ranking") was based on -- a one-off analysis of 1447 historical
@@ -86,11 +79,8 @@ _BASELINE_CATALYST_WIN_RATE_DELTA_PP = 8.5
 _BASELINE_FADE_RISK_WIN_RATE = 25.6
 _BASELINE_FADE_RISK_AVG_RETURN = -10.38
 # Must match formulas._FADE_RISK_RVOL -- duplicated rather than imported,
-# same as _RVOL_BUCKETS' own ">15x" boundary above.
+# same as bucket_analysis.RVOL_BUCKETS' own ">15x" boundary.
 _FADE_RISK_RVOL_THRESHOLD = 15.0
-# Below this many picks in a bucket, win rate/avg return are too noisy to
-# call drift one way or the other either way.
-_DRIFT_MIN_SAMPLE_SIZE = 30
 
 
 @dataclass
@@ -331,10 +321,12 @@ class ScannerHistoryStore:
         leaderboard_worst = sorted(latest_picks, key=lambda p: p["alpha_vs_benchmark"])[:_LEADERBOARD_SIZE]
 
         latest_with_return = [p for p in picks_by_horizon["latest"] if p["pct_change_since_entry"] is not None]
-        gap_buckets = self._bucket_breakdown(
-            latest_with_return, lambda p: abs(p["entry_pct_change"]), _GAP_BUCKETS
+        gap_buckets = bucket_analysis.bucket_breakdown(
+            latest_with_return, lambda p: abs(p["entry_pct_change"]), bucket_analysis.GAP_BUCKETS
         )
-        rvol_buckets = self._bucket_breakdown(latest_with_return, lambda p: p["entry_rvol"], _RVOL_BUCKETS)
+        rvol_buckets = bucket_analysis.bucket_breakdown(
+            latest_with_return, lambda p: p["entry_rvol"], bucket_analysis.RVOL_BUCKETS
+        )
 
         return {
             "summary": summary,
@@ -344,62 +336,15 @@ class ScannerHistoryStore:
             "rvol_buckets": rvol_buckets,
         }
 
-    @staticmethod
-    def _bucket_breakdown(
-        picks: list[dict],
-        key_fn,
-        buckets: list[tuple[str, float, float | None]],
-    ) -> list[dict]:
-        """Fade-risk breakdown: does this bucket (gap size or RVOL) predict
-        worse pct_change_since_entry than a smaller one? See
-        app.scanners.history_store module docstring / _GAP_BUCKETS for the
-        hypothesis this exists to keep checking as more data accumulates.
-        Rows come out in (view, bucket) declaration order, not sorted --
-        the point is reading them left-to-right as a monotonic trend.
-        """
-        rows = []
-        for view_name in ("gainers", "losers", "most_active"):
-            view_picks = [p for p in picks if p["view"] == view_name]
-            for label, low, high in buckets:
-                bucket_picks = [p for p in view_picks if key_fn(p) >= low and (high is None or key_fn(p) < high)]
-                if not bucket_picks:
-                    continue
-                wins = sum(1 for p in bucket_picks if p["pct_change_since_entry"] > 0)
-                rows.append(
-                    {
-                        "view": view_name,
-                        "bucket": label,
-                        "sample_size": len(bucket_picks),
-                        "win_rate": round(wins / len(bucket_picks) * 100, 1),
-                        "avg_return": round(
-                            sum(p["pct_change_since_entry"] for p in bucket_picks) / len(bucket_picks), 2
-                        ),
-                    }
-                )
-        return rows
-
     async def compute_performance(self, days: int = 7, view: str | None = None) -> dict:
         return await asyncio.to_thread(self._compute_performance_sync, days, view)
 
     @staticmethod
-    def _bucket_stats(picks: list[dict]) -> dict:
-        wins = sum(1 for p in picks if p["pct_change_since_entry"] > 0)
-        return {
-            "sample_size": len(picks),
-            "win_rate": round(wins / len(picks) * 100, 1) if picks else None,
-            "avg_return": (
-                round(sum(p["pct_change_since_entry"] for p in picks) / len(picks), 2)
-                if picks
-                else None
-            ),
-        }
-
-    @classmethod
-    def _catalyst_drift(cls, picks: list[dict]) -> dict:
+    def _catalyst_drift(picks: list[dict]) -> dict:
         with_headline = [p for p in picks if p["has_headline"]]
         without_headline = [p for p in picks if not p["has_headline"]]
-        with_stats = cls._bucket_stats(with_headline)
-        without_stats = cls._bucket_stats(without_headline)
+        with_stats = bucket_analysis.bucket_stats(with_headline)
+        without_stats = bucket_analysis.bucket_stats(without_headline)
         delta_pp = (
             round(with_stats["win_rate"] - without_stats["win_rate"], 1)
             if with_stats["win_rate"] is not None and without_stats["win_rate"] is not None
@@ -411,22 +356,22 @@ class ScannerHistoryStore:
             "win_rate_delta_pp": delta_pp,
             "baseline_win_rate_delta_pp": _BASELINE_CATALYST_WIN_RATE_DELTA_PP,
             "sufficient_sample": (
-                len(with_headline) >= _DRIFT_MIN_SAMPLE_SIZE
-                and len(without_headline) >= _DRIFT_MIN_SAMPLE_SIZE
+                len(with_headline) >= bucket_analysis.MIN_SAMPLE_SIZE
+                and len(without_headline) >= bucket_analysis.MIN_SAMPLE_SIZE
             ),
         }
 
-    @classmethod
-    def _fade_risk_drift(cls, picks: list[dict]) -> dict:
+    @staticmethod
+    def _fade_risk_drift(picks: list[dict]) -> dict:
         above = [p for p in picks if p["entry_rvol"] > _FADE_RISK_RVOL_THRESHOLD]
         at_or_below = [p for p in picks if p["entry_rvol"] <= _FADE_RISK_RVOL_THRESHOLD]
         return {
-            "rvol_above_threshold": cls._bucket_stats(above),
-            "rvol_at_or_below_threshold": cls._bucket_stats(at_or_below),
+            "rvol_above_threshold": bucket_analysis.bucket_stats(above),
+            "rvol_at_or_below_threshold": bucket_analysis.bucket_stats(at_or_below),
             "threshold": _FADE_RISK_RVOL_THRESHOLD,
             "baseline_win_rate": _BASELINE_FADE_RISK_WIN_RATE,
             "baseline_avg_return": _BASELINE_FADE_RISK_AVG_RETURN,
-            "sufficient_sample": len(above) >= _DRIFT_MIN_SAMPLE_SIZE,
+            "sufficient_sample": len(above) >= bucket_analysis.MIN_SAMPLE_SIZE,
         }
 
     def _compute_ranking_drift_sync(self, since_date: str) -> dict:
