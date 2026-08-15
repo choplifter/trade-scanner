@@ -155,3 +155,34 @@ async def get_daily_bars_multi(
     )
     bar_set = await asyncio.to_thread(clients.data.get_stock_bars, request)
     return dict(bar_set.data)
+
+
+async def get_minute_bars_multi(
+    clients: AlpacaClients, symbols: list[str], lookback_days: int = 30
+) -> dict[str, list]:
+    """Minute bars for several symbols over an explicit multi-week/month
+    calendar-day lookback -- unlike get_intraday_minute_bars_multi (hard-
+    coded to 1 session, for seeding today's live VWAP/momentum), this is
+    for historical backtesting (see app.scanners.momentum_backtest) over
+    weeks of history. Alpaca paginates internally for a range this large;
+    a multi-week, multi-hundred-symbol call can take real wall-clock time
+    (potentially minutes, not seconds) and return millions of bars -- see
+    app.scanners.bar_cache for why callers doing this more than once
+    should go through its disk cache instead of calling this directly
+    every time.
+
+    adjustment=SPLIT, same reasoning as get_daily_bars_multi: a split
+    inside the lookback window would otherwise show as a nonsensical
+    single-bar price discontinuity.
+    """
+    if not symbols:
+        return {}
+    request = StockBarsRequest(
+        symbol_or_symbols=symbols,
+        timeframe=TimeFrame.Minute,
+        start=datetime.now(timezone.utc) - timedelta(days=lookback_days),
+        feed=clients.feed,
+        adjustment=Adjustment.SPLIT,
+    )
+    bar_set = await asyncio.to_thread(clients.data.get_stock_bars, request)
+    return dict(bar_set.data)
