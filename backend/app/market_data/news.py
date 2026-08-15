@@ -18,14 +18,45 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_NEWS_LOOKBACK = timedelta(hours=48)
 
-# Benzinga publishes recurring "N <sector> Stocks Moving In <Day>'s
-# <Session> Session" roundups covering a dozen-ish symbols at once. The
-# headline alone doesn't say which *direction* our specific symbol moved
-# in -- that only shows up in the article body, split into "Gainers" and
-# "Losers" sections. Matched against the plain headline text (already
-# fetched for free in the first pass below), before deciding whether the
-# pricier include_content=True follow-up fetch is worth making at all.
-_ROUNDUP_HEADLINE = re.compile(r"^\d+\s+.+\s+Stocks Moving")
+# Benzinga publishes recurring "N <sector> Stocks <topic>" roundups
+# covering a dozen-ish symbols at once -- "N <sector> Stocks Moving In
+# <Day>'s <Session> Session" is the most common, but the same numbered-
+# listicle template covers other topics too (verified live: "N <sector>
+# Stocks With Whale Alerts In Today's Session", "N <sector> Stocks Whale
+# Activity In Today's Session"), so this matches the shared structural
+# prefix rather than the specific topic word -- narrower per-topic
+# patterns would just keep missing whatever the next variant is. Only the
+# "Moving" variant's direction is ambiguous from the headline alone (shows
+# up in the body instead, split into "Gainers"/"Losers" sections); the
+# other topics don't have a meaningful per-symbol direction to begin with,
+# so classify_mover below just harmlessly finds nothing for those. Matched
+# against the plain headline text (already fetched for free in the first
+# pass below), before deciding whether the pricier include_content=True
+# follow-up fetch is worth making at all.
+_ROUNDUP_HEADLINE = re.compile(r"^\d+\s+.+?\bStocks\b", re.IGNORECASE)
+
+# A second, more common Benzinga roundup template: "<Company>, <Company>,
+# <Company> And Other (Big) Stocks Moving Higher/Lower On/In <day/session>."
+# Unlike _ROUNDUP_HEADLINE above, the direction is already stated in the
+# headline itself (one blanket direction for the whole list), so this
+# doesn't need the include_content=True follow-up -- it's only used to
+# recognize that a headline naming our symbol is still just a mention in a
+# multi-stock list, not a story *about* that symbol, for is_roundup_headline
+# below.
+_ROUNDUP_TAIL = re.compile(r"And Other (Big )?Stocks Moving (Higher|Lower)", re.IGNORECASE)
+
+
+def is_roundup_headline(headline: str) -> bool:
+    """True for a Benzinga movers-roundup headline (either template above)
+    -- a symbol being *listed* alongside a dozen others because it happened
+    to move today isn't a catalyst *for* that symbol the way an earnings
+    beat or FDA decision is, even though it's real, current news. Used to
+    keep roundup mentions out of ranking's catalyst boost (see
+    app.scanners.engine._has_headline) while still surfacing them as
+    recent_headline for display -- they're not wrong, just not evidence of
+    *why* the stock is moving.
+    """
+    return bool(_ROUNDUP_HEADLINE.match(headline) or _ROUNDUP_TAIL.search(headline))
 
 
 def _classify_mover(content: str, symbol: str) -> str | None:
@@ -85,12 +116,15 @@ async def fetch_headlines(
 ) -> dict[str, str]:
     """Most recent news headline per symbol, best-effort: a fetch failure
     (rate limit, transient API error) degrades to no headlines rather than
-    failing the caller outright. Benzinga "N ... Stocks Moving..." roundup
-    headlines get a "(Gainer)"/"(Loser)" suffix once classified -- see
-    _append_mover_directions -- fetched only for symbols that actually
+    failing the caller outright. Benzinga's numbered-listicle roundups (see
+    _ROUNDUP_HEADLINE) get a "(Gainer)"/"(Loser)" suffix once classified --
+    see _append_mover_directions -- fetched only for symbols that actually
     matched a roundup headline in this batch, not on every call, since
     include_content=True returns the full article body (a few KB) instead
-    of just a headline.
+    of just a headline. A no-op for roundup topics that don't have a
+    Gainers/Losers split in the body (e.g. whale-alert roundups) --
+    _classify_mover just finds nothing and the headline keeps its plain
+    unclassified text.
     """
     if not symbols:
         return {}

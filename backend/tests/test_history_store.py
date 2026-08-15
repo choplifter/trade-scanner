@@ -72,3 +72,23 @@ def test_compute_ranking_drift_catalyst_and_fade_risk_breakdown(tmp_path):
     assert fade_risk["rvol_above_threshold"]["win_rate"] == 50.0
     assert fade_risk["rvol_at_or_below_threshold"]["sample_size"] == 3
     assert fade_risk["sufficient_sample"] is False
+
+
+def test_compute_ranking_drift_excludes_roundup_mentions_from_catalyst(tmp_path):
+    store = _store(tmp_path)
+    _seed(store, "AAA", entry_rvol=3.0, headline="Beats earnings", entry_price=10.0, latest_price=11.0)
+    _seed(
+        store,
+        "BBB",
+        entry_rvol=3.0,
+        headline="12 Health Care Stocks Moving In Wednesday's Intraday Session",
+        entry_price=10.0,
+        latest_price=12.0,
+    )
+
+    report = asyncio.run(store.compute_ranking_drift(since_date="2000-01-01"))
+
+    catalyst = report["catalyst"]
+    # BBB's roundup mention doesn't count as a catalyst -- only AAA does.
+    assert catalyst["with_headline"]["sample_size"] == 1
+    assert catalyst["without_headline"]["sample_size"] == 1

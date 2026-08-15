@@ -18,7 +18,7 @@ from app.market_data.market_conditions import (
     fetch_high_impact_events_today,
     fetch_vix,
 )
-from app.market_data.news import fetch_headlines
+from app.market_data.news import fetch_headlines, is_roundup_headline
 from app.market_data.news_cache import NewsCache
 from app.scanners import formulas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
@@ -36,7 +36,19 @@ _TOP_N = 50
 
 
 def _has_headline(row: ScannerRow, news_cache: NewsCache | None) -> bool:
-    return news_cache is not None and news_cache.get(row.symbol) is not None
+    """True only for a headline that's actually about this symbol -- a
+    Benzinga movers-roundup mention (see
+    app.market_data.news.is_roundup_headline) doesn't count, even though
+    it's a real, current headline: being one of a dozen names listed
+    because it happened to move today isn't evidence of *why*, so it
+    shouldn't earn rank_score's catalyst boost the way an earnings/FDA/M&A
+    story would. Still shown to the user as recent_headline regardless --
+    this only affects ranking.
+    """
+    if news_cache is None:
+        return False
+    headline = news_cache.get(row.symbol)
+    return headline is not None and not is_roundup_headline(headline)
 
 
 def _tradable(rows, min_dollar_volume: float) -> list[ScannerRow]:

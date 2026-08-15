@@ -19,6 +19,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.market_data.news import is_roundup_headline
 from app.scanners import bucket_analysis
 from app.services.market_clock import ET
 
@@ -408,9 +409,16 @@ class ScannerHistoryStore:
             if not entry_price:
                 continue
             _, latest_price = max(snaps, key=lambda s: s[0])
+            entry_headline = appearance["entry_headline"]
             picks.append(
                 {
-                    "has_headline": bool(appearance["entry_headline"]),
+                    # A Benzinga movers-roundup mention doesn't count as a
+                    # catalyst here either -- see
+                    # app.market_data.news.is_roundup_headline and
+                    # app.scanners.engine._has_headline, which this mirrors
+                    # so the drift report measures the same thing ranking
+                    # actually rewards.
+                    "has_headline": bool(entry_headline) and not is_roundup_headline(entry_headline),
                     "entry_rvol": appearance["entry_rvol"],
                     "pct_change_since_entry": (latest_price - entry_price) / entry_price * 100,
                 }
