@@ -10,7 +10,13 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "pandas>=2.2",
-    "pandas_ta>=0.3",
+    # b0, not a typo: pandas_ta has only ever published beta-tagged
+    # releases on PyPI (even its long-standing "stable" 0.3.x was
+    # 0.3.14b0) -- a bare ">=0.3" makes pip exclude every available
+    # version as a prerelease and fail to resolve at all. The "b0" here
+    # makes the specifier itself prerelease-inclusive per PEP 440, without
+    # needing --pre globally.
+    "pandas_ta>=0.3b0",
     "numpy>=2.0",
     "pandas_market_calendars>=4.4",
     "orjson>=3.10",
