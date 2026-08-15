@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.core.config import Settings
-from app.scanners.momentum_backtest import simulate_momentum_alerts
+from app.scanners.momentum_backtest import simulate_momentum_alerts, sweep_momentum_params
 
 
 @dataclass
@@ -58,9 +58,12 @@ def test_simulate_momentum_alerts_threshold_only_without_shape_confirmation():
 def test_simulate_momentum_alerts_full_alert_when_shape_confirms():
     closes = [100.0] * 15 + [110.0] * 20
     bars = _minute_bars(closes)
-    # Shaved top (upper wick ~0) with a clearly-not-shaved bottom (lower
-    # wick a third of the range) -- shouldn't matter either way now, since
-    # the bottom side isn't evaluated at all, but keeps the fixture honest.
+    # Shaved top (upper wick ~0), closes green (close > open), and the
+    # sustained flat-100 run beforehand keeps the running VWAP low enough
+    # that closing at 110 lands well above it -- all three confirmation
+    # gates satisfied. Lower wick (low=95) is deliberately wide -- the
+    # bottom side isn't evaluated at all, long-only, but keeps the fixture
+    # honest about not needing a shaved bottom too.
     bars[15] = _Bar(close=110.0, volume=100_000.0, timestamp=bars[15].timestamp, open=100.0, high=110.0, low=95.0)
 
     picks = simulate_momentum_alerts({"AAA": bars}, threshold=_THRESHOLD, horizon_minutes=5)
@@ -69,6 +72,37 @@ def test_simulate_momentum_alerts_full_alert_when_shape_confirms():
     assert len(full_alert_picks) == 1
     assert full_alert_picks[0]["symbol"] == "AAA"
     assert "view" not in full_alert_picks[0]
+
+
+def test_simulate_momentum_alerts_requires_green_candle():
+    # Shaved top (upper wick ~0.04) but closes red (close < open) --
+    # confirmation requires a green candle, not just wick shape.
+    closes = [100.0] * 15 + [110.0] * 20
+    bars = _minute_bars(closes)
+    bars[15] = _Bar(close=110.0, volume=100_000.0, timestamp=bars[15].timestamp, open=110.5, high=110.5, low=99.0)
+
+    picks = simulate_momentum_alerts({"AAA": bars}, threshold=_THRESHOLD, horizon_minutes=5)
+
+    kinds = {p["kind"] for p in picks}
+    assert "threshold_only" in kinds
+    assert "full_alert" not in kinds
+
+
+def test_simulate_momentum_alerts_requires_above_vwap():
+    # A sustained higher base (200) before a deeper drop to 90 drags the
+    # running session VWAP well above a move that's only recovering part
+    # of that drop (90 -> 100, +11%) -- shaved top and green both confirm,
+    # but the close is still well below the running VWAP, so this
+    # shouldn't fire full_alert even though it clears the 15m% threshold.
+    closes = [200.0] * 15 + [90.0] * 20 + [100.0] * 10
+    bars = _minute_bars(closes)
+    bars[35] = _Bar(close=100.0, volume=100_000.0, timestamp=bars[35].timestamp, open=95.0, high=100.0, low=90.0)
+
+    picks = simulate_momentum_alerts({"AAA": bars}, threshold=_THRESHOLD, horizon_minutes=5)
+
+    kinds_at_35 = {p["kind"] for p in picks if p["timestamp"] == bars[35].timestamp.isoformat()}
+    assert "threshold_only" in kinds_at_35
+    assert "full_alert" not in kinds_at_35
 
 
 def test_simulate_momentum_alerts_ignores_downward_moves_entirely():
@@ -125,3 +159,37 @@ def test_simulate_momentum_alerts_multiple_symbols_are_independent():
 
     symbols_with_full_alert = {p["symbol"] for p in picks if p["kind"] == "full_alert"}
     assert symbols_with_full_alert == {"AAA"}
+
+
+def test_sweep_momentum_params_returns_one_row_per_combination():
+    bars = {"AAA": _minute_bars([100.0] * 40)}
+    results = sweep_momentum_params(bars, thresholds=[1.0, 5.0], horizons_minutes=[5, 15, 30])
+
+    assert len(results) == 6  # 2 thresholds x 3 horizons
+    combos = {(r["threshold"], r["horizon_minutes"]) for r in results}
+    assert combos == {(1.0, 5), (1.0, 15), (1.0, 30), (5.0, 5), (5.0, 15), (5.0, 30)}
+
+
+def test_sweep_momentum_params_lower_threshold_finds_more_picks():
+    # A modest, sustained +3% move: too small for the default 5%
+    # threshold, but should trigger at a looser 1% one.
+    closes = [100.0] * 15 + [103.0] * 20
+    bars = {"AAA": _minute_bars(closes)}
+    bars["AAA"][15] = _Bar(close=103.0, volume=100_000.0, timestamp=bars["AAA"][15].timestamp, open=100.0, high=103.0, low=99.0)
+
+    results = sweep_momentum_params(bars, thresholds=[1.0, 5.0], horizons_minutes=[5])
+
+    loose = next(r for r in results if r["threshold"] == 1.0)
+    strict = next(r for r in results if r["threshold"] == 5.0)
+    assert loose["full_alert"]["sample_size"] == 1
+    assert strict["full_alert"]["sample_size"] == 0
+
+
+def test_sweep_momentum_params_reuses_same_bars_across_combinations():
+    # A sanity check that the sweep doesn't mutate/consume its input --
+    # the same bars dict backs every combination in the grid.
+    bars = {"AAA": _minute_bars([100.0] * 15 + [110.0] * 20)}
+    bars["AAA"][15] = _Bar(close=110.0, volume=100_000.0, timestamp=bars["AAA"][15].timestamp, open=100.0, high=110.0, low=99.0)
+
+    results = sweep_momentum_params(bars, thresholds=[5.0], horizons_minutes=[5, 5])
+    assert results[0]["full_alert"] == results[1]["full_alert"]

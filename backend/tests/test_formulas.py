@@ -65,29 +65,31 @@ def test_rank_score_preserves_sign_for_losers():
 
 
 def test_is_momentum_alert_none_pct_change_is_false():
-    assert is_momentum_alert(None, True, True, threshold=5.0) is False
+    assert is_momentum_alert(None, True, True, True, threshold=5.0) is False
 
 
 def test_is_momentum_alert_below_threshold_is_false():
-    assert is_momentum_alert(3.0, True, True, threshold=5.0) is False
+    assert is_momentum_alert(3.0, True, True, True, threshold=5.0) is False
 
 
-def test_is_momentum_alert_up_move_checks_shaved_top_not_bottom():
-    # A move up with a shaved bottom (but not a shaved top) shouldn't
-    # alert -- the shape check has to match the move's own direction.
-    assert is_momentum_alert(8.0, False, True, threshold=5.0) is False
-    assert is_momentum_alert(8.0, True, False, threshold=5.0) is True
+def test_is_momentum_alert_requires_shaved_top():
+    assert is_momentum_alert(8.0, False, True, True, threshold=5.0) is False
+    assert is_momentum_alert(8.0, True, True, True, threshold=5.0) is True
 
 
-def test_is_momentum_alert_down_move_checks_shaved_bottom_not_top():
-    assert is_momentum_alert(-8.0, True, False, threshold=5.0) is False
-    assert is_momentum_alert(-8.0, False, True, threshold=5.0) is True
+def test_is_momentum_alert_requires_green_candle():
+    assert is_momentum_alert(8.0, True, False, True, threshold=5.0) is False
 
 
-def test_is_momentum_alert_negative_direction_uses_magnitude():
-    assert is_momentum_alert(-8.0, False, True, threshold=5.0) is True
-    assert is_momentum_alert(-3.0, False, True, threshold=5.0) is False
+def test_is_momentum_alert_requires_above_vwap():
+    assert is_momentum_alert(8.0, True, True, False, threshold=5.0) is False
+
+
+def test_is_momentum_alert_down_move_never_alerts():
+    # Long side only -- a downward move never alerts regardless of
+    # magnitude or how the other flags happen to be set.
+    assert is_momentum_alert(-8.0, True, True, True, threshold=5.0) is False
 
 
 def test_is_momentum_alert_exactly_at_threshold_is_true():
-    assert is_momentum_alert(5.0, True, True, threshold=5.0) is True
+    assert is_momentum_alert(5.0, True, True, True, threshold=5.0) is True

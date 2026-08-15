@@ -1,12 +1,10 @@
-"""Minute-resolution historical backtest for the live momentum alarm's
-long side: does requiring the shaved-top candle-shape confirmation
-actually improve on the 15m% threshold alone? Replays historical minute
-bars through the *actual* production functions (see
-app.scanners.momentum_backtest) -- not a reimplementation of the live
-alarm's logic, the literal same formulas.is_momentum_alert call. Long
-side only by design -- downward moves and is_shaved_bottom aren't
-evaluated at all here, even though the live alarm itself still checks
-both directions.
+"""Minute-resolution historical backtest for the live momentum alarm: does
+requiring the shaved-top/green/above-VWAP confirmation actually improve
+on the 15m% threshold alone? Replays historical minute bars through the
+*actual* production functions (see app.scanners.momentum_backtest) -- not
+a reimplementation of the live alarm's logic, the literal same
+formulas.is_momentum_alert call. Long side only, matching the live alarm
+itself.
 
 Run from backend/ (after `pip install -e ".[dev]"`):
     python -m scripts.momentum_backtest_report [--lookback-days 30]
@@ -82,11 +80,11 @@ def _print_report(report: dict) -> None:
     min_n = report["min_sample_size"]
     comparison = report["comparison"]
 
-    print(f"Threshold only (15m% >= {report['threshold']}%, no shape check):")
+    print(f"Threshold only (15m% >= {report['threshold']}%, no confirmation check):")
     print(_fmt_bucket("threshold only", comparison["threshold_only"], min_n))
     print()
 
-    print(f"Full alert (15m% >= {report['threshold']}% AND shaved top):")
+    print(f"Full alert (15m% >= {report['threshold']}% AND shaved top AND green AND above VWAP):")
     print(_fmt_bucket("full alert", comparison["full_alert"], min_n))
 
 

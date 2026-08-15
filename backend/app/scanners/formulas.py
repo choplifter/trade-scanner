@@ -140,27 +140,36 @@ def rank_score(magnitude: float, has_headline: bool, rvol: float | None) -> floa
 
 
 def is_momentum_alert(
-    pct_change_last_15m: float | None, is_shaved_top: bool, is_shaved_bottom: bool, threshold: float
+    pct_change_last_15m: float | None,
+    is_shaved_top: bool,
+    is_green: bool,
+    is_above_vwap: bool,
+    threshold: float,
 ) -> bool:
-    """A fast, still-confirming move: the trailing-15-minute price change
-    exceeds `threshold` in magnitude *and* the most recent 1-minute candle
-    closed at/near the extreme matching that direction -- shaved top
-    (closed at its high, see app.market_data.candle_shape.is_shaved_top)
-    for an upward move, shaved bottom for a downward one. Direction-aware
-    on purpose: a candle closing at its high is confirmation for a move
-    that's going up, but says nothing about one going down (and vice
-    versa), so using a single direction-agnostic shape check (e.g. a
-    marubozu) would accept the wrong evidence for whichever direction
-    it doesn't match. Distinct from is_fade_risk (extreme RVOL, which
-    historically predicts a *worse* outcome) -- this is about catching a
-    move while it's actively happening, not judging whether it'll
-    continue.
+    """A fast, still-confirming *upward* move, long setups only: the
+    trailing-15-minute price change is at least `threshold`, and the most
+    recent 1-minute candle confirms it three ways -- closed at/near its
+    high (shaved top, see app.market_data.candle_shape.is_shaved_top),
+    closed green (close > open, not just a long lower wick that happens to
+    land near the high), and price is trading above the session VWAP (see
+    app.market_data.vwap.SessionVwapState) -- the standard day-trading
+    reference for "buyers are still in control," not just a brief poke
+    above a falling average.
+
+    Long side only, by design. Previously direction-aware (a mirrored
+    shaved-bottom/red/below-VWAP check fired for downward moves too), but
+    green-candle-and-above-VWAP is fundamentally a long-only definition --
+    there's no sign-flip that turns it into a valid short-side check, so
+    the down-side alert was dropped rather than left half-supported.
+    Distinct from is_fade_risk (extreme RVOL, which historically predicts
+    a *worse* outcome) -- this is about catching a move while it's
+    actively happening, not judging whether it'll continue.
     """
     if pct_change_last_15m is None:
         return False
-    if abs(pct_change_last_15m) < threshold:
+    if pct_change_last_15m <= 0 or pct_change_last_15m < threshold:
         return False
-    return is_shaved_top if pct_change_last_15m > 0 else is_shaved_bottom
+    return is_shaved_top and is_green and is_above_vwap
 
 
 def spread_pct(bid: float | None, ask: float | None) -> float | None:

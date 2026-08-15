@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from alpaca.data.enums import Adjustment
@@ -61,6 +62,60 @@ def intraday_chart_lookback_start_utc(
         session_day = now.date()
     start_et = datetime.combine(session_day, PREMARKET_START, tzinfo=ET)
     return start_et.astimezone(timezone.utc)
+
+
+@dataclass
+class AggregatedBar:
+    """A synthetic OHLCV candle built by combining several consecutive
+    1-minute bars -- duck-types the same open/high/low/close/volume/
+    timestamp attributes a real Alpaca Bar has, so it drops straight into
+    anything that only reads those (is_shaved_top, a green-candle check,
+    SessionVwapState.update, ...).
+    """
+
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    timestamp: datetime
+
+
+def aggregate_last_n_minutes(bars: list, minutes: int) -> AggregatedBar | None:
+    """Combine the 1-minute bars falling in the *latest* clock-aligned
+    N-minute bucket (e.g. 5m buckets at :00, :05, :10, ...) into one
+    candle -- same bucketing convention the chart widget's own
+    aggregateBars() (assets/lightweight_chart.html) uses, so "the latest
+    5m candle" means the same thing here as it would on a 5m chart, not an
+    arbitrary trailing-5-minutes window. Used by the momentum alarm (see
+    app.scanners.momentum_cache) to confirm shape/color on a candle that's
+    actually been fully built up over N minutes, rather than a single
+    noisy 1-minute print. None only when `bars` itself is empty.
+
+    `minutes` must evenly divide 60 (1/2/3/4/5/6/10/12/15/20/30/60) for the
+    bucket boundary to land on a clean clock time -- the only values this
+    app actually uses.
+    """
+    if not bars:
+        return None
+    latest = bars[-1]
+    bucket_start = latest.timestamp.replace(
+        minute=(latest.timestamp.minute // minutes) * minutes, second=0, microsecond=0
+    )
+    # Only the trailing `minutes` bars can possibly fall in the latest
+    # bucket -- slicing first keeps this cheap even over a multi-day,
+    # multi-thousand-bar fetch.
+    window = [b for b in bars[-minutes:] if b.timestamp >= bucket_start]
+    if not window:
+        window = [latest]
+    return AggregatedBar(
+        open=window[0].open,
+        high=max(b.high for b in window),
+        low=min(b.low for b in window),
+        close=window[-1].close,
+        volume=sum(b.volume for b in window),
+        timestamp=bucket_start,
+    )
 
 
 async def get_intraday_minute_bars(clients: AlpacaClients, symbol: str) -> list:

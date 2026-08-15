@@ -36,8 +36,29 @@ body {
 h2 {
   font-size: 16px;
   font-weight: 600;
-  margin: 16px;
+  margin: 16px 0;
   color: #0b0b0b;
+}
+
+/* Every page's layout() returns a single top-level html.Div -- this gives
+   its content a comfortable, consistent left/right margin instead of
+   sitting flush against the browser edge. Horizontal spacing lives here
+   (not on h2's own margin above, which is vertical-only) so a page's
+   title and body text line up under the same left edge. Scoped to
+   #_pages_content's direct child (i.e. excludes the page-nav bar above it,
+   which has its own padding) -- see .home-grid below for why the home
+   page opts out of this and pads itself instead. */
+#_pages_content > div {
+  padding: 0 24px 24px;
+}
+
+/* The home page's grid is a deliberately edge-to-edge, full-viewport
+   layout (height: calc(100vh - 96px)) -- the generic content padding
+   above would shrink it and misalign its own internal 16px padding, so
+   this page opts out via :has() and pads its own root Div at the old
+   16px instead, keeping it pixel-identical to before this rule existed. */
+#_pages_content > div:has(> .home-grid) {
+  padding: 0 16px;
 }
 
 label {
@@ -349,4 +370,27 @@ div[id="heatmap-scanner-view"] label {
   font-size: 11px;
   color: #898781;
   font-style: italic;
+}
+
+/* Backtest page: form/results sections on the left, an embedded chart
+   panel pinned to the right -- same split as the scanner heatmap's home
+   page, just as a simple two-column flex rather than that page's
+   draggable 2x2 grid (the backtest sections stack to a length the grid's
+   fixed-viewport-height panels aren't built for). */
+.backtest-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.backtest-main {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+
+.backtest-symbol-panel {
+  flex: 1 1 50%;
+  min-width: 0;
+  position: sticky;
+  top: 16px;
 }

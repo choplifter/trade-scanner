@@ -207,6 +207,16 @@ const params = new URLSearchParams(window.location.search);
 const symbol = (params.get("symbol") || "").toUpperCase();
 document.getElementById("symbol-label").textContent = symbol || "Select a symbol";
 
+// Set by callers (see app.dash_app.pages.backtest's _iframe_src) that want
+// this chart to jump straight to one specific bar -- a backtest pick's own
+// entry time, unix seconds UTC -- rather than just showing the most recent
+// bars. Null when opened normally (e.g. from the scanner heatmap's Symbol
+// Detail panel), which keeps the existing "show the most recent window"
+// behavior entirely unchanged.
+const targetTimeParam = params.get("time");
+const targetTime = targetTimeParam ? parseInt(targetTimeParam, 10) : null;
+let didInitialLoad = false;
+
 const tfGroup = document.getElementById("tf-group");
 let activeKey = DEFAULT_KEY;
 TIMEFRAME_OPTIONS.forEach((opt) => {
@@ -327,6 +337,55 @@ function drawIndicatorLines(indicators) {
 
 indicatorsCheckbox.onchange = () => drawIndicatorLines(lastIndicators);
 
+function findNearestIndex(bars, time) {
+  let nearest = 0;
+  let bestDiff = Infinity;
+  for (let i = 0; i < bars.length; i++) {
+    const diff = Math.abs(toUnixSeconds(bars[i].t) - time);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      nearest = i;
+    }
+  }
+  return nearest;
+}
+
+// lightweight-charts' series-markers API has moved between versions
+// (ISeriesApi#setMarkers vs. the newer createSeriesMarkers primitive) --
+// probing for whichever this pinned CDN version actually exposes keeps the
+// marker a pure nice-to-have: if neither is present, jumping/centering on
+// the pick (the actual ask) still works, just without the visual pin.
+// lightweight-charts v5 replaced the old ISeriesApi#setMarkers with a
+// createSeriesMarkers(series, markers) primitive that returns its own
+// updater -- created once and reused via its own .setMarkers() from then
+// on, so repeated calls (e.g. clearing markers on a later, too-narrow
+// manual timeframe switch) update in place instead of stacking a new
+// primitive layer on top of the last one every time.
+let seriesMarkersPrimitive = null;
+
+function setPickMarkers(markers) {
+  try {
+    if (typeof candleSeries.setMarkers === "function") {
+      candleSeries.setMarkers(markers);
+    } else if (typeof LightweightCharts.createSeriesMarkers === "function") {
+      if (seriesMarkersPrimitive) {
+        seriesMarkersPrimitive.setMarkers(markers);
+      } else {
+        seriesMarkersPrimitive = LightweightCharts.createSeriesMarkers(candleSeries, markers);
+      }
+    }
+  } catch (err) {
+    // Marker support varies by lightweight-charts version -- not worth
+    // failing the whole chart load over.
+  }
+}
+
+function markPick(bar) {
+  setPickMarkers([
+    { time: toUnixSeconds(bar.t), position: "aboveBar", color: "#2a78d6", shape: "arrowDown", text: "Pick" },
+  ]);
+}
+
 function setChartData(bars, vwap, indicators) {
   candleSeries.setData(bars.map(barToCandle));
   volumeSeries.setData(bars.map(barToVolume));
@@ -347,9 +406,60 @@ function setChartData(bars, vwap, indicators) {
     const width = container.clientWidth || 1;
     const spacing = Math.min(MAX_SPACING, Math.max(MIN_SPACING, width / bars.length));
     const visibleCount = Math.min(bars.length, Math.max(1, Math.ceil(width / spacing)));
-    chart.timeScale().setVisibleLogicalRange({ from: bars.length - visibleCount, to: bars.length - 1 });
+
+    // Only jump/mark if these bars actually reach back far enough to cover
+    // the requested time -- loadChart()'s escalation loop tries to arrange
+    // that on the automatic initial load, but a *manual* timeframe switch
+    // afterward can still land on a too-narrow view (e.g. the user clicks
+    // back to 5m for a pick from a month ago); falling back to the normal
+    // "most recent bars" view here is better than centering on/marking an
+    // unrelated bar.
+    const covered = targetTime != null && toUnixSeconds(bars[0].t) <= targetTime;
+    if (covered) {
+      const idx = findNearestIndex(bars, targetTime);
+      const half = Math.floor(visibleCount / 2);
+      const from = Math.max(0, Math.min(bars.length - visibleCount, idx - half));
+      chart.timeScale().setVisibleLogicalRange({ from, to: from + visibleCount - 1 });
+      markPick(bars[idx]);
+    } else {
+      chart.timeScale().setVisibleLogicalRange({ from: bars.length - visibleCount, to: bars.length - 1 });
+      setPickMarkers([]);
+    }
     document.getElementById("last-price").textContent = bars[bars.length - 1].c.toFixed(2);
   }
+}
+
+// Widening order tried when a target time isn't covered by the currently
+// selected timeframe's native lookback (see bars.py's
+// _INTRADAY_SESSION_LOOKBACK/HISTORICAL_TIMEFRAMES for what each one
+// actually covers: ~10 sessions / 60 days / 200 days / 730 days) -- only
+// consulted on the automatic initial load a "time" query param triggers,
+// never overriding a timeframe the user clicked themselves afterward.
+const ESCALATION_ORDER = ["5m", "1h", "4h", "1D"];
+
+async function fetchTimeframeData(option) {
+  const timeframeParam = option.kind === "intraday" ? "1Min" : option.alpacaTimeframe;
+  const res = await fetch("/api/symbols/" + encodeURIComponent(symbol) + "/bars?timeframe=" + timeframeParam);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  let bars = data.bars;
+  let vwap = data.vwap;
+  // "series"-kind indicators (e.g. an EMA) are minute-resolution -- on an
+  // hourly/daily/weekly/monthly chart that's both semantically odd to
+  // overlay and, left unaggregated, would trip the same
+  // resolution-mismatch zoom bug aggregateBars exists to avoid. "level"
+  // lines are flat values, unaffected either way, so only those show
+  // outside the intraday view.
+  let indicators = option.kind === "intraday"
+    ? data.indicators
+    : (data.indicators || []).filter((i) => i.kind === "level");
+  if (option.kind === "intraday" && option.minutes > 1) {
+    const agg = aggregateBars(bars, vwap, option.minutes, indicators);
+    bars = agg.bars;
+    vwap = agg.vwap;
+    indicators = agg.indicators;
+  }
+  return { bars, vwap, indicators };
 }
 
 async function loadChart() {
@@ -357,30 +467,26 @@ async function loadChart() {
     statusEl.textContent = "Select a symbol from the dropdown.";
     return;
   }
-  const option = TIMEFRAME_OPTIONS.find((o) => o.key === activeKey) || TIMEFRAME_OPTIONS[1];
+  let option = TIMEFRAME_OPTIONS.find((o) => o.key === activeKey) || TIMEFRAME_OPTIONS[1];
   statusEl.textContent = "Loading " + symbol + "…";
   try {
-    const timeframeParam = option.kind === "intraday" ? "1Min" : option.alpacaTimeframe;
-    const res = await fetch("/api/symbols/" + encodeURIComponent(symbol) + "/bars?timeframe=" + timeframeParam);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    let bars = data.bars;
-    let vwap = data.vwap;
-    // "series"-kind indicators (e.g. an EMA) are minute-resolution -- on an
-    // hourly/daily/weekly/monthly chart that's both semantically odd to
-    // overlay and, left unaggregated, would trip the same
-    // resolution-mismatch zoom bug aggregateBars exists to avoid. "level"
-    // lines are flat values, unaffected either way, so only those show
-    // outside the intraday view.
-    let indicators = option.kind === "intraday"
-      ? data.indicators
-      : (data.indicators || []).filter((i) => i.kind === "level");
-    if (option.kind === "intraday" && option.minutes > 1) {
-      const agg = aggregateBars(bars, vwap, option.minutes, indicators);
-      bars = agg.bars;
-      vwap = agg.vwap;
-      indicators = agg.indicators;
+    let { bars, vwap, indicators } = await fetchTimeframeData(option);
+
+    if (targetTime != null && !didInitialLoad) {
+      let idx = ESCALATION_ORDER.indexOf(activeKey);
+      if (idx === -1) idx = 0;
+      while (bars.length && toUnixSeconds(bars[0].t) > targetTime && idx < ESCALATION_ORDER.length - 1) {
+        idx += 1;
+        activeKey = ESCALATION_ORDER[idx];
+        option = TIMEFRAME_OPTIONS.find((o) => o.key === activeKey);
+        ({ bars, vwap, indicators } = await fetchTimeframeData(option));
+      }
+      Array.from(tfGroup.children).forEach((c) => {
+        c.classList.toggle("active", c.textContent === option.label);
+      });
     }
+    didInitialLoad = true;
+
     if (!bars.length) {
       statusEl.textContent = "No " + option.label + " data available for " + symbol + ".";
       candleSeries.setData([]);

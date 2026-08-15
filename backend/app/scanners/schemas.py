@@ -37,11 +37,11 @@ class ScannerRow(BaseModel):
     # vice versa for a fresh late-session breakout. None until fetched, or
     # when there isn't yet 15 minutes of bars to compare against.
     pct_change_last_15m: float | None = None
-    # True when pct_change_last_15m exceeds settings.alarm_momentum_pct_threshold
-    # in magnitude *and* the latest 1-minute candle closed at/near the
-    # extreme matching that direction (shaved top for a move up, shaved
-    # bottom for a move down) -- see app.scanners.formulas.is_momentum_alert.
-    # Drives the frontend's momentum-alarm overlay (off by default).
+    # True when pct_change_last_15m is at least settings.alarm_momentum_pct_threshold
+    # *and* the latest 1-minute candle confirms it (shaved top, green, and
+    # trading above session VWAP) -- long setups only, see
+    # app.scanners.formulas.is_momentum_alert. Drives the frontend's
+    # momentum-alarm overlay (off by default).
     is_momentum_alert: bool = False
     # When the underlying trade/bar backing last_price was actually printed
     # -- distinct from updated_at, which is when *we* last recomputed the

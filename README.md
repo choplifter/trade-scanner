@@ -107,21 +107,24 @@ backend on port 8000, so both must be running.
   **Table / Heatmap** toggle switches the same live feed to a treemap view
   (tile size = dollar volume, color = gap %, click-to-chart same as the
   table).
-- **Momentum alarm** (React app only, off by default): a dashboard-wide
-  alert for a fast, still-confirming move -- 15m % exceeding a threshold
-  (5% default, `ALARM_MOMENTUM_PCT_THRESHOLD`) *and* the latest 1-minute
-  candle closed at/near the extreme matching that direction: shaved top
-  (near-zero upper wick) for a move up, shaved bottom for a move down
-  (`app/market_data/candle_shape.py`) -- direction-aware on purpose, since
-  a candle closing at its high confirms an upward move but says nothing
-  about a downward one. Unlike a chart indicator (which only ever watches
-  whatever symbol's chart happens to be open), this watches every ranked
-  view continuously. Toggle in the header ("Alarms Off/On", state
-  persisted across reloads); once on, a new trigger auto-opens a center
-  overlay listing every currently active alarm (click one to load its
-  chart), collapsing to a small count badge you can reopen manually. The
-  threshold and shaved-top/bottom wick tolerance are starting heuristics,
-  not yet backtested the way the catalyst/fade-risk multipliers were.
+- **Momentum alarm** (React app only, off by default, long setups only):
+  a dashboard-wide alert for a fast, still-confirming *upward* move -- 15m
+  % at least a threshold (5% default, `ALARM_MOMENTUM_PCT_THRESHOLD`)
+  *and* the latest 1-minute candle confirms it three ways: closed at/near
+  its high (shaved top, near-zero upper wick, `app/market_data/candle_shape.py`),
+  closed green (close > open), and price trading above the session VWAP
+  (`app/market_data/vwap.py`) -- the standard day-trading reference for
+  "buyers are still in control." Long side only on purpose: a green-candle-
+  and-above-VWAP requirement doesn't have a sign-flipped short-side
+  equivalent, so downward moves aren't alerted at all. Unlike a chart
+  indicator (which only ever watches whatever symbol's chart happens to be
+  open), this watches every ranked view continuously. Toggle in the header
+  ("Alarms Off/On", state persisted across reloads); once on, a new
+  trigger auto-opens a center overlay listing every currently active alarm
+  (click one to load its chart), collapsing to a small count badge you can
+  reopen manually. The threshold and shaved-top wick tolerance are
+  starting heuristics, not yet backtested the way the catalyst/fade-risk
+  multipliers were.
 - One chart widget: click any symbol anywhere in the app to load it —
   candlestick chart, volume pane, and a session-anchored VWAP line (resets
   at 09:30 ET), fed by Alpaca's live minute-bar stream, plus a company info
@@ -235,12 +238,14 @@ backend on port 8000, so both must be running.
   freely repositionable.
 - **Momentum alarm**: React app only, not in the Dash analytics app (the
   center-overlay/toggle interaction pattern doesn't translate to Dash's
-  page-reload-driven callbacks the same way). Both scanner tables do show
-  the underlying ⚡ MOMENTUM badge regardless. The 5% threshold and 10%
-  shaved-top/bottom wick tolerance are unvalidated starting heuristics --
-  worth checking against `scanner_history.sqlite3` (same way the catalyst/
-  fade-risk multipliers were validated and re-validated) once enough real
-  triggers have accumulated. A 180-day daily-bar backtest of `is_shaved_top`
+  page-reload-driven callbacks the same way; the Dash Backtest page does
+  cover the underlying alert condition's historical win rate, see below).
+  Both scanner tables do show the underlying ⚡ MOMENTUM badge regardless.
+  The 5% threshold and 10% shaved-top wick tolerance are unvalidated
+  starting heuristics -- worth checking against `scanner_history.sqlite3`
+  (same way the catalyst/fade-risk multipliers were validated and
+  re-validated) once enough real triggers have accumulated. A 180-day
+  daily-bar backtest of `is_shaved_top`
   *on its own* (no 15m % gate, since that needs minute data -- see below)
   found no meaningful standalone edge at a 1-day horizon for either
   gainers or losers, despite large samples -- doesn't confirm or refute

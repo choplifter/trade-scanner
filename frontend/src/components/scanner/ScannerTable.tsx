@@ -178,7 +178,7 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
               {row.is_momentum_alert && (
                 <span
                   className="badge-momentum-alert"
-                  title="Fast, wick-less move -- a large 15-minute price change with almost no pullback candle"
+                  title="Fast bullish move -- a large 15-minute gain confirmed by a green, wick-less candle trading above VWAP"
                 >
                   ⚡ MOMENTUM
                 </span>
