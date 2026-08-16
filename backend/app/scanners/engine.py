@@ -20,6 +20,7 @@ from app.market_data.market_conditions import (
 )
 from app.market_data.news import fetch_headlines, is_roundup_headline
 from app.market_data.news_cache import NewsCache
+from app.market_data.volume_profile import VolumeProfileCache
 from app.scanners import formulas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.history_store import NewAppearance, ScannerHistoryStore
@@ -71,27 +72,48 @@ def _rank_gainers(
 def _rank_losers(
     rows, news_cache: NewsCache | None = None, min_dollar_volume: float = 0.0
 ) -> list[ScannerRow]:
-    # rank_score's boost/discount multiplies whatever magnitude it's given,
-    # so applying it directly to pct_change (negative here) still sorts
-    # correctly ascending: a catalyst makes a negative number more negative
-    # (ranks higher), a fade-risk discount pulls it toward zero (ranks
-    # lower) -- same as it does for the positive gainers case.
+    # rank_score's discount multiplies whatever magnitude it's given, so
+    # applying it directly to pct_change (negative here) still sorts correctly
+    # ascending: a fade-risk discount pulls a negative number toward zero
+    # (ranks lower) -- same as it does for the positive gainers case.
+    #
+    # catalyst_boost=False: the headline multiplier is gainers-only, since the
+    # per-view win-rate data doesn't support it here (see
+    # formulas._CATALYST_BOOST).
     tradable = _tradable(rows, min_dollar_volume)
     return sorted(
         (r for r in tradable if r.pct_change < 0),
-        key=lambda r: formulas.rank_score(r.pct_change, _has_headline(r, news_cache), r.rvol),
+        key=lambda r: formulas.rank_score(
+            r.pct_change, _has_headline(r, news_cache), r.rvol, catalyst_boost=False
+        ),
     )[:_TOP_N]
 
 
 def _rank_most_active(
     rows, news_cache: NewsCache | None = None, min_dollar_volume: float = 0.0
 ) -> list[ScannerRow]:
-    """By share volume traded today -- direction-agnostic, unlike
-    gainers/losers, so no pct_change filter."""
+    """By dollar volume traded today -- direction-agnostic, unlike
+    gainers/losers, so no pct_change filter.
+
+    Ranked on dollar volume rather than raw share volume specifically because
+    of the IEX feed: IEX is one exchange's slice of the consolidated tape, and
+    that slice varies by symbol, so a raw volume *level* is only ever a partial
+    count. Dollar volume is computed from the same partial count but weights by
+    price, which makes the ordering track "where the money actually went"
+    instead of "which symbol happens to route more flow through IEX". A ratio
+    like gap % survives a partial tape; an absolute level is the most distorted
+    thing this feed can be asked for. (Setting ALPACA_DATA_FEED=sip with a paid
+    subscription resolves the underlying issue.)
+
+    catalyst_boost=False for the same reason as _rank_losers: the headline
+    multiplier is gainers-only (see formulas._CATALYST_BOOST).
+    """
     tradable = _tradable(rows, min_dollar_volume)
     return sorted(
         tradable,
-        key=lambda r: formulas.rank_score(r.volume_today, _has_headline(r, news_cache), r.rvol),
+        key=lambda r: formulas.rank_score(
+            r.dollar_volume_today, _has_headline(r, news_cache), r.rvol, catalyst_boost=False
+        ),
         reverse=True,
     )[:_TOP_N]
 
@@ -101,7 +123,7 @@ class ScannerEngine:
     scanner views over the "scanner:<name>" WebSocket topics.
 
     Four views: "gainers" and "losers" (ranked by %-change from prior
-    close, opposite directions), "most_active" (ranked by share volume,
+    close, opposite directions), "most_active" (ranked by dollar volume,
     direction-agnostic), and "premarket_gainers". During premarket,
     "premarket_gainers" is intentionally the same live list as "gainers";
     the moment the regular session opens, it freezes to a snapshot of the
@@ -136,6 +158,10 @@ class ScannerEngine:
         self.news_cache = news_cache
         self.momentum_cache = momentum_cache
         self.http_client = http_client
+        # Supplies the time-of-day denominator for RVOL. Built lazily on the
+        # first poll and refreshed daily; until then fraction_at returns 1.0 and
+        # RVOL is the plain full-day ratio. See app.market_data.volume_profile.
+        self.volume_profile = VolumeProfileCache(clients)
         self.market_conditions: MarketConditions | None = None
         self._last_market_conditions_refresh: float = 0.0
         self.benchmark_symbol = "SPY"
@@ -149,8 +175,28 @@ class ScannerEngine:
         self._split_ratios: dict[str, tuple[float, date]] = {}
         self._last_split_refresh: float = 0.0
 
+    def _session_volume_fraction(self, at: datetime) -> float | None:
+        """Time-of-day RVOL denominator, or None to leave RVOL un-normalized.
+
+        Gated on settings.scanner_rvol_time_normalized -- see that setting for
+        why it's off by default (the fade-risk threshold is calibrated against
+        the un-normalized definition).
+        """
+        if not self.settings.scanner_rvol_time_normalized:
+            return None
+        return self.volume_profile.fraction_at(at)
+
+    async def _ensure_volume_profile(self) -> None:
+        if not self.settings.scanner_rvol_time_normalized:
+            return
+        await self.volume_profile.ensure_fresh()
+
     def _compute_rows(self, snapshots: dict) -> None:
         now = datetime.now(timezone.utc)
+        # One lookup per batch rather than per row -- the fraction only depends
+        # on the clock, not the symbol. None when disabled, which makes
+        # formulas.rvol fall back to the plain full-day ratio.
+        session_fraction = self._session_volume_fraction(now)
         for symbol, snap in snapshots.items():
             uni = self.universe.get(symbol)
             if uni is None or snap is None:
@@ -201,7 +247,7 @@ class ScannerEngine:
                 continue
 
             quote = snap.latest_quote
-            row_rvol = formulas.rvol(volume_today, uni.avg_vol_20d) or 0.0
+            row_rvol = formulas.rvol(volume_today, uni.avg_vol_20d, session_fraction) or 0.0
 
             self.rows[symbol] = ScannerRow(
                 symbol=symbol,
@@ -331,6 +377,14 @@ class ScannerEngine:
         symbols = list(self.universe.keys())
         rows: dict[str, ScannerRow] = {}
 
+        # These rows are cumulative premarket volume as of the open, so the
+        # RVOL denominator is the share of a typical day done by 09:30 -- a few
+        # percent, not a whole day. Without this a busy premarket reads as a
+        # trivial RVOL. Built here rather than relying on the poll loop, since
+        # this backfill runs once at startup and may get there first.
+        await self._ensure_volume_profile()
+        session_fraction = self._session_volume_fraction(end)
+
         for i in range(0, len(symbols), _SNAPSHOT_BATCH_SIZE):
             batch = symbols[i : i + _SNAPSHOT_BATCH_SIZE]
             try:
@@ -359,7 +413,7 @@ class ScannerEngine:
                 if pct is None:
                     continue
                 volume = sum(b.volume for b in bars)
-                bar_rvol = formulas.rvol(volume, uni.avg_vol_20d) or 0.0
+                bar_rvol = formulas.rvol(volume, uni.avg_vol_20d, session_fraction) or 0.0
                 rows[symbol] = ScannerRow(
                     symbol=symbol,
                     exchange=uni.exchange,
@@ -497,8 +551,13 @@ class ScannerEngine:
     async def _attach_fundamentals(self, views: dict[str, list[ScannerRow]]) -> None:
         """Fill in float/market cap/short interest/country/company name for
         whatever's actually ranked right now -- see
-        app.fundamentals.cache.FundamentalsCache for why this is scoped to
-        the ranked views instead of the whole universe.
+        app.fundamentals.cache.FundamentalsCache for why market cap and profile
+        are scoped to the ranked views instead of the whole universe.
+
+        Float is the exception: it comes from FMP's bulk shares-float file
+        (universe-wide, ~8 requests) rather than the per-symbol endpoint, so it's
+        available for every row immediately instead of only after that symbol's
+        own fundamentals fetch has landed.
         """
         symbols = {r.symbol for rows in views.values() for r in rows}
         if not symbols:
@@ -506,9 +565,10 @@ class ScannerEngine:
         await self.fundamentals.ensure_fresh(symbols)
         for rows in views.values():
             for row in rows:
+                row.float_shares = self.fundamentals.float_shares(row.symbol)
                 data = self.fundamentals.get(row.symbol)
                 if data is not None:
-                    row.float_shares = data.float_shares
+                    row.float_shares = data.float_shares or row.float_shares
                     row.market_cap = data.market_cap
                     row.short_interest_pct = data.short_interest_pct
                     row.country = data.profile.country if data.profile else None
@@ -551,6 +611,9 @@ class ScannerEngine:
                 )
 
     async def _poll_once(self) -> None:
+        # Cheap no-op after the first successful build (daily refresh), and
+        # skipped entirely when time-of-day RVOL is disabled.
+        await self._ensure_volume_profile()
         symbols = list(self.universe.keys())
         batches = [
             symbols[i : i + _SNAPSHOT_BATCH_SIZE]
@@ -656,6 +719,12 @@ class ScannerEngine:
                 entry_rvol=row.rvol,
                 benchmark_entry_price=self.benchmark_price,
                 entry_headline=headlines.get(row.symbol),
+                # Taken from the universe-wide bulk float map rather than
+                # row.float_shares: the row's own copy is only populated once
+                # the symbol has been in a ranked view long enough for the
+                # per-symbol fundamentals fetch to land, so it's frequently
+                # None at exactly the moment an appearance is first recorded.
+                entry_float_shares=self.fundamentals.float_shares(row.symbol),
             )
             for view_name, row in candidates
         ]

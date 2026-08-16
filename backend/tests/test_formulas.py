@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app.scanners.formulas import is_fade_risk, is_momentum_alert, is_stale, rank_score
+from app.scanners.formulas import is_fade_risk, is_momentum_alert, is_stale, rank_score, rvol
 
 
 def test_is_stale_true_when_no_last_trade_at():
@@ -53,15 +53,29 @@ def test_rank_score_headline_and_fade_risk_both_apply():
     assert rank_score(10.0, True, 20.0) == 10.0 * 1.15 * 0.7
 
 
-def test_rank_score_preserves_sign_for_losers():
-    # Losers rank by negative pct_change -- a catalyst should push it
-    # further negative (bigger drop, ranks higher), a fade-risk discount
-    # should pull it back toward zero (ranks lower), same multipliers as
-    # the positive/gainers case.
+def test_rank_score_preserves_sign_for_negative_magnitudes():
+    # Losers rank by negative pct_change, so the multipliers have to keep
+    # working on a negative magnitude: the boost pushes it further negative
+    # (bigger drop, ranks higher), the fade-risk discount pulls it back toward
+    # zero (ranks lower), same as the positive/gainers case. The losers view
+    # itself no longer passes catalyst_boost -- see the engine ranking tests --
+    # but the arithmetic still has to hold for whoever does.
     boosted = rank_score(-10.0, True, 5.0)
     discounted = rank_score(-10.0, False, 20.0)
     assert boosted < -10.0
     assert -10.0 < discounted < 0.0
+
+
+def test_rank_score_catalyst_boost_disabled_ignores_a_headline():
+    # Same inputs as test_rank_score_headline_boosts, boost suppressed.
+    assert rank_score(10.0, True, 5.0, catalyst_boost=False) == 10.0
+
+
+def test_rank_score_catalyst_boost_disabled_still_applies_fade_risk():
+    # The fade-risk discount is direction-agnostic, so it stays on in every
+    # view even where the catalyst boost is switched off.
+    assert rank_score(10.0, True, 20.0, catalyst_boost=False) == 7.0
+    assert rank_score(-10.0, True, 20.0, catalyst_boost=False) == -7.0
 
 
 def test_is_momentum_alert_none_pct_change_is_false():
@@ -93,3 +107,29 @@ def test_is_momentum_alert_down_move_never_alerts():
 
 def test_is_momentum_alert_exactly_at_threshold_is_true():
     assert is_momentum_alert(5.0, True, True, True, threshold=5.0) is True
+
+
+def test_rvol_without_a_session_fraction_is_the_full_day_ratio():
+    # Unchanged behaviour: the pre-normalization semantics.
+    assert rvol(500_000.0, 1_000_000.0) == 0.5
+
+
+def test_rvol_session_fraction_scales_the_denominator_to_time_of_day():
+    # 20k traded when only 2% of a typical 1M-share day is normally done means
+    # today is running at ~1x pace, not the 0.02x a full-day comparison shows.
+    assert rvol(20_000.0, 1_000_000.0, 0.02) == 1.0
+    assert rvol(20_000.0, 1_000_000.0) == 0.02
+
+
+def test_rvol_session_fraction_of_one_matches_the_unnormalized_value():
+    assert rvol(500_000.0, 1_000_000.0, 1.0) == rvol(500_000.0, 1_000_000.0)
+
+
+def test_rvol_zero_session_fraction_falls_back_to_full_day():
+    # Guards against a malformed profile dividing by ~nothing and reporting a
+    # five-figure RVOL.
+    assert rvol(500_000.0, 1_000_000.0, 0.0) == 0.5
+
+
+def test_rvol_zero_avg_volume_is_none():
+    assert rvol(500_000.0, 0.0, 0.5) is None

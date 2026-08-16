@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS appearances (
     entry_rvol REAL NOT NULL,
     benchmark_entry_price REAL,
     entry_headline TEXT,
+    entry_float_shares REAL,
     first_seen_at TEXT NOT NULL,
     UNIQUE(symbol, view, trading_date)
 );
@@ -58,6 +59,11 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_appearance_id ON snapshots(appearance_i
 # happen in Python via PRAGMA table_info instead.
 _COLUMN_MIGRATIONS = [
     ("appearances", "entry_headline", "TEXT"),
+    # Recorded so a float-based ranking rule can be validated against real
+    # outcomes before being shipped, the same way the catalyst boost and
+    # fade-risk discount were. Without float at entry there is no way to ask
+    # "did low float actually predict anything here" after the fact.
+    ("appearances", "entry_float_shares", "REAL"),
 ]
 
 # Target checkpoints for the aggregated performance view -- "latest" isn't a
@@ -113,6 +119,7 @@ class NewAppearance:
     entry_rvol: float
     benchmark_entry_price: float | None
     entry_headline: str | None = None
+    entry_float_shares: float | None = None
 
 
 class ScannerHistoryStore:
@@ -142,8 +149,9 @@ class ScannerHistoryStore:
             conn.executemany(
                 """INSERT OR IGNORE INTO appearances
                    (symbol, view, trading_date, entry_price, entry_pct_change,
-                    entry_rvol, benchmark_entry_price, entry_headline, first_seen_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    entry_rvol, benchmark_entry_price, entry_headline,
+                    entry_float_shares, first_seen_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         e.symbol,
@@ -154,6 +162,7 @@ class ScannerHistoryStore:
                         e.entry_rvol,
                         e.benchmark_entry_price,
                         e.entry_headline,
+                        e.entry_float_shares,
                         first_seen_at,
                     )
                     for e in entries

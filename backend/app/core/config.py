@@ -55,6 +55,20 @@ class Settings(BaseSettings):
     # but haven't actually traded much yet.
     scanner_min_dollar_volume: float = 1_000_000.0
 
+    # Divide RVOL's denominator by the share of a typical day's volume normally
+    # done by this time of day, instead of comparing today's partial volume
+    # against a full-day average (see app.market_data.volume_profile and
+    # formulas.rvol). Strictly the more correct measure -- raw RVOL understates
+    # by ~20x at 09:35 -- but OFF by default because it rescales RVOL rather
+    # than just correcting it, and formulas._FADE_RISK_RVOL (15x) plus the
+    # 25.6%/-10.38% baseline behind it were both calibrated against the
+    # un-normalized definition. Measured against SPY's real curve, the
+    # denominator shrinks ~21x at 09:35, ~7x at 10:00, ~2.3x at noon and ~1x by
+    # the close, so turning this on without re-deriving that threshold would
+    # flag most of the morning as fade risk. Re-derive it from fresh
+    # scanner_history data (scripts/ranking_drift_report.py) after enabling.
+    scanner_rvol_time_normalized: bool = False
+
     # How often to re-check Alpaca's movers screener for symbols that are
     # moving big today but never qualified for the trailing-volume-filtered
     # universe above (see fetch_movers_backstop in app.alpaca.universe).

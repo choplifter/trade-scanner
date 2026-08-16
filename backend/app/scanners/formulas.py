@@ -61,15 +61,31 @@ def pct_change(last: float, prev_close: float) -> float | None:
     return (last - prev_close) / prev_close * 100.0
 
 
-def rvol(volume_today: float, avg_vol_20d: float) -> float | None:
-    """Simplified relative volume: today's cumulative volume over the 20-day
-    average *full-day* volume. Most meaningful later in the session -- early
-    in the day it understates RVOL since avg_vol_20d is an end-of-day figure.
-    A time-of-day-normalized version is a v3 follow-up.
+def rvol(
+    volume_today: float, avg_vol_20d: float, session_fraction: float | None = None
+) -> float | None:
+    """Relative volume: today's cumulative volume over the volume normally
+    traded by this point in the session.
+
+    `avg_vol_20d` is a *full-day* average, so comparing today's partial volume
+    against it directly understates RVOL for the whole morning -- a symbol
+    trading at an entirely ordinary pace at 09:35 has ~1-2% of its typical day
+    in and would read ~0.02x. `session_fraction` (from
+    app.market_data.volume_profile) is the share of a typical day normally
+    complete by now, which scales the denominator down to match: RVOL then
+    reads as "volume so far vs. volume normally in by now", comparable across
+    times of day.
+
+    Passing None keeps the old un-normalized full-day behaviour, which is also
+    what happens whenever the profile hasn't been built yet -- and is correct
+    as-is once the session is over, since the fraction is 1.0 by then.
     """
     if avg_vol_20d <= 0:
         return None
-    return volume_today / avg_vol_20d
+    expected_by_now = avg_vol_20d * (session_fraction if session_fraction else 1.0)
+    if expected_by_now <= 0:
+        return None
+    return volume_today / expected_by_now
 
 
 def dollar_volume(volume_today: float, last: float) -> float:
@@ -106,8 +122,19 @@ def is_stale(last_trade_at: datetime | None, now: datetime, threshold_seconds: f
 # A magnitude multiplier for symbols with a recent news headline attached --
 # a catalyst behind a move makes it more likely to persist/continue than an
 # unexplained one, per this app's own scanner_history.sqlite3 win-rate
-# analysis (news-catalyst picks ran ~8.5pp higher win rate across all three
-# ranked views).
+# analysis.
+#
+# **Gainers only** -- see rank_score's catalyst_boost. The original analysis
+# read as ~8.5pp higher win rate "across all three ranked views", but that
+# figure pooled the views, and pooling is invalid here: "win" means the
+# opposite thing for losers (a flagged loser rising is the move reversing).
+# Re-run per view after fixing that, the catalyst edge is +9.1pp on gainers
+# (n=209 vs 372, ~2.1 standard errors) but statistically indistinguishable
+# from zero on the other two -- losers +3.1pp and most_active -3.1pp, both
+# inside one standard error of ~5pp. So the boost is applied only where the
+# effect is actually measurable, rather than everywhere on the strength of a
+# pooled number. Worth re-checking via scripts/ranking_drift_report.py as
+# more trading days accumulate; the current read rests on 3.
 _CATALYST_BOOST = 1.15
 
 # Above this RVOL, the same history analysis found win rate *drops*
@@ -124,15 +151,27 @@ def is_fade_risk(rvol: float | None) -> bool:
     return rvol is not None and rvol > _FADE_RISK_RVOL
 
 
-def rank_score(magnitude: float, has_headline: bool, rvol: float | None) -> float:
+def rank_score(
+    magnitude: float,
+    has_headline: bool,
+    rvol: float | None,
+    *,
+    catalyst_boost: bool = True,
+) -> float:
     """Ranking magnitude adjusted for the two data-backed signals above.
 
     `magnitude` is whatever the view already ranks by (pct_change for
     gainers/losers, dollar volume for most-active) -- this only rescales it,
     it never changes sign or reorders which symbols even qualify for a view.
+
+    `catalyst_boost=False` suppresses the headline multiplier for views where
+    the win-rate data doesn't support it (losers, most-active -- see
+    _CATALYST_BOOST). The fade-risk discount still applies either way: it's
+    direction-agnostic, so unlike the catalyst boost it means the same thing
+    in every view.
     """
     score = magnitude
-    if has_headline:
+    if has_headline and catalyst_boost:
         score *= _CATALYST_BOOST
     if is_fade_risk(rvol):
         score *= _FADE_RISK_DISCOUNT

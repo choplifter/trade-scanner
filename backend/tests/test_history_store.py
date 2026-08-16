@@ -195,3 +195,45 @@ def test_compute_ranking_drift_counts_a_holiday_as_a_non_trading_day(tmp_path):
 
     assert report["sample_size"] == 0
     assert report["excluded_non_trading_day"] == 1
+
+
+def test_record_appearances_persists_entry_float_shares(tmp_path):
+    store = _store(tmp_path)
+    asyncio.run(
+        store.record_appearances(
+            [
+                NewAppearance(
+                    symbol="UMAC",
+                    view="gainers",
+                    entry_price=10.0,
+                    entry_pct_change=25.0,
+                    entry_rvol=8.0,
+                    benchmark_entry_price=None,
+                    entry_headline=None,
+                    entry_float_shares=24_500_000.0,
+                )
+            ],
+            now=TRADING_DAY,
+        )
+    )
+    import sqlite3
+
+    with sqlite3.connect(store.db_path) as conn:
+        row = conn.execute(
+            "SELECT symbol, entry_float_shares FROM appearances WHERE symbol = 'UMAC'"
+        ).fetchone()
+    assert row == ("UMAC", 24_500_000.0)
+
+
+def test_entry_float_shares_defaults_to_null_when_unknown(tmp_path):
+    # Float is unknown for ~29% of FMP's bulk file, so the column has to stay
+    # nullable rather than defaulting to 0 (which would read as "zero float").
+    store = _store(tmp_path)
+    _seed(store, "AAA", entry_rvol=3.0, headline=None, entry_price=10.0, latest_price=11.0)
+    import sqlite3
+
+    with sqlite3.connect(store.db_path) as conn:
+        value = conn.execute(
+            "SELECT entry_float_shares FROM appearances WHERE symbol = 'AAA'"
+        ).fetchone()[0]
+    assert value is None

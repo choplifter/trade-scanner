@@ -76,7 +76,10 @@ backend on port 8000, so both must be running.
 
 - Four live scanners: **Market Gainers**, **Premarket Gainers**, and
   **Losers** (all ranked by % change from prior close), plus **Most Active**
-  (ranked by share volume, direction-agnostic) — polled from Alpaca
+  (ranked by **dollar** volume, direction-agnostic — a raw share-volume level
+  is the most IEX-distorted number available, since IEX is one exchange's
+  varying slice of the tape, whereas weighting by price tracks where the money
+  actually went) — polled from Alpaca
   snapshots every 5s (regular hours) / 10s (premarket) and pushed over
   WebSocket. A movers-screener backstop periodically pulls in today's
   runners that weren't in the trailing-volume-filtered universe to begin
@@ -86,15 +89,22 @@ backend on port 8000, so both must be running.
   (`SCANNER_MIN_DOLLAR_VOLUME`), so a thin name that technically clears the
   universe filters but hasn't traded much yet today doesn't clutter the
   list.
-- **Ranking formula**: gap %/volume magnitude is boosted 1.15x when a
-  genuine news catalyst is behind the move, and discounted 0.7x when RVOL
-  exceeds 15x -- both tuned from this app's own scanner-history win-rate
-  data (`app/scanners/formulas.py`'s `rank_score`). A roundup headline that
-  just lists a symbol alongside a dozen others ("12 Health Care Stocks
-  Moving...") doesn't count as a catalyst, only a story actually about that
-  symbol does (`is_roundup_headline` in `app/market_data/news.py`). **FADE RISK**
-  and **⚡ MOMENTUM** badges on the symbol cell surface the RVOL and
-  momentum-alarm flags directly, not just indirectly via rank order.
+- **Ranking formula**: gap % magnitude is boosted 1.15x on the **gainers**
+  views when a genuine news catalyst is behind the move, and any view's
+  magnitude is discounted 0.7x when RVOL exceeds 15x -- both tuned from this
+  app's own scanner-history win-rate data (`app/scanners/formulas.py`'s
+  `rank_score`). The catalyst boost is deliberately gainers-only: re-checked
+  per view, the headline edge is +9.1pp on gainers but statistically
+  indistinguishable from zero on losers and most-active, so it's applied only
+  where it's measurable (see `_CATALYST_BOOST`, and
+  `scripts/ranking_drift_report.py` to re-check as more data accumulates).
+  The fade-risk discount is direction-agnostic and so applies everywhere. A
+  roundup headline that just lists a symbol alongside a dozen others ("12
+  Health Care Stocks Moving...") doesn't count as a catalyst, only a story
+  actually about that symbol does (`is_roundup_headline` in
+  `app/market_data/news.py`). **FADE RISK** and **⚡ MOMENTUM** badges on the
+  symbol cell surface the RVOL and momentum-alarm flags directly, not just
+  indirectly via rank order.
 - Scanner columns: symbol (click to copy its unambiguous `EXCHANGE:SYMBOL`
   TradingView format), a 📰 flag when there's a recent news headline
   (hover for the headline; refreshed every 15 min for whatever's currently
@@ -248,8 +258,41 @@ backend on port 8000, so both must be running.
   prints. Lower it in `backend/.env` if you want penny stocks back.
 - **Dedicated RVOL scanner / new highs-lows**: not built -- RVOL is shown
   as a column on every scanner, not a ranking of its own.
-- **Float/market cap/short interest**: only fetched for symbols currently in
-  a ranked scanner view (not the whole universe), so it's absent until a
+- **RVOL is not time-of-day normalized by default**: `formulas.rvol` compares
+  today's volume so far against a *full-day* 20-day average, so it understates
+  RVOL all morning -- measured against SPY's own intraday curve, only ~4.6% of
+  a typical day's volume is in by 09:35 and ~14% by 10:00, so a symbol trading
+  at a completely normal pace reads ~0.05x rather than ~1x that early. A
+  corrected denominator exists (`app/market_data/volume_profile.py`, enabled
+  with `SCANNER_RVOL_TIME_NORMALIZED=true`) but ships **off**, because turning
+  it on rescales RVOL by up to ~20x in the first minutes and the 15x fade-risk
+  threshold plus the 25.6%/-10.38% baseline behind it were both calibrated
+  against the un-normalized definition. Enabling it without re-deriving that
+  threshold from fresh `scanner_history.sqlite3` data
+  (`scripts/ranking_drift_report.py`) would flag most of the morning as fade
+  risk. Also note there's no RVOL *floor* at all -- unlike scanners that
+  require e.g. RVOL >= 5x as a hard gate, a big gap on unremarkable volume
+  still ranks here.
+- **Float** comes from FMP's **bulk** shares-float file
+  (`app/fundamentals/float_bulk.py`), so unlike market cap and company profile
+  it's available for the *whole* universe rather than only for symbols already
+  in a ranked view — ~8 requests covers ~23k symbols, which measured 98.5%
+  coverage of the symbols this scanner has actually ranked to date. That's what
+  makes float usable as a future *ranking* input rather than display-only, since
+  ranking on float needs float before ranking. Requires an FMP plan that
+  includes the endpoint (verified on **Starter**; the sibling `profile-bulk` is
+  402-restricted there, which is why market cap/profile stay per-symbol).
+  Each appearance's float is now recorded as `entry_float_shares` in
+  `scanner_history.sqlite3`, so a low-float rule can be validated against real
+  outcomes before being shipped — the same discipline the catalyst boost and
+  fade-risk discount went through. **No float-based ranking factor exists yet**,
+  deliberately: there's no accumulated history to validate one against. Two
+  traps for whoever adds one — FMP reports `0` for "unknown" (treated as absent
+  here, not as a real zero float), and float around a reverse split is
+  unreliable, e.g. ELPW reads ~0.0M float days after a 45:1 reverse split, so a
+  naive "lowest float ranks highest" rule would put it top of the board.
+- **Market cap / short interest**: only fetched for symbols currently in
+  a ranked scanner view (not the whole universe), so they're absent until a
   symbol actually appears there. Short interest is FINRA's own biweekly
   bulk file, which in practice runs noticeably behind FINRA's advertised
   publish schedule -- expect it to reflect a settlement date roughly 2-4

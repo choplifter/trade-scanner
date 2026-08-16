@@ -26,6 +26,7 @@ import httpx
 from app.core.config import Settings
 from app.fundamentals.client import ERROR_RETRY_SECONDS, fetch_float_and_market_cap
 from app.fundamentals.finra_short_interest import fetch_latest_short_interest
+from app.fundamentals.float_bulk import fetch_all_float
 from app.fundamentals.schemas import CompanyProfile, FundamentalsData
 
 logger = logging.getLogger(__name__)
@@ -45,9 +46,27 @@ class FundamentalsCache:
         self._fetched_at: dict[str, float] = {}
         self._short_interest_shares: dict[str, float] = {}
         self._short_interest_fetched_at: float = -float("inf")
+        # Universe-wide float from FMP's bulk file -- available for every symbol
+        # regardless of whether it's currently ranked, unlike self._data which
+        # is populated per ranked symbol. See float_bulk.fetch_all_float.
+        self._float_shares: dict[str, float] = {}
+        self._float_fetched_at: float = -float("inf")
 
     def get(self, symbol: str) -> FundamentalsData | None:
         return self._data.get(symbol)
+
+    def float_shares(self, symbol: str) -> float | None:
+        """Float for any symbol, ranked or not.
+
+        This is the piece that makes float usable as a ranking input: it's
+        populated for the whole universe from one bulk file, so it's available
+        *before* ranking rather than only after a symbol has already surfaced.
+        """
+        return self._float_shares.get(symbol)
+
+    @property
+    def float_universe_size(self) -> int:
+        return len(self._float_shares)
 
     async def ensure_fresh(self, symbols: Iterable[str]) -> None:
         """Called both from ScannerEngine's long-lived event loop (every
@@ -67,6 +86,7 @@ class FundamentalsCache:
             return
 
         await self._ensure_short_interest_file_fresh()
+        await self._ensure_float_file_fresh()
 
         now = time.monotonic()
         stale = [
@@ -95,6 +115,20 @@ class FundamentalsCache:
         if shares:
             self._short_interest_shares = shares
 
+    async def _ensure_float_file_fresh(self) -> None:
+        now = time.monotonic()
+        if now - self._float_fetched_at < self.settings.fundamentals_refresh_interval:
+            return
+        self._float_fetched_at = now
+
+        try:
+            shares = await fetch_all_float(self._client, self.settings.fmp_api_key)
+        except Exception:
+            logger.exception("Bulk shares-float refresh failed")
+            return
+        if shares:
+            self._float_shares = shares
+
     async def _refresh_one(self, symbol: str, semaphore: asyncio.Semaphore) -> None:
         async with semaphore:
             float_shares: float | None = None
@@ -108,6 +142,12 @@ class FundamentalsCache:
             except Exception:
                 logger.exception("Fundamentals refresh (FMP) failed for %s", symbol)
                 retry_after = ERROR_RETRY_SECONDS
+
+        # Fall back to the bulk file's float when the per-symbol call didn't
+        # return one (same FMP source, so no consistency concern) -- that also
+        # rescues short_interest_pct, which is unavailable without a float.
+        if not float_shares:
+            float_shares = self._float_shares.get(symbol)
 
         short_interest_pct: float | None = None
         shares_short = self._short_interest_shares.get(symbol)
