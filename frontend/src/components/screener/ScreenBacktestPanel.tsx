@@ -27,7 +27,8 @@ function signed(value: number | null): string {
 
 /**
  * "How would this screen have done?" — replays the current filters over
- * historical daily bars.
+ * history at the chosen resolution: one bar per session (daily), or every
+ * 5 minutes, which is what makes the 1h volume-rate fields replayable.
  *
  * Deliberately reports alpha beside raw win rate. A raw win rate near 50% is
  * what a coin flip looks like, and on a broadly green day every long closes
@@ -114,7 +115,18 @@ export function ScreenBacktestPanel({ screen, onClose }: Props) {
         </button>
       </div>
 
-      {loading && <p className="screener-summary">Fetching daily bars — this takes a moment.</p>}
+      {loading && (
+        // Resolution-specific on purpose: this said "daily bars" for both,
+        // which is plainly wrong mid-way through a 5-minute replay. The
+        // intraday run does also pull daily bars, for the 20-day volume
+        // baseline and previous closes, so say that rather than imply it's
+        // only 5-minute data.
+        <p className="screener-summary">
+          {resolution === "intraday"
+            ? "Fetching 5-minute bars (plus daily bars for the 20-day volume baseline) — the first run over a set of symbols is slow, repeats are served from the disk cache."
+            : "Fetching daily bars — this takes a moment."}
+        </p>
+      )}
 
       {refusal && (
         <div className="screen-backtest-refusal">

@@ -129,7 +129,11 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol }: ScannerWidgetP
             </button>
           )}
           {!frozenActive && (
-            <button type="button" onClick={() => setShowBacktest((v) => !v)} title="Replay this screen over historical daily bars">
+            <button
+              type="button"
+              onClick={() => setShowBacktest((v) => !v)}
+              title="Replay this screen over history — daily bars, or every 5 minutes for the 1h volume-rate fields"
+            >
               Backtest
             </button>
           )}
