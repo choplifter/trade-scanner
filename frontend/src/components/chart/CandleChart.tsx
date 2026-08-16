@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import {
   CandlestickSeries,
   createChart,
+  createSeriesMarkers,
   HistogramSeries,
   LineSeries,
   LineStyle,
@@ -11,6 +12,7 @@ import {
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type LineData,
   type Time,
   type UTCTimestamp,
@@ -32,6 +34,28 @@ interface CandleChartProps {
  * enough to see what led into the entry and what happened after, narrow
  * enough that the bar in question is still identifiable. */
 const FOCUS_PADDING_SECONDS = 90 * 60;
+
+/** Same pin the Dash backtest page drops on a clicked pick (see
+ * dash_app/assets/lightweight_chart.html's markPick), so the two surfaces
+ * mark an entry identically. */
+const PICK_MARKER_COLOR = "#2a78d6";
+
+/** The bar closest to `time`, since a pick's entry rarely lands exactly on a
+ * bar boundary of whatever timeframe is being displayed -- a 5-minute entry
+ * viewed on a daily chart has no exact match at all. */
+function nearestBarTime(bars: Bar[], time: number): UTCTimestamp | null {
+  let nearest: UTCTimestamp | null = null;
+  let bestDiff = Infinity;
+  for (const bar of bars) {
+    const barTime = toUnixSeconds(bar.t);
+    const diff = Math.abs(barTime - time);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      nearest = barTime;
+    }
+  }
+  return nearest;
+}
 
 function toUnixSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
@@ -109,6 +133,9 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
   const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
+  // The markers primitive, kept so the pick pin is updated in place rather
+  // than layered again on every focus change.
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   // Read by the resize handler, which is subscribed once at mount and so
   // can't close over the current bars. A ref rather than a dep of the mount
   // effect, which would rebuild the whole chart on every tick.
@@ -211,6 +238,9 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      // Belonged to the series just disposed -- left set, the focus effect
+      // would call setMarkers on a dead primitive after a remount.
+      markersRef.current = null;
       vwapSeriesRef.current = null;
       // chart.remove() above already disposed every series/price-line that
       // was attached to it, including whatever the indicators effect added
@@ -258,11 +288,36 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
     }
   }, [bars, vwap, focusTime]);
 
-  // Scroll a clicked backtest pick into view. Runs after the data effect
-  // above, so the bars it needs are already on the series.
+  // Scroll a clicked backtest pick into view and pin it with an arrow. Runs
+  // after the data effect above, so the bars it needs are already on the
+  // series.
   useEffect(() => {
     const chart = chartRef.current;
-    if (!chart || focusTime == null || bars.length === 0) return;
+    const candleSeries = candleSeriesRef.current;
+    if (!chart || !candleSeries) return;
+
+    // Created once and reused, because createSeriesMarkers stacks a fresh
+    // primitive layer on the series every call -- so calling it per focus
+    // change would pile up layers instead of replacing the marker.
+    if (!markersRef.current) {
+      markersRef.current = createSeriesMarkers(candleSeries, []);
+    }
+    const markerTime = focusTime == null ? null : nearestBarTime(bars, focusTime);
+    markersRef.current.setMarkers(
+      markerTime == null
+        ? []
+        : [
+            {
+              time: markerTime,
+              position: "aboveBar",
+              color: PICK_MARKER_COLOR,
+              shape: "arrowDown",
+              text: "Pick",
+            },
+          ],
+    );
+
+    if (focusTime == null || bars.length === 0) return;
 
     const first = toUnixSeconds(bars[0].t);
     const last = toUnixSeconds(bars[bars.length - 1].t);
