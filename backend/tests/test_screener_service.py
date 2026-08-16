@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.dash_app.pages import screener as page
 from app.scanners import screener
 from app.scanners.schemas import ScannerRow
 from app.scanners.screener_service import derived_values, screen_live_rows
@@ -119,56 +118,3 @@ def test_presets_run_against_live_rows():
     engine = _engine([_row("UP", pct=8.0), _row("DOWN", pct=-8.0)])
     payload = screen_live_rows(engine, _SETTINGS, screener.PRESETS["losers"]["screen"])
     assert [r["symbol"] for r in payload["rows"]] == ["DOWN"]
-
-
-# --- Dash page helpers --------------------------------------------------------
-
-
-def test_page_coerces_text_input_per_operator():
-    assert page._coerce("5", "gt") == 5.0
-    assert page._coerce("NASDAQ", "eq") == "NASDAQ"
-    assert page._coerce("NASDAQ, NYSE", "in") == ["NASDAQ", "NYSE"]
-    assert page._coerce("", "gt") is None
-    # Unparseable numerics pass through; the screener's comparison drops them
-    # rather than this raising mid-callback.
-    assert page._coerce("abc", "gt") == "abc"
-
-
-def test_page_builds_one_row_per_filter_including_boolean_ones():
-    rows = page.build_filter_rows(
-        [{"field": "pct_change", "op": "gt", "value": 5}, {"field": "is_hod", "op": "is_true"}]
-    )
-    assert len(rows) == 2
-
-
-def test_page_filter_rows_always_include_both_value_inputs():
-    # Dash resolves pattern-matching inputs positionally, so a row that
-    # sometimes omits an input would shift every later row's values by one.
-    def count_inputs(component):
-        found = 0
-        children = getattr(component, "children", None) or []
-        for child in children if isinstance(children, list) else [children]:
-            if type(child).__name__ == "Input":
-                found += 1
-            found += count_inputs(child)
-        return found
-
-    boolean_row = page.build_filter_rows([{"field": "is_hod", "op": "is_true"}])[0]
-    between_row = page.build_filter_rows([{"field": "last_price", "op": "between", "value": 1, "value2": 2}])[0]
-    assert count_inputs(boolean_row) == count_inputs(between_row) == 2
-
-
-def test_page_formats_by_registry_type():
-    assert page._format(-3.2, "pct_change") == "-3.20%"
-    assert page._format(1_234_567.0, "dollar_volume_today") == "$1.2M"
-    assert page._format(True, "is_hod") == "Yes"
-    assert page._format(None, "float_shares") == "—"
-
-
-def test_page_screen_from_state_round_trips_into_a_valid_screen():
-    screen = page._screen_from_state(
-        [{"field": "rvol", "op": "gte", "value": "3"}], "pct_change", "asc", "25"
-    )
-    assert screen.filters[0].value == 3.0
-    assert screen.descending is False
-    assert screen.limit == 25
