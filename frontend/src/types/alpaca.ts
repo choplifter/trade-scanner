@@ -30,6 +30,16 @@ export interface ScannerRow {
    * wick) -- see backend app.scanners.formulas.is_momentum_alert. Drives
    * the momentum-alarm overlay (see hooks/useAlarms), off by default. */
   is_momentum_alert: boolean;
+  /** Volume *rate* fields, unlike rvol which is cumulative since the open
+   * and only ever climbs. volume_surge is the trailing hour over the one
+   * before it -- honest as a description but misleading as a filter, since
+   * session volume is U-shaped and near the close it exceeds 1 for most of
+   * the market. rvol_1h compares the same hour against what this symbol
+   * normally trades in that clock hour, which is the one to screen on.
+   * Null outside the regular session. See backend app.market_data.volume_surge. */
+  volume_1h: number | null;
+  volume_surge: number | null;
+  rvol_1h: number | null;
   /** True when the feed hasn't confirmed this price via a real trade/bar
    * recently -- the row still ranks normally, but the price shown may be
    * older than it looks. */

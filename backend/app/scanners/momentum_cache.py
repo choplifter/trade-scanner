@@ -21,6 +21,7 @@ surfaced those specific names instead of the whole-day leaderboard.
 import logging
 import time
 from collections.abc import Iterable
+from datetime import timedelta
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
@@ -32,6 +33,7 @@ from app.market_data.momentum import (
     pct_change_over_window,
     same_trading_day,
 )
+from app.market_data.volume_surge import trailing_windows
 from app.market_data.vwap import SessionVwapState
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,15 @@ class MomentumCache:
         self._is_shaved_top: dict[str, bool] = {}
         self._is_green: dict[str, bool] = {}
         self._is_above_vwap: dict[str, bool] = {}
+        # Volume in the trailing window and the window before it, from the
+        # same bars -- the raw inputs for the acceleration fields this
+        # module's docstring describes. Kept as raw volumes rather than a
+        # ratio because turning them into rvol_1h needs avg_vol_20d and the
+        # intraday volume profile, neither of which this cache holds; see
+        # ScannerEngine._attach_momentum.
+        self._window_volume: dict[str, float | None] = {}
+        self._prior_window_volume: dict[str, float | None] = {}
+        self._bars: dict[str, list] = {}
         self._fetched_at: dict[str, float] = {}
 
     def get(self, symbol: str) -> float | None:
@@ -64,6 +75,19 @@ class MomentumCache:
 
     def is_above_vwap(self, symbol: str) -> bool:
         return self._is_above_vwap.get(symbol, False)
+
+    def window_volume(self, symbol: str) -> float | None:
+        return self._window_volume.get(symbol)
+
+    def prior_window_volume(self, symbol: str) -> float | None:
+        return self._prior_window_volume.get(symbol)
+
+    def bars(self, symbol: str) -> list:
+        """The cached 5-minute bars themselves, so a caller that needs a
+        different window (rvol_1h computes its own expected volume from the
+        same series) doesn't trigger a second fetch.
+        """
+        return self._bars.get(symbol) or []
 
     async def ensure_fresh(self, symbols: Iterable[str]) -> None:
         now = time.monotonic()
@@ -82,9 +106,17 @@ class MomentumCache:
             logger.exception("Scanner momentum refresh failed for a batch of %d symbols", len(stale))
             return
 
+        window = timedelta(minutes=self.settings.scanner_volume_surge_window_minutes)
         for symbol in stale:
             self._fetched_at[symbol] = now
             bars = bars_by_symbol.get(symbol) or []
+            self._bars[symbol] = bars
+            # Same set-on-every-refresh discipline as the four fields below:
+            # trailing_windows returns (None, None) outside the session, which
+            # clears the reading rather than leaving yesterday's stuck.
+            recent, prior = trailing_windows(bars, window)
+            self._window_volume[symbol] = recent
+            self._prior_window_volume[symbol] = prior
             # Only a regular-session bar may report momentum, matching the
             # backtest exactly (see momentum.is_regular_session_bar).
             # Outside 09:30-16:00 ET there is no meaningful "momentum right

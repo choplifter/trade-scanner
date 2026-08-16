@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 from alpaca.data.requests import StockBarsRequest, StockSnapshotRequest
@@ -20,6 +20,7 @@ from app.market_data.market_conditions import (
 )
 from app.market_data.news import fetch_headlines, is_roundup_headline
 from app.market_data.news_cache import NewsCache
+from app.market_data import volume_surge
 from app.market_data.volume_profile import VolumeProfileCache
 from app.scanners import formulas
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
@@ -191,8 +192,14 @@ class ScannerEngine:
         return self.volume_profile.fraction_at(at)
 
     async def _ensure_volume_profile(self) -> None:
-        if not self.settings.scanner_rvol_time_normalized:
-            return
+        """Built unconditionally, not gated on scanner_rvol_time_normalized.
+
+        That flag governs whether formulas.rvol *rescales* RVOL -- a change to
+        an existing metric's definition, which is why it ships off. The curve
+        itself is just data (one SPY 5-minute fetch a day) and the
+        volume-acceleration fields need it regardless, so gating the build on
+        the flag would leave rvol_1h permanently None by default.
+        """
         await self.volume_profile.ensure_fresh()
 
     def _compute_rows(self, snapshots: dict) -> None:
@@ -603,6 +610,7 @@ class ScannerEngine:
         if not symbols:
             return
         await self.momentum_cache.ensure_fresh(symbols)
+        window = timedelta(minutes=self.settings.scanner_volume_surge_window_minutes)
         for rows in views.values():
             for row in rows:
                 row.pct_change_last_15m = self.momentum_cache.get(row.symbol)
@@ -612,6 +620,20 @@ class ScannerEngine:
                     self.momentum_cache.is_green(row.symbol),
                     self.momentum_cache.is_above_vwap(row.symbol),
                     self.settings.alarm_momentum_pct_threshold,
+                )
+                # Computed here rather than in the cache because this is the
+                # only place holding all three inputs: the cache's window
+                # volumes, the universe's avg_vol_20d, and the intraday
+                # profile curve.
+                row.volume_1h = self.momentum_cache.window_volume(row.symbol)
+                row.volume_surge = volume_surge.surge_ratio(
+                    row.volume_1h, self.momentum_cache.prior_window_volume(row.symbol)
+                )
+                row.rvol_1h = volume_surge.windowed_rvol(
+                    self.momentum_cache.bars(row.symbol),
+                    row.avg_vol_20d,
+                    self.volume_profile.curve,
+                    window,
                 )
 
     def _evaluate_screens(self) -> list[tuple[object, list[ScannerRow], dict]]:

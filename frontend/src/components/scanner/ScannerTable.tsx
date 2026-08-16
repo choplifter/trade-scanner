@@ -31,6 +31,7 @@ type SortKey =
   | "mom15"
   | "vol"
   | "rvol"
+  | "rvol_1h"
   | "float"
   | "market_cap"
   | "short_interest_pct"
@@ -52,6 +53,7 @@ const SORT_ACCESSORS: Record<SortKey, (row: ScannerRow) => SortValue> = {
   mom15: (r) => r.pct_change_last_15m,
   vol: (r) => r.dollar_volume_today,
   rvol: (r) => r.rvol,
+  rvol_1h: (r) => r.rvol_1h,
   float: (r) => r.float_shares,
   market_cap: (r) => r.market_cap,
   short_interest_pct: (r) => r.short_interest_pct,
@@ -67,6 +69,7 @@ const COLUMNS: { id: SortKey; label: string }[] = [
   { id: "mom15", label: "15m %" },
   { id: "vol", label: "$ Vol" },
   { id: "rvol", label: "RVol" },
+  { id: "rvol_1h", label: "RVol 1h" },
   { id: "float", label: "Float" },
   { id: "market_cap", label: "Mkt Cap" },
   { id: "short_interest_pct", label: "Short %" },
@@ -210,6 +213,9 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
             </td>
             <td>{formatDollarVolume(row.dollar_volume_today)}</td>
             <td>{formatRvol(row.rvol)}</td>
+            <td title="Volume in the last hour vs. what this symbol normally trades in that same clock hour -- a rate, unlike RVol, which is cumulative since the open and only ever climbs">
+              {cell(row.rvol_1h, formatRvol)}
+            </td>
             <td>{cell(row.float_shares, formatShares)}</td>
             <td>{cell(row.market_cap, formatMarketCap)}</td>
             <td>{cell(row.short_interest_pct, formatShortInterestPct)}</td>

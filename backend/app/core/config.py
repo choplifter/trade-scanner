@@ -116,6 +116,15 @@ class Settings(BaseSettings):
     # symbols on every tick.
     scanner_momentum_refresh_interval: float = 120.0
 
+    # Trailing window for the volume-acceleration fields (volume_1h,
+    # volume_surge, rvol_1h -- see app.market_data.volume_surge). 60 minutes
+    # is long enough that a single block print doesn't dominate the reading,
+    # and short enough that it still describes "right now" rather than the
+    # whole afternoon. Computed from the 5-minute bars MomentumCache already
+    # fetches, so changing this costs nothing extra as long as it stays
+    # within the one session those bars cover.
+    scanner_volume_surge_window_minutes: int = 60
+
     # Absolute-value threshold for "suspicious" 15-minute momentum used by
     # the momentum alarm (see app.scanners.formulas.is_momentum_alert) -- a
     # fixed % rather than normalized against each symbol's own typical daily

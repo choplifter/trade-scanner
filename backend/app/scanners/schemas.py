@@ -43,6 +43,25 @@ class ScannerRow(BaseModel):
     # app.scanners.formulas.is_momentum_alert. Drives the frontend's
     # momentum-alarm overlay (off by default).
     is_momentum_alert: bool = False
+    # Volume *rate* rather than running total -- see
+    # app.market_data.volume_surge. rvol (above) is cumulative since the open
+    # and only ever climbs, so it can't distinguish a stock that ran at 09:45
+    # and died from one accelerating into the close.
+    #
+    # volume_1h: shares traded in the trailing window.
+    # volume_surge: that window over the one before it. Honest as a
+    #   description, misleading as a filter -- session volume is U-shaped, so
+    #   near the close this is above 1 for most of the market at once.
+    # rvol_1h: that window over what the same *clock window* normally trades
+    #   (from the intraday volume profile). "2x" means twice the usual
+    #   15:00-16:00 volume, not twice a quiet lunch hour. This is the one to
+    #   screen on.
+    #
+    # All None outside the regular session and until the momentum cache has
+    # fetched -- there is no "right now" to measure when the market is shut.
+    volume_1h: float | None = None
+    volume_surge: float | None = None
+    rvol_1h: float | None = None
     # When the underlying trade/bar backing last_price was actually printed
     # -- distinct from updated_at, which is when *we* last recomputed the
     # row (that happens every poll tick regardless of whether the feed

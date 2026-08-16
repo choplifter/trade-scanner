@@ -99,6 +99,12 @@ FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("day_high", "Day High", CURRENCY),
     FieldSpec("day_low", "Day Low", CURRENCY),
     FieldSpec("spread_pct", "Spread %", PERCENT),
+    # Volume *rate* fields -- see app.market_data.volume_surge. rvol above is
+    # cumulative since the open and only climbs; these describe right now.
+    # Populated for ranked and screened rows during the regular session only.
+    FieldSpec("volume_1h", "Volume (1h)", NUMBER),
+    FieldSpec("volume_surge", "Volume Surge (vs prior 1h)", NUMBER),
+    FieldSpec("rvol_1h", "Rel Volume (1h)", NUMBER),
     FieldSpec("is_hod", "At High of Day", BOOLEAN),
     FieldSpec("is_lod", "At Low of Day", BOOLEAN),
     FieldSpec("is_fade_risk", "Fade Risk", BOOLEAN),
@@ -304,6 +310,24 @@ PRESETS: dict[str, dict] = {
         "label": "Most Active",
         "description": "Ordered by dollar volume traded today -- direction-agnostic, so no change filter.",
         "screen": Screen(filters=[], sort_by="dollar_volume_today", descending=True, limit=50),
+    },
+    "late_volume_surge": {
+        "label": "Volume Accelerating",
+        "description": (
+            "Trading at 2x+ the volume normal for this time of day and still green -- catches a "
+            "name picking up late, which cumulative RVOL cannot see. Deliberately filters on "
+            "rvol_1h, not volume_surge: session volume is U-shaped, so near the close the raw "
+            "hour-over-hour ratio is above 1 for most of the market."
+        ),
+        "screen": Screen(
+            filters=[
+                Filter(field="rvol_1h", op="gt", value=2),
+                Filter(field="pct_change", op="gt", value=0),
+            ],
+            sort_by="rvol_1h",
+            descending=True,
+            limit=50,
+        ),
     },
     "low_float_runners": {
         "label": "Low Float Runners",
