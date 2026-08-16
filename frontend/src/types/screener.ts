@@ -115,6 +115,10 @@ export interface ScreenBacktestResponse {
   alpha: AlphaRow[];
   replication?: ReplicationInfo;
   window_minutes?: number;
+  /** Fields this run could only replay using *today's* values — float and
+   * short interest have no historical series here, so a result using them
+   * carries look-ahead bias and isn't validation. Empty on a clean run. */
+  look_ahead_fields: string[];
   picks: BacktestPick[];
   /** True when more picks matched than were sent. Every statistic above was
    * computed over the full set server-side; only this list is capped. */
@@ -129,6 +133,7 @@ export interface BacktestPick {
    * just the session it belongs to. */
   timestamp?: string;
   entry_pct_change: number;
+  entry_gap_pct?: number | null;
   entry_rvol: number;
   entry_rvol_1h?: number | null;
   entry_dollar_volume: number;

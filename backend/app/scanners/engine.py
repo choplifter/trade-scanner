@@ -266,6 +266,15 @@ class ScannerEngine:
                 last_price=last,
                 prev_close=prev_close,
                 pct_change=pct,
+                # Today's open against the same prev_close pct_change uses,
+                # so the two are directly comparable. The daily bar carries
+                # the session open; before the open there's no bar and this
+                # stays None rather than reporting a gap that hasn't happened.
+                gap_pct=(
+                    formulas.pct_change(snap.daily_bar.open, prev_close)
+                    if snap.daily_bar and snap.daily_bar.open
+                    else None
+                ),
                 volume_today=volume_today,
                 avg_vol_20d=uni.avg_vol_20d,
                 rvol=row_rvol,

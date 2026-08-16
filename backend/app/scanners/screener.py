@@ -92,6 +92,9 @@ FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("exchange", "Exchange", TEXT),
     FieldSpec("last_price", "Price", CURRENCY),
     FieldSpec("pct_change", "Change %", PERCENT),
+    # The overnight gap specifically -- see ScannerRow.gap_pct for why this
+    # is not the same question as Change %.
+    FieldSpec("gap_pct", "Gap % (overnight)", PERCENT),
     FieldSpec("volume_today", "Volume", NUMBER),
     FieldSpec("avg_vol_20d", "Avg Volume (20d)", NUMBER),
     FieldSpec("rvol", "Rel Volume", NUMBER),
@@ -112,6 +115,13 @@ FIELDS: tuple[FieldSpec, ...] = (
     # Universe-wide from the bulk shares-float file rather than the row --
     # see the module docstring.
     FieldSpec("float_shares", "Float", NUMBER, derived=True),
+    # Also universe-wide, and for the same reason float is: FundamentalsCache
+    # holds FINRA's bulk short-interest file for every symbol, so dividing it
+    # by the bulk float gives a screenable percentage without widening any
+    # per-symbol fetch. row.short_interest_pct exists too but is only filled
+    # in for already-ranked symbols, so the derived map is the one that works
+    # across the whole universe.
+    FieldSpec("short_interest_pct", "Short % of Float", PERCENT, derived=True),
     # The live ranking magnitude, so a screen can still order by exactly
     # what the fixed views ordered by. Derived because it needs the news
     # cache (catalyst boost) that only the engine holds.

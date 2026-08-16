@@ -22,11 +22,15 @@ def _row(symbol="AAA", price=10.0, pct=5.0, rvol=2.0, volume=1_000_000.0):
 
 
 class _Fundamentals:
-    def __init__(self, floats=None):
+    def __init__(self, floats=None, short_pcts=None):
         self._floats = floats or {}
+        self._short_pcts = short_pcts or {}
 
     def float_shares(self, symbol):
         return self._floats.get(symbol)
+
+    def short_interest_pct(self, symbol):
+        return self._short_pcts.get(symbol)
 
 
 class _NewsCache:
@@ -37,13 +41,13 @@ class _NewsCache:
         return self._headlines.get(symbol)
 
 
-def _engine(rows, floats=None, headlines=None, latest=None, session="regular"):
+def _engine(rows, floats=None, headlines=None, latest=None, session="regular", short_pcts=None):
     return SimpleNamespace(
         rows={r.symbol: r for r in rows},
         _latest_session_rows=latest,
         session=session,
         is_latest_session_fallback=not rows,
-        fundamentals=_Fundamentals(floats),
+        fundamentals=_Fundamentals(floats, short_pcts),
         news_cache=_NewsCache(headlines),
     )
 
@@ -118,3 +122,18 @@ def test_presets_run_against_live_rows():
     engine = _engine([_row("UP", pct=8.0), _row("DOWN", pct=-8.0)])
     payload = screen_live_rows(engine, _SETTINGS, screener.PRESETS["losers"]["screen"])
     assert [r["symbol"] for r in payload["rows"]] == ["DOWN"]
+
+
+def test_short_interest_is_screenable_across_the_whole_universe():
+    """Both inputs are already universe-wide bulk files (FINRA short interest,
+    FMP float), so this needs no per-symbol fetch -- which is what lets it be
+    filtered on before a symbol has ever been ranked."""
+    heavy, light = _row("HEAVY"), _row("LIGHT")
+    engine = _engine([heavy, light], short_pcts={"HEAVY": 32.5, "LIGHT": 1.2})
+    screen = screener.Screen(
+        filters=[screener.Filter(field="short_interest_pct", op="gt", value=20)]
+    )
+
+    payload = screen_live_rows(engine, _SETTINGS, screen)
+    assert [r["symbol"] for r in payload["rows"]] == ["HEAVY"]
+    assert payload["derived"]["short_interest_pct"] == {"HEAVY": 32.5}

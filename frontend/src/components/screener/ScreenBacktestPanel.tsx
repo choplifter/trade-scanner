@@ -75,6 +75,17 @@ function signed(value: number | null): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+/** Dollar volume at the entry bar. Compact because it spans several orders
+ * of magnitude across a pick list and the raw integer is unreadable in a
+ * table cell. */
+function dollars(value: number | null | undefined): string {
+  if (value == null) return "—";
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
 /**
  * "How would this screen have done?" — replays the current filters over
  * history at the chosen resolution: one bar per session (daily), or every
@@ -213,6 +224,18 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
             )}
           </p>
 
+          {result.look_ahead_fields.length > 0 && (
+            // Not a failure, so not styled as one -- but a result built on
+            // today's float or short interest applied to past dates is not
+            // validation, and that has to be visible next to the number
+            // rather than buried in docs.
+            <p className="screen-backtest-warning">
+              Look-ahead bias: {result.look_ahead_fields.join(", ")} used today's values on past
+              dates — there's no historical series for them. Treat this as exploratory, not as
+              validation.
+            </p>
+          )}
+
           {result.replication && result.replication.picks_per_event !== null && (
             // Every qualifying 5-minute bar is a pick, so one surge can
             // contribute a dozen near-identical rows. Stated plainly rather
@@ -276,7 +299,9 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
                   <tr>
                     <th>Symbol</th>
                     <th>Entry</th>
+                    <th>Chg %</th>
                     <th>Gap %</th>
+                    <th>$ Vol</th>
                     <th>RVol</th>
                     {result.resolution === "intraday" && <th>RVol 1h</th>}
                     <th>To close</th>
@@ -301,6 +326,8 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
                       <td>{pick.symbol}</td>
                       <td>{pickLabel(pick)}</td>
                       <td>{signed(pick.entry_pct_change)}</td>
+                      <td>{pick.entry_gap_pct == null ? "—" : signed(pick.entry_gap_pct)}</td>
+                      <td>{dollars(pick.entry_dollar_volume)}</td>
                       <td>{pick.entry_rvol.toFixed(2)}x</td>
                       {result.resolution === "intraday" && (
                         <td>{pick.entry_rvol_1h == null ? "—" : `${pick.entry_rvol_1h.toFixed(2)}x`}</td>

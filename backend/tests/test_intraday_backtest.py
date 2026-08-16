@@ -84,7 +84,7 @@ def test_intraday_resolution_accepts_the_volume_rate_fields():
 
 
 def test_some_fields_are_unsupported_at_every_resolution():
-    for field in ("float_shares", "spread_pct", "is_stale"):
+    for field in ("spread_pct", "is_stale"):
         screen = screener.Screen(filters=[screener.Filter(field=field, op="gt", value=1)])
         assert unsupported_filters(screen, "intraday") == [field], field
 

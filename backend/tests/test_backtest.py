@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.scanners.backtest import (
     active_views,
+    look_ahead_filters,
     fade_risk_by_view,
     simulate_from_bars,
     unsupported_filters,
@@ -247,9 +248,10 @@ def test_unsupported_filters_names_what_daily_bars_cannot_reconstruct():
         ],
         sort_by="pct_change",
     )
-    # Named, not silently dropped -- apply_filters would happily ignore both
-    # and return a plausible number for a screen nobody described.
-    assert unsupported_filters(screen) == ["float_shares", "rvol_1h"]
+    # float_shares is now supported but look-ahead (see LOOK_AHEAD_FIELDS);
+    # only the intraday-only field is genuinely unreplayable on daily bars.
+    assert unsupported_filters(screen) == ["rvol_1h"]
+    assert look_ahead_filters(screen) == ["float_shares"]
 
 
 def test_unsupported_filters_checks_the_sort_key_too():

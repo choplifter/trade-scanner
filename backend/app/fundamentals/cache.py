@@ -64,6 +64,22 @@ class FundamentalsCache:
         """
         return self._float_shares.get(symbol)
 
+    def short_interest_pct(self, symbol: str) -> float | None:
+        """Short interest as a % of float, for any symbol, ranked or not.
+
+        Both inputs are already universe-wide bulk files -- FINRA's short
+        interest and FMP's shares-float -- so this needs no per-symbol fetch,
+        which is what lets it be screened on across the whole universe rather
+        than only on rows that happen to be ranked. self.get(symbol) carries
+        the same figure for ranked symbols; this is the version that works
+        before a symbol has surfaced.
+        """
+        shares_short = self._short_interest_shares.get(symbol)
+        float_shares = self._float_shares.get(symbol)
+        if not shares_short or not float_shares:
+            return None
+        return shares_short / float_shares * 100
+
     @property
     def float_universe_size(self) -> int:
         return len(self._float_shares)

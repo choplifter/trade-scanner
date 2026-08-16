@@ -56,6 +56,11 @@ async def compute_latest_session_rows(
                     last_price=last_bar.close,
                     prev_close=prev_bar.close,
                     pct_change=pct,
+                    # The completed session's own opening gap. Set here as
+                    # well as in the live path, or gap_pct would be null for
+                    # every row whenever the market is closed -- which is
+                    # exactly when someone reviews the last session.
+                    gap_pct=formulas.pct_change(last_bar.open, prev_bar.close),
                     volume_today=volume,
                     avg_vol_20d=uni.avg_vol_20d,
                     rvol=row_rvol,

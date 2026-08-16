@@ -9,6 +9,13 @@ class ScannerRow(BaseModel):
     last_price: float
     prev_close: float
     pct_change: float
+    # The *overnight* gap: today's open against yesterday's close. Distinct
+    # from pct_change, which is the current price against yesterday's close
+    # and therefore includes everything that has happened since the open. A
+    # stock that gapped +20% and has since given it all back reads +20% here
+    # and ~0% there; screening "gapped hard this morning" needs this one.
+    # None before today's open has printed.
+    gap_pct: float | None = None
     volume_today: float
     avg_vol_20d: float
     rvol: float

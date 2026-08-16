@@ -119,6 +119,9 @@ BACKTESTABLE_FIELDS = frozenset(
         "symbol",
         "last_price",
         "pct_change",
+        # The overnight gap is straight off the bar (open vs. the previous
+        # close), so unlike float/short interest it is genuinely point-in-time.
+        "gap_pct",
         "volume_today",
         "avg_vol_20d",
         "rvol",
@@ -129,8 +132,31 @@ BACKTESTABLE_FIELDS = frozenset(
         "is_lod",
         "is_fade_risk",
         "rank_score",
+        # See LOOK_AHEAD_FIELDS -- replayable only against today's values.
+        "float_shares",
+        "short_interest_pct",
     }
 )
+
+# Fields a backtest *can* apply but only using today's value, because no
+# historical series is fetched for them. Float moves with offerings, buybacks
+# and lockup expiries, and is unreliable around a reverse split; FINRA
+# publishes short interest twice a month with a 2-4 week lag, so even the
+# "current" figure describes a settlement date already weeks old.
+#
+# Screening on either against past dates is look-ahead bias: it asks "how did
+# stocks that are low-float *today* behave last March", which is not a
+# question a trader could have acted on last March. Supported because the
+# alternative -- refusing outright -- makes the tool useless for the setups
+# these fields exist to describe, but every response naming one carries a
+# warning, and no result using them should be read as validation.
+LOOK_AHEAD_FIELDS = frozenset({"float_shares", "short_interest_pct"})
+
+
+def look_ahead_filters(screen) -> list[str]:
+    """Which of `screen`'s fields can only be replayed with today's values."""
+    names = [f.field for f in screen.filters] + [screen.sort_by]
+    return sorted({n for n in names if n in LOOK_AHEAD_FIELDS})
 
 
 # At 5-minute resolution the three intraday volume fields become
@@ -182,6 +208,7 @@ class _BacktestRow:
     symbol: str
     last_price: float
     pct_change: float
+    gap_pct: float | None
     volume_today: float
     avg_vol_20d: float
     dollar_volume_today: float
@@ -194,7 +221,7 @@ class _BacktestRow:
     is_shaved_top: bool
 
 
-def _ranked_views(day_rows, min_dollar_volume: float, screen):
+def _ranked_views(day_rows, min_dollar_volume: float, screen, fundamentals: dict | None = None):
     """(view_name, rows) pairs for one trading day.
 
     With no screen this is the three live views, which is what the daily
@@ -223,7 +250,11 @@ def _ranked_views(day_rows, min_dollar_volume: float, screen):
         "rank_score": {
             r.symbol: formulas.rank_score(r.pct_change, False, r.rvol, catalyst_boost=r.pct_change > 0)
             for r in tradable
-        }
+        },
+        # Today's values on a past date -- see LOOK_AHEAD_FIELDS. Passed as
+        # flat per-symbol maps precisely because they don't vary by date:
+        # there is no historical series behind them to key on.
+        **(fundamentals or {}),
     }
     return (("screen", screener.run_screen(tradable, screen, derived).rows),)
 
@@ -299,6 +330,7 @@ def simulate_from_bars(
     horizon_days: int = 1,
     benchmark_returns: dict[date, float] | None = None,
     screen=None,
+    fundamentals: dict | None = None,
 ) -> list[dict]:
     """Pure, network-free -- reconstructs each historical trading day's
     gainers/losers/most-active exactly as engine._rank_gainers/_rank_losers/
@@ -345,6 +377,9 @@ def simulate_from_bars(
                     symbol=symbol,
                     last_price=bar.close,
                     pct_change=pct,
+                    # Point-in-time and exact: the bar's own open against the
+                    # same prior close pct_change uses.
+                    gap_pct=formulas.pct_change(bar.open, prev_close),
                     volume_today=bar.volume,
                     avg_vol_20d=avg_vol_20d,
                     dollar_volume_today=formulas.dollar_volume(bar.volume, bar.close),
@@ -361,7 +396,7 @@ def simulate_from_bars(
 
     picks: list[dict] = []
     for trading_date, day_rows in rows_by_date.items():
-        for view_name, ranked in _ranked_views(day_rows, min_dollar_volume, screen):
+        for view_name, ranked in _ranked_views(day_rows, min_dollar_volume, screen, fundamentals):
             for row in ranked:
                 exit_price = exit_price_by_symbol_date.get((row.symbol, trading_date))
                 if exit_price is None or row.last_price <= 0:
@@ -380,6 +415,7 @@ def simulate_from_bars(
                         "trading_date": trading_date.isoformat(),
                         "view": view_name,
                         "entry_pct_change": row.pct_change,
+                        "entry_gap_pct": row.gap_pct,
                         "entry_rvol": row.rvol,
                         # The magnitude "most_active" actually ranks on --
                         # carried on every pick regardless of view so a
@@ -452,6 +488,7 @@ async def run_backtest(
     horizon_days: int = 1,
     batch_size: int = _FETCH_BATCH_SIZE,
     screen=None,
+    fundamentals: dict | None = None,
 ) -> dict:
     """Fetch/orchestration wrapper: chunks symbols (get_daily_bars_multi
     doesn't chunk itself), merges results, replays via simulate_from_bars,
@@ -479,7 +516,12 @@ async def run_backtest(
         )
 
     picks = simulate_from_bars(
-        bars_by_symbol, settings.scanner_min_dollar_volume, horizon_days, benchmark_returns, screen
+        bars_by_symbol,
+        settings.scanner_min_dollar_volume,
+        horizon_days,
+        benchmark_returns,
+        screen,
+        fundamentals,
     )
 
     # Every breakdown iterates a fixed view list, so a screened run -- which

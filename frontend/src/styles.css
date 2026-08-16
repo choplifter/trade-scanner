@@ -1277,3 +1277,14 @@ a.symbol-news-headline {
 .screen-backtest-picks tbody tr:hover {
   background: var(--surface-hover, rgba(128, 128, 128, 0.12));
 }
+
+/* Look-ahead warning on a backtest result. Deliberately not the refusal's
+   red: the run succeeded and the numbers are real, they just answer a
+   question the trader couldn't have asked at the time. */
+.screen-backtest-warning {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid #c99a2e;
+  font-size: 11px;
+  color: var(--text-muted);
+}

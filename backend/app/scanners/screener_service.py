@@ -33,6 +33,9 @@ def derived_values(engine, rows) -> dict[str, dict]:
     news_cache = engine.news_cache
     return {
         "float_shares": {r.symbol: fundamentals.float_shares(r.symbol) for r in rows},
+        "short_interest_pct": {
+            r.symbol: fundamentals.short_interest_pct(r.symbol) for r in rows
+        },
         "rank_score": {
             r.symbol: formulas.rank_score(
                 r.pct_change,

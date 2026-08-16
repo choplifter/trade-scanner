@@ -59,6 +59,7 @@ class _IntradayRow:
     symbol: str
     last_price: float
     pct_change: float
+    gap_pct: float | None
     volume_today: float
     avg_vol_20d: float
     dollar_volume_today: float
@@ -179,6 +180,11 @@ def build_rows_by_timestamp(
                         symbol=symbol,
                         last_price=bar.close,
                         pct_change=pct,
+                        # The session's *opening* gap, constant through the
+                        # day -- taken from the first regular-session bar's
+                        # open, not this bar's, which would just re-measure
+                        # pct_change five minutes at a time.
+                        gap_pct=formulas.pct_change(day_bars[0].open, prev_close),
                         volume_today=cumulative,
                         avg_vol_20d=avg_vol,
                         dollar_volume_today=formulas.dollar_volume(cumulative, bar.close),
@@ -231,6 +237,7 @@ def simulate_intraday_screen(
     min_dollar_volume: float,
     window: timedelta,
     benchmark_to_close_by_ts: dict[datetime, float] | None = None,
+    fundamentals: dict | None = None,
 ) -> list[dict]:
     """One pick per (symbol, bar) the screen matches, held to that session's
     close.
@@ -253,7 +260,9 @@ def simulate_intraday_screen(
             "rank_score": {
                 r.symbol: formulas.rank_score(r.pct_change, False, r.rvol, catalyst_boost=r.pct_change > 0)
                 for r in tradable
-            }
+            },
+            # Today's values on a past date -- see backtest.LOOK_AHEAD_FIELDS.
+            **(fundamentals or {}),
         }
         trading_date = timestamp.astimezone(ET).date()
         for row in screener.run_screen(tradable, screen, derived).rows:
@@ -273,6 +282,7 @@ def simulate_intraday_screen(
                     "timestamp": timestamp.astimezone(ET).isoformat(),
                     "view": "screen",
                     "entry_pct_change": row.pct_change,
+                    "entry_gap_pct": row.gap_pct,
                     "entry_rvol": row.rvol,
                     "entry_rvol_1h": row.rvol_1h,
                     "entry_dollar_volume": row.dollar_volume_today,

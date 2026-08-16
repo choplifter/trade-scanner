@@ -115,20 +115,38 @@ async def backtest_screen(body: BacktestRequest, request: Request) -> dict:
     ranked = sorted(universe.values(), key=lambda u: u.avg_dollar_vol_20d, reverse=True)
     symbols = [u.symbol for u in ranked[: max(1, body.max_symbols)]]
 
+    # Not a refusal: these fields are replayable, just only against today's
+    # values (see backtest.LOOK_AHEAD_FIELDS). The result travels with the
+    # warning attached so a biased number can't be read as a validated one.
+    look_ahead = backtest.look_ahead_filters(body.screen)
+
+    # Today's float and short interest, keyed by symbol. Flat maps because
+    # there is no historical series behind them to key by date -- which is
+    # exactly what makes them look-ahead.
+    fundamentals = {
+        "float_shares": {s: engine.fundamentals.float_shares(s) for s in symbols},
+        "short_interest_pct": {s: engine.fundamentals.short_interest_pct(s) for s in symbols},
+    }
+
     if resolution == "intraday":
-        return await run_intraday_backtest(
-            engine.clients,
-            settings,
-            symbols,
-            body.screen,
-            # A session of 5-minute bars is ~78 rows per symbol per day, so
-            # the default 180 would be an enormous pull here. Capped rather
-            # than silently honoured.
-            lookback_days=min(body.lookback_days, 45),
-        )
+        return {
+            "look_ahead_fields": look_ahead,
+            **await run_intraday_backtest(
+                engine.clients,
+                settings,
+                symbols,
+                body.screen,
+                # A session of 5-minute bars is ~78 rows per symbol per day,
+                # so the default 180 would be an enormous pull here. Capped
+                # rather than silently honoured.
+                lookback_days=min(body.lookback_days, 45),
+                fundamentals=fundamentals,
+            ),
+        }
 
     return {
         "resolution": "daily",
+        "look_ahead_fields": look_ahead,
         **await backtest.run_backtest(
             engine.clients,
             settings,
@@ -136,5 +154,6 @@ async def backtest_screen(body: BacktestRequest, request: Request) -> dict:
             lookback_days=body.lookback_days,
             horizon_days=body.horizon_days,
             screen=body.screen,
+            fundamentals=fundamentals,
         ),
     }

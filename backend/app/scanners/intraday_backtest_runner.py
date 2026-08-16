@@ -49,6 +49,7 @@ async def run_intraday_backtest(
     lookback_days: int = 30,
     cache_dir: Path = DEFAULT_CACHE_DIR,
     force_refresh: bool = False,
+    fundamentals: dict | None = None,
 ) -> dict:
     """Replay `screen` at 5-minute resolution, holding each pick to its
     session close.
@@ -96,6 +97,7 @@ async def run_intraday_backtest(
         settings.scanner_min_dollar_volume,
         window,
         benchmark_to_close(benchmark_intraday),
+        fundamentals,
     )
 
     return {
