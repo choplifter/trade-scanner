@@ -74,8 +74,8 @@ from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
 from app.market_data.bars import get_daily_bars_multi
 from app.market_data.candle_shape import is_shaved_top
-from app.scanners import bucket_analysis, formulas
-from app.scanners.engine import _rank_gainers, _rank_losers, _rank_most_active
+from app.scanners import bucket_analysis, formulas, screener
+from app.scanners.engine import _rank_gainers, _rank_losers, _rank_most_active, _tradable
 
 # Trading days of trailing volume history needed before a day can get an
 # avg_vol_20d (and therefore an RVOL) computed from the bars themselves --
@@ -97,23 +97,112 @@ _BENCHMARK_SYMBOL = "SPY"
 logger = logging.getLogger(__name__)
 
 
+# Screener fields a daily bar can honestly reconstruct, so a user-built
+# screen can be replayed over history (see simulate_from_bars' `screen`).
+#
+# Everything absent from this set is absent for a reason, not an oversight:
+#   spread_pct  -- needs historical NBBO quotes, which nothing here fetches.
+#   volume_1h / volume_surge / rvol_1h -- intraday by definition; a daily bar
+#       is one number for the whole session. Same wall that stops this tool
+#       re-deriving the RVOL fade-risk threshold.
+#   is_stale    -- describes live feed freshness, meaningless for a past date.
+#   float_shares -- FMP's bulk file is *today's* float; applying it to past
+#       dates is look-ahead bias, and float is unreliable around a reverse
+#       split. Already out of scope for the same reason elsewhere here.
+#
+# screener.apply_filters deliberately *ignores* unknown fields so a saved
+# screen naming a removed one still runs live. That behaviour is wrong here:
+# silently dropping half a screen's criteria would produce a plausible number
+# for a strategy nobody described. unsupported_filters() is what catches it.
+BACKTESTABLE_FIELDS = frozenset(
+    {
+        "symbol",
+        "last_price",
+        "pct_change",
+        "volume_today",
+        "avg_vol_20d",
+        "rvol",
+        "dollar_volume_today",
+        "day_high",
+        "day_low",
+        "is_hod",
+        "is_lod",
+        "is_fade_risk",
+        "rank_score",
+    }
+)
+
+
+def unsupported_filters(screen) -> list[str]:
+    """Field names in `screen` that history can't reconstruct -- filters and
+    sort key alike. Empty means the screen is fully replayable.
+    """
+    names = [f.field for f in screen.filters] + [screen.sort_by]
+    return sorted({n for n in names if n not in BACKTESTABLE_FIELDS})
+
+
 @dataclass
 class _BacktestRow:
-    """Just enough fields for engine._tradable/_rank_gainers/_rank_losers
-    and formulas.rank_score to work -- those functions are duck-typed over
-    any object with these attributes, not tied to the full ScannerRow
-    pydantic model (which would need fabricating unused fields like
-    updated_at for no benefit here). is_shaved_top rides along unused by
-    ranking itself, just carried through to the final picks for analysis.
+    """Just enough fields for engine._tradable/_rank_gainers/_rank_losers,
+    formulas.rank_score and screener.run_screen to work -- those functions
+    are duck-typed over any object with these attributes, not tied to the
+    full ScannerRow pydantic model (which would need fabricating unused
+    fields like updated_at for no benefit here).
+
+    The day_high/day_low/is_hod/is_lod/avg_vol_20d fields exist only so a
+    user screen can filter on them; ranking itself never reads them. Note
+    is_hod/is_lod mean something weaker here than live: from a daily bar all
+    that's knowable is "closed at its high", not "touched the high at this
+    moment", which is what the live flag tracks.
     """
 
     symbol: str
     last_price: float
     pct_change: float
     volume_today: float
+    avg_vol_20d: float
     dollar_volume_today: float
     rvol: float
+    day_high: float
+    day_low: float
+    is_hod: bool
+    is_lod: bool
+    is_fade_risk: bool
     is_shaved_top: bool
+
+
+def _ranked_views(day_rows, min_dollar_volume: float, screen):
+    """(view_name, rows) pairs for one trading day.
+
+    With no screen this is the three live views, which is what the daily
+    backtest has always replayed. With one, it's that screen instead -- a
+    single "screen" view -- because the question being asked is "how did
+    *this* filter set do", and mixing it with the fixed views would put
+    unrelated picks in the same buckets.
+
+    The screen path applies engine._tradable first, exactly as the live
+    screener does (see screener_service.screen_live_rows), so a backtested
+    screen and a live one start from the same eligible set.
+    """
+    if screen is None:
+        return (
+            ("gainers", _rank_gainers(day_rows, None, min_dollar_volume)),
+            ("losers", _rank_losers(day_rows, None, min_dollar_volume)),
+            ("most_active", _rank_most_active(day_rows, None, min_dollar_volume)),
+        )
+
+    tradable = _tradable(day_rows, min_dollar_volume)
+    # rank_score is a derived field live (it needs the news cache); here
+    # has_headline is always False -- there's no historical news -- so it
+    # reduces to magnitude with the fade-risk discount, and is supplied the
+    # same way the live path supplies it.
+    derived = {
+        "rank_score": {
+            r.symbol: formulas.rank_score(r.pct_change, False, r.rvol, catalyst_boost=r.pct_change > 0)
+            for r in tradable
+        }
+    }
+    return (("screen", screener.run_screen(tradable, screen, derived).rows),)
 
 
 def benchmark_returns_by_date(
@@ -138,7 +227,7 @@ def benchmark_returns_by_date(
     return returns
 
 
-def alpha_by_view(picks: list[dict]) -> list[dict]:
+def alpha_by_view(picks: list[dict], views: tuple[str, ...] = bucket_analysis.VIEWS) -> list[dict]:
     """Per view: how often a pick beat the benchmark, next to how often it
     merely closed positive.
 
@@ -155,7 +244,7 @@ def alpha_by_view(picks: list[dict]) -> list[dict]:
     it or force a benchmark concept into a module that has no use for one.
     """
     rows = []
-    for view_name in bucket_analysis.VIEWS:
+    for view_name in views:
         view_picks = [p for p in picks if p["view"] == view_name]
         with_alpha = [p for p in view_picks if p["alpha_vs_benchmark"] is not None]
         if not view_picks:
@@ -186,6 +275,7 @@ def simulate_from_bars(
     min_dollar_volume: float,
     horizon_days: int = 1,
     benchmark_returns: dict[date, float] | None = None,
+    screen=None,
 ) -> list[dict]:
     """Pure, network-free -- reconstructs each historical trading day's
     gainers/losers/most-active exactly as engine._rank_gainers/_rank_losers/
@@ -233,8 +323,14 @@ def simulate_from_bars(
                     last_price=bar.close,
                     pct_change=pct,
                     volume_today=bar.volume,
+                    avg_vol_20d=avg_vol_20d,
                     dollar_volume_today=formulas.dollar_volume(bar.volume, bar.close),
                     rvol=row_rvol,
+                    day_high=bar.high,
+                    day_low=bar.low,
+                    is_hod=formulas.is_hod(bar.close, bar.high),
+                    is_lod=formulas.is_lod(bar.close, bar.low),
+                    is_fade_risk=formulas.is_fade_risk(row_rvol),
                     is_shaved_top=is_shaved_top(bar.open, bar.high, bar.low, bar.close),
                 )
             )
@@ -242,11 +338,7 @@ def simulate_from_bars(
 
     picks: list[dict] = []
     for trading_date, day_rows in rows_by_date.items():
-        for view_name, ranked in (
-            ("gainers", _rank_gainers(day_rows, None, min_dollar_volume)),
-            ("losers", _rank_losers(day_rows, None, min_dollar_volume)),
-            ("most_active", _rank_most_active(day_rows, None, min_dollar_volume)),
-        ):
+        for view_name, ranked in _ranked_views(day_rows, min_dollar_volume, screen):
             for row in ranked:
                 exit_price = exit_price_by_symbol_date.get((row.symbol, trading_date))
                 if exit_price is None or row.last_price <= 0:
@@ -285,7 +377,19 @@ def simulate_from_bars(
     return picks
 
 
-def fade_risk_by_view(picks: list[dict]) -> list[dict]:
+def active_views(picks: list[dict], screen=None) -> tuple[str, ...]:
+    """Which view names the aggregations should break down by.
+
+    A screen run produces a single "screen" view, and every breakdown here
+    iterates a fixed view list -- so without this, a screened backtest's
+    picks would be silently dropped from every table it produced.
+    """
+    if screen is not None:
+        return ("screen",)
+    return bucket_analysis.VIEWS
+
+
+def fade_risk_by_view(picks: list[dict], views: tuple[str, ...] = bucket_analysis.VIEWS) -> list[dict]:
     """Win rate/avg return above vs. at-or-below formulas._FADE_RISK_RVOL,
     broken down per view and never pooled -- the same shape (and the same
     reasoning) as history_store._fade_risk_drift, so the historical and the
@@ -302,7 +406,7 @@ def fade_risk_by_view(picks: list[dict]) -> list[dict]:
     network round-trip.
     """
     rows = []
-    for view_name in bucket_analysis.VIEWS:
+    for view_name in views:
         view_picks = [p for p in picks if p["view"] == view_name]
         above = [p for p in view_picks if p["entry_rvol"] > formulas._FADE_RISK_RVOL]
         at_or_below = [p for p in view_picks if p["entry_rvol"] <= formulas._FADE_RISK_RVOL]
@@ -324,6 +428,7 @@ async def run_backtest(
     lookback_days: int = 180,
     horizon_days: int = 1,
     batch_size: int = _FETCH_BATCH_SIZE,
+    screen=None,
 ) -> dict:
     """Fetch/orchestration wrapper: chunks symbols (get_daily_bars_multi
     doesn't chunk itself), merges results, replays via simulate_from_bars,
@@ -351,20 +456,23 @@ async def run_backtest(
         )
 
     picks = simulate_from_bars(
-        bars_by_symbol, settings.scanner_min_dollar_volume, horizon_days, benchmark_returns
+        bars_by_symbol, settings.scanner_min_dollar_volume, horizon_days, benchmark_returns, screen
     )
 
-    # No `views=` override -- bucket_breakdown defaults to
-    # bucket_analysis.VIEWS, which is already exactly the three live views.
+    # Every breakdown iterates a fixed view list, so a screened run -- which
+    # produces one "screen" view -- has to say so or its picks vanish from
+    # all of them. Without a screen this is exactly bucket_analysis.VIEWS.
+    views = active_views(picks, screen)
+
     gap_buckets = bucket_analysis.bucket_breakdown(
-        picks, lambda p: abs(p["entry_pct_change"]), bucket_analysis.GAP_BUCKETS
+        picks, lambda p: abs(p["entry_pct_change"]), bucket_analysis.GAP_BUCKETS, views=views
     )
     rvol_buckets = bucket_analysis.bucket_breakdown(
-        picks, lambda p: p["entry_rvol"], bucket_analysis.RVOL_BUCKETS
+        picks, lambda p: p["entry_rvol"], bucket_analysis.RVOL_BUCKETS, views=views
     )
 
     shaved_top: list[dict] = []
-    for view_name in bucket_analysis.VIEWS:
+    for view_name in views:
         view_picks = [p for p in picks if p["view"] == view_name]
         shaved = [p for p in view_picks if p["is_shaved_top"]]
         not_shaved = [p for p in view_picks if not p["is_shaved_top"]]
@@ -389,11 +497,15 @@ async def run_backtest(
         "gap_buckets": gap_buckets,
         "rvol_buckets": rvol_buckets,
         "shaved_top": shaved_top,
-        "alpha": alpha_by_view(picks),
+        "alpha": alpha_by_view(picks, views),
         "benchmark_symbol": _BENCHMARK_SYMBOL,
+        # What was actually replayed: the three fixed views, or one screen.
+        # A caller rendering these tables shouldn't have to infer it.
+        "views": list(views),
+        "screened": screen is not None,
         "fade_risk": {
             "threshold": formulas._FADE_RISK_RVOL,
-            "views": fade_risk_by_view(picks),
+            "views": fade_risk_by_view(picks, views),
         },
         "min_sample_size": bucket_analysis.MIN_SAMPLE_SIZE,
         # Raw per-pick rows, alongside the buckets above -- callers that

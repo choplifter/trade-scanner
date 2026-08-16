@@ -10,9 +10,10 @@ the Dash page calls directly in-process -- so both surfaces run identical
 logic rather than one reimplementing the other.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
-from app.scanners import screener
+from app.scanners import backtest, screener
 from app.scanners.screener_service import screen_live_rows
 
 router = APIRouter(prefix="/api/screener", tags=["screener"])
@@ -40,4 +41,65 @@ async def run_screen(screen: screener.Screen, request: Request) -> dict:
     """Run a screen against the current live rows."""
     return screen_live_rows(
         request.app.state.scanner_engine, request.app.state.settings, screen
+    )
+
+
+class BacktestRequest(BaseModel):
+    screen: screener.Screen
+    lookback_days: int = 180
+    horizon_days: int = 1
+    max_symbols: int = 300
+
+
+@router.post("/backtest")
+async def backtest_screen(body: BacktestRequest, request: Request) -> dict:
+    """Replay a user-built screen over historical daily bars.
+
+    Refuses rather than silently degrading when the screen filters on
+    something a daily bar can't reconstruct (float, spread, the intraday
+    volume fields -- see backtest.BACKTESTABLE_FIELDS). screener.apply_filters
+    ignores unknown fields by design so a stale saved screen still runs live,
+    but here that would quietly drop criteria and return a plausible number
+    for a strategy the user never described -- the worst failure mode a
+    validation tool can have. 422 with the offending field names lets the UI
+    say exactly which filters to remove.
+
+    Symbols come from the live universe by dollar volume, the same selection
+    scripts/backtest_report.py uses. Note that biases the sample: it's today's
+    universe applied to past dates (survivorship), and pre-sorting by dollar
+    volume is why most_active reads oddly in the CLI report.
+    """
+    unsupported = backtest.unsupported_filters(body.screen)
+    if unsupported:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "This screen can't be backtested on daily bars.",
+                "unsupported_fields": unsupported,
+                "reason": (
+                    "Daily bars can't reconstruct these: intraday volume fields need "
+                    "minute data, spread needs historical quotes, float would be "
+                    "today's value applied to past dates, and stale-price describes "
+                    "a live feed. Remove these filters to backtest the rest."
+                ),
+                "backtestable_fields": sorted(backtest.BACKTESTABLE_FIELDS),
+            },
+        )
+
+    engine = request.app.state.scanner_engine
+    settings = request.app.state.settings
+    universe = request.app.state.universe or {}
+    if not universe:
+        raise HTTPException(status_code=503, detail="Universe not built yet -- try again shortly.")
+
+    ranked = sorted(universe.values(), key=lambda u: u.avg_dollar_vol_20d, reverse=True)
+    symbols = [u.symbol for u in ranked[: max(1, body.max_symbols)]]
+
+    return await backtest.run_backtest(
+        engine.clients,
+        settings,
+        symbols,
+        lookback_days=body.lookback_days,
+        horizon_days=body.horizon_days,
+        screen=body.screen,
     )

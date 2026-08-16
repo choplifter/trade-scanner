@@ -1,7 +1,12 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from app.scanners.backtest import fade_risk_by_view, simulate_from_bars
+from app.scanners.backtest import (
+    active_views,
+    fade_risk_by_view,
+    simulate_from_bars,
+    unsupported_filters,
+)
 
 
 @dataclass
@@ -220,3 +225,96 @@ def test_simulate_from_bars_respects_horizon_days():
     # pick for that day measures the same outcome.
     expected = round((120.0 - 110.0) / 110.0 * 100, 2)
     assert all(round(p["pct_change_since_entry"], 2) == expected for p in picks)
+
+
+# --- screen backtesting -------------------------------------------------------
+
+
+def _screen(**kwargs):
+    from app.scanners import screener
+
+    return screener.Screen(**kwargs)
+
+
+def test_unsupported_filters_names_what_daily_bars_cannot_reconstruct():
+    from app.scanners import screener
+
+    screen = _screen(
+        filters=[
+            screener.Filter(field="pct_change", op="gt", value=5),
+            screener.Filter(field="float_shares", op="lt", value=20_000_000),
+            screener.Filter(field="rvol_1h", op="gt", value=2),
+        ],
+        sort_by="pct_change",
+    )
+    # Named, not silently dropped -- apply_filters would happily ignore both
+    # and return a plausible number for a screen nobody described.
+    assert unsupported_filters(screen) == ["float_shares", "rvol_1h"]
+
+
+def test_unsupported_filters_checks_the_sort_key_too():
+    assert unsupported_filters(_screen(sort_by="spread_pct")) == ["spread_pct"]
+    assert unsupported_filters(_screen(sort_by="rank_score")) == []
+
+
+def test_a_fully_supported_screen_has_nothing_unsupported():
+    from app.scanners import screener
+
+    screen = _screen(
+        filters=[
+            screener.Filter(field="rvol", op="gt", value=2),
+            screener.Filter(field="is_hod", op="is_true"),
+            screener.Filter(field="last_price", op="between", value=1, value2=50),
+        ],
+        sort_by="rank_score",
+    )
+    assert unsupported_filters(screen) == []
+
+
+def test_screen_replaces_the_three_views_rather_than_joining_them():
+    from app.scanners import screener
+
+    closes = [100.0] * 20 + [110.0, 115.0]
+    bars = _daily_bars(date(2026, 1, 1), closes)
+    picks = simulate_from_bars(
+        {"AAA": bars}, 0.0, 1, None,
+        _screen(filters=[screener.Filter(field="pct_change", op="gt", value=5)]),
+    )
+
+    # One "screen" view -- mixing it with gainers/most_active would put
+    # unrelated picks in the same buckets.
+    assert [p["view"] for p in picks] == ["screen"]
+
+
+def test_screen_filters_actually_exclude_rows():
+    from app.scanners import screener
+
+    up = _daily_bars(date(2026, 1, 1), [100.0] * 20 + [110.0, 115.0])
+    flat = _daily_bars(date(2026, 1, 1), [50.0] * 22)
+
+    picks = simulate_from_bars(
+        {"UP": up, "FLAT": flat}, 0.0, 1, None,
+        _screen(filters=[screener.Filter(field="pct_change", op="gt", value=5)]),
+    )
+    assert {p["symbol"] for p in picks} == {"UP"}
+
+
+def test_screen_can_filter_on_fields_only_daily_bars_provide():
+    from app.scanners import screener
+
+    # Closes at its high on the entry day -> is_hod true.
+    bars = _daily_bars(date(2026, 1, 1), [100.0] * 20 + [110.0, 115.0])
+    bars[20] = _Bar(close=110.0, volume=100_000.0, timestamp=bars[20].timestamp,
+                    open=105.0, high=110.0, low=95.0)
+
+    hod = simulate_from_bars({"AAA": bars}, 0.0, 1, None,
+                             _screen(filters=[screener.Filter(field="is_hod", op="is_true")]))
+    not_hod = simulate_from_bars({"AAA": bars}, 0.0, 1, None,
+                                 _screen(filters=[screener.Filter(field="is_lod", op="is_true")]))
+    assert len(hod) == 1
+    assert not_hod == []
+
+
+def test_active_views_switches_with_the_screen():
+    assert active_views([], None) == ("gainers", "losers", "most_active")
+    assert active_views([], _screen()) == ("screen",)

@@ -1217,3 +1217,46 @@ a.symbol-news-headline {
   color: var(--text-muted);
   cursor: default;
 }
+
+/* Screen backtest panel: sits under the filter bar in the scanner widget,
+   so "how did this screen do historically" is one click from the screen
+   you're looking at rather than a different page. */
+.screen-backtest {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.screen-backtest-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.screen-backtest-controls label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+/* The refusal case is a first-class outcome, not an error: the backtest
+   declines rather than silently dropping filters it can't replay, so it
+   needs to read as an explanation. */
+.screen-backtest-refusal {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--delta-down);
+  font-size: 12px;
+}
+
+.screen-backtest-refusal p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+}
+
+.screen-backtest-result table {
+  margin-top: 6px;
+}

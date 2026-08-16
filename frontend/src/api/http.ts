@@ -2,7 +2,13 @@ import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
 import type { MarketConditionsResponse } from "../types/marketConditions";
 import type { ScannerBenchmarkResponse } from "../types/scannerBenchmark";
 import type { ScannerHistoryResponse } from "../types/scannerHistory";
-import type { FieldsResponse, PresetsResponse } from "../types/screener";
+import type {
+  BacktestRefusal,
+  FieldsResponse,
+  PresetsResponse,
+  Screen,
+  ScreenBacktestResponse,
+} from "../types/screener";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
 import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types/tradeIdeas";
 
@@ -98,3 +104,32 @@ export function getScreenerPresets(): Promise<PresetsResponse> {
 // over the scanner websocket (see api/ws.ts subscribeScreen) rather than
 // polling. POST /api/screener/run still exists server-side as a one-shot
 // scriptable endpoint, it just has no client caller.
+
+/** Thrown when the backtest refuses a screen it can't replay on daily bars.
+ * Carries the offending field names so the UI can name them rather than
+ * showing a generic failure. */
+export class BacktestRefusedError extends Error {
+  constructor(readonly detail: BacktestRefusal) {
+    super(detail.message);
+    this.name = "BacktestRefusedError";
+  }
+}
+
+export async function backtestScreen(
+  screen: Screen,
+  options: { lookback_days?: number; horizon_days?: number; max_symbols?: number } = {},
+): Promise<ScreenBacktestResponse> {
+  const res = await fetch(`${API_BASE}/screener/backtest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ screen, ...options }),
+  });
+  if (res.status === 422) {
+    const body = (await res.json()) as { detail: BacktestRefusal };
+    throw new BacktestRefusedError(body.detail);
+  }
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res, `Backtest failed: ${res.status}`));
+  }
+  return (await res.json()) as ScreenBacktestResponse;
+}

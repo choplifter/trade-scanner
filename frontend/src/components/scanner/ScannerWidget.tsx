@@ -5,6 +5,7 @@ import { useScannerFeed } from "../../hooks/useScannerFeed";
 import { useScreenFeed } from "../../hooks/useScreenFeed";
 import type { FieldSpec, Preset, Screen } from "../../types/screener";
 import { ScannerFilterBar } from "../screener/ScannerFilterBar";
+import { ScreenBacktestPanel } from "../screener/ScreenBacktestPanel";
 import { ScannerHeatmap } from "./ScannerHeatmap";
 import { ScannerTable } from "./ScannerTable";
 
@@ -45,6 +46,7 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol }: ScannerWidgetP
   const [screen, setScreen] = useState<Screen>(DEFAULT_SCREEN);
   const [viewMode, setViewMode] = useState<(typeof VIEW_MODES)[number]["key"]>("table");
   const [showFilters, setShowFilters] = useState(false);
+  const [showBacktest, setShowBacktest] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -126,6 +128,11 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol }: ScannerWidgetP
               {screen.filters.length > 0 ? ` (${screen.filters.length})` : ""}
             </button>
           )}
+          {!frozenActive && (
+            <button type="button" onClick={() => setShowBacktest((v) => !v)} title="Replay this screen over historical daily bars">
+              Backtest
+            </button>
+          )}
           {VIEW_MODES.map((mode) => (
             <button
               key={mode.key}
@@ -144,6 +151,10 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol }: ScannerWidgetP
 
       {showFilters && !frozenActive && (
         <ScannerFilterBar fields={fields} screen={screen} onChange={updateScreen} />
+      )}
+
+      {showBacktest && !frozenActive && (
+        <ScreenBacktestPanel screen={screen} onClose={() => setShowBacktest(false)} />
       )}
 
       {!loading && (
