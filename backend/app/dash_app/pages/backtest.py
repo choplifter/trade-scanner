@@ -423,7 +423,9 @@ def _daily_section():
                 "boost (needs historical news, unbuilt) and no float (bulk float is today's, not "
                 "point-in-time). Read Most Active with care: daily bars carry consolidated-tape volume "
                 "where the live scanner sees a partial IEX slice, and Max symbols already selects by "
-                "dollar volume — so at small Max symbols that view is close to degenerate.",
+                "dollar volume — so its picks repeat much more than the other two views' (measured at "
+                "300 symbols over 180 days: it drew on 62.6% of the pool with 16 names present on 90%+ "
+                "of days, against ~100% and none for Gainers/Losers), and more so as Max symbols shrinks.",
                 className="benchmark-disclaimer",
             ),
             html.Div(

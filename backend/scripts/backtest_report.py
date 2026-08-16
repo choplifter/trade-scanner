@@ -72,7 +72,10 @@ def _print_report(report: dict) -> None:
     print("   lookback window (survivorship bias).")
     print("   most_active reads differently from the other two views: daily bars are")
     print("   consolidated-tape volume vs. the live partial IEX slice, and --max-symbols")
-    print("   already pre-sorts by dollar volume -- expect it near-degenerate at small N. **\n")
+    print("   already pre-sorts by dollar volume, so its picks repeat far more than the")
+    print("   other views' -- measured at the defaults it drew on 62.6% of the symbol")
+    print("   pool with 16 names present on >=90% of days, against ~100% and none for")
+    print("   gainers/losers. Concentrated, not degenerate; tightens further at small N. **\n")
 
     if report["sample_size"] == 0:
         print("No picks reconstructed -- nothing to report.")

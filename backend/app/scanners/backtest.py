@@ -25,8 +25,15 @@ reading anything into its numbers:
   N of the universe *by avg_dollar_vol_20d* (see _top_symbols in the Dash
   backtest page and backtest_report.py's own sort), so "rank by dollar
   volume" is being run over a set already pre-sorted by dollar volume.
-  At small N expect it to be close to degenerate -- the same handful of
-  names every day. Gainers/losers are far less sensitive to that cap.
+  Measured at the CLI defaults (180 days, --max-symbols 300, 243 symbols
+  with bars, 129 trading days): most_active drew on 62.6% of the pool
+  (152 symbols), its 10 most frequent names held 19.9% of its picks, and
+  16 names appeared on >=90% of all days. Gainers/losers over the same
+  run drew on ~100% of the pool with a 7.6-7.9% top-10 share and *no*
+  name on >=90% of days. So it's meaningfully concentrated -- roughly
+  2.6x the top-10 share -- but not the degenerate handful-of-names case;
+  read its sample as a narrower, repeat-heavy cohort rather than an
+  independent one, and expect it to tighten further as N shrinks.
 
 Deliberately out of scope for this pass:
 - Catalyst/headline backtesting -- needs historical news data (a harder,

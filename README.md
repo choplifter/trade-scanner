@@ -331,8 +331,14 @@ backend on port 8000, so both must be running.
   daily bars carry consolidated-tape volume where the live scanner sees a
   partial IEX slice (the reason that view ranks on dollar volume at all),
   and `--max-symbols` selects the universe's top N *by dollar volume*, so
-  at small N it ranks by dollar volume over a set already sorted by dollar
-  volume and comes out close to degenerate.
+  it ranks by dollar volume over a set already sorted by dollar volume and
+  its picks repeat far more than the other views'. Measured at the CLI
+  defaults (180 days, 300 symbols): `most_active` drew on 62.6% of the
+  symbol pool with its top 10 names holding 19.9% of picks and 16 names
+  present on >=90% of trading days, against ~100% of the pool, a 7.6-7.9%
+  top-10 share and no such name for gainers/losers. Concentrated rather
+  than degenerate -- treat its sample as a narrower, repeat-heavy cohort,
+  and expect it to tighten further at smaller `--max-symbols`.
 - **Scanner benchmark / match history**: entries are still recorded from
   closed-market fallback data, but the actual price/SPY comparison columns
   only populate once live polling resumes (they need a live SPY price and a
