@@ -101,6 +101,25 @@ def _print_report(report: dict) -> None:
         )
     print()
 
+    benchmark = report.get("benchmark_symbol", "benchmark")
+    print(f"Vs {benchmark} -- did the pick beat the market, or just go up with it?")
+    if not report.get("alpha"):
+        print("  No benchmark data -- every win rate below is raw.\n")
+    else:
+        for row in report["alpha"]:
+            if row["alpha_win_rate"] is None:
+                print(f"  {row['view']:12s} n={row['sample_size']:5d}  no benchmark overlap")
+                continue
+            flag = "" if row["sufficient_sample"] else f"  ** below n={min_n} floor, noisy **"
+            print(
+                f"  {row['view']:12s} n={row['sample_size_with_benchmark']:5d}  "
+                f"win_rate={row['win_rate']}%  alpha_win_rate={row['alpha_win_rate']}%  "
+                f"avg_alpha={row['avg_alpha']}%  median_alpha={row['median_alpha']}%{flag}"
+            )
+        print("  win_rate is 'closed positive'; alpha_win_rate is 'beat the benchmark'.")
+        print("  On a broadly green day every long closes positive -- only the second")
+        print("  number says whether the ranking itself contributed anything.\n")
+
     fade_risk = report["fade_risk"]
     threshold = fade_risk["threshold"]
     print(f"Fade risk (formulas._FADE_RISK_RVOL = {threshold}x, discount {1 - formulas._FADE_RISK_DISCOUNT:.0%} above it):")

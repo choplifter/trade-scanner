@@ -64,10 +64,11 @@ Deliberately out of scope for this pass:
   legitimately qualified months ago). Accepted, not solved, here.
 """
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
-from statistics import mean
+from statistics import mean, median
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
@@ -89,6 +90,11 @@ _WARMUP_CALENDAR_PADDING_DAYS = 40
 # get_daily_bars_multi doesn't chunk symbols itself -- mirrors
 # app.alpaca.universe._BATCH_SIZE's precedent for the same reason.
 _FETCH_BATCH_SIZE = 500
+# Matches ScannerEngine.benchmark_symbol, so a backtested alpha and a live
+# alpha are measured against the same thing.
+_BENCHMARK_SYMBOL = "SPY"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -110,10 +116,76 @@ class _BacktestRow:
     is_shaved_top: bool
 
 
+def benchmark_returns_by_date(
+    benchmark_bars: list, horizon_days: int
+) -> dict[date, float]:
+    """{trading_date: the benchmark's own % change over the same
+    horizon_days forward window} -- the yardstick a pick's raw return has to
+    be measured against.
+
+    Indexed off the benchmark's own series rather than a calendar offset:
+    SPY trades every session, so its bar index *is* the canonical
+    trading-day sequence, which is the same thing horizon_days counts in
+    each symbol's series.
+    """
+    returns: dict[date, float] = {}
+    for i in range(len(benchmark_bars) - horizon_days):
+        entry = benchmark_bars[i]
+        if entry.close <= 0:
+            continue
+        exit_close = benchmark_bars[i + horizon_days].close
+        returns[entry.timestamp.date()] = (exit_close - entry.close) / entry.close * 100
+    return returns
+
+
+def alpha_by_view(picks: list[dict]) -> list[dict]:
+    """Per view: how often a pick beat the benchmark, next to how often it
+    merely closed positive.
+
+    This is the metric the daily backtest was missing entirely. A raw win
+    rate answers "did the price go up", which on a broadly green day every
+    long does -- it says nothing about whether *this scanner* added
+    anything. The live store has measured alpha since it was built (see
+    history_store's alpha_vs_benchmark), so without this the historical and
+    live views of "did it work" were answering different questions.
+
+    Kept here rather than folded into bucket_analysis.bucket_stats on
+    purpose: that helper is shared with momentum_backtest, whose picks have
+    no benchmark attached, so adding an alpha term there would either break
+    it or force a benchmark concept into a module that has no use for one.
+    """
+    rows = []
+    for view_name in bucket_analysis.VIEWS:
+        view_picks = [p for p in picks if p["view"] == view_name]
+        with_alpha = [p for p in view_picks if p["alpha_vs_benchmark"] is not None]
+        if not view_picks:
+            continue
+        alpha_wins = sum(1 for p in with_alpha if p["alpha_vs_benchmark"] > 0)
+        raw_wins = sum(1 for p in view_picks if p["pct_change_since_entry"] > 0)
+        alphas = [p["alpha_vs_benchmark"] for p in with_alpha]
+        rows.append(
+            {
+                "view": view_name,
+                "sample_size": len(view_picks),
+                "sample_size_with_benchmark": len(with_alpha),
+                "win_rate": round(raw_wins / len(view_picks) * 100, 1),
+                "alpha_win_rate": round(alpha_wins / len(with_alpha) * 100, 1) if with_alpha else None,
+                "avg_alpha": round(sum(alphas) / len(alphas), 2) if alphas else None,
+                # Median for the same reason the RVOL replay reports one:
+                # these returns are fat-tailed enough that a mean describes
+                # its outliers rather than its population.
+                "median_alpha": round(median(alphas), 2) if alphas else None,
+                "sufficient_sample": len(with_alpha) >= bucket_analysis.MIN_SAMPLE_SIZE,
+            }
+        )
+    return rows
+
+
 def simulate_from_bars(
     bars_by_symbol: dict[str, list],
     min_dollar_volume: float,
     horizon_days: int = 1,
+    benchmark_returns: dict[date, float] | None = None,
 ) -> list[dict]:
     """Pure, network-free -- reconstructs each historical trading day's
     gainers/losers/most-active exactly as engine._rank_gainers/_rank_losers/
@@ -179,6 +251,14 @@ def simulate_from_bars(
                 exit_price = exit_price_by_symbol_date.get((row.symbol, trading_date))
                 if exit_price is None or row.last_price <= 0:
                     continue
+                pct_since_entry = (exit_price - row.last_price) / row.last_price * 100
+                # None rather than 0.0 when the benchmark has no bar for this
+                # date -- a missing yardstick has to stay distinguishable from
+                # a flat one, or every unmeasurable pick would silently count
+                # as exactly matching the market.
+                benchmark_pct = (
+                    benchmark_returns.get(trading_date) if benchmark_returns else None
+                )
                 picks.append(
                     {
                         "symbol": row.symbol,
@@ -192,7 +272,14 @@ def simulate_from_bars(
                         # there at all (its gap % often being unremarkable).
                         "entry_dollar_volume": row.dollar_volume_today,
                         "is_shaved_top": row.is_shaved_top,
-                        "pct_change_since_entry": (exit_price - row.last_price) / row.last_price * 100,
+                        "pct_change_since_entry": pct_since_entry,
+                        # Named to match history_store's own fields so a
+                        # historical read and a live read of "did this work"
+                        # are the same measurement, not two similar ones.
+                        "benchmark_pct_change_since_entry": benchmark_pct,
+                        "alpha_vs_benchmark": (
+                            pct_since_entry - benchmark_pct if benchmark_pct is not None else None
+                        ),
                     }
                 )
     return picks
@@ -250,7 +337,22 @@ async def run_backtest(
         batch = symbols[i : i + batch_size]
         bars_by_symbol.update(await get_daily_bars_multi(clients, batch, lookback_days=fetch_lookback))
 
-    picks = simulate_from_bars(bars_by_symbol, settings.scanner_min_dollar_volume, horizon_days)
+    # Its own fetch, not folded into the batches above: the benchmark sits
+    # outside the universe's $1-$50 price filter and isn't a scanner row --
+    # the same reason ScannerEngine._poll_benchmark exists separately.
+    benchmark_bars = (await get_daily_bars_multi(clients, [_BENCHMARK_SYMBOL], lookback_days=fetch_lookback)).get(
+        _BENCHMARK_SYMBOL
+    ) or []
+    benchmark_returns = benchmark_returns_by_date(benchmark_bars, horizon_days)
+    if not benchmark_returns:
+        logger.warning(
+            "No %s bars -- alpha will be unavailable and every win rate here stays raw",
+            _BENCHMARK_SYMBOL,
+        )
+
+    picks = simulate_from_bars(
+        bars_by_symbol, settings.scanner_min_dollar_volume, horizon_days, benchmark_returns
+    )
 
     # No `views=` override -- bucket_breakdown defaults to
     # bucket_analysis.VIEWS, which is already exactly the three live views.
@@ -287,6 +389,8 @@ async def run_backtest(
         "gap_buckets": gap_buckets,
         "rvol_buckets": rvol_buckets,
         "shaved_top": shaved_top,
+        "alpha": alpha_by_view(picks),
+        "benchmark_symbol": _BENCHMARK_SYMBOL,
         "fade_risk": {
             "threshold": formulas._FADE_RISK_RVOL,
             "views": fade_risk_by_view(picks),
