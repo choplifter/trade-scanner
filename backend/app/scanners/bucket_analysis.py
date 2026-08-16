@@ -17,6 +17,12 @@ RVOL_BUCKETS = [("<2x", 0.0, 2.0), ("2-5x", 2.0, 5.0), ("5-15x", 5.0, 15.0), (">
 # call a trend one way or the other.
 MIN_SAMPLE_SIZE = 30
 
+# The ranked views, in reading order. Every per-view breakdown groups by these
+# rather than pooling: "win = positive return" means opposite things for
+# gainers and losers (a loser whose price rises is the flagged move
+# *reversing*), so a pooled win rate averages two contradictory signals.
+VIEWS = ("gainers", "losers", "most_active")
+
 
 def bucket_stats(picks: list[dict]) -> dict:
     wins = sum(1 for p in picks if p["pct_change_since_entry"] > 0)
@@ -33,7 +39,7 @@ def bucket_breakdown(
     picks: list[dict],
     key_fn,
     buckets: list[tuple[str, float, float | None]],
-    views: tuple[str, ...] = ("gainers", "losers", "most_active"),
+    views: tuple[str, ...] = VIEWS,
 ) -> list[dict]:
     """Does this bucket (gap size or RVOL) predict worse pct_change_since_entry
     than a smaller one? See GAP_BUCKETS/RVOL_BUCKETS for the hypothesis this

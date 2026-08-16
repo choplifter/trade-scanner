@@ -17,11 +17,11 @@ reason about a single sqlite3.Connection being shared across threads.
 import asyncio
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from app.market_data.news import is_roundup_headline
 from app.scanners import bucket_analysis
-from app.services.market_clock import ET
+from app.services.market_clock import ET, trading_hours_for
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS appearances (
@@ -84,6 +84,26 @@ _BASELINE_FADE_RISK_AVG_RETURN = -10.38
 _FADE_RISK_RVOL_THRESHOLD = 15.0
 
 
+def _is_trading_day(trading_date: str) -> bool:
+    """Was the NYSE actually open on this ET date?
+
+    Appearances keep getting recorded outside market hours from the
+    closed-market fallback data (see engine.py's latest-session backfill), so a
+    weekend or holiday accumulates rows whose follow-up snapshots are all taken
+    against a frozen tape: every one comes out at exactly 0% return, which
+    `win = pct_change_since_entry > 0` then counts as a loss. Left in, those
+    rows drag every win rate down by however large a share of the sample they
+    are, for no informational gain. Uses the real NYSE calendar rather than a
+    weekday check so holidays are excluded too.
+    """
+    try:
+        return trading_hours_for(date.fromisoformat(trading_date)) is not None
+    except ValueError:
+        # Unparseable date in the DB -- keep the row rather than silently
+        # dropping data over a formatting problem.
+        return True
+
+
 @dataclass
 class NewAppearance:
     symbol: str
@@ -140,14 +160,22 @@ class ScannerHistoryStore:
                 ],
             )
 
-    async def record_appearances(self, entries: list[NewAppearance]) -> None:
+    async def record_appearances(
+        self, entries: list[NewAppearance], now: datetime | None = None
+    ) -> None:
         """INSERT OR IGNORE on (symbol, view, trading_date) does the
         de-dup -- no in-memory "seen today" cache needed, unlike
         ScannerBenchmarkTracker.record_if_new.
+
+        `now` defaults to the wall clock; pass it to control the derived
+        trading_date, which tests need in order to seed rows on a known
+        trading day rather than on whatever day they happen to run.
         """
         if not entries:
             return
-        await asyncio.to_thread(self._record_appearances_sync, entries, datetime.now(timezone.utc))
+        await asyncio.to_thread(
+            self._record_appearances_sync, entries, now or datetime.now(timezone.utc)
+        )
 
     def _existing_keys_for_date_sync(self, trading_date: str) -> set[tuple[str, str]]:
         with self._connect() as conn:
@@ -383,7 +411,12 @@ class ScannerHistoryStore:
             ).fetchall()
 
             if not appearances:
-                return {"since": since_date, "sample_size": 0, "catalyst": None, "fade_risk": None}
+                return {
+                    "since": since_date,
+                    "sample_size": 0,
+                    "excluded_non_trading_day": 0,
+                    "views": {},
+                }
 
             appearance_ids = [a["id"] for a in appearances]
             placeholders = ",".join("?" * len(appearance_ids))
@@ -401,6 +434,7 @@ class ScannerHistoryStore:
             )
 
         picks = []
+        excluded_non_trading_day = 0
         for appearance in appearances:
             snaps = snaps_by_appearance.get(appearance["id"])
             if not snaps:
@@ -408,10 +442,14 @@ class ScannerHistoryStore:
             entry_price = appearance["entry_price"]
             if not entry_price:
                 continue
+            if not _is_trading_day(appearance["trading_date"]):
+                excluded_non_trading_day += 1
+                continue
             _, latest_price = max(snaps, key=lambda s: s[0])
             entry_headline = appearance["entry_headline"]
             picks.append(
                 {
+                    "view": appearance["view"],
                     # A Benzinga movers-roundup mention doesn't count as a
                     # catalyst here either -- see
                     # app.market_data.news.is_roundup_headline and
@@ -424,11 +462,27 @@ class ScannerHistoryStore:
                 }
             )
 
+        # Grouped by view, never pooled -- see bucket_analysis.VIEWS for why a
+        # pooled win rate is meaningless across gainers and losers. rank_score
+        # applies the catalyst boost and fade-risk discount in all three views
+        # (engine.py's _rank_gainers/_rank_losers/_rank_most_active), so each
+        # one gets checked against the baseline separately.
+        views = {}
+        for view_name in bucket_analysis.VIEWS:
+            view_picks = [p for p in picks if p["view"] == view_name]
+            if not view_picks:
+                continue
+            views[view_name] = {
+                "sample_size": len(view_picks),
+                "catalyst": self._catalyst_drift(view_picks),
+                "fade_risk": self._fade_risk_drift(view_picks),
+            }
+
         return {
             "since": since_date,
             "sample_size": len(picks),
-            "catalyst": self._catalyst_drift(picks),
-            "fade_risk": self._fade_risk_drift(picks),
+            "excluded_non_trading_day": excluded_non_trading_day,
+            "views": views,
         }
 
     async def compute_ranking_drift(self, since_date: str = _DEPLOY_DATE) -> dict:
@@ -445,5 +499,14 @@ class ScannerHistoryStore:
         numbers rather than a single pass/fail verdict: whether a given gap
         from baseline counts as "drift" worth acting on is a judgment call,
         not something to hardcode a threshold for.
+
+        Results are broken down per view and never pooled, and appearances
+        recorded on non-trading days are dropped (counted in
+        `excluded_non_trading_day`) -- see bucket_analysis.VIEWS and
+        _is_trading_day for why each of those would otherwise bias the
+        numbers. Note the baselines being compared against were themselves
+        computed pooled across all three views in the original one-off
+        analysis, so treat them as a rough reference per view, not an exact
+        like-for-like.
         """
         return await asyncio.to_thread(self._compute_ranking_drift_sync, since_date)
