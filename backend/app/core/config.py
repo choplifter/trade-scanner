@@ -65,8 +65,26 @@ class Settings(BaseSettings):
     # un-normalized definition. Measured against SPY's real curve, the
     # denominator shrinks ~21x at 09:35, ~7x at 10:00, ~2.3x at noon and ~1x by
     # the close, so turning this on without re-deriving that threshold would
-    # flag most of the morning as fade risk. Re-derive it from fresh
-    # scanner_history data (scripts/ranking_drift_report.py) after enabling.
+    # flag most of the morning as fade risk.
+    #
+    # That threshold has since been re-derived intraday --
+    # scripts/rvol_backtest_report.py, which sweeps both definitions side by
+    # side over 5-minute bars (ranking_drift_report.py, the pointer that used
+    # to be here, cannot do it: it only sees whatever definition was live when
+    # the appearance was recorded). Measured over 613 previously-ranked
+    # symbols, 21 trading days, entry-to-session-close:
+    #
+    #   raw >=15x   -> n=85, win 41.2%, median -0.47%  (today's live setting)
+    #   norm >=50x  -> n=86, win 43.0%, median -1.90%
+    #   norm >=75x  -> n=64, win 32.8%, median -3.67%
+    #
+    # 50x picks out almost exactly the same population 15x does today (86 vs
+    # 85 entries, 71 vs 71 distinct symbols) and sits where win rate and
+    # median return start degrading, so ~50x is the candidate replacement and
+    # 50-75x the defensible range. Still OFF: that rests on 21 trading days of
+    # one symbol set in one period, and enabling the flag means shipping a
+    # second threshold constant for the normalized definition rather than
+    # reusing 15x. Re-run the report over a longer window before flipping it.
     scanner_rvol_time_normalized: bool = False
 
     # How often to re-check Alpaca's movers screener for symbols that are

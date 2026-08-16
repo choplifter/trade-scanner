@@ -203,6 +203,20 @@ backend on port 8000, so both must be running.
   is inherently a minute-resolution concept), and it applies today's
   universe membership across the whole lookback window (survivorship bias)
   -- all stated up front in its own report output.
+  `rvol_backtest_report.py` is the intraday counterpart, and the only tool
+  that can re-derive `formulas._FADE_RISK_RVOL` for the *time-normalized*
+  RVOL definition behind `SCANNER_RVOL_TIME_NORMALIZED`: it walks 5-minute
+  bars and sweeps candidate thresholds under both definitions **side by
+  side**, the raw column acting as a control whose answer is already known
+  from live data. If the control doesn't reproduce, the candidate column
+  isn't evidence of anything -- that check is the point of the tool, not a
+  footnote. Prefer `--from-history` (every symbol that has actually been
+  ranked) over the default top-N-by-dollar-volume selection: the most
+  liquid names essentially never reach high RVOL, so the default produces
+  zero of the events being measured. Reads win rate and *median* return
+  rather than the mean, since entry-to-close returns on thin names ran
+  from -66% to +459% in the first real run -- a range in which a mean
+  describes its outliers rather than its population.
 - **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
   for the scanner benchmark, scanner match history, cross-symbol
@@ -323,10 +337,11 @@ backend on port 8000, so both must be running.
   resolution even across ~240 symbols -- that specific threshold is
   fundamentally an intraday phenomenon daily bars smooth away, so this
   tool can't validate it either; only live/intraday history can. The same
-  limit is what blocks `SCANNER_RVOL_TIME_NORMALIZED`: a daily bar is a
-  whole session, so the time-of-day session fraction is 1.0 and the
-  normalized RVOL definition is *identical* to the raw one here -- no
-  amount of daily-bar lookback can re-derive `_FADE_RISK_RVOL` for it.
+  limit applies to `SCANNER_RVOL_TIME_NORMALIZED`: a daily bar is a whole
+  session, so the time-of-day session fraction is 1.0 and the normalized
+  RVOL definition is *identical* to the raw one here -- no amount of
+  daily-bar lookback can re-derive `_FADE_RISK_RVOL` for it. That one is
+  answered by `rvol_backtest_report.py` instead (see above).
   And `most_active` is replayed but doesn't read like the other two views:
   daily bars carry consolidated-tape volume where the live scanner sees a
   partial IEX slice (the reason that view ranks on dollar volume at all),
