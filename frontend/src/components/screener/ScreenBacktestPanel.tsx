@@ -25,10 +25,19 @@ function pickTime(pick: BacktestPick): number {
   return Math.floor(new Date(iso).getTime() / 1000);
 }
 
+/**
+ * Entry label in *market* time, not the viewer's.
+ *
+ * The backend sends ISO timestamps carrying their own ET offset
+ * ("2026-08-14T15:55:00-04:00"), so slicing the string reads ET directly
+ * rather than converting. Converting was the bug: a 15:30 ET entry rendered
+ * as 21:30 for a CEST viewer, printed next to an ET trading_date, so one
+ * label mixed two timezones and announced neither — and made the last hour
+ * of a session look like it happened after the close.
+ */
 function pickLabel(pick: BacktestPick): string {
   if (!pick.timestamp) return pick.trading_date;
-  const d = new Date(pick.timestamp);
-  return `${pick.trading_date} ${d.toTimeString().slice(0, 5)}`;
+  return `${pick.trading_date} ${pick.timestamp.slice(11, 16)}`;
 }
 
 const LOOKBACK_OPTIONS = [60, 120, 180, 365];
@@ -232,15 +241,15 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
             <div className="screen-backtest-picks">
               <p className="screener-summary">
                 {result.picks_truncated
-                  ? `Most recent ${result.picks.length} picks (every statistic above used all ${result.sample_size}).`
+                  ? `${result.picks.length} picks sampled evenly across the whole period (every statistic above used all ${result.sample_size}).`
                   : `${result.picks.length} picks.`}{" "}
-                Click one to load its chart at the entry.
+                Newest first, times in market time (ET). Click one to load its chart at the entry.
               </p>
               <table className="scanner-table">
                 <thead>
                   <tr>
                     <th>Symbol</th>
-                    <th>Entry</th>
+                    <th>Entry (ET)</th>
                     <th>Gap %</th>
                     <th>RVol</th>
                     {result.resolution === "intraday" && <th>RVol 1h</th>}

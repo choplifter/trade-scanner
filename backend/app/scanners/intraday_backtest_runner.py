@@ -30,7 +30,7 @@ from app.scanners.bar_cache import DEFAULT_CACHE_DIR, get_cached_5m_bars_multi
 from app.scanners.intraday_backtest import (
     benchmark_to_close,
     previous_closes,
-    recent_picks,
+    sample_picks,
     replication_factor,
     simulate_intraday_screen,
 )
@@ -127,7 +127,8 @@ async def run_intraday_backtest(
             "threshold": formulas._FADE_RISK_RVOL,
             "views": fade_risk_by_view(picks, _VIEWS),
         },
-        # Capped for transport -- every stat above used the full list.
-        "picks": recent_picks(picks),
-        "picks_truncated": len(picks) > len(recent_picks(picks)),
+        # Capped for transport, spread across the whole period -- every stat
+        # above used the full list.
+        "picks": sample_picks(picks),
+        "picks_truncated": len(picks) > len(sample_picks(picks)),
     }

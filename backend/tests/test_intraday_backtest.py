@@ -12,6 +12,7 @@ from app.scanners.intraday_backtest import (
     build_rows_by_timestamp,
     previous_closes,
     replication_factor,
+    sample_picks,
     simulate_intraday_screen,
 )
 from app.services.market_clock import ET
@@ -273,3 +274,27 @@ def test_a_screen_matching_nothing_yields_no_picks():
         0.0, _WINDOW,
     )
     assert picks == []
+
+
+def test_sample_picks_spans_the_whole_period_not_just_the_newest():
+    """Taking the newest N made a 15-day backtest look like one afternoon:
+    300 of 5,027 picks covered only 12:30-15:55 of the final day."""
+    picks = [
+        {"symbol": "AAA", "trading_date": f"2026-01-{day:02d}", "timestamp": f"2026-01-{day:02d}T{9 + h:02d}:30:00-05:00"}
+        for day in range(1, 16)
+        for h in range(7)
+    ]
+    sampled = sample_picks(picks, limit=10)
+
+    assert len(sampled) == 10
+    dates = {p["trading_date"] for p in sampled}
+    # Spread across the range rather than clustered at one end.
+    assert min(dates) == "2026-01-01"
+    assert max(dates) == "2026-01-15"
+    # Newest first, as displayed.
+    assert sampled[0]["timestamp"] > sampled[-1]["timestamp"]
+
+
+def test_sample_picks_returns_everything_when_under_the_limit():
+    picks = [{"symbol": "AAA", "trading_date": "2026-01-05", "timestamp": f"2026-01-05T10:{m:02d}:00-05:00"} for m in (0, 5, 10)]
+    assert len(sample_picks(picks, limit=100)) == 3

@@ -287,16 +287,29 @@ def simulate_intraday_screen(
     return picks
 
 
-def recent_picks(picks: list[dict], limit: int = 300) -> list[dict]:
-    """The most recent `limit` picks, newest first, for display.
+def sample_picks(picks: list[dict], limit: int = 300) -> list[dict]:
+    """Up to `limit` picks spread evenly across the whole backtest period,
+    newest first.
 
     Every aggregate in the report is computed over the *full* pick list
-    server-side; this only bounds what crosses the wire. An intraday run
-    routinely produces thousands of picks -- one real run made 6,818 -- and
-    shipping all of them would dwarf the report they belong to for a table
-    nobody scrolls to the end of.
+    server-side; this only bounds what crosses the wire, since an intraday
+    run routinely produces thousands (one real run made 6,818).
+
+    Evenly spaced rather than simply the newest N, which is what this did
+    first and was actively misleading: 300 newest picks out of 5,027 covered
+    only 12:30-15:55 of the final day, so a 15-day backtest presented a list
+    that looked like it had all happened in one afternoon. A stride across
+    the time-ordered list keeps the visible sample representative of the
+    period the statistics actually describe.
     """
-    return sorted(picks, key=lambda p: p.get("timestamp") or p["trading_date"], reverse=True)[:limit]
+    ordered = sorted(picks, key=lambda p: p.get("timestamp") or p["trading_date"])
+    if len(ordered) > limit and limit > 1:
+        # Spans both endpoints. A plain `i * len/limit` stride stops short of
+        # the final element, which would silently drop the most recent picks
+        # -- the ones most likely to be looked at first.
+        last = len(ordered) - 1
+        ordered = [ordered[round(i * last / (limit - 1))] for i in range(limit)]
+    return list(reversed(ordered))
 
 
 def replication_factor(picks: list[dict]) -> dict:
