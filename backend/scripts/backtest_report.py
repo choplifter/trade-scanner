@@ -10,10 +10,22 @@ Run from backend/ (after `pip install -e ".[dev]"`):
 NOT covered by this report -- see app.scanners.backtest's module
 docstring for why each is out of scope for this pass:
   - Catalyst/headline boost (needs historical news data, a separate phase)
+  - Float (FMP's bulk file is TODAY's float -- applying it to past dates
+    is look-ahead bias)
+  - Time-of-day-normalized RVOL (daily bars are whole sessions, so the
+    session fraction is 1.0 and the normalized definition is identical
+    here -- re-deriving formulas._FADE_RISK_RVOL for it needs an intraday
+    replay this tool can't do at any lookback)
   - The momentum alarm itself: 15m % + shaved top/bottom (15m % is
     inherently a minute-resolution concept, needs historical minute bars)
   - Point-in-time universe membership -- this backtests TODAY's universe
     against past dates, which has survivorship bias.
+
+The "most_active" view is replayed but reads differently from the other
+two: daily bars are consolidated-tape volume where the live scanner sees
+a partial IEX slice, and --max-symbols selects by avg_dollar_vol_20d, so
+this ranks by dollar volume over a set already pre-sorted by dollar
+volume. Expect it near-degenerate at small --max-symbols.
 
 Does cover is_shaved_top (app.market_data.candle_shape) on its own,
 without the 15m % gate the live momentum alarm pairs it with: did the
@@ -53,9 +65,14 @@ def _print_report(report: dict) -> None:
     print(f"Total ranked picks reconstructed: {report['sample_size']}\n")
 
     print("** NOT covered by this report: catalyst/headline boost (needs historical")
-    print("   news, a separate phase), the momentum alarm itself (15m % is a minute-")
-    print("   resolution concept), and today's universe membership is applied across")
-    print("   the whole lookback window (survivorship bias). **\n")
+    print("   news, a separate phase), float (bulk float is today's, not point-in-")
+    print("   time), time-of-day-normalized RVOL (identical to raw RVOL at daily")
+    print("   resolution), the momentum alarm itself (15m % is a minute-resolution")
+    print("   concept), and today's universe membership is applied across the whole")
+    print("   lookback window (survivorship bias).")
+    print("   most_active reads differently from the other two views: daily bars are")
+    print("   consolidated-tape volume vs. the live partial IEX slice, and --max-symbols")
+    print("   already pre-sorts by dollar volume -- expect it near-degenerate at small N. **\n")
 
     if report["sample_size"] == 0:
         print("No picks reconstructed -- nothing to report.")
@@ -84,10 +101,15 @@ def _print_report(report: dict) -> None:
     fade_risk = report["fade_risk"]
     threshold = fade_risk["threshold"]
     print(f"Fade risk (formulas._FADE_RISK_RVOL = {threshold}x, discount {1 - formulas._FADE_RISK_DISCOUNT:.0%} above it):")
-    print(_fmt_bucket(f"rvol > {threshold}x", fade_risk["rvol_above_threshold"]))
-    print(_fmt_bucket(f"rvol <= {threshold}x", fade_risk["rvol_at_or_below_threshold"]))
-    if not fade_risk["sufficient_sample"]:
-        print(f"  ** sample size below {min_n} for the >threshold group -- treat as noisy **")
+    # Per view, never pooled -- "win" means the opposite thing on losers, so
+    # a pooled number averages contradictory signals. Same breakdown the live
+    # drift report uses (history_store._fade_risk_drift).
+    for entry in fade_risk["views"]:
+        print(f"  {entry['view']}:")
+        print(_fmt_bucket(f"    rvol > {threshold}x", entry["rvol_above_threshold"]))
+        print(_fmt_bucket(f"    rvol <= {threshold}x", entry["rvol_at_or_below_threshold"]))
+        if not entry["sufficient_sample"]:
+            print(f"    ** below n={min_n} for the >threshold group -- treat as noisy **")
     print()
 
     print(f"Shaved top (entry day's candle closed at/near its high, avg {report['horizon_days']}-day-forward return):")

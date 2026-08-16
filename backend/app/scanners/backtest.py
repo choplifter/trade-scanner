@@ -1,8 +1,9 @@
 """Daily-bar-resolution historical backtest: replays past trading days
 through the app's *actual* ranking functions (engine._rank_gainers/
-_rank_losers, not a reimplementation) to reconstruct what would have
-ranked as a gainer/loser, then buckets win-rate/avg-return with the same
-methodology already trusted for live data (bucket_analysis.py).
+_rank_losers/_rank_most_active, not a reimplementation) to reconstruct
+what would have ranked in each of the three live views, then buckets
+win-rate/avg-return with the same methodology already trusted for live
+data (bucket_analysis.py).
 
 Also checks each entry day's own candle shape via is_shaved_top (see
 app.market_data.candle_shape) -- did the pick close at/near that day's
@@ -10,10 +11,41 @@ high, regardless of how it got there? Wick-shape analysis works on any
 OHLC bar, daily included, so this doesn't need minute data the way the
 momentum alarm's 15m % check does.
 
+"most_active" is replayed here too, but it is not a like-for-like replay
+the way gainers/losers are, for two reasons worth keeping in mind before
+reading anything into its numbers:
+- Tape mismatch. Daily bars carry *consolidated*-tape volume; the live
+  scanner reads a partial IEX slice, which is exactly why that view ranks
+  on dollar volume in the first place (see engine._rank_most_active). So
+  this replays the same formula over a *better* tape than production
+  sees -- the cohort it produces is not the cohort live ranking would
+  have produced. Gainers/losers rank on gap %, a ratio that survives a
+  partial tape, so they don't have this problem.
+- Selection bias from the caller's symbol cap. Both callers pick the top
+  N of the universe *by avg_dollar_vol_20d* (see _top_symbols in the Dash
+  backtest page and backtest_report.py's own sort), so "rank by dollar
+  volume" is being run over a set already pre-sorted by dollar volume.
+  At small N expect it to be close to degenerate -- the same handful of
+  names every day. Gainers/losers are far less sensitive to that cap.
+
 Deliberately out of scope for this pass:
 - Catalyst/headline backtesting -- needs historical news data (a harder,
   separate phase), so every row here is ranked with has_headline=False
-  (news_cache=None passed to _rank_gainers/_rank_losers).
+  (news_cache=None passed to the ranking functions). Note the catalyst
+  boost is gainers-only now anyway (see formulas._CATALYST_BOOST), so on
+  the other two views this costs nothing.
+- Float. Each live appearance records entry_float_shares (see
+  history_store.py) so a float-based ranking rule can eventually be
+  validated, but that can't be reconstructed here: FMP's bulk file is
+  *today's* float, and applying it to past dates is look-ahead bias --
+  plus float is unreliable around a reverse split. A float rule
+  "validated" against it would look measured without being measured.
+- Time-of-day-normalized RVOL (settings.scanner_rvol_time_normalized).
+  Daily bars are whole sessions, so the session fraction is 1.0 and the
+  normalized and un-normalized definitions are identical here -- this
+  tool cannot re-derive formulas._FADE_RISK_RVOL for the normalized
+  definition no matter how much history it's given. That needs an
+  intraday replay.
 - The momentum alarm itself (15m % + shaved top/bottom) -- 15m % is
   inherently a minute-resolution concept (a trailing-15-*minute* delta),
   so it can't be reconstructed from daily bars at all, unlike
@@ -35,7 +67,7 @@ from app.core.config import Settings
 from app.market_data.bars import get_daily_bars_multi
 from app.market_data.candle_shape import is_shaved_top
 from app.scanners import bucket_analysis, formulas
-from app.scanners.engine import _rank_gainers, _rank_losers
+from app.scanners.engine import _rank_gainers, _rank_losers, _rank_most_active
 
 # Trading days of trailing volume history needed before a day can get an
 # avg_vol_20d (and therefore an RVOL) computed from the bars themselves --
@@ -77,8 +109,15 @@ def simulate_from_bars(
     horizon_days: int = 1,
 ) -> list[dict]:
     """Pure, network-free -- reconstructs each historical trading day's
-    gainers/losers exactly as engine._rank_gainers/_rank_losers would have
-    ranked it live, using only that day's trailing-20-bar history.
+    gainers/losers/most-active exactly as engine._rank_gainers/_rank_losers/
+    _rank_most_active would have ranked it live, using only that day's
+    trailing-20-bar history.
+
+    A symbol can legitimately come out in two views on the same date (any
+    most-active name that also gapped), which is the same thing the live
+    history store records -- appearances are keyed per (symbol, view,
+    date), not per symbol. Every consumer here groups by view before
+    aggregating, so that's a duplicate row, not a double-count.
 
     Rows are grouped by each bar's own `.timestamp.date()`, not by list
     index: two symbols' bar lists aren't guaranteed to line up index-for-
@@ -127,6 +166,7 @@ def simulate_from_bars(
         for view_name, ranked in (
             ("gainers", _rank_gainers(day_rows, None, min_dollar_volume)),
             ("losers", _rank_losers(day_rows, None, min_dollar_volume)),
+            ("most_active", _rank_most_active(day_rows, None, min_dollar_volume)),
         ):
             for row in ranked:
                 exit_price = exit_price_by_symbol_date.get((row.symbol, trading_date))
@@ -139,11 +179,48 @@ def simulate_from_bars(
                         "view": view_name,
                         "entry_pct_change": row.pct_change,
                         "entry_rvol": row.rvol,
+                        # The magnitude "most_active" actually ranks on --
+                        # carried on every pick regardless of view so a
+                        # most-active row has a column explaining why it's
+                        # there at all (its gap % often being unremarkable).
+                        "entry_dollar_volume": row.dollar_volume_today,
                         "is_shaved_top": row.is_shaved_top,
                         "pct_change_since_entry": (exit_price - row.last_price) / row.last_price * 100,
                     }
                 )
     return picks
+
+
+def fade_risk_by_view(picks: list[dict]) -> list[dict]:
+    """Win rate/avg return above vs. at-or-below formulas._FADE_RISK_RVOL,
+    broken down per view and never pooled -- the same shape (and the same
+    reasoning) as history_store._fade_risk_drift, so the historical and the
+    live read of the fade-risk discount stay directly comparable.
+
+    Pooling would be wrong for exactly the reason bucket_analysis.VIEWS
+    gives: "win = positive return" means the opposite thing on losers, so a
+    pooled win rate averages contradictory signals. The discount itself is
+    direction-agnostic and applies in all three views (see
+    formulas.rank_score) -- it's the *measurement* that has to be per view,
+    not the multiplier.
+
+    Pure and separate from run_backtest so it can be tested without a
+    network round-trip.
+    """
+    rows = []
+    for view_name in bucket_analysis.VIEWS:
+        view_picks = [p for p in picks if p["view"] == view_name]
+        above = [p for p in view_picks if p["entry_rvol"] > formulas._FADE_RISK_RVOL]
+        at_or_below = [p for p in view_picks if p["entry_rvol"] <= formulas._FADE_RISK_RVOL]
+        rows.append(
+            {
+                "view": view_name,
+                "rvol_above_threshold": bucket_analysis.bucket_stats(above),
+                "rvol_at_or_below_threshold": bucket_analysis.bucket_stats(at_or_below),
+                "sufficient_sample": len(above) >= bucket_analysis.MIN_SAMPLE_SIZE,
+            }
+        )
+    return rows
 
 
 async def run_backtest(
@@ -168,24 +245,17 @@ async def run_backtest(
 
     picks = simulate_from_bars(bars_by_symbol, settings.scanner_min_dollar_volume, horizon_days)
 
+    # No `views=` override -- bucket_breakdown defaults to
+    # bucket_analysis.VIEWS, which is already exactly the three live views.
     gap_buckets = bucket_analysis.bucket_breakdown(
-        picks, lambda p: abs(p["entry_pct_change"]), bucket_analysis.GAP_BUCKETS, views=("gainers", "losers")
+        picks, lambda p: abs(p["entry_pct_change"]), bucket_analysis.GAP_BUCKETS
     )
     rvol_buckets = bucket_analysis.bucket_breakdown(
-        picks, lambda p: p["entry_rvol"], bucket_analysis.RVOL_BUCKETS, views=("gainers", "losers")
+        picks, lambda p: p["entry_rvol"], bucket_analysis.RVOL_BUCKETS
     )
 
-    above = [p for p in picks if p["entry_rvol"] > formulas._FADE_RISK_RVOL]
-    at_or_below = [p for p in picks if p["entry_rvol"] <= formulas._FADE_RISK_RVOL]
-    fade_risk = {
-        "rvol_above_threshold": bucket_analysis.bucket_stats(above),
-        "rvol_at_or_below_threshold": bucket_analysis.bucket_stats(at_or_below),
-        "threshold": formulas._FADE_RISK_RVOL,
-        "sufficient_sample": len(above) >= bucket_analysis.MIN_SAMPLE_SIZE,
-    }
-
     shaved_top: list[dict] = []
-    for view_name in ("gainers", "losers"):
+    for view_name in bucket_analysis.VIEWS:
         view_picks = [p for p in picks if p["view"] == view_name]
         shaved = [p for p in view_picks if p["is_shaved_top"]]
         not_shaved = [p for p in view_picks if not p["is_shaved_top"]]
@@ -210,7 +280,10 @@ async def run_backtest(
         "gap_buckets": gap_buckets,
         "rvol_buckets": rvol_buckets,
         "shaved_top": shaved_top,
-        "fade_risk": fade_risk,
+        "fade_risk": {
+            "threshold": formulas._FADE_RISK_RVOL,
+            "views": fade_risk_by_view(picks),
+        },
         "min_sample_size": bucket_analysis.MIN_SAMPLE_SIZE,
         # Raw per-pick rows, alongside the buckets above -- callers that
         # want to list individual wins/losses (see the Dash backtest page)

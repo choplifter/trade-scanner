@@ -478,10 +478,18 @@ class ScannerHistoryStore:
             )
 
         # Grouped by view, never pooled -- see bucket_analysis.VIEWS for why a
-        # pooled win rate is meaningless across gainers and losers. rank_score
-        # applies the catalyst boost and fade-risk discount in all three views
-        # (engine.py's _rank_gainers/_rank_losers/_rank_most_active), so each
-        # one gets checked against the baseline separately.
+        # pooled win rate is meaningless across gainers and losers.
+        #
+        # The fade-risk discount does apply in all three views (it's
+        # direction-agnostic), so each view's fade-risk block re-checks a
+        # multiplier that's actually live there. The catalyst boost no longer
+        # does: it's gainers-only now (see formulas._CATALYST_BOOST), because
+        # the per-view numbers this report produced showed the headline edge
+        # was real on gainers and inside one standard error of zero on the
+        # other two. Catalyst is still measured on all three anyway -- on
+        # losers/most_active it's an open hypothesis rather than a check of a
+        # shipped multiplier, and it's the only thing that would show the
+        # boost becoming justified there as more data accumulates.
         views = {}
         for view_name in bucket_analysis.VIEWS:
             view_picks = [p for p in picks if p["view"] == view_name]

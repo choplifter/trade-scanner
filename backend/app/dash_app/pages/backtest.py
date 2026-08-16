@@ -150,19 +150,34 @@ def _iframe_src(symbol: str | None, target_time: int | None = None, timeframe: s
     return src
 
 
-def _pick_row_id(symbol: str, target_time: int) -> str:
+def _pick_row_id(symbol: str, target_time: int, view: str | None = None) -> str:
     """Packs symbol + entry time (unix seconds) into one row "id" -- not
     shown as a column, just read back from active_cell["row_id"] on click
     (see update_backtest_symbol_panel) so the chart panel knows not just
     which symbol but which specific bar to jump to. Avoids indexing into
     the table's "data" by row position, which native pagination makes
     unreliable.
+
+    `view` is appended for the daily table only, where symbol+date is no
+    longer unique: a gapper that's also a most-active name produces one row
+    per view for the same date (see backtest.simulate_from_bars), and
+    _register_copy_single_pick_callback looks a clicked row up by id -- with
+    a colliding id it would copy whichever of the two it found first. The
+    momentum table's rows stay two-part, and nothing downstream reads past
+    the first two fields.
     """
-    return f"{symbol}|{target_time}"
+    packed = f"{symbol}|{target_time}"
+    return f"{packed}|{view}" if view is not None else packed
 
 
 def _parse_row_id(row_id: str) -> tuple[str, int | None]:
-    symbol, _, ts = row_id.partition("|")
+    """Symbol + entry time. Any trailing component (the daily table's view,
+    above) is deliberately ignored -- the chart panel keys off symbol and
+    bar, which are the same whichever view surfaced the pick.
+    """
+    parts = row_id.split("|")
+    symbol = parts[0]
+    ts = parts[1] if len(parts) > 1 else ""
     return symbol, (int(ts) if ts else None)
 
 
@@ -357,7 +372,7 @@ _GROUP_COLUMNS = [
 
 _GROUP_COLUMNS_WITH_VIEW = [{"name": "View", "id": "view"}, *_GROUP_COLUMNS]
 
-_VIEW_LABEL = {"gainers": "Gainers", "losers": "Losers"}
+_VIEW_LABEL = {"gainers": "Gainers", "losers": "Losers", "most_active": "Most Active"}
 
 
 def _bucket_rows(buckets: list[dict]) -> list[dict]:
@@ -402,10 +417,13 @@ def _daily_section():
         [
             html.H3("Daily Ranking Backtest"),
             html.P(
-                "Replays past trading days through engine._rank_gainers/_rank_losers to check "
-                "whether gap%/RVOL predict win rate, whether high-RVOL entries fade, and whether a "
-                "shaved-top entry candle says anything about outcome. No catalyst/headline boost "
-                "(needs historical news, unbuilt).",
+                "Replays past trading days through engine._rank_gainers/_rank_losers/_rank_most_active "
+                "to check whether gap%/RVOL predict win rate, whether high-RVOL entries fade, and "
+                "whether a shaved-top entry candle says anything about outcome. No catalyst/headline "
+                "boost (needs historical news, unbuilt) and no float (bulk float is today's, not "
+                "point-in-time). Read Most Active with care: daily bars carry consolidated-tape volume "
+                "where the live scanner sees a partial IEX slice, and Max symbols already selects by "
+                "dollar volume — so at small Max symbols that view is close to degenerate.",
                 className="benchmark-disclaimer",
             ),
             html.Div(
@@ -447,6 +465,9 @@ _DAILY_PICK_COLUMNS = [
     {"name": "Date", "id": "trading_date"},
     {"name": "Entry Gap%", "id": "entry_gap"},
     {"name": "Entry RVOL", "id": "entry_rvol"},
+    # The magnitude Most Active ranks on -- without it those rows show no
+    # column explaining why they're in the list.
+    {"name": "Entry $Vol", "id": "entry_dollar_volume"},
     {"name": "Shaved Top", "id": "shaved_top"},
     {"name": "Outcome", "id": "outcome"},
     {"name": "Result", "id": "result"},
@@ -457,10 +478,30 @@ _DAILY_PICK_SORT_KEYS = {
     "symbol": lambda p: p["symbol"],
     "view": lambda p: p["view"],
     "trading_date": lambda p: p["trading_date"],
+    # These read the *_num helpers, not the display strings in the same row
+    # dict -- _sorted_rows runs over _daily_pick_rows' output, where
+    # entry_rvol is "1.23x" and entry_dollar_volume is "$1.2M". Sorting on
+    # those would order them as text ("9.00x" above "10.00x").
     "entry_gap": lambda p: p["entry_pct_change"],
-    "entry_rvol": lambda p: p["entry_rvol"],
-    "outcome": lambda p: p["pct_change_since_entry"],
+    "entry_rvol": lambda p: p["entry_rvol_num"],
+    "entry_dollar_volume": lambda p: p["entry_dollar_volume_num"],
+    "outcome": lambda p: p["outcome_num"],
 }
+
+
+def _format_dollar_volume(value: float) -> str:
+    """Compact $ magnitude -- dollar volume spans several orders of
+    magnitude across a ranked day, and the raw integer is unreadable at a
+    glance in a table cell. Sorting uses the raw number (see
+    _DAILY_PICK_SORT_KEYS), so rounding here costs nothing.
+    """
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"${value / 1_000:.0f}K"
+    return f"${value:.0f}"
 
 
 def _daily_pick_rows(picks: list[dict]) -> list[dict]:
@@ -472,7 +513,9 @@ def _daily_pick_rows(picks: list[dict]) -> list[dict]:
             # findNearestIndex), not a claim about when the day's move
             # actually happened.
             "id": _pick_row_id(
-                p["symbol"], int(datetime.fromisoformat(p["trading_date"]).replace(tzinfo=timezone.utc).timestamp())
+                p["symbol"],
+                int(datetime.fromisoformat(p["trading_date"]).replace(tzinfo=timezone.utc).timestamp()),
+                p["view"],
             ),
             "symbol": p["symbol"],
             "view": _VIEW_LABEL.get(p["view"], p["view"]),
@@ -480,6 +523,9 @@ def _daily_pick_rows(picks: list[dict]) -> list[dict]:
             "entry_gap": _format_pct(p["entry_pct_change"]),
             "entry_pct_change": p["entry_pct_change"],
             "entry_rvol": f"{p['entry_rvol']:.2f}x",
+            "entry_rvol_num": p["entry_rvol"],
+            "entry_dollar_volume": _format_dollar_volume(p["entry_dollar_volume"]),
+            "entry_dollar_volume_num": p["entry_dollar_volume"],
             "shaved_top": "Yes" if p["is_shaved_top"] else "No",
             "outcome": _format_pct(p["pct_change_since_entry"]),
             "outcome_num": p["pct_change_since_entry"],
@@ -514,10 +560,23 @@ def _daily_report_layout(report: dict):
         )
 
     fade = report["fade_risk"]
-    fade_rows = [
-        {"group": f"RVOL <= {fade['threshold']:.0f}x", **_stats_cell(fade["rvol_at_or_below_threshold"])},
-        {"group": f"RVOL > {fade['threshold']:.0f}x", **_stats_cell(fade["rvol_above_threshold"])},
-    ]
+    # Per view, never pooled -- see backtest.fade_risk_by_view.
+    fade_rows = []
+    for entry in fade["views"]:
+        fade_rows.append(
+            {
+                "view": entry["view"],
+                "group": f"RVOL <= {fade['threshold']:.0f}x",
+                **_stats_cell(entry["rvol_at_or_below_threshold"]),
+            }
+        )
+        fade_rows.append(
+            {
+                "view": entry["view"],
+                "group": f"RVOL > {fade['threshold']:.0f}x",
+                **_stats_cell(entry["rvol_above_threshold"]),
+            }
+        )
     shaved_rows = []
     for entry in report["shaved_top"]:
         shaved_rows.append({"view": entry["view"], "group": "Shaved top", **_stats_cell(entry["shaved_top"])})
@@ -536,7 +595,7 @@ def _daily_report_layout(report: dict):
             html.H4("Fade Risk — By Entry RVOL"),
             _bucket_table("backtest-daily-rvol-table", _bucket_rows(report["rvol_buckets"])),
             html.H4(f"High-RVOL Fade Risk (>{fade['threshold']:.0f}x)"),
-            _group_table("backtest-daily-fade-table", fade_rows),
+            _group_table("backtest-daily-fade-table", fade_rows, show_view=True),
             html.H4("Shaved-Top Entry Candle"),
             _group_table("backtest-daily-shaved-table", shaved_rows, show_view=True),
         ]
@@ -643,7 +702,9 @@ _MOMENTUM_PICK_SORT_KEYS = {
     "symbol": lambda p: p["symbol"],
     "kind": lambda p: p["kind"],
     "timestamp": lambda p: p["timestamp"],
-    "outcome": lambda p: p["pct_change_since_entry"],
+    # outcome_num, not the "+1.23%" display string -- see the note in
+    # _DAILY_PICK_SORT_KEYS.
+    "outcome": lambda p: p["outcome_num"],
 }
 
 

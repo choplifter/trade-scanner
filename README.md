@@ -187,20 +187,22 @@ backend on port 8000, so both must be running.
   hardcoded pass/fail (flags buckets under a 30-sample floor as noisy
   instead of overstating a thin result). `backtest_report.py` goes further
   back by replaying months of historical **daily** bars through the same
-  live ranking functions (`engine._rank_gainers`/`_rank_losers`, not a
-  reimplementation) to reconstruct what would have ranked as a gainer/
-  loser on past trading days -- a much bigger sample than however many
-  days of live history have accumulated so far. Both share
+  live ranking functions (`engine._rank_gainers`/`_rank_losers`/
+  `_rank_most_active`, not a reimplementation) to reconstruct what would
+  have ranked in each of the three views on past trading days -- a much
+  bigger sample than however many days of live history have accumulated so
+  far. Both share
   `app/scanners/bucket_analysis.py`'s bucketing so a live check and a
   historical one measure things identically. Also breaks down win rate by
   `is_shaved_top` (did the entry day's own candle close at/near its high?
   -- wick-shape analysis works on any OHLC bar, so this doesn't need
   minute data). The backtest is daily-bar-only: no catalyst backtesting
-  (needs historical news, unbuilt), no minute-resolution signals (time-of-
-  day RVOL, the momentum alarm itself -- 15m % is inherently a minute-
-  resolution concept), and it applies today's universe membership across
-  the whole lookback window (survivorship bias) -- all stated up front in
-  its own report output.
+  (needs historical news, unbuilt), no float (FMP's bulk file is *today's*
+  float, so applying it to past dates is look-ahead bias), no minute-
+  resolution signals (time-of-day RVOL, the momentum alarm itself -- 15m %
+  is inherently a minute-resolution concept), and it applies today's
+  universe membership across the whole lookback window (survivorship bias)
+  -- all stated up front in its own report output.
 - **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
   for the scanner benchmark, scanner match history, cross-symbol
@@ -320,7 +322,17 @@ backend on port 8000, so both must be running.
   minute bars, unbuilt). A 180-day run found ~0 RVOL>15x events at daily
   resolution even across ~240 symbols -- that specific threshold is
   fundamentally an intraday phenomenon daily bars smooth away, so this
-  tool can't validate it either; only live/intraday history can.
+  tool can't validate it either; only live/intraday history can. The same
+  limit is what blocks `SCANNER_RVOL_TIME_NORMALIZED`: a daily bar is a
+  whole session, so the time-of-day session fraction is 1.0 and the
+  normalized RVOL definition is *identical* to the raw one here -- no
+  amount of daily-bar lookback can re-derive `_FADE_RISK_RVOL` for it.
+  And `most_active` is replayed but doesn't read like the other two views:
+  daily bars carry consolidated-tape volume where the live scanner sees a
+  partial IEX slice (the reason that view ranks on dollar volume at all),
+  and `--max-symbols` selects the universe's top N *by dollar volume*, so
+  at small N it ranks by dollar volume over a set already sorted by dollar
+  volume and comes out close to degenerate.
 - **Scanner benchmark / match history**: entries are still recorded from
   closed-market fallback data, but the actual price/SPY comparison columns
   only populate once live polling resumes (they need a live SPY price and a
