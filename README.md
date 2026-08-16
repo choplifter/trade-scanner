@@ -1,10 +1,12 @@
 # Stocks in Play — Trading Dashboard
 
 A personal, locally-run "stocks in play" scanner + chart dashboard in the
-spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: live
-gainers / premarket gainers / losers / most-active scanners (table or
-treemap heatmap view) ranked with a catalyst-boost/fade-risk-aware scoring
-formula, a click-to-chart candlestick widget with a session-anchored VWAP
+spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: a live
+**screener** (table or treemap heatmap view) where you build your own filters
+over ~20 fields and results stream in over a WebSocket, with gainers /
+premarket gainers / losers / most-active shipped as editable presets ranked by
+a catalyst-boost/fade-risk-aware scoring formula, a click-to-chart candlestick
+widget with a session-anchored VWAP
 overlay, EMA/premarket/weekly/monthly range indicators, and company
 info/news, a dashboard-wide momentum alarm, AI-generated trade-idea
 annotations, a scanner-wide benchmark against SPY, a persistent scanner
@@ -74,21 +76,29 @@ backend on port 8000, so both must be running.
 
 ## What's included
 
-- Four live scanners: **Market Gainers**, **Premarket Gainers**, and
-  **Losers** (all ranked by % change from prior close), plus **Most Active**
-  (ranked by **dollar** volume, direction-agnostic — a raw share-volume level
-  is the most IEX-distorted number available, since IEX is one exchange's
-  varying slice of the tape, whereas weighting by price tracks where the money
-  actually went) — polled from Alpaca
-  snapshots every 5s (regular hours) / 10s (premarket) and pushed over
-  WebSocket. A movers-screener backstop periodically pulls in today's
-  runners that weren't in the trailing-volume-filtered universe to begin
-  with, and keeps running even while the market's closed so a big mover
-  from the last session isn't invisible over a weekend/holiday. Rows need
-  at least $1M of today's own dollar volume to appear in a ranked view
-  (`SCANNER_MIN_DOLLAR_VOLUME`), so a thin name that technically clears the
-  universe filters but hasn't traded much yet today doesn't clutter the
-  list.
+- **Live screener** (one widget — the scanner *is* the screener). Build your
+  own filters over the fields in [Filter parameters](#filter-parameters)
+  below, sort by any of them, and the results update on every poll tick over
+  a WebSocket rather than needing a refresh. The universe is polled from
+  Alpaca snapshots every 5s (regular hours) / 10s (premarket). A
+  movers-screener backstop periodically pulls in today's runners that weren't
+  in the trailing-volume-filtered universe to begin with, and keeps running
+  even while the market's closed so a big mover from the last session isn't
+  invisible over a weekend/holiday. Rows need at least $1M of today's own
+  dollar volume to appear at all (`SCANNER_MIN_DOLLAR_VOLUME`), applied
+  *before* your filters, so a thin name that clears the universe filters but
+  hasn't traded much today doesn't clutter the list.
+- **Presets, not hardcoded views.** **Top Gainers**, **Top Losers** and
+  **Most Active** are ordinary screens you can open, read and edit — load one
+  and its filters and sort appear in the filter bar. Editing it shows
+  "Custom" instead of claiming you're still on the preset. **Most Active**
+  ranks by **dollar** volume, direction-agnostic: a raw share-volume level is
+  the most IEX-distorted number available, since IEX is one exchange's varying
+  slice of the tape, whereas weighting by price tracks where the money
+  actually went. **Premarket Gainers** is the one exception and stays a fixed
+  view — it's the gap frozen at the 09:30 open, not a question about the
+  current rows, so no filter expresses it and the filter bar hides itself
+  there.
 - **Ranking formula**: gap % magnitude is boosted 1.15x on the **gainers**
   views when a genuine news catalyst is behind the move, and any view's
   magnitude is discounted 0.7x when RVOL exceeds 15x -- both tuned from this
@@ -112,11 +122,90 @@ backend on port 8000, so both must be running.
   **15m %** (trailing-15-minute price change, refreshed every 2 min --
   distinct from gap %, which is since prior close, so a symbol that already
   ran earlier and has since gone flat reads differently from one still
-  actively moving right now), volume, RVOL, and (when `FMP_API_KEY` is set)
-  float, market cap, short interest % of float, exchange, and country. A
-  **Table / Heatmap** toggle switches the same live feed to a treemap view
-  (tile size = dollar volume, color = gap %, click-to-chart same as the
-  table).
+  actively moving right now), volume, RVOL, **RVol 1h**, and (when
+  `FMP_API_KEY` is set) float, market cap, short interest % of float,
+  exchange, and country. A **Table / Heatmap** toggle switches the same live
+  feed to a treemap view (tile size = dollar volume, color = gap %,
+  click-to-chart same as the table).
+
+### Filter parameters
+
+Every field below can be filtered and sorted on. The list is served by the
+backend (`GET /api/screener/fields`, defined in `app/scanners/screener.py`)
+and both the filter dropdown and the column picker are generated from it —
+adding a field there makes it appear in the UI with no frontend change.
+
+| Field | Label | Type | Operators |
+|---|---|---|---|
+| `symbol` | Symbol | text | `eq`, `ne`, `contains`, `in` |
+| `exchange` | Exchange | text | `eq`, `ne`, `contains`, `in` |
+| `last_price` | Price | currency | `gt`, `gte`, `lt`, `lte`, `between` |
+| `pct_change` | Change % | percent | `gt`, `gte`, `lt`, `lte`, `between` |
+| `volume_today` | Volume | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `avg_vol_20d` | Avg Volume (20d) | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `rvol` | Rel Volume | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `dollar_volume_today` | Dollar Volume | currency | `gt`, `gte`, `lt`, `lte`, `between` |
+| `day_high` | Day High | currency | `gt`, `gte`, `lt`, `lte`, `between` |
+| `day_low` | Day Low | currency | `gt`, `gte`, `lt`, `lte`, `between` |
+| `spread_pct` | Spread % | percent | `gt`, `gte`, `lt`, `lte`, `between` |
+| `volume_1h` | Volume (1h) | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `volume_surge` | Volume Surge (vs prior 1h) | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `rvol_1h` | Rel Volume (1h) | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `is_hod` | At High of Day | boolean | `is_true`, `is_false` |
+| `is_lod` | At Low of Day | boolean | `is_true`, `is_false` |
+| `is_fade_risk` | Fade Risk | boolean | `is_true`, `is_false` |
+| `is_stale` | Stale Price | boolean | `is_true`, `is_false` |
+| `float_shares` | Float | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `rank_score` | Rank Score | number | `gt`, `gte`, `lt`, `lte`, `between` |
+
+**Operators.** `gt`/`gte`/`lt`/`lte` are the usual comparisons; `between`
+takes two bounds and is order-insensitive (40 and 10 means the same range as
+10 and 40); `in` takes a comma-separated list (`NASDAQ, NYSE`); `contains` is
+a case-insensitive substring match. Booleans take no value.
+
+**Two behaviours worth knowing.** Filters are **ANDed** — there is no OR, since
+a flat filter list can't express grouping unambiguously. And a **missing value
+never matches** a numeric or text filter: "float under 20M" excludes symbols
+whose float is unknown rather than sweeping them in, so a filter on a sparse
+field legitimately narrows hard.
+
+**The volume fields are three different questions.** `rvol` is cumulative
+volume since the open over a 20-day average — it only ever climbs, so a stock
+that ran at 09:45 and died still reads high at 15:30. `volume_surge` is the
+trailing hour over the hour before it; honest as a description but a trap as a
+filter, because session volume is U-shaped and near the close it exceeds 1 for
+most of the market at once. `rvol_1h` is the trailing hour over what that
+*clock hour* normally trades (from the intraday volume profile), so "2x" means
+twice the usual 15:00–16:00 volume. **Screen on `rvol_1h`, not
+`volume_surge`.** Measured on real 2026-08-14 bars, the naive ratio called all
+of AAPL (3.15), TSLA (2.11), NVDA (1.64), SMCI (1.67) and AMD (3.81)
+"accelerating", while `rvol_1h` correctly read 0.28–0.95 — every one traded
+*below* its normal final hour. Window length is
+`SCANNER_VOLUME_SURGE_WINDOW_MINUTES` (default 60). All three are `null`
+outside the regular session.
+
+**Coverage caveat.** `float_shares` is universe-wide (one bulk FMP file), and
+everything else in the table above is computed for every symbol on every poll.
+Market cap, short interest, country, company name, recent headline and 15m %
+are **not** filterable: they're only fetched for symbols already in a ranked
+view or a live screen result (~150 of ~2000), so filtering on them would
+silently return nothing for most of the universe. They still *display* on
+whatever your screen returns — screened rows are enriched alongside ranked
+ones. `volume_1h` / `volume_surge` / `rvol_1h` share that enrichment path, so
+they populate for your screen's results rather than the whole universe.
+
+**Built-in presets** (`GET /api/screener/presets`):
+
+| Preset | Filters | Sort |
+|---|---|---|
+| Top Gainers | `pct_change > 0` | `rank_score` desc |
+| Top Losers | `pct_change < 0` | `rank_score` asc |
+| Most Active | none | `dollar_volume_today` desc |
+| Volume Accelerating | `rvol_1h > 2`, `pct_change > 0` | `rvol_1h` desc |
+| Low Float Runners | `float_shares < 20M`, `pct_change > 5`, `rvol > 3` | `pct_change` desc |
+
+Screens are not persisted yet — presets are server-side, but a screen you
+build yourself is lost on reload.
 - **Momentum alarm** (React app only, off by default, long setups only):
   a dashboard-wide alert for a fast, still-confirming *upward* move -- 15m
   % at least a threshold (5% default, `ALARM_MOMENTUM_PCT_THRESHOLD`)
@@ -314,6 +403,20 @@ backend on port 8000, so both must be running.
   publish schedule -- expect it to reflect a settlement date roughly 2-4
   weeks old, not this week's.
 - **Watchlists**: roadmap item, not built yet.
+- **Screener**: React app only — the Dash analytics app has no screening page
+  (it briefly did; having two surfaces answer the same question differently,
+  one live and one request-driven, was worse than having one). Screens you
+  build aren't saved: presets are server-side and survive, a custom filter set
+  is lost on reload. Filters are AND-only. And the fields that are filterable
+  are limited to those computed for the whole universe every poll — see the
+  coverage caveat under [Filter parameters](#filter-parameters).
+- **`rvol_1h` calibration**: the field is correct in *relative* terms — it
+  demonstrably separates a genuine late-session pickup from the U-shaped ramp
+  every stock gets (see Filter parameters). Whether its absolute scale is
+  right hasn't been confirmed on a live session yet: five large caps sampled
+  on one August Friday all read below 1x, which is plausible for a light day
+  but isn't proof. If it sits below 1 for nearly everything during an active
+  session, the expected-volume denominator needs a look.
 - **Momentum alarm**: React app only, not in the Dash analytics app (the
   center-overlay/toggle interaction pattern doesn't translate to Dash's
   page-reload-driven callbacks the same way; the Dash Backtest page does
