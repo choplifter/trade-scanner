@@ -133,12 +133,35 @@ BACKTESTABLE_FIELDS = frozenset(
 )
 
 
-def unsupported_filters(screen) -> list[str]:
-    """Field names in `screen` that history can't reconstruct -- filters and
-    sort key alike. Empty means the screen is fully replayable.
+# At 5-minute resolution the three intraday volume fields become
+# reconstructible -- see app.scanners.intraday_backtest, which rebuilds each
+# symbol's state as of every bar. The other three stay out at any resolution:
+# spread needs historical quotes nothing fetches, float would be today's value
+# on a past date, and is_stale describes a live feed.
+INTRADAY_BACKTESTABLE_FIELDS = BACKTESTABLE_FIELDS | {"volume_1h", "volume_surge", "rvol_1h"}
+
+RESOLUTIONS = ("daily", "intraday")
+
+
+def supported_fields(resolution: str = "daily") -> frozenset:
+    return INTRADAY_BACKTESTABLE_FIELDS if resolution == "intraday" else BACKTESTABLE_FIELDS
+
+
+def unsupported_filters(screen, resolution: str = "daily") -> list[str]:
+    """Field names in `screen` that this resolution can't reconstruct --
+    filters and sort key alike. Empty means the screen is fully replayable.
     """
+    supported = supported_fields(resolution)
     names = [f.field for f in screen.filters] + [screen.sort_by]
-    return sorted({n for n in names if n not in BACKTESTABLE_FIELDS})
+    return sorted({n for n in names if n not in supported})
+
+
+def intraday_would_help(screen) -> list[str]:
+    """Fields the daily path rejects that intraday resolution would accept --
+    so a refusal can tell the user to switch rather than to delete filters
+    they deliberately built a screen around.
+    """
+    return sorted(set(unsupported_filters(screen, "daily")) - set(unsupported_filters(screen, "intraday")))
 
 
 @dataclass

@@ -1,7 +1,12 @@
 import { useState } from "react";
 
 import { BacktestRefusedError, backtestScreen } from "../../api/http";
-import type { BacktestRefusal, Screen, ScreenBacktestResponse } from "../../types/screener";
+import type {
+  BacktestRefusal,
+  BacktestResolution,
+  Screen,
+  ScreenBacktestResponse,
+} from "../../types/screener";
 
 interface Props {
   screen: Screen;
@@ -32,16 +37,21 @@ function signed(value: number | null): string {
 export function ScreenBacktestPanel({ screen, onClose }: Props) {
   const [lookback, setLookback] = useState(180);
   const [horizon, setHorizon] = useState(1);
+  const [resolution, setResolution] = useState<BacktestResolution>("daily");
   const [result, setResult] = useState<ScreenBacktestResponse | null>(null);
   const [refusal, setRefusal] = useState<BacktestRefusal | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const run = () => {
+  const run = (useResolution: BacktestResolution = resolution) => {
     setLoading(true);
     setError(null);
     setRefusal(null);
-    backtestScreen(screen, { lookback_days: lookback, horizon_days: horizon })
+    backtestScreen(screen, {
+      lookback_days: useResolution === "intraday" ? Math.min(lookback, 45) : lookback,
+      horizon_days: horizon,
+      resolution: useResolution,
+    })
       .then((res) => {
         setResult(res);
         setLoading(false);
@@ -74,16 +84,29 @@ export function ScreenBacktestPanel({ screen, onClose }: Props) {
           </select>
         </label>
         <label>
-          Hold
-          <select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
-            {HORIZON_OPTIONS.map((d) => (
-              <option key={d} value={d}>
-                {d}d
-              </option>
-            ))}
+          Resolution
+          <select
+            value={resolution}
+            onChange={(e) => setResolution(e.target.value as BacktestResolution)}
+            title="Daily is fast and covers months. Intraday rebuilds every 5 minutes, which is what makes the 1h volume fields replayable — much heavier, so shorter lookbacks."
+          >
+            <option value="daily">Daily</option>
+            <option value="intraday">Intraday (5m)</option>
           </select>
         </label>
-        <button type="button" onClick={run} disabled={loading}>
+        {resolution === "daily" && (
+          <label>
+            Hold
+            <select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
+              {HORIZON_OPTIONS.map((d) => (
+                <option key={d} value={d}>
+                  {d}d
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button type="button" onClick={() => run()} disabled={loading}>
           {loading ? "Running…" : "Run"}
         </button>
         <button type="button" onClick={onClose}>
@@ -99,6 +122,19 @@ export function ScreenBacktestPanel({ screen, onClose }: Props) {
           <p>
             Can't replay: {refusal.unsupported_fields.join(", ")}. {refusal.reason}
           </p>
+          {refusal.retry_with_intraday.length > 0 && (
+            // The fix is a resolution switch, not deleting the filter the
+            // screen was built around -- so offer the switch directly.
+            <button
+              type="button"
+              onClick={() => {
+                setResolution("intraday");
+                run("intraday");
+              }}
+            >
+              Retry at intraday resolution
+            </button>
+          )}
         </div>
       )}
 
@@ -108,11 +144,24 @@ export function ScreenBacktestPanel({ screen, onClose }: Props) {
         <div className="screen-backtest-result">
           <p className="screener-summary">
             {result.sample_size} picks over {result.lookback_days} days ·{" "}
-            {result.symbols_with_bars}/{result.symbol_count} symbols · {result.horizon_days}-day hold
+            {result.symbols_with_bars}/{result.symbol_count} symbols ·{" "}
+            {result.resolution === "intraday" ? "held to session close" : `${result.horizon_days}-day hold`}
             {result.sample_size < result.min_sample_size && (
               <span className="custom-tab"> · below the n={result.min_sample_size} floor, treat as noise</span>
             )}
           </p>
+
+          {result.replication && result.replication.picks_per_event !== null && (
+            // Every qualifying 5-minute bar is a pick, so one surge can
+            // contribute a dozen near-identical rows. Stated plainly rather
+            // than letting a big sample size be read at face value.
+            <p className="screener-summary">
+              {result.replication.sample_size} picks come from{" "}
+              {result.replication.distinct_symbol_days} distinct symbol-days (
+              {result.replication.picks_per_event}× per event) — consecutive bars during one
+              surge are highly correlated, so the effective sample is nearer the second number.
+            </p>
+          )}
 
           {alpha ? (
             <table className="scanner-table">

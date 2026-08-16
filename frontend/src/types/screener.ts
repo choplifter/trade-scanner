@@ -100,6 +100,7 @@ export interface BucketRow {
 }
 
 export interface ScreenBacktestResponse {
+  resolution: BacktestResolution;
   symbol_count: number;
   symbols_with_bars: number;
   lookback_days: number;
@@ -112,6 +113,8 @@ export interface ScreenBacktestResponse {
   gap_buckets: BucketRow[];
   rvol_buckets: BucketRow[];
   alpha: AlphaRow[];
+  replication?: ReplicationInfo;
+  window_minutes?: number;
 }
 
 /** 422 body when a screen filters on something daily bars can't
@@ -120,8 +123,21 @@ export interface ScreenBacktestResponse {
 export interface BacktestRefusal {
   message: string;
   unsupported_fields: string[];
+  /** Subset of unsupported_fields that intraday resolution *would* handle.
+   * Non-empty means "switch resolution", not "delete these filters". */
+  retry_with_intraday: string[];
   reason: string;
   backtestable_fields: string[];
+}
+
+export type BacktestResolution = "daily" | "intraday";
+
+/** Present only on intraday runs. Every qualifying 5-minute bar is a pick, so
+ * sample_size overstates independent evidence; picks_per_event is how much. */
+export interface ReplicationInfo {
+  sample_size: number;
+  distinct_symbol_days: number;
+  picks_per_event: number | null;
 }
 
 export interface FieldsResponse {

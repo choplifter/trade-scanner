@@ -4,6 +4,7 @@ import type { ScannerBenchmarkResponse } from "../types/scannerBenchmark";
 import type { ScannerHistoryResponse } from "../types/scannerHistory";
 import type {
   BacktestRefusal,
+  BacktestResolution,
   FieldsResponse,
   PresetsResponse,
   Screen,
@@ -117,7 +118,12 @@ export class BacktestRefusedError extends Error {
 
 export async function backtestScreen(
   screen: Screen,
-  options: { lookback_days?: number; horizon_days?: number; max_symbols?: number } = {},
+  options: {
+    lookback_days?: number;
+    horizon_days?: number;
+    max_symbols?: number;
+    resolution?: BacktestResolution;
+  } = {},
 ): Promise<ScreenBacktestResponse> {
   const res = await fetch(`${API_BASE}/screener/backtest`, {
     method: "POST",
