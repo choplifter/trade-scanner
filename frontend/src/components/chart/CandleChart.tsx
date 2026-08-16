@@ -73,6 +73,22 @@ function barToVolume(bar: Bar): HistogramData {
   };
 }
 
+const MIN_SPACING = 3;
+const MAX_SPACING = 10;
+
+// Show as many bars as fit at a readable spacing: fit everything when there's
+// little data (capped at MAX_SPACING so a handful of bars doesn't stretch into
+// oversized candles), or the most recent bars at MIN_SPACING when there's more
+// data than the pane can show at once. Shared by the data effect and the
+// resize handler so the two can't drift apart -- the pane's width is an input
+// either way, so a resize has to recompute this just as a new bar does.
+function visibleLogicalRange(width: number, barCount: number) {
+  if (barCount <= 0 || width <= 0) return null;
+  const spacing = Math.min(MAX_SPACING, Math.max(MIN_SPACING, width / barCount));
+  const visibleCount = Math.min(barCount, Math.max(1, Math.ceil(width / spacing)));
+  return { from: barCount - visibleCount, to: barCount - 1 };
+}
+
 // Chart instance is created once and mutated imperatively via the
 // lightweight-charts API rather than re-rendered through React, since it
 // owns its own canvas and re-creating it per tick would be far too slow for
@@ -85,6 +101,14 @@ export function CandleChart({ bars, vwap, indicators, showIndicators }: CandleCh
   const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
+  // Read by the resize handler, which is subscribed once at mount and so
+  // can't close over the current bars. A ref rather than a dep of the mount
+  // effect, which would rebuild the whole chart on every tick.
+  const barCountRef = useRef(0);
+  // Applying a range can itself change the time scale's width (different
+  // visible bars -> different price labels -> a wider/narrower price scale),
+  // which fires subscribeSizeChange again. This swallows that echo.
+  const applyingRangeRef = useRef(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -150,7 +174,31 @@ export function CandleChart({ bars, vwap, indicators, showIndicators }: CandleCh
     volumeSeriesRef.current = volumeSeries;
     vwapSeriesRef.current = vwapSeries;
 
+    // autoSize above already has lightweight-charts observing the container,
+    // so hook its own size event rather than adding a second ResizeObserver
+    // on the same element -- see .heatmap-container in styles.css for what a
+    // redundant observer feeding back into a layout can cost. Without this,
+    // resizing the pane keeps the old logical range and just stretches the
+    // same bars past MAX_SPACING; a live tick would fix it eventually, but
+    // outside market hours nothing re-runs the data effect at all.
+    const handleSizeChange = () => {
+      if (applyingRangeRef.current) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const range = visibleLogicalRange(container.clientWidth || 1, barCountRef.current);
+      if (!range) return;
+      applyingRangeRef.current = true;
+      chart.timeScale().setVisibleLogicalRange(range);
+      requestAnimationFrame(() => {
+        applyingRangeRef.current = false;
+      });
+    };
+    chart.timeScale().subscribeSizeChange(handleSizeChange);
+
     return () => {
+      // Before remove(), which disposes the time scale -- reaching for
+      // timeScale() afterwards throws.
+      chart.timeScale().unsubscribeSizeChange(handleSizeChange);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -186,21 +234,14 @@ export function CandleChart({ bars, vwap, indicators, showIndicators }: CandleCh
     });
     vwapSeries.setData(vwapPoints);
 
-    // Show as many bars as fit at a readable spacing: fit everything when
-    // there's little data (capped at MAX_SPACING so a handful of bars
-    // doesn't stretch into oversized candles), or the most recent bars at
-    // MIN_SPACING when there's more data than the pane can show at once.
+    barCountRef.current = bars.length;
+
     const container = containerRef.current;
-    if (container && bars.length > 0) {
-      const MIN_SPACING = 3;
-      const MAX_SPACING = 10;
-      const width = container.clientWidth || 1;
-      const spacing = Math.min(MAX_SPACING, Math.max(MIN_SPACING, width / bars.length));
-      const visibleCount = Math.min(bars.length, Math.max(1, Math.ceil(width / spacing)));
-      chartRef.current?.timeScale().setVisibleLogicalRange({
-        from: bars.length - visibleCount,
-        to: bars.length - 1,
-      });
+    if (container) {
+      const range = visibleLogicalRange(container.clientWidth || 1, bars.length);
+      if (range) {
+        chartRef.current?.timeScale().setVisibleLogicalRange(range);
+      }
     }
   }, [bars, vwap]);
 
