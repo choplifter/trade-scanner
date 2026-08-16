@@ -318,13 +318,28 @@ def _result_conditional(column_id: str) -> list[dict]:
     ]
 
 
+def _noise_flag(sample_size: int) -> str:
+    """The under-the-floor warning, defined once for every table on this
+    page. Both the group tables and the bucket tables show it, and they
+    must show the same words for the same floor -- two spellings of one
+    warning reads as two different warnings.
+
+    Bucket tables need this at least as much as group tables do: bucketing
+    splits a sample four ways per view, so tail buckets sit under the floor
+    routinely even when the run as a whole is large. A 30-60% gap bucket
+    with 11 picks and a 72.7% win rate looks like a finding next to the
+    ~49% the big buckets show, and is three picks away from 45%.
+    """
+    return "" if sample_size >= bucket_analysis.MIN_SAMPLE_SIZE else f"noisy (n<{bucket_analysis.MIN_SAMPLE_SIZE})"
+
+
 def _stats_cell(stats: dict) -> dict:
     return {
         "sample_size": stats["sample_size"],
         "win_rate": f"{stats['win_rate']:.1f}%" if stats["win_rate"] is not None else "—",
         "avg_return": _format_pct(stats["avg_return"]),
         "avg_return_num": stats["avg_return"],
-        "flag": "" if stats["sample_size"] >= bucket_analysis.MIN_SAMPLE_SIZE else f"noisy (n<{bucket_analysis.MIN_SAMPLE_SIZE})",
+        "flag": _noise_flag(stats["sample_size"]),
     }
 
 
@@ -360,6 +375,8 @@ _BUCKET_COLUMNS = [
     {"name": "Sample", "id": "sample_size"},
     {"name": "Win Rate", "id": "win_rate"},
     {"name": "Avg Return", "id": "avg_return"},
+    # Same trailing noise flag the group tables carry -- see _noise_flag.
+    {"name": "", "id": "flag"},
 ]
 
 _GROUP_COLUMNS = [
@@ -384,6 +401,7 @@ def _bucket_rows(buckets: list[dict]) -> list[dict]:
             "win_rate": f"{b['win_rate']:.1f}%",
             "avg_return": _format_pct(b["avg_return"]),
             "avg_return_num": b["avg_return"],
+            "flag": _noise_flag(b["sample_size"]),
         }
         for b in buckets
     ]
