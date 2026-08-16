@@ -25,19 +25,42 @@ function pickTime(pick: BacktestPick): number {
   return Math.floor(new Date(iso).getTime() / 1000);
 }
 
+/** Local time, matching the chart — CandleChart formats its axis and
+ * crosshair with Intl.DateTimeFormat(undefined, …), so a pick shown in any
+ * other zone would disagree with the chart it loads. */
+const LOCAL_DATETIME = new Intl.DateTimeFormat(undefined, {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** The viewer's zone, e.g. "GMT+2" — shown once beside the table rather than
+ * on every row, so the times aren't ambiguous the way they were when a local
+ * time sat next to an ET date with neither labelled. */
+const LOCAL_ZONE =
+  new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+    .formatToParts(new Date())
+    .find((part) => part.type === "timeZoneName")?.value ?? "local";
+
 /**
- * Entry label in *market* time, not the viewer's.
+ * Entry label.
  *
- * The backend sends ISO timestamps carrying their own ET offset
- * ("2026-08-14T15:55:00-04:00"), so slicing the string reads ET directly
- * rather than converting. Converting was the bug: a 15:30 ET entry rendered
- * as 21:30 for a CEST viewer, printed next to an ET trading_date, so one
- * label mixed two timezones and announced neither — and made the last hour
- * of a session look like it happened after the close.
+ * Both halves come from the timestamp so the whole label is one timezone.
+ * Deriving the date from `trading_date` instead would reintroduce the
+ * original bug in reverse: that field is the ET *session*, so pairing it
+ * with a local clock time mixes two zones in one string — and for a viewer
+ * far enough east or west, the local date genuinely differs from the
+ * session's.
+ *
+ * A daily pick has no timestamp, only a session, which is inherently an ET
+ * concept and has no meaningful local time of day — so it stays as-is rather
+ * than being converted from a fictitious midnight.
  */
 function pickLabel(pick: BacktestPick): string {
   if (!pick.timestamp) return pick.trading_date;
-  return `${pick.trading_date} ${pick.timestamp.slice(11, 16)}`;
+  return LOCAL_DATETIME.format(new Date(pick.timestamp)).replace(",", "");
 }
 
 const LOOKBACK_OPTIONS = [60, 120, 180, 365];
@@ -243,13 +266,16 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
                 {result.picks_truncated
                   ? `${result.picks.length} picks sampled evenly across the whole period (every statistic above used all ${result.sample_size}).`
                   : `${result.picks.length} picks.`}{" "}
-                Newest first, times in market time (ET). Click one to load its chart at the entry.
+                {result.resolution === "intraday"
+                  ? `Newest first, times in your local timezone (${LOCAL_ZONE}) to match the chart.`
+                  : "Newest first, dated by trading session."}{" "}
+                Click one to load its chart at the entry.
               </p>
               <table className="scanner-table">
                 <thead>
                   <tr>
                     <th>Symbol</th>
-                    <th>Entry (ET)</th>
+                    <th>Entry</th>
                     <th>Gap %</th>
                     <th>RVol</th>
                     {result.resolution === "intraday" && <th>RVol 1h</th>}
