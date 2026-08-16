@@ -11,7 +11,6 @@ import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
-import { ScreenerWidget } from "./components/screener/ScreenerWidget";
 import { useAlarms } from "./hooks/useAlarms";
 import { useDashboardLayout, type WidgetId } from "./hooks/useDashboardLayout";
 import { useMarketConditions } from "./hooks/useMarketConditions";
@@ -45,7 +44,6 @@ export default function App() {
     () => ({
       scanner: <ScannerWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />,
       chart: <ChartWidget symbol={selectedSymbol} />,
-      screener: <ScreenerWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />,
       ideas: <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />,
       benchmark: (
         <ScannerBenchmarkWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
@@ -118,11 +116,7 @@ export default function App() {
           <ResizablePanels
             direction="column"
             storageKey="layout:main-rows"
-            // Three rows now that the screener has its own. A stored
-            // two-element size array no longer matches this default's length,
-            // so ResizablePanels' loadSizes falls back rather than applying
-            // stale sizes -- no storage key change needed.
-            defaultSizes={[0.45, 0.3, 0.25]}
+            defaultSizes={[0.65, 0.35]}
             minSizePx={140}
           >
             <ResizablePanels
@@ -134,7 +128,6 @@ export default function App() {
               {widgets.scanner}
               {widgets.chart}
             </ResizablePanels>
-            {widgets.screener}
             <ResizablePanels
               direction="row"
               storageKey="layout:bottom-row"

@@ -158,6 +158,10 @@ class ScannerEngine:
         self.news_cache = news_cache
         self.momentum_cache = momentum_cache
         self.http_client = http_client
+        # Live user-defined screens, one per connected socket. Set by main.py
+        # after construction (the WS layer owns it) -- None when the engine is
+        # built without a websocket layer at all, e.g. in tests.
+        self.screen_subscriptions = None
         # Supplies the time-of-day denominator for RVOL. Built lazily on the
         # first poll and refreshed daily; until then fraction_at returns 1.0 and
         # RVOL is the plain full-day ratio. See app.market_data.volume_profile.
@@ -610,6 +614,48 @@ class ScannerEngine:
                     self.settings.alarm_momentum_pct_threshold,
                 )
 
+    def _evaluate_screens(self) -> list[tuple[object, list[ScannerRow], dict]]:
+        """Run every connected client's live screen against the current rows.
+
+        Returns (websocket, matched_rows, payload) so run_loop can enrich the
+        rows before the payload is serialized -- the rows in the payload are
+        the same objects, so enrichment lands in what gets sent.
+
+        Imported lazily: app.ws.screen_subscriptions imports the screener,
+        which imports this module, and a module-level import here would close
+        that cycle at import time.
+        """
+        if self.screen_subscriptions is None or not self.screen_subscriptions.any_active():
+            return []
+
+        from app.scanners.screener_service import run_live_screen
+
+        results = []
+        for websocket, screen in self.screen_subscriptions.active():
+            try:
+                rows, meta = run_live_screen(self, self.settings, screen)
+            except Exception:
+                logger.exception("Failed evaluating a live screen")
+                continue
+            results.append((websocket, rows, meta))
+        return results
+
+    async def _broadcast_screens(self, results) -> None:
+        """Serialized here, after run_loop has enriched the rows -- doing it
+        in _evaluate_screens would snapshot them before fundamentals, news
+        and momentum landed.
+        """
+        if not results or self.screen_subscriptions is None:
+            return
+        from app.scanners.screener_service import serialize_screen
+
+        await self.screen_subscriptions.broadcast(
+            [
+                (websocket, {"type": "screen_update", **serialize_screen(rows, meta)})
+                for websocket, rows, meta in results
+            ]
+        )
+
     async def _poll_once(self) -> None:
         # Cheap no-op after the first successful build (daily refresh), and
         # skipped entirely when time-of-day RVOL is disabled.
@@ -807,9 +853,29 @@ class ScannerEngine:
             views = self._build_views()
             await self._record_new_appearances(views)
             await self._write_periodic_snapshots()
-            await self._attach_fundamentals(views)
-            await self._attach_news(views)
-            await self._attach_momentum(views)
+
+            # Evaluate live user screens *before* enrichment so their rows can
+            # be enriched alongside the ranked ones. History recording above
+            # deliberately runs first and only over the three canonical views:
+            # scanner_history is what the drift report, benchmark tracker and
+            # every backtest read, and letting an arbitrary user screen write
+            # into it would corrupt that continuity.
+            screen_results = self._evaluate_screens()
+            enriched = dict(views)
+            if screen_results:
+                # Rows are shared objects, so attaching to them here is what
+                # populates the same rows in the screen payloads below --
+                # which is how a custom screen gets company name, market cap,
+                # short interest and 15m momentum without widening any fetch
+                # to the whole universe. Bounded by the screens' own limits.
+                enriched["_screened"] = [
+                    row for _, rows, _ in screen_results for row in rows
+                ]
+
+            await self._attach_fundamentals(enriched)
+            await self._attach_news(enriched)
+            await self._attach_momentum(enriched)
+            await self._broadcast_screens(screen_results)
             is_fallback = self.is_latest_session_fallback
             for name, rows in views.items():
                 await self.manager.broadcast(

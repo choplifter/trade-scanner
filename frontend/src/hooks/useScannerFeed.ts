@@ -13,13 +13,22 @@ export interface ScannerFeedState {
   isLatestSession: boolean;
 }
 
-export function useScannerFeed(scanner: string): ScannerFeedState {
+/**
+ * Subscribes to a named, server-computed view.
+ *
+ * `null` leaves it unsubscribed and idle -- the unified scanner widget calls
+ * this and useScreenFeed unconditionally (hooks can't be conditional) and
+ * feeds whichever one its active tab doesn't need a null, so only one feed is
+ * ever actually connected.
+ */
+export function useScannerFeed(scanner: string | null): ScannerFeedState {
   const [rows, setRows] = useState<ScannerRow[]>([]);
   const [session, setSession] = useState("closed");
   const [loading, setLoading] = useState(true);
   const [isLatestSession, setIsLatestSession] = useState(false);
 
   useEffect(() => {
+    if (scanner === null) return;
     let cancelled = false;
     setLoading(true);
 

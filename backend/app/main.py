@@ -25,6 +25,7 @@ from app.scanners.history_store import ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
 from app.ws import chart_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
+from app.ws.screen_subscriptions import ScreenSubscriptions
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ async def lifespan(app: FastAPI):
     manager = ConnectionManager()
     app.state.connection_manager = manager
     app.state.stream_manager = StreamManager(clients, manager, settings.max_stream_symbols)
+    # Live user-defined screens. Separate from ConnectionManager because a
+    # screen's result is per-connection, not shareable across a topic --
+    # see app.ws.screen_subscriptions.
+    screen_subscriptions = ScreenSubscriptions()
+    app.state.screen_subscriptions = screen_subscriptions
 
     app.state.anthropic_client = (
         anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -90,6 +96,7 @@ async def lifespan(app: FastAPI):
         momentum_cache,
         fundamentals_client,
     )
+    engine.screen_subscriptions = screen_subscriptions
     app.state.scanner_engine = engine
     bind_dash_state(app)
 

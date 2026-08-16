@@ -1187,3 +1187,33 @@ a.symbol-news-headline {
   min-height: 0;
   overflow: auto;
 }
+
+/* Unified scanner header: preset tabs on the left, filter toggle and
+   table/heatmap switch on the right. Wraps rather than scrolls -- the preset
+   list grows as screens are added, and a horizontally scrolling tab strip
+   hides the ones you added most recently. */
+.scanner-header {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scanner-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.scanner-header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Shown when the active screen no longer matches any preset, i.e. you've
+   edited one. Deliberately not a button -- there's nothing to click, it's a
+   statement about what you're looking at. */
+.custom-tab {
+  font-style: italic;
+  color: var(--text-muted);
+  cursor: default;
+}

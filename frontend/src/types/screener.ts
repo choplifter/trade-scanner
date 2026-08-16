@@ -66,6 +66,12 @@ export interface ScreenResponse {
   derived: Record<string, Record<string, number | null>>;
 }
 
+/** Pushed on every poll tick to whichever socket owns this screen. Same
+ * shape as ScreenResponse plus the discriminator the socket dispatches on. */
+export interface ScreenUpdateMessage extends ScreenResponse {
+  type: "screen_update";
+}
+
 export interface FieldsResponse {
   fields: FieldSpec[];
 }

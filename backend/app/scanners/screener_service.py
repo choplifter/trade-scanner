@@ -45,8 +45,14 @@ def derived_values(engine, rows) -> dict[str, dict]:
     }
 
 
-def screen_live_rows(engine, settings, screen: screener.Screen) -> dict:
-    """Run `screen` against whatever the engine currently holds.
+def run_live_screen(engine, settings, screen: screener.Screen):
+    """Run `screen` against whatever the engine currently holds, returning
+    (matched_rows, meta) with the rows still as ScannerRow *objects*.
+
+    Split from screen_live_rows so the poll loop can enrich those rows --
+    fundamentals, news, momentum -- before anything is serialized. They're
+    shared objects, so enriching them there is what fills those columns in
+    the payload sent to a live screen subscriber.
 
     Applies the same tradability floor the ranked views apply
     (engine._tradable with settings.scanner_min_dollar_volume) *before* any
@@ -60,15 +66,27 @@ def screen_live_rows(engine, settings, screen: screener.Screen) -> dict:
     derived = derived_values(engine, rows)
     result = screener.run_screen(rows, screen, derived)
 
-    return {
+    meta = {
         "session": engine.session,
         "is_latest_session": engine.is_latest_session_fallback,
         "total_matched": result.total_matched,
         "tradable_size": len(rows),
         "universe_size": len(source),
-        "rows": [r.model_dump(mode="json") for r in result.rows],
         # Derived columns travel beside the rows rather than on them: they
         # aren't ScannerRow fields, and folding them in would make the row
         # schema depend on which screen happened to run.
         "derived": result.values,
     }
+    return result.rows, meta
+
+
+def serialize_screen(rows, meta: dict) -> dict:
+    return {**meta, "rows": [r.model_dump(mode="json") for r in rows]}
+
+
+def screen_live_rows(engine, settings, screen: screener.Screen) -> dict:
+    """One-shot screen for the HTTP router and the Dash page, which have no
+    poll loop to enrich rows in and so serialize immediately.
+    """
+    rows, meta = run_live_screen(engine, settings, screen)
+    return serialize_screen(rows, meta)
