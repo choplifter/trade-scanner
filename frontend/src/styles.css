@@ -1260,3 +1260,20 @@ a.symbol-news-headline {
 .screen-backtest-result table {
   margin-top: 6px;
 }
+
+/* Picks table inside the backtest panel. Capped height so a 300-row list
+   doesn't push the live scanner table off screen -- the point of the panel
+   is to sit beside the screen you're looking at, not replace it. */
+.screen-backtest-picks {
+  margin-top: 8px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.screen-backtest-picks tbody tr {
+  cursor: pointer;
+}
+
+.screen-backtest-picks tbody tr:hover {
+  background: var(--surface-hover, rgba(128, 128, 128, 0.12));
+}

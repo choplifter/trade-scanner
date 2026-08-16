@@ -23,7 +23,15 @@ interface CandleChartProps {
   vwap: (number | null)[];
   indicators: IndicatorResult[];
   showIndicators: boolean;
+  /** Unix seconds to scroll into view — a backtest pick's entry time. Null
+   * leaves the chart wherever the user left it. */
+  focusTime?: number | null;
 }
+
+/** How much history/future to show either side of a focused pick. Wide
+ * enough to see what led into the entry and what happened after, narrow
+ * enough that the bar in question is still identifiable. */
+const FOCUS_PADDING_SECONDS = 90 * 60;
 
 function toUnixSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
@@ -93,7 +101,7 @@ function visibleLogicalRange(width: number, barCount: number) {
 // lightweight-charts API rather than re-rendered through React, since it
 // owns its own canvas and re-creating it per tick would be far too slow for
 // live data.
-export function CandleChart({ bars, vwap, indicators, showIndicators }: CandleChartProps) {
+export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -236,6 +244,11 @@ export function CandleChart({ bars, vwap, indicators, showIndicators }: CandleCh
 
     barCountRef.current = bars.length;
 
+    // A focused pick owns the viewport: re-applying the default
+    // right-anchored range here would immediately scroll away from the bar
+    // the user just clicked, on this render and again on every live tick.
+    if (focusTime != null) return;
+
     const container = containerRef.current;
     if (container) {
       const range = visibleLogicalRange(container.clientWidth || 1, bars.length);
@@ -243,7 +256,26 @@ export function CandleChart({ bars, vwap, indicators, showIndicators }: CandleCh
         chartRef.current?.timeScale().setVisibleLogicalRange(range);
       }
     }
-  }, [bars, vwap]);
+  }, [bars, vwap, focusTime]);
+
+  // Scroll a clicked backtest pick into view. Runs after the data effect
+  // above, so the bars it needs are already on the series.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || focusTime == null || bars.length === 0) return;
+
+    const first = toUnixSeconds(bars[0].t);
+    const last = toUnixSeconds(bars[bars.length - 1].t);
+    // Silently doing nothing would look like a broken click. Clamping keeps
+    // the chart pointed at the nearest end of what it actually has, which at
+    // least shows the user the pick is outside the loaded window.
+    const target = Math.min(Math.max(focusTime, first), last);
+
+    chart.timeScale().setVisibleRange({
+      from: Math.max(first, target - FOCUS_PADDING_SECONDS) as UTCTimestamp,
+      to: Math.min(last, target + FOCUS_PADDING_SECONDS) as UTCTimestamp,
+    });
+  }, [focusTime, bars]);
 
   // Separate from the bars/vwap effect above: indicators only change when
   // the symbol changes or the toggle flips, not on every live tick, and

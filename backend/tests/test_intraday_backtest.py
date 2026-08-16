@@ -8,6 +8,7 @@ from app.scanners.backtest import (
     unsupported_filters,
 )
 from app.scanners.intraday_backtest import (
+    benchmark_to_close,
     build_rows_by_timestamp,
     previous_closes,
     replication_factor,
@@ -196,17 +197,42 @@ def test_picks_are_held_to_the_session_close():
     assert round(first["pct_change_since_entry"], 2) == 100.0
 
 
-def test_alpha_is_measured_against_the_same_day_benchmark_move():
+def test_benchmark_is_measured_over_the_same_intraday_window():
+    # SPY 100 -> 110 across the session, so its move *from the first bar* to
+    # the close is +10%, and from the second bar it's 0%. Keying alpha on the
+    # entry bar is what makes those different; a daily close-to-close figure
+    # would wrongly give both entries the same benchmark.
+    spy = _session([100.0, 110.0])
+    to_close = benchmark_to_close(spy)
+    stamps = sorted(to_close)
+    assert round(to_close[stamps[0]], 2) == 10.0
+    assert round(to_close[stamps[1]], 2) == 0.0
+
+
+def test_alpha_uses_the_benchmark_move_from_the_entry_bar():
+    bars = _session([11.0, 22.0])
+    spy = _session([100.0, 110.0])
+    b, avg, prev, curve = _inputs(bars)
+    picks = simulate_intraday_screen(
+        b, avg, prev, curve,
+        screener.Screen(filters=[screener.Filter(field="pct_change", op="gt", value=5)]),
+        0.0, _WINDOW, benchmark_to_close(spy),
+    )
+    first = min(picks, key=lambda p: p["timestamp"])
+    # Entered on the first bar, so the benchmark's own first-bar-to-close move.
+    assert round(first["benchmark_pct_change_since_entry"], 2) == 10.0
+    assert round(first["alpha_vs_benchmark"], 2) == round(first["pct_change_since_entry"] - 10.0, 2)
+
+
+def test_alpha_is_none_when_the_benchmark_has_no_bar_for_that_moment():
     bars = _session([11.0, 22.0])
     b, avg, prev, curve = _inputs(bars)
     picks = simulate_intraday_screen(
         b, avg, prev, curve,
         screener.Screen(filters=[screener.Filter(field="pct_change", op="gt", value=5)]),
-        0.0, _WINDOW, {_DAY: 10.0},
+        0.0, _WINDOW, {},
     )
-    first = min(picks, key=lambda p: p["timestamp"])
-    assert first["benchmark_pct_change_since_entry"] == 10.0
-    assert round(first["alpha_vs_benchmark"], 2) == round(first["pct_change_since_entry"] - 10.0, 2)
+    assert all(p["alpha_vs_benchmark"] is None for p in picks)
 
 
 def test_a_screen_matching_nothing_yields_no_picks():

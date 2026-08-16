@@ -24,12 +24,13 @@ from app.scanners.backtest import (
     _BENCHMARK_SYMBOL,
     _WARMUP_CALENDAR_PADDING_DAYS,
     alpha_by_view,
-    benchmark_returns_by_date,
     fade_risk_by_view,
 )
 from app.scanners.bar_cache import DEFAULT_CACHE_DIR, get_cached_5m_bars_multi
 from app.scanners.intraday_backtest import (
+    benchmark_to_close,
     previous_closes,
+    recent_picks,
     replication_factor,
     simulate_intraday_screen,
 )
@@ -72,11 +73,18 @@ async def run_intraday_backtest(
     daily = await get_daily_bars_multi(
         clients, symbols, lookback_days=lookback_days + _WARMUP_CALENDAR_PADDING_DAYS
     )
-    benchmark_daily = (
-        await get_daily_bars_multi(
-            clients, [_BENCHMARK_SYMBOL], lookback_days=lookback_days + _WARMUP_CALENDAR_PADDING_DAYS
-        )
-    ).get(_BENCHMARK_SYMBOL) or []
+    # The benchmark's own 5-minute bars, so alpha spans the same minutes each
+    # pick does. DEFAULT_REFERENCE_SYMBOL and _BENCHMARK_SYMBOL are both SPY,
+    # so this is normally the fetch already made above rather than a new one.
+    benchmark_intraday = (
+        reference.get(_BENCHMARK_SYMBOL)
+        if _BENCHMARK_SYMBOL == DEFAULT_REFERENCE_SYMBOL
+        else (
+            await get_cached_5m_bars_multi(
+                clients, [_BENCHMARK_SYMBOL], lookback_days, cache_dir=cache_dir
+            )
+        ).get(_BENCHMARK_SYMBOL)
+    ) or []
 
     window = timedelta(minutes=settings.scanner_volume_surge_window_minutes)
     picks = simulate_intraday_screen(
@@ -87,10 +95,7 @@ async def run_intraday_backtest(
         screen,
         settings.scanner_min_dollar_volume,
         window,
-        # Entries are held to the session close, so the benchmark's own
-        # same-day move is the right comparison -- horizon_days=1 on daily
-        # bars is close-to-close, which is what a to-the-close hold spans.
-        benchmark_returns_by_date(benchmark_daily, 1),
+        benchmark_to_close(benchmark_intraday),
     )
 
     return {
@@ -122,5 +127,7 @@ async def run_intraday_backtest(
             "threshold": formulas._FADE_RISK_RVOL,
             "views": fade_risk_by_view(picks, _VIEWS),
         },
-        "picks": picks,
+        # Capped for transport -- every stat above used the full list.
+        "picks": recent_picks(picks),
+        "picks_truncated": len(picks) > len(recent_picks(picks)),
     }

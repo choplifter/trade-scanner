@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getScreenerFields, getScreenerPresets } from "../../api/http";
 import { useScannerFeed } from "../../hooks/useScannerFeed";
 import { useScreenFeed } from "../../hooks/useScreenFeed";
-import type { FieldSpec, Preset, Screen } from "../../types/screener";
+import type { ChartFocus, FieldSpec, Preset, Screen } from "../../types/screener";
 import { ScannerFilterBar } from "../screener/ScannerFilterBar";
 import { ScreenBacktestPanel } from "../screener/ScreenBacktestPanel";
 import { ScannerHeatmap } from "./ScannerHeatmap";
@@ -12,6 +12,8 @@ import { ScannerTable } from "./ScannerTable";
 interface ScannerWidgetProps {
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
+  /** A backtest pick was clicked: load its chart at the entry time. */
+  onSelectPick: (focus: ChartFocus) => void;
 }
 
 /**
@@ -39,7 +41,7 @@ const DEFAULT_SCREEN: Screen = {
   limit: 50,
 };
 
-export function ScannerWidget({ selectedSymbol, onSelectSymbol }: ScannerWidgetProps) {
+export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: ScannerWidgetProps) {
   const [fields, setFields] = useState<FieldSpec[]>([]);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [activePreset, setActivePreset] = useState<string | null>(null);
@@ -158,7 +160,11 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol }: ScannerWidgetP
       )}
 
       {showBacktest && !frozenActive && (
-        <ScreenBacktestPanel screen={screen} onClose={() => setShowBacktest(false)} />
+        <ScreenBacktestPanel
+          screen={screen}
+          onClose={() => setShowBacktest(false)}
+          onSelectPick={onSelectPick}
+        />
       )}
 
       {!loading && (

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { TradeIdeasWidget } from "./components/ai/TradeIdeasWidget";
@@ -11,6 +11,7 @@ import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
+import type { ChartFocus } from "./types/screener";
 import { useAlarms } from "./hooks/useAlarms";
 import { useDashboardLayout, type WidgetId } from "./hooks/useDashboardLayout";
 import { useMarketConditions } from "./hooks/useMarketConditions";
@@ -31,6 +32,25 @@ const CONDITIONS_LABEL: Record<string, string> = {
 
 export default function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  // Where the chart should jump to, set only by clicking a backtest pick.
+  const [chartFocus, setChartFocus] = useState<ChartFocus | null>(null);
+
+  // Picking a symbol any other way clears the focus, so the chart returns to
+  // its normal live view instead of staying pinned to some earlier pick's
+  // timestamp.
+  const selectSymbol = useCallback((symbol: string) => {
+    setChartFocus(null);
+    setSelectedSymbol(symbol);
+  }, []);
+
+  const selectPick = useCallback((focus: ChartFocus) => {
+    setSelectedSymbol(focus.symbol);
+    // A new object identity every time on purpose: clicking the same pick
+    // twice should re-centre the chart, which an equal-but-identical focus
+    // wouldn't trigger.
+    setChartFocus({ ...focus });
+  }, []);
+
   const session = useMarketSession();
   const conditions = useMarketConditions();
   const alarms = useAlarms();
@@ -42,8 +62,14 @@ export default function App() {
   // instance and restart the analytics widgets' poll intervals.
   const widgets = useMemo<Record<WidgetId, ReactNode>>(
     () => ({
-      scanner: <ScannerWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />,
-      chart: <ChartWidget symbol={selectedSymbol} />,
+      scanner: (
+        <ScannerWidget
+          selectedSymbol={selectedSymbol}
+          onSelectSymbol={selectSymbol}
+          onSelectPick={selectPick}
+        />
+      ),
+      chart: <ChartWidget symbol={selectedSymbol} focus={chartFocus} />,
       ideas: <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />,
       benchmark: (
         <ScannerBenchmarkWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
@@ -52,7 +78,7 @@ export default function App() {
         <ScannerHistoryWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
     }),
-    [selectedSymbol],
+    [selectedSymbol, chartFocus, selectSymbol, selectPick],
   );
 
   return (

@@ -2,8 +2,10 @@ import { useState } from "react";
 
 import { BacktestRefusedError, backtestScreen } from "../../api/http";
 import type {
+  BacktestPick,
   BacktestRefusal,
   BacktestResolution,
+  ChartFocus,
   Screen,
   ScreenBacktestResponse,
 } from "../../types/screener";
@@ -11,6 +13,22 @@ import type {
 interface Props {
   screen: Screen;
   onClose: () => void;
+  /** Clicking a pick loads that symbol's chart at the entry time. */
+  onSelectPick: (focus: ChartFocus) => void;
+}
+
+/** Entry times are ISO. An intraday pick has a real time of day; a daily one
+ * only knows its session, so it anchors at midnight UTC of that date — enough
+ * for the chart's nearest-bar search on a daily series. */
+function pickTime(pick: BacktestPick): number {
+  const iso = pick.timestamp ?? `${pick.trading_date}T00:00:00Z`;
+  return Math.floor(new Date(iso).getTime() / 1000);
+}
+
+function pickLabel(pick: BacktestPick): string {
+  if (!pick.timestamp) return pick.trading_date;
+  const d = new Date(pick.timestamp);
+  return `${pick.trading_date} ${d.toTimeString().slice(0, 5)}`;
 }
 
 const LOOKBACK_OPTIONS = [60, 120, 180, 365];
@@ -35,7 +53,7 @@ function signed(value: number | null): string {
  * positive; only the benchmark-relative number says whether the *screen*
  * contributed anything.
  */
-export function ScreenBacktestPanel({ screen, onClose }: Props) {
+export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
   const [lookback, setLookback] = useState(180);
   const [horizon, setHorizon] = useState(1);
   const [resolution, setResolution] = useState<BacktestResolution>("daily");
@@ -209,6 +227,61 @@ export function ScreenBacktestPanel({ screen, onClose }: Props) {
             market over the same window — the second is the one that says whether the screen added
             anything. Today's universe is applied to past dates, so results carry survivorship bias.
           </p>
+
+          {result.picks.length > 0 && (
+            <div className="screen-backtest-picks">
+              <p className="screener-summary">
+                {result.picks_truncated
+                  ? `Most recent ${result.picks.length} picks (every statistic above used all ${result.sample_size}).`
+                  : `${result.picks.length} picks.`}{" "}
+                Click one to load its chart at the entry.
+              </p>
+              <table className="scanner-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Entry</th>
+                    <th>Gap %</th>
+                    <th>RVol</th>
+                    {result.resolution === "intraday" && <th>RVol 1h</th>}
+                    <th>To close</th>
+                    <th>Alpha</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.picks.map((pick) => (
+                    <tr
+                      key={`${pick.symbol}|${pick.timestamp ?? pick.trading_date}`}
+                      onClick={() =>
+                        onSelectPick({
+                          symbol: pick.symbol,
+                          time: pickTime(pick),
+                          // Intraday entries need an intraday chart to be
+                          // visible at all; a daily pick would be a sliver.
+                          timeframeKey: pick.timestamp ? "5m" : "1D",
+                        })
+                      }
+                      title={`Load ${pick.symbol} at ${pickLabel(pick)}`}
+                    >
+                      <td>{pick.symbol}</td>
+                      <td>{pickLabel(pick)}</td>
+                      <td>{signed(pick.entry_pct_change)}</td>
+                      <td>{pick.entry_rvol.toFixed(2)}x</td>
+                      {result.resolution === "intraday" && (
+                        <td>{pick.entry_rvol_1h == null ? "—" : `${pick.entry_rvol_1h.toFixed(2)}x`}</td>
+                      )}
+                      <td className={pick.pct_change_since_entry >= 0 ? "delta-up" : "delta-down"}>
+                        {signed(pick.pct_change_since_entry)}
+                      </td>
+                      <td className={(pick.alpha_vs_benchmark ?? 0) >= 0 ? "delta-up" : "delta-down"}>
+                        {signed(pick.alpha_vs_benchmark)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useChartFeed } from "../../hooks/useChartFeed";
+import type { ChartFocus } from "../../types/screener";
 import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
@@ -9,12 +10,24 @@ import { SymbolInfoPanel } from "./SymbolInfoPanel";
 
 interface ChartWidgetProps {
   symbol: string | null;
+  /** Set when a backtest pick is clicked: jump to this entry and show it at
+   * a resolution where it's visible. */
+  focus?: ChartFocus | null;
 }
 
 const DEFAULT_TIMEFRAME_KEY = "5m";
 
-export function ChartWidget({ symbol }: ChartWidgetProps) {
+export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   const [timeframeKey, setTimeframeKey] = useState(DEFAULT_TIMEFRAME_KEY);
+
+  // A pick carries the resolution that makes it legible -- a 10:35 intraday
+  // entry means nothing on a daily chart, and a daily pick is a sliver on a
+  // 5m one. Switching here rather than in the panel keeps the timeframe
+  // control the single owner of that state, so the user can still change it
+  // afterwards and stay changed.
+  useEffect(() => {
+    if (focus) setTimeframeKey(focus.timeframeKey);
+  }, [focus]);
   // Off by default -- these are reference lines, not something every chart
   // view needs cluttered onto it.
   const [showIndicators, setShowIndicators] = useState(false);
@@ -118,6 +131,10 @@ export function ChartWidget({ symbol }: ChartWidgetProps) {
             vwap={displayed.vwap}
             indicators={displayed.indicators}
             showIndicators={showIndicators}
+            // Only honour the focus while it still refers to the symbol on
+            // screen; a stale one would drag the chart to an unrelated time
+            // after the user clicks a different row.
+            focusTime={focus && focus.symbol === symbol ? focus.time : null}
           />
         )}
       </div>

@@ -115,6 +115,37 @@ export interface ScreenBacktestResponse {
   alpha: AlphaRow[];
   replication?: ReplicationInfo;
   window_minutes?: number;
+  picks: BacktestPick[];
+  /** True when more picks matched than were sent. Every statistic above was
+   * computed over the full set server-side; only this list is capped. */
+  picks_truncated: boolean;
+}
+
+export interface BacktestPick {
+  symbol: string;
+  trading_date: string;
+  view: string;
+  /** ISO entry time. Intraday runs only — a daily pick has no time of day,
+   * just the session it belongs to. */
+  timestamp?: string;
+  entry_pct_change: number;
+  entry_rvol: number;
+  entry_rvol_1h?: number | null;
+  entry_dollar_volume: number;
+  is_shaved_top: boolean;
+  pct_change_since_entry: number;
+  benchmark_pct_change_since_entry: number | null;
+  alpha_vs_benchmark: number | null;
+}
+
+/** What the chart should jump to when a pick is clicked. */
+export interface ChartFocus {
+  symbol: string;
+  /** Unix seconds. */
+  time: number;
+  /** Which chart timeframe makes the pick visible: a 10:35 entry is
+   * meaningless on a daily chart, and a daily pick is lost on a 5m one. */
+  timeframeKey: string;
 }
 
 /** 422 body when a screen filters on something daily bars can't

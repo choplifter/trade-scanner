@@ -531,6 +531,7 @@ async def run_backtest(
             "views": fade_risk_by_view(picks, views),
         },
         "min_sample_size": bucket_analysis.MIN_SAMPLE_SIZE,
+        "picks_truncated": False,
         # Raw per-pick rows, alongside the buckets above -- callers that
         # want to list individual wins/losses (see the Dash backtest page)
         # can use this directly instead of re-deriving it from bars.

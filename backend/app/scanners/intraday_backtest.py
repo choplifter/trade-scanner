@@ -188,6 +188,28 @@ def build_rows_by_timestamp(
     return rows_by_ts, exit_price
 
 
+def benchmark_to_close(benchmark_bars: list) -> dict[datetime, float]:
+    """{bar_timestamp: the benchmark's % move from that bar to its own
+    session close}.
+
+    Alpha has to be measured over the *same* window as the pick. A pick
+    entered at 14:35 and held to the close spans 14:35-16:00, so comparing it
+    against SPY's daily close-to-close move -- which is the previous session's
+    close to this one's, an almost entirely different window -- would be
+    wrong, not merely approximate. Built from the benchmark's own 5-minute
+    bars, which the runner already fetches for the volume profile.
+    """
+    result: dict[datetime, float] = {}
+    for trading_date, day_bars in _session_days(benchmark_bars).items():
+        if not day_bars:
+            continue
+        session_close = day_bars[-1].close
+        for bar in day_bars:
+            if bar.close > 0:
+                result[bar.timestamp] = (session_close - bar.close) / bar.close * 100
+    return result
+
+
 def simulate_intraday_screen(
     bars_by_symbol: dict[str, list],
     avg_vol_by_symbol_date: dict[str, dict[date, float]],
@@ -196,7 +218,7 @@ def simulate_intraday_screen(
     screen,
     min_dollar_volume: float,
     window: timedelta,
-    benchmark_returns: dict[date, float] | None = None,
+    benchmark_to_close_by_ts: dict[datetime, float] | None = None,
 ) -> list[dict]:
     """One pick per (symbol, bar) the screen matches, held to that session's
     close.
@@ -227,7 +249,11 @@ def simulate_intraday_screen(
             if close is None or row.last_price <= 0:
                 continue
             pct_since_entry = (close - row.last_price) / row.last_price * 100
-            benchmark_pct = benchmark_returns.get(trading_date) if benchmark_returns else None
+            # Keyed on the entry *bar*, so the benchmark spans exactly the
+            # same minutes the pick does.
+            benchmark_pct = (
+                benchmark_to_close_by_ts.get(timestamp) if benchmark_to_close_by_ts else None
+            )
             picks.append(
                 {
                     "symbol": row.symbol,
@@ -247,6 +273,18 @@ def simulate_intraday_screen(
                 }
             )
     return picks
+
+
+def recent_picks(picks: list[dict], limit: int = 300) -> list[dict]:
+    """The most recent `limit` picks, newest first, for display.
+
+    Every aggregate in the report is computed over the *full* pick list
+    server-side; this only bounds what crosses the wire. An intraday run
+    routinely produces thousands of picks -- one real run made 6,818 -- and
+    shipping all of them would dwarf the report they belong to for a table
+    nobody scrolls to the end of.
+    """
+    return sorted(picks, key=lambda p: p.get("timestamp") or p["trading_date"], reverse=True)[:limit]
 
 
 def replication_factor(picks: list[dict]) -> dict:
