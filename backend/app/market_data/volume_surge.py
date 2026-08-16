@@ -33,6 +33,7 @@ from datetime import datetime, timedelta
 from app.market_data.bars import MOMENTUM_BAR_MINUTES
 from app.market_data.momentum import is_regular_session_bar, same_trading_day
 from app.market_data.volume_profile import fraction_at
+from app.services.market_clock import ET, trading_hours_for
 
 DEFAULT_WINDOW = timedelta(minutes=60)
 # A bar's timestamp is the start of its interval, so the window that "ends
@@ -71,17 +72,52 @@ def window_volume(bars: list, start: datetime, end: datetime, reference) -> floa
     )
 
 
-def _anchor(bars: list):
+def is_green(bar) -> bool:
+    """Long side only, matching formulas.is_momentum_alert.
+
+    A volume surge on a red bar is a real event but a different setup --
+    distribution rather than accumulation -- and this scanner is long-biased
+    throughout. Reporting one number for both would mean a screen for
+    "volume accelerating" silently returned the names being dumped alongside
+    the ones being bought.
+    """
+    return bar.close > bar.open
+
+
+def _session_open(bar) -> datetime | None:
+    hours = trading_hours_for(bar.timestamp.astimezone(ET).date())
+    return hours[0] if hours else None
+
+
+def _anchor(bars: list, window: timedelta, require_prior: bool):
     """(reference_bar, window_end) or None -- the single place the "now"
-    anchor and its half-open right edge are derived, so the two public
-    entry points can't drift apart on the boundary.
+    anchor, its half-open right edge, and the warmup rules are derived, so
+    the two public entry points can't drift apart on any of them.
+
+    Returns None unless the trailing window fits entirely inside the session,
+    i.e. at least `window` has elapsed since the open. Before that the
+    numerator is a partial window while the denominator is a whole one, which
+    understates the rate by up to 12x at 09:35 -- worse than useless, since
+    it reads as "unusually quiet" during the busiest hour of the day.
+
+    `require_prior` additionally demands a full *previous* window inside the
+    session, which volume_surge needs and rvol_1h doesn't: comparing against
+    a half-empty prior hour inflates the ratio exactly when the session is
+    youngest.
     """
     reference = latest_session_bar(bars)
-    if reference is None:
+    if reference is None or not is_green(reference):
         return None
     # The anchor bar's own interval counts as part of the recent window, so
     # the window ends at the bar's end, not its start.
-    return reference, reference.timestamp + _BAR_LENGTH
+    end = reference.timestamp + _BAR_LENGTH
+    open_at = _session_open(reference)
+    if open_at is None:
+        return None
+    needed = 2 * window if require_prior else window
+    if end - needed < open_at:
+        return None
+    return reference, end
 
 
 def trailing_windows(bars: list, window: timedelta = DEFAULT_WINDOW):
@@ -92,7 +128,9 @@ def trailing_windows(bars: list, window: timedelta = DEFAULT_WINDOW):
     the session there is no "right now" to measure, the same stance
     MomentumCache takes for the 15-minute momentum figure.
     """
-    anchored = _anchor(bars)
+    # require_prior: a surge ratio needs a *complete* previous window, so it
+    # only becomes measurable two windows into the session, not one.
+    anchored = _anchor(bars, window, require_prior=True)
     if anchored is None:
         return None, None
     reference, end = anchored
@@ -139,7 +177,7 @@ def windowed_rvol(
     well as rise and says something about now rather than about the whole
     day so far.
     """
-    anchored = _anchor(bars)
+    anchored = _anchor(bars, window, require_prior=False)
     if anchored is None:
         return None
     reference, end = anchored

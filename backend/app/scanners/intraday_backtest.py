@@ -156,8 +156,21 @@ def build_rows_by_timestamp(
                 prior = prefix[recent_start] - prefix[prior_start]
 
                 window_end = bar.timestamp + _BAR_LENGTH
+                # Same warmup and direction rules as the live field
+                # (volume_surge._anchor), or a backtest would validate a
+                # signal the scanner never actually emits:
+                #  - a full trailing window must fit inside the session, else
+                #    a partial numerator is divided by a whole-window
+                #    denominator and reads ~12x too quiet at 09:35;
+                #  - volume_surge additionally needs a complete *prior*
+                #    window, so it starts one hour later still;
+                #  - long side only, matching is_momentum_alert.
+                green = bar.close > bar.open
+                has_full_window = i + 1 >= bars_per_window
+                has_full_prior = i + 1 >= 2 * bars_per_window
+
                 expected = None
-                if curve:
+                if curve and green and has_full_window:
                     share = fraction_at(curve, window_end) - fraction_at(curve, window_end - window)
                     expected = avg_vol * share if share > 0 else None
 
@@ -176,11 +189,10 @@ def build_rows_by_timestamp(
                         is_lod=formulas.is_lod(bar.close, running_low),
                         is_fade_risk=formulas.is_fade_risk(rvol),
                         is_shaved_top=is_shaved_top(bar.open, bar.high, bar.low, bar.close),
-                        volume_1h=recent,
-                        # Only meaningful once a full prior window exists;
-                        # before that the "previous hour" is a partial session
-                        # and the ratio would flatter every morning bar.
-                        volume_surge=(recent / prior if prior > 0 and prior_start < recent_start else None),
+                        volume_1h=recent if has_full_window else None,
+                        volume_surge=(
+                            recent / prior if green and has_full_prior and prior > 0 else None
+                        ),
                         rvol_1h=(recent / expected if expected else None),
                     )
                 )

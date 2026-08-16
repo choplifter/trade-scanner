@@ -38,10 +38,23 @@ class _Bar:
             self.low = self.close
 
 
-def _session(closes: list[float], volume: float = 100_000.0, start: time = time(9, 30), day: date = _DAY):
+def _session(
+    closes: list[float],
+    volume: float = 100_000.0,
+    start: time = time(9, 30),
+    day: date = _DAY,
+    green: bool = True,
+):
+    """Green by default: the volume-rate fields are long-only, so a flat bar
+    would null them and most fixtures would test nothing."""
     first = datetime.combine(day, start, tzinfo=ET)
     return [
-        _Bar(volume=volume, close=c, timestamp=first + timedelta(minutes=5 * i))
+        _Bar(
+            volume=volume,
+            close=c,
+            open=c - 1 if green else c + 1,
+            timestamp=first + timedelta(minutes=5 * i),
+        )
         for i, c in enumerate(closes)
     ]
 
@@ -131,16 +144,32 @@ def test_rows_are_skipped_without_a_warmed_up_baseline_or_prev_close():
     assert build_rows_by_timestamp({"AAA": bars}, {"AAA": {_DAY: 1.0}}, {}, _FLAT_CURVE, _WINDOW)[0] == {}
 
 
-def test_volume_surge_is_none_until_a_full_prior_window_exists():
-    # 13 bars = just over one 60-minute window, so the earliest bars have no
-    # complete previous hour to compare against.
-    bars = _session([10.0] * 13)
+def test_volume_fields_warm_up_the_same_way_the_live_field_does():
+    # 25 bars from 09:30 -> 09:30..11:30. volume_1h needs one full window
+    # (12 bars, from 10:30); volume_surge needs two (24 bars, from 11:30).
+    # Matching volume_surge._anchor exactly, or the backtest would validate
+    # a signal the live scanner never emits.
+    bars = _session([10.0] * 25)
     rows_by_ts, _ = build_rows_by_timestamp(
-        {"AAA": bars}, {"AAA": {_DAY: 1_000_000.0}}, {"AAA": {_DAY: 10.0}}, _FLAT_CURVE, _WINDOW
+        {"AAA": bars}, {"AAA": {_DAY: 1_000_000.0}}, {"AAA": {_DAY: 9.0}}, _FLAT_CURVE, _WINDOW
     )
     ordered = [rows_by_ts[ts][0] for ts in sorted(rows_by_ts)]
-    assert ordered[0].volume_surge is None
-    assert ordered[-1].volume_surge is not None
+
+    assert ordered[0].volume_1h is None
+    assert ordered[11].volume_1h is not None
+    assert ordered[11].volume_surge is None
+    assert ordered[23].volume_surge is not None
+
+
+def test_volume_fields_are_long_only():
+    red = _session([10.0] * 25, green=False)
+    rows_by_ts, _ = build_rows_by_timestamp(
+        {"AAA": red}, {"AAA": {_DAY: 1_000_000.0}}, {"AAA": {_DAY: 11.0}}, _FLAT_CURVE, _WINDOW
+    )
+    ordered = [rows_by_ts[ts][0] for ts in sorted(rows_by_ts)]
+    # Warmed up by bar 24, but red -- so no surge reading at all.
+    assert ordered[-1].volume_surge is None
+    assert ordered[-1].rvol_1h is None
 
 
 # --- screening ----------------------------------------------------------------

@@ -22,12 +22,26 @@ class _Bar:
     volume: float
     timestamp: datetime
     close: float = 10.0
+    # Green by default (close > open): the fields are long-only, so a flat
+    # bar would make every fixture return None and test nothing.
+    open: float = 9.0
+    high: float = 10.0
+    low: float = 9.0
 
 
-def _bars(start: time, count: int, volume: float, day: date = _DAY) -> list[_Bar]:
+def _bars(
+    start: time, count: int, volume: float, day: date = _DAY, green: bool = True
+) -> list[_Bar]:
     """`count` consecutive 5-minute bars from `start` ET on `day`."""
     first = datetime.combine(day, start, tzinfo=ET)
-    return [_Bar(volume=volume, timestamp=first + timedelta(minutes=5 * i)) for i in range(count)]
+    return [
+        _Bar(
+            volume=volume,
+            timestamp=first + timedelta(minutes=5 * i),
+            open=9.0 if green else 11.0,
+        )
+        for i in range(count)
+    ]
 
 
 # Flat curve: every clock time is 50% of the day done, so any window's
@@ -39,6 +53,10 @@ _FLAT_CURVE = [(time(0, 0), 0.5)]
 # 100% by 16:00 -- so the final hour alone is 55% of the day.
 _U_CURVE = [
     (time(9, 30), 0.02),
+    # Needed so the first measurable window (09:30-10:30) has a non-zero
+    # share; without a point inside it, expected volume is 0 and every
+    # morning reading is None for the wrong reason.
+    (time(10, 30), 0.06),
     (time(11, 0), 0.10),
     (time(14, 0), 0.25),
     (time(15, 0), 0.45),
@@ -73,10 +91,10 @@ def test_window_volume_excludes_premarket_and_other_days():
 
 
 def test_recent_window_includes_the_anchor_bars_own_interval():
-    # Twelve bars 15:00-15:55. The last is stamped 15:55 and covers
+    # Twelve bars 15:00-15:55, late enough that both windows fit the session. The last is stamped 15:55 and covers
     # 15:55-16:00, so a 60-minute window ending at 16:00 must contain all of
     # them -- an off-by-one on the half-open edge would drop it.
-    bars = _bars(time(15, 0), 12, 100.0)
+    bars = _bars(time(13, 0), 36, 100.0)
     recent, _ = trailing_windows(bars, _WINDOW)
     assert recent == 1200.0
 
@@ -155,3 +173,44 @@ def test_the_u_shape_is_exactly_what_separates_the_two_metrics():
     # ...but is exactly average for the time of day. Screening on the first
     # number near the close would return most of the market.
     assert round(normalized, 4) == 1.0
+
+
+# --- warmup and direction rules ------------------------------------------------
+
+
+def test_no_reading_until_a_full_window_has_elapsed_since_the_open():
+    """At 09:35 a 5-minute numerator would be divided by a whole hour's
+    expected volume, reading ~12x too quiet during the busiest hour of the
+    day. None is the honest answer until 10:30."""
+    early = _bars(time(9, 30), 3, 100_000.0)  # 09:30-09:45
+    assert windowed_rvol(early, 1_000_000.0, _U_CURVE, _WINDOW) is None
+
+    # 09:30 + 12 bars = 10:30, the first moment a full hour fits.
+    warmed = _bars(time(9, 30), 12, 100_000.0)
+    assert windowed_rvol(warmed, 1_000_000.0, _U_CURVE, _WINDOW) is not None
+
+
+def test_surge_ratio_needs_two_full_windows_not_one():
+    # A complete previous hour only exists from 11:30, an hour after
+    # rvol_1h becomes available -- comparing against a half-empty prior
+    # window would inflate the ratio exactly when the session is youngest.
+    one_hour = _bars(time(9, 30), 12, 100.0)
+    assert trailing_windows(one_hour, _WINDOW) == (None, None)
+
+    two_hours = _bars(time(9, 30), 24, 100.0)
+    recent, prior = trailing_windows(two_hours, _WINDOW)
+    assert recent == 1200.0
+    assert prior == 1200.0
+
+
+def test_both_metrics_are_long_only():
+    red = _bars(time(13, 0), 36, 100.0, green=False)
+    assert trailing_windows(red, _WINDOW) == (None, None)
+    assert windowed_rvol(red, 1_000_000.0, _U_CURVE, _WINDOW) is None
+
+
+def test_direction_is_judged_on_the_anchor_bar_alone():
+    # Red run, then a green bar: the reading is about what is happening now,
+    # so the latest bar decides.
+    bars = _bars(time(13, 0), 35, 100.0, green=False) + _bars(time(15, 55), 1, 100.0)
+    assert windowed_rvol(bars, 1_000_000.0, _U_CURVE, _WINDOW) is not None
