@@ -195,6 +195,20 @@ backend on port 8000, so both must be running.
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
   for the scanner benchmark, scanner match history, cross-symbol
   correlation/comparison, and seasonality.
+- **Two layout modes** (React app), switched by the header's **Layout:
+  Panels / Grid** toggle and remembered across reloads: **Panels** is the
+  default nested-splitter layout (drag the splitters to resize fixed slots),
+  and **Grid** makes all five widgets freely repositionable -- drag a widget
+  by its header to move it, drag its bottom-right corner to resize, and
+  neighbours compact out of the way (`react-grid-layout`, wrapped by
+  `frontend/src/components/layout/DashboardGrid.tsx`). A **Reset** button
+  restores the default arrangement, which deliberately mirrors the Panels
+  layout so switching modes changes nothing until you actually drag. Grid
+  cells are keyed by stable widget id rather than position, so moving a
+  widget never remounts it -- the chart keeps its zoom and the analytics
+  widgets don't restart their poll timers. Row height is derived from the
+  measured viewport (12 rows) rather than fixed, so the default layout fills
+  the window exactly; drag widgets past the bottom and the grid scrolls.
 - Session badge (Premarket / Market Open / After Hours / Closed) in the
   header, computed from the NYSE trading calendar.
 - **Market-conditions traffic light** (needs `FMP_API_KEY`): a red/yellow/
@@ -240,9 +254,7 @@ backend on port 8000, so both must be running.
   bulk file, which in practice runs noticeably behind FINRA's advertised
   publish schedule -- expect it to reflect a settlement date roughly 2-4
   weeks old, not this week's.
-- **Multi-widget draggable grid (React app), watchlists**: roadmap items,
-  not built yet -- panels resize (drag the splitters) but aren't
-  freely repositionable.
+- **Watchlists**: roadmap item, not built yet.
 - **Momentum alarm**: React app only, not in the Dash analytics app (the
   center-overlay/toggle interaction pattern doesn't translate to Dash's
   page-reload-driven callbacks the same way; the Dash Backtest page does

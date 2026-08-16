@@ -187,7 +187,9 @@ body {
   gap: 6px;
 }
 
-.alarms-toggle {
+.alarms-toggle,
+.layout-mode-toggle,
+.layout-reset-button {
   display: inline-flex;
   align-items: center;
   font-size: 12px;
@@ -200,11 +202,14 @@ body {
   cursor: pointer;
 }
 
-.alarms-toggle:hover {
+.alarms-toggle:hover,
+.layout-mode-toggle:hover,
+.layout-reset-button:hover {
   background: var(--row-hover);
 }
 
-.alarms-toggle[aria-pressed="true"] {
+.alarms-toggle[aria-pressed="true"],
+.layout-mode-toggle[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -986,4 +991,102 @@ a.symbol-news-headline {
 
 .performance-table tbody tr[aria-selected="true"] {
   background: var(--row-selected);
+}
+
+/* ---- Draggable widget grid (DashboardGrid) ------------------------------
+   The opt-in alternative to ResizablePanels: widgets are freely
+   repositionable rather than locked into fixed slots. react-grid-layout's
+   own stylesheet is imported first (see main.tsx), so everything below
+   overrides it. */
+
+.layout-mode-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.layout-reset-button {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.dashboard-grid {
+  height: 100%;
+  min-height: 0;
+  /* A layout dragged taller than GRID_ROWS scrolls rather than clipping.
+     Safe despite the heatmap's ResizeObserver <-> overflow:auto feedback
+     hazard (see .heatmap-container) because that container clips its own
+     subpixel overflow before it can ever reach this ancestor. */
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Reproduces .resizable-panel's contract exactly -- .widget is
+   `display:flex; flex:1`, so it only fills a cell whose parent is a flex
+   column, and the min-height:0 is what lets .widget-body's overflow:auto
+   engage instead of the content forcing the cell taller. */
+.grid-cell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* The header is the drag handle (see DashboardGrid's dragConfig), so signal
+   that -- but only in grid mode, since it does nothing in panel mode. */
+.dashboard-grid .widget-header {
+  cursor: grab;
+  user-select: none;
+}
+
+.dashboard-grid .react-draggable-dragging .widget-header {
+  cursor: grabbing;
+}
+
+/* Kill the library's cell transition. A cell animating its size drives
+   ScannerHeatmap's ResizeObserver frame by frame, which is exactly the
+   oscillation .heatmap-container documents; snapping instead avoids it and
+   keeps dense tables from smearing mid-drag. */
+.dashboard-grid .react-grid-item.cssTransforms {
+  transition: none;
+}
+
+.dashboard-grid .react-grid-item.react-draggable-dragging,
+.dashboard-grid .react-grid-item.resizing {
+  /* Above sibling widgets while moving, below .alarms-overlay. */
+  z-index: 3;
+  opacity: 0.92;
+}
+
+/* Default placeholder is a red block; use the accent tint instead. */
+.dashboard-grid .react-grid-placeholder {
+  background: var(--accent);
+  opacity: 0.18;
+  border-radius: 8px;
+  transition-duration: 100ms;
+}
+
+/* Replace react-resizable's background-image SVG corner with a token-colored
+   chevron that reads correctly in both themes. */
+.dashboard-grid .react-resizable-handle {
+  background: none;
+  padding: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.dashboard-grid .react-resizable-handle::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+}
+
+.dashboard-grid .react-grid-item:hover .react-resizable-handle::after {
+  border-color: var(--accent);
 }
