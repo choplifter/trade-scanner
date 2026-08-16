@@ -274,6 +274,12 @@ class ScannerHistoryStore:
             snaps = snaps_by_appearance.get(appearance["id"])
             if not snaps:
                 continue
+            # Same exclusion as compute_ranking_drift -- a weekend/holiday
+            # appearance's snapshots are all taken against a frozen tape, so it
+            # contributes a guaranteed 0% "loss" to every win rate and a
+            # meaningless 0 to every average. See _is_trading_day.
+            if not _is_trading_day(appearance["trading_date"]):
+                continue
 
             entry_price = appearance["entry_price"]
             benchmark_entry_price = appearance["benchmark_entry_price"]

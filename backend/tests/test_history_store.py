@@ -148,6 +148,35 @@ def test_compute_ranking_drift_drops_non_trading_day_appearances(tmp_path):
     assert report["views"]["gainers"]["catalyst"]["without_headline"]["win_rate"] == 100.0
 
 
+def test_compute_performance_drops_non_trading_day_appearances(tmp_path):
+    store = _store(tmp_path)
+    _seed(store, "AAA", entry_rvol=3.0, headline=None, entry_price=10.0, latest_price=11.0)
+    # Saturday fallback row: flat price, so it would score as a 0% loss and
+    # halve the reported win rate.
+    _seed(
+        store,
+        "SATURDAY",
+        entry_rvol=3.0,
+        headline=None,
+        entry_price=10.0,
+        latest_price=10.0,
+        now=NON_TRADING_DAY,
+    )
+
+    # Wide enough window to reach both seeded dates.
+    report = asyncio.run(store.compute_performance(days=3650, view="gainers"))
+
+    latest = [row for row in report["summary"] if row["horizon"] == "latest"]
+    assert len(latest) == 1
+    assert latest[0]["sample_size"] == 1, "the Saturday row should not be counted"
+    assert latest[0]["win_rate"] == 100.0
+    # The RVOL/gap buckets draw from the same filtered picks. (Leaderboards
+    # aren't checked here -- they require alpha_vs_benchmark, and these rows are
+    # seeded without a benchmark price, so they'd be empty either way.)
+    assert sum(b["sample_size"] for b in report["rvol_buckets"]) == 1
+    assert sum(b["sample_size"] for b in report["gap_buckets"]) == 1
+
+
 def test_compute_ranking_drift_counts_a_holiday_as_a_non_trading_day(tmp_path):
     store = _store(tmp_path)
     # 2026-01-01 is a New Year's Day holiday -- a weekday the NYSE is shut, so a
