@@ -12,7 +12,7 @@ export type LayoutMode = "panels" | "grid";
  * would remount subtrees -- destroying CandleChart's chart instance, every
  * widget's local useState, and restarting the three analytics widgets'
  * poll intervals. Keying by id means dragging only moves a cell. */
-export type WidgetId = "scanner" | "chart" | "ideas" | "benchmark" | "history";
+export type WidgetId = "scanner" | "chart" | "screener" | "ideas" | "benchmark" | "history";
 
 /** Render order of grid cells. Deliberately constant and independent of
  * `layout` -- position comes from the layout item's x/y, never from DOM
@@ -20,6 +20,7 @@ export type WidgetId = "scanner" | "chart" | "ideas" | "benchmark" | "history";
 export const WIDGET_IDS: readonly WidgetId[] = [
   "scanner",
   "chart",
+  "screener",
   "ideas",
   "benchmark",
   "history",
@@ -42,16 +43,22 @@ export const GRID_MARGIN = 8;
 export const DEFAULT_LAYOUT: Layout = [
   { i: "scanner", x: 0, y: 0, w: 5, h: 8, minW: 3, minH: 3 },
   { i: "chart", x: 5, y: 0, w: 7, h: 8, minW: 3, minH: 4 },
-  { i: "ideas", x: 0, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
-  { i: "benchmark", x: 4, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
-  { i: "history", x: 8, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
+  // Full width under the fold: the screener carries a filter builder above
+  // its table, so it needs more room than the analytics widgets beside it.
+  { i: "screener", x: 0, y: 8, w: 12, h: 6, minW: 4, minH: 4 },
+  { i: "ideas", x: 0, y: 14, w: 4, h: 4, minW: 2, minH: 2 },
+  { i: "benchmark", x: 4, y: 14, w: 4, h: 4, minW: 2, minH: 2 },
+  { i: "history", x: 8, y: 14, w: 4, h: 4, minW: 2, minH: 2 },
 ];
 
 const LAYOUT_STORAGE_KEY = "layout:grid";
 const MODE_STORAGE_KEY = "layout:mode";
 /** Bump when WIDGET_IDS or the grid geometry changes incompatibly; a stored
  * layout with a different version is discarded rather than migrated. */
-const LAYOUT_VERSION = 1;
+// 2: added the "screener" widget. isValidLayout requires every id exactly
+// once, so a stored v1 layout is now incompatible -- bumping discards it
+// rather than leaving the new widget invisible on an old saved layout.
+const LAYOUT_VERSION = 2;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */

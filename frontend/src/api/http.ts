@@ -2,6 +2,7 @@ import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
 import type { MarketConditionsResponse } from "../types/marketConditions";
 import type { ScannerBenchmarkResponse } from "../types/scannerBenchmark";
 import type { ScannerHistoryResponse } from "../types/scannerHistory";
+import type { FieldsResponse, PresetsResponse, Screen, ScreenResponse } from "../types/screener";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
 import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types/tradeIdeas";
 
@@ -24,8 +25,13 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function postJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "POST" });
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    ...(body === undefined
+      ? {}
+      : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+  });
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res, `POST ${path} failed: ${res.status}`));
   }
@@ -78,4 +84,21 @@ export function postTradeIdeas(): Promise<TradeIdeasResponse> {
 
 export function getTradeIdeasPerformance(): Promise<TradeIdeasPerformanceResponse> {
   return getJson<TradeIdeasPerformanceResponse>("/trade-ideas/performance");
+}
+
+/** The screenable field registry. Fetched once and used to build every
+ * field picker, operator list and column in the screener UI -- nothing about
+ * which fields exist lives in the frontend. */
+export function getScreenerFields(): Promise<FieldsResponse> {
+  return getJson<FieldsResponse>("/screener/fields");
+}
+
+/** Built-in screens, including the three that used to be fixed views.
+ * Full filter specs, so loading one lets the user then edit it. */
+export function getScreenerPresets(): Promise<PresetsResponse> {
+  return getJson<PresetsResponse>("/screener/presets");
+}
+
+export function runScreen(screen: Screen): Promise<ScreenResponse> {
+  return postJson<ScreenResponse>("/screener/run", screen);
 }
