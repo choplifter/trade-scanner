@@ -15,10 +15,16 @@ from alpaca.data.requests import NewsRequest
 from pydantic import BaseModel
 
 from app.alpaca.client import AlpacaClients
+from app.market_data.fmp_news import is_low_signal_headline
 
 logger = logging.getLogger(__name__)
 
 _LOOKBACK = timedelta(hours=48)
+
+_FMP_URL = "https://financialmodelingprep.com/stable/news/stock"
+# Over-fetch relative to `limit`: ~83% of raw FMP items are filtered out, so
+# asking for exactly `limit` would usually return nothing usable.
+_FMP_FETCH_LIMIT = 60
 
 
 class NewsItem(BaseModel):
@@ -27,6 +33,12 @@ class NewsItem(BaseModel):
     source: str
     url: str | None
     published_at: datetime
+    # Which feed supplied it: "alpaca" or "fmp". `source` is the article's
+    # own publisher (Benzinga, GlobeNewsWire, ...) and is what the panel
+    # shows; this is the provenance, kept because the two feeds have very
+    # different reliability -- see app.market_data.fmp_news on FMP's noise
+    # rate and its observed symbol mis-tagging.
+    feed: str = "alpaca"
 
 
 async def fetch_recent_news(alpaca: AlpacaClients, symbol: str, limit: int = 5) -> list[NewsItem]:
@@ -56,3 +68,77 @@ async def fetch_recent_news(alpaca: AlpacaClients, symbol: str, limit: int = 5) 
         )
         for article in news_set.data.get("news", [])[:limit]
     ]
+
+
+async def fetch_recent_fmp_news(
+    http_client, api_key: str, symbol: str, limit: int = 5
+) -> list[NewsItem]:
+    """The same shape as fetch_recent_news, from FMP.
+
+    Exists because Alpaca's Benzinga feed is thin on the small and mid caps
+    this scanner surfaces -- measured over 12 scanner symbols, Alpaca had a
+    story for 3 and FMP for all 12. The chart panel is where a trader asks
+    "why is this moving", so an empty panel on a runner is the worst place
+    for that gap to land.
+
+    Filtered by fmp_news.is_low_signal_headline, exactly as the catalyst
+    path is: FMP's raw feed is ~30% securities-litigation notices, and a
+    sidebar filled with "INVESTOR ALERT: law firm reminds investors" tells
+    you nothing about why a stock moved today.
+    """
+    if not api_key:
+        return []
+    try:
+        response = await http_client.get(
+            _FMP_URL,
+            params={"symbols": symbol, "limit": _FMP_FETCH_LIMIT, "apikey": api_key},
+        )
+        response.raise_for_status()
+        items = response.json()
+    except Exception:
+        logger.exception("FMP news fetch failed for %s", symbol)
+        return []
+
+    if not isinstance(items, list):
+        return []
+
+    results: list[NewsItem] = []
+    for item in items:
+        title = (item.get("title") or "").strip()
+        publisher = item.get("publisher")
+        if item.get("symbol") != symbol or not title:
+            continue
+        if is_low_signal_headline(title, publisher):
+            continue
+        published = _parse_fmp_date(item.get("publishedDate"))
+        if published is None:
+            continue
+        results.append(
+            NewsItem(
+                headline=title,
+                # FMP calls the body "text"; truncated the same way a summary
+                # would be, and deliberately not the full article -- same
+                # reasoning as the Alpaca path not requesting content.
+                summary=(item.get("text") or "")[:400],
+                source=publisher or "FMP",
+                url=item.get("url"),
+                published_at=published,
+                feed="fmp",
+            )
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _parse_fmp_date(value: str | None) -> datetime | None:
+    """FMP publishes "YYYY-MM-DD HH:MM:SS" without a zone. Treated as UTC so
+    it can be ordered against Alpaca's genuinely tz-aware timestamps -- a
+    naive datetime would raise the moment the two are compared.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from app.alpaca.client import AlpacaClients
 from app.fundamentals.cache import FundamentalsCache
-from app.news.client import NewsItem, fetch_recent_news
+from app.news.client import NewsItem, fetch_recent_fmp_news, fetch_recent_news
 
 
 class SymbolInfoResponse(BaseModel):
@@ -42,10 +42,20 @@ async def get_symbol_info(
     cache method. News isn't cached -- Alpaca isn't the scarce resource
     here (FMP is), so a plain per-request fetch is fine.
     """
-    _, news = await asyncio.gather(
+    # Both feeds, concurrently. Unlike the catalyst path -- where Alpaca is
+    # authoritative and FMP only fills gaps, because the boost's calibration
+    # depends on it -- this panel is display only, so more real context is
+    # strictly better and the two are merged rather than ranked. Each item
+    # still shows its own publisher, so the reader can weigh a company press
+    # release against a commentary piece themselves.
+    _, alpaca_news, fmp_news = await asyncio.gather(
         fundamentals.ensure_fresh([symbol]),
         fetch_recent_news(alpaca, symbol),
+        fetch_recent_fmp_news(
+            fundamentals.http_client, fundamentals.settings.fmp_api_key, symbol
+        ),
     )
+    news = merge_news(alpaca_news, fmp_news)
     data = fundamentals.get(symbol)
     profile = data.profile if data else None
 
@@ -61,3 +71,23 @@ async def get_symbol_info(
         float_shares=data.float_shares if data else None,
         news=news,
     )
+
+
+def merge_news(alpaca_news: list[NewsItem], fmp_news: list[NewsItem], limit: int = 6) -> list[NewsItem]:
+    """Both feeds interleaved by recency, newest first.
+
+    Deduped on the normalised headline, because a company press release is
+    syndicated across wires and routinely arrives from both feeds -- without
+    this the panel would show the same story twice with different publisher
+    labels. Alpaca wins a tie purely for stability of display, not because
+    either is more correct about a story they both carry.
+    """
+    seen: set[str] = set()
+    merged: list[NewsItem] = []
+    for item in sorted([*alpaca_news, *fmp_news], key=lambda i: i.published_at, reverse=True):
+        key = " ".join(item.headline.lower().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged[:limit]

@@ -64,6 +64,14 @@ _LOW_SIGNAL = re.compile(
   | (lead\s+plaintiff|securities\s+fraud)
   | deadline\s+(approach|remind)
   | have\s+rights
+  # Litigation also arrives via the primary wires, which the publisher check
+  # deliberately trusts -- "Capricor Therapeutics, Inc. Sued for Securities
+  # Law Violations" came through PRNewsWire and slipped past the patterns
+  # above, so the phrasings have to be caught on the title alone.
+  | \bsued\b
+  | securities\s+law\s+violation
+  | (investigat\w+)\s+(of|into)\s+.*\b(inc|corp|ltd|plc|holdings)\b
+  | on\s+behalf\s+of\s+(investors|shareholders)
   | (purchases|sells|acquires|buys|sold|bought)\s+[\d,]+\s+shares
   | (raises|lowers|boosts|trims)\s+(stake|position|holdings)
   | (stake|position)\s+in\s+.+\s+(increased|lowered|raised)

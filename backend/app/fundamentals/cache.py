@@ -52,6 +52,15 @@ class FundamentalsCache:
         self._float_shares: dict[str, float] = {}
         self._float_fetched_at: float = -float("inf")
 
+    @property
+    def http_client(self):
+        """The shared FMP HTTP client. Exposed so callers that need to hit
+        another FMP endpoint with the same key and timeout -- the symbol
+        panel's news fetch -- can reuse this connection pool instead of
+        opening their own or reaching for the private attribute.
+        """
+        return self._client
+
     def get(self, symbol: str) -> FundamentalsData | None:
         return self._data.get(symbol)
 

@@ -11,6 +11,10 @@ _LITIGATION = [
     "HTZ Stockholders Have Rights - If You Lost Money Investing in Hertz Global",
     "Class Action Filed Against Acme Corp",
     "Lead Plaintiff Deadline Approaching for Investors",
+    # Reached the panel via PRNewsWire, which the publisher check trusts --
+    # so litigation phrasings have to be caught on the title alone.
+    "Capricor Therapeutics, Inc. Sued for Securities Law Violations - Contact Us",
+    "Investigation of Acme Holdings Inc. Announced on Behalf of Investors",
 ]
 _HOLDINGS = [
     "Bank of America Corp DE Purchases 1,163,577 Shares of The Western Union Company",
@@ -199,3 +203,54 @@ async def test_no_fallback_without_an_http_client(monkeypatch):
     await cache.ensure_fresh(["AAA"])
     assert cache.get("AAA") is None
     assert cache.source("AAA") is None
+
+
+# --- chart panel: merging both feeds ------------------------------------------
+
+
+def _item(headline, source, minutes_ago, feed="alpaca"):
+    from datetime import datetime, timedelta, timezone
+    from app.news.client import NewsItem
+
+    return NewsItem(
+        headline=headline,
+        summary="",
+        source=source,
+        url=None,
+        published_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
+        feed=feed,
+    )
+
+
+def test_chart_news_merges_both_feeds_newest_first():
+    from app.symbols.info import merge_news
+
+    merged = merge_news(
+        [_item("Alpaca older story", "Benzinga", 120)],
+        [_item("FMP newer story", "GlobeNewsWire", 10, feed="fmp")],
+    )
+    assert [i.headline for i in merged] == ["FMP newer story", "Alpaca older story"]
+    assert [i.feed for i in merged] == ["fmp", "alpaca"]
+
+
+def test_chart_news_dedupes_syndicated_releases():
+    """A company press release reaches both feeds; showing it twice with
+    different publisher labels would look like two separate events."""
+    from app.symbols.info import merge_news
+
+    merged = merge_news(
+        [_item("Acme Reports Q2 Results", "Benzinga", 30)],
+        [_item("acme   reports   q2   results", "GlobeNewsWire", 25, feed="fmp")],
+    )
+    assert len(merged) == 1
+
+
+def test_chart_news_is_capped():
+    from app.symbols.info import merge_news
+
+    merged = merge_news(
+        [_item(f"A{i}", "Benzinga", i) for i in range(10)],
+        [_item(f"F{i}", "GlobeNewsWire", i, feed="fmp") for i in range(10)],
+        limit=6,
+    )
+    assert len(merged) == 6
