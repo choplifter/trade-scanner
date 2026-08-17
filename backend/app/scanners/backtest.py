@@ -190,6 +190,18 @@ def intraday_would_help(screen) -> list[str]:
     return sorted(set(unsupported_filters(screen, "daily")) - set(unsupported_filters(screen, "intraday")))
 
 
+class _HistoricalNews:
+    """Duck-typed NewsCache for the backtest. engine._has_headline only ever
+    calls .get(symbol), so this is the entire surface needed to feed real
+    dated catalysts into the live ranking functions."""
+
+    def __init__(self, headlines: dict[str, str]):
+        self._headlines = headlines
+
+    def get(self, symbol: str) -> str | None:
+        return self._headlines.get(symbol)
+
+
 @dataclass
 class _BacktestRow:
     """Just enough fields for engine._tradable/_rank_gainers/_rank_losers,
@@ -221,7 +233,13 @@ class _BacktestRow:
     is_shaved_top: bool
 
 
-def _ranked_views(day_rows, min_dollar_volume: float, screen, fundamentals: dict | None = None):
+def _ranked_views(
+    day_rows,
+    min_dollar_volume: float,
+    screen,
+    fundamentals: dict | None = None,
+    day_catalysts: dict | None = None,
+):
     """(view_name, rows) pairs for one trading day.
 
     With no screen this is the three live views, which is what the daily
@@ -234,11 +252,15 @@ def _ranked_views(day_rows, min_dollar_volume: float, screen, fundamentals: dict
     screener does (see screener_service.screen_live_rows), so a backtested
     screen and a live one start from the same eligible set.
     """
+    # A tiny stand-in for NewsCache: engine._has_headline only calls .get(),
+    # so the ranking functions can be handed real historical catalysts
+    # without knowing they aren't looking at the live cache.
+    news = _HistoricalNews(day_catalysts or {})
     if screen is None:
         return (
-            ("gainers", _rank_gainers(day_rows, None, min_dollar_volume)),
-            ("losers", _rank_losers(day_rows, None, min_dollar_volume)),
-            ("most_active", _rank_most_active(day_rows, None, min_dollar_volume)),
+            ("gainers", _rank_gainers(day_rows, news, min_dollar_volume)),
+            ("losers", _rank_losers(day_rows, news, min_dollar_volume)),
+            ("most_active", _rank_most_active(day_rows, news, min_dollar_volume)),
         )
 
     tradable = _tradable(day_rows, min_dollar_volume)
@@ -248,7 +270,12 @@ def _ranked_views(day_rows, min_dollar_volume: float, screen, fundamentals: dict
     # same way the live path supplies it.
     derived = {
         "rank_score": {
-            r.symbol: formulas.rank_score(r.pct_change, False, r.rvol, catalyst_boost=r.pct_change > 0)
+            r.symbol: formulas.rank_score(
+                r.pct_change,
+                r.symbol in (day_catalysts or {}),
+                r.rvol,
+                catalyst_boost=r.pct_change > 0,
+            )
             for r in tradable
         },
         # Today's values on a past date -- see LOOK_AHEAD_FIELDS. Passed as
@@ -331,6 +358,7 @@ def simulate_from_bars(
     benchmark_returns: dict[date, float] | None = None,
     screen=None,
     fundamentals: dict | None = None,
+    catalysts: dict[str, dict[date, str]] | None = None,
 ) -> list[dict]:
     """Pure, network-free -- reconstructs each historical trading day's
     gainers/losers/most-active exactly as engine._rank_gainers/_rank_losers/
@@ -396,7 +424,18 @@ def simulate_from_bars(
 
     picks: list[dict] = []
     for trading_date, day_rows in rows_by_date.items():
-        for view_name, ranked in _ranked_views(day_rows, min_dollar_volume, screen, fundamentals):
+        # Real historical catalysts, where supplied. Every prior run of this
+        # tool ranked with has_headline=False because no dated news source
+        # existed -- so any catalyst-boost effect was invisible to it by
+        # construction, not by measurement.
+        day_catalysts = (
+            {s: m[trading_date] for s, m in catalysts.items() if trading_date in m}
+            if catalysts
+            else {}
+        )
+        for view_name, ranked in _ranked_views(
+            day_rows, min_dollar_volume, screen, fundamentals, day_catalysts
+        ):
             for row in ranked:
                 exit_price = exit_price_by_symbol_date.get((row.symbol, trading_date))
                 if exit_price is None or row.last_price <= 0:
@@ -423,6 +462,8 @@ def simulate_from_bars(
                         # there at all (its gap % often being unremarkable).
                         "entry_dollar_volume": row.dollar_volume_today,
                         "is_shaved_top": row.is_shaved_top,
+                        "entry_headline": day_catalysts.get(row.symbol),
+                        "has_catalyst": row.symbol in day_catalysts,
                         "pct_change_since_entry": pct_since_entry,
                         # Named to match history_store's own fields so a
                         # historical read and a live read of "did this work"
