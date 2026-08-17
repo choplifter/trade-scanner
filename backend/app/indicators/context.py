@@ -22,7 +22,7 @@ class IndicatorContext:
     monthly_bars: pd.DataFrame
 
 
-_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume"]
+_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "vwap"]
 
 
 def _bars_to_df(bars: list) -> pd.DataFrame:
@@ -36,6 +36,13 @@ def _bars_to_df(bars: list) -> pd.DataFrame:
             "low": [b.low for b in bars],
             "close": [b.close for b in bars],
             "volume": [b.volume for b in bars],
+            # Alpaca's own per-bar trade-weighted price. Carried through
+            # because it is a better answer to "what price did the money
+            # trade at" than an H/L/C typical price, which weights a
+            # one-tick wick the same as the bulk of the bar's volume.
+            # None on feeds or bars that omit it -- an indicator using it
+            # has to fall back rather than assume it is there.
+            "vwap": [getattr(b, "vwap", None) for b in bars],
         }
     )
 
