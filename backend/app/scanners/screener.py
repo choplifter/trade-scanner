@@ -355,7 +355,8 @@ PRESETS: dict[str, dict] = {
             "spread_pct filter before trading it."
         ),
         "screen": Screen(
-            filters=[Filter(field="pct_change", op="between", value=3, value2=8)],
+            filters=[Filter(field="pct_change", op="between", value=3, value2=8),
+                     Filter(field="dollar_volume_today", op="gt", value=2_000_000)],
             sort_by="dollar_volume_today",
             descending=True,
             limit=50,

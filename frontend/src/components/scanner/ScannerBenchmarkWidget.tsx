@@ -140,9 +140,9 @@ export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: Scann
           <div className="widget-error">{error}</div>
         ) : picks.length === 0 ? (
           <div className="widget-empty">
-            Waiting for the scanner to flag its first symbol -- every gainer, loser, or most-active
-            entry gets logged here the moment it first appears, then tracked against {benchmarkSymbol}
-            from that instant.
+            Waiting for the scanner to flag its first symbol -- every gainer, loser, most-active or
+            moderate-mover entry gets logged here the moment it first appears, then tracked against{" "}
+            {benchmarkSymbol} from that instant.
           </div>
         ) : (
           <>
@@ -168,7 +168,11 @@ export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: Scann
               <tbody>
                 {sortedPicks.map((p) => (
                   <tr
-                    key={p.symbol}
+                    // Symbol alone is not unique: the tracker keys entries per
+                    // (symbol, view), so a stock in gainers and moderate_movers
+                    // is legitimately two rows. A duplicate React key here made
+                    // rows silently fail to render.
+                    key={`${p.symbol}-${p.view}`}
                     aria-selected={p.symbol === selectedSymbol}
                     onClick={() => onSelectSymbol(p.symbol)}
                   >
