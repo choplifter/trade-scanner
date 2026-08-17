@@ -15,6 +15,7 @@ const VIEW_LABEL: Record<string, string> = {
   gainers: "Gainers",
   losers: "Losers",
   most_active: "Most Active",
+  moderate_movers: "Moderate 3-8%",
 };
 
 const HORIZONS: { id: ScannerHistoryHorizon; label: string }[] = [

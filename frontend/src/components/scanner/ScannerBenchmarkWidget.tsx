@@ -10,6 +10,7 @@ const VIEW_LABEL: Record<string, string> = {
   gainers: "Gainers",
   losers: "Losers",
   most_active: "Most Active",
+  moderate_movers: "Moderate 3-8%",
 };
 
 function pctText(pct: number | null): string {
@@ -198,7 +199,7 @@ export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: Scann
               </tbody>
             </table>
             <p className="ai-ideas-disclaimer">
-              Every symbol the scanner itself has flagged (gainers/losers/most active), tracked from
+              Every symbol the scanner itself has flagged (gainers/losers/most active/moderate 3-8%), tracked from
               the moment it first appeared -- a self-check on the scanner's own selection criteria, not
               a trading record. "Just now" entries haven't had time to move yet.
             </p>

@@ -8,7 +8,12 @@ would flip the order if it were applied, making its absence observable.
 
 from datetime import datetime, timezone
 
-from app.scanners.engine import _rank_gainers, _rank_losers, _rank_most_active
+from app.scanners.engine import (
+    _rank_gainers,
+    _rank_losers,
+    _rank_moderate_movers,
+    _rank_most_active,
+)
 from app.scanners.schemas import ScannerRow
 
 
@@ -113,3 +118,30 @@ def test_most_active_ranks_by_dollar_volume_not_share_volume():
     ]
     ranked = _rank_most_active(rows, _StubNewsCache({}))
     assert _symbols(ranked) == ["PRICEY", "PENNY"]
+
+
+def test_moderate_movers_tracks_the_band_and_excludes_the_tail():
+    """The live view has to agree with the preset it is derived from, since
+    the whole reason it is tracked is to accumulate forward performance for
+    that exact selection. A drift between the two would quietly measure
+    something other than what was backtested.
+
+    The 45% mover is the case that matters: past 8% the relation inverts, so
+    it belongs outside the band rather than at the top of it.
+    """
+    rows = [
+        _row("QUIET", pct_change=1.0),
+        _row("LOW", pct_change=3.5),
+        _row("HIGH", pct_change=7.9),
+        _row("TOOFAR", pct_change=11.0),
+        _row("BLOWOFF", pct_change=45.0),
+        _row("DOWN", pct_change=-6.0),
+    ]
+    assert sorted(_symbols(_rank_moderate_movers(rows))) == ["HIGH", "LOW"]
+
+
+def test_moderate_movers_respects_the_tradability_floor():
+    """Applied before the band filter, as every other view does -- a screen
+    must not surface rows the scanner itself would never show."""
+    rows = [_row("THIN", pct_change=5.0, volume_today=100.0, last_price=1.0)]
+    assert _rank_moderate_movers(rows, min_dollar_volume=1_000_000.0) == []

@@ -24,7 +24,7 @@ from app.market_data.fmp_news import fetch_fmp_headlines
 from app.market_data.news_cache import NewsCache
 from app.market_data import volume_surge
 from app.market_data.volume_profile import VolumeProfileCache
-from app.scanners import formulas
+from app.scanners import formulas, screener
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.history_store import NewAppearance, ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
@@ -121,13 +121,51 @@ def _rank_most_active(
     )[:_TOP_N]
 
 
+def _rank_moderate_movers(
+    rows, news_cache: NewsCache | None = None, min_dollar_volume: float = 0.0
+) -> list[ScannerRow]:
+    """The 3-8% band, run straight off its preset rather than restating the
+    numbers here -- see screener.PRESETS["moderate_movers"] for what the band
+    is and why it has an upper bound.
+
+    Tracked as a live view (not just offered as a screen) so real forward
+    performance accumulates for it in ScannerBenchmarkTracker and
+    ScannerHistoryStore. It's the one selection that survived an
+    out-of-sample test, and a backtest number nobody re-checks against live
+    data is how a result quietly stops being true.
+
+    Only rank_score is supplied as a derived value -- the preset needs no
+    others, and it keeps the poll loop from doing a fundamentals lookup per
+    row. If the preset is ever edited to filter on float or short interest,
+    those would read as missing here and match nothing; screen the live
+    screener for that instead, which computes the full set.
+    """
+    tradable = _tradable(rows, min_dollar_volume)
+    derived = {
+        "rank_score": {
+            r.symbol: formulas.rank_score(
+                r.pct_change,
+                _has_headline(r, news_cache),
+                r.rvol,
+                catalyst_boost=r.pct_change > 0,
+            )
+            for r in tradable
+        }
+    }
+    return screener.run_screen(
+        tradable, screener.PRESETS["moderate_movers"]["screen"], derived
+    ).rows
+
+
 class ScannerEngine:
     """Polls Alpaca snapshots for the whole universe and broadcasts ranked
     scanner views over the "scanner:<name>" WebSocket topics.
 
-    Four views: "gainers" and "losers" (ranked by %-change from prior
+    Five views: "gainers" and "losers" (ranked by %-change from prior
     close, opposite directions), "most_active" (ranked by dollar volume,
-    direction-agnostic), and "premarket_gainers". During premarket,
+    direction-agnostic), "moderate_movers" (the 3-8% band, run from its
+    preset -- see _rank_moderate_movers), and "premarket_gainers". During
+    premarket,
     "premarket_gainers" is intentionally the same live list as "gainers";
     the moment the regular session opens, it freezes to a snapshot of the
     gap as it stood at 09:30 ET while "gainers" keeps tracking the live
@@ -341,11 +379,16 @@ class ScannerEngine:
             self.rows.values(), self.news_cache, min_dollar_volume
         ) or _rank_most_active(fallback_rows, self.news_cache, min_dollar_volume)
 
+        moderate_movers = _rank_moderate_movers(
+            self.rows.values(), self.news_cache, min_dollar_volume
+        ) or _rank_moderate_movers(fallback_rows, self.news_cache, min_dollar_volume)
+
         return {
             "gainers": gainers,
             "premarket_gainers": premarket_gainers,
             "losers": losers,
             "most_active": most_active,
+            "moderate_movers": moderate_movers,
         }
 
     def snapshot_view(self, name: str) -> list[ScannerRow]:
@@ -356,7 +399,8 @@ class ScannerEngine:
         app starts while markets are closed) -- computed once at startup
         from the most recently completed session's real close-to-close
         move for every symbol, instead of showing an empty scanner or
-        fabricating data. Each view (gainers/losers/most_active) applies
+        fabricating data. Each view (gainers/losers/most_active/
+        moderate_movers) applies
         its own ranking on top of this shared row set at build time -- see
         _build_views.
         """
@@ -759,7 +803,7 @@ class ScannerEngine:
         """
         candidates = [
             (view_name, row)
-            for view_name in ("gainers", "losers", "most_active")
+            for view_name in ("gainers", "losers", "most_active", "moderate_movers")
             for row in views.get(view_name, [])
         ]
 
@@ -909,7 +953,7 @@ class ScannerEngine:
 
             # Evaluate live user screens *before* enrichment so their rows can
             # be enriched alongside the ranked ones. History recording above
-            # deliberately runs first and only over the three canonical views:
+            # deliberately runs first and only over the four canonical views:
             # scanner_history is what the drift report, benchmark tracker and
             # every backtest read, and letting an arbitrary user screen write
             # into it would corrupt that continuity.
