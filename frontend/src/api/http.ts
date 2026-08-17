@@ -123,6 +123,7 @@ export async function backtestScreen(
     horizon_days?: number;
     max_symbols?: number;
     resolution?: BacktestResolution;
+    with_catalysts?: boolean;
   } = {},
 ): Promise<ScreenBacktestResponse> {
   const res = await fetch(`${API_BASE}/screener/backtest`, {

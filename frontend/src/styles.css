@@ -1288,3 +1288,13 @@ a.symbol-news-headline {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* Catalyst split inside the backtest panel. Sits above the picks list
+   because it answers a question about the whole result, not about any one
+   pick. */
+.screen-backtest-catalyst {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}

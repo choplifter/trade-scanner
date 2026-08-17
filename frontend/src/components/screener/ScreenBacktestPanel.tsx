@@ -100,6 +100,7 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
   const [lookback, setLookback] = useState(180);
   const [horizon, setHorizon] = useState(1);
   const [resolution, setResolution] = useState<BacktestResolution>("daily");
+  const [withCatalysts, setWithCatalysts] = useState(false);
   const [result, setResult] = useState<ScreenBacktestResponse | null>(null);
   const [refusal, setRefusal] = useState<BacktestRefusal | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +114,9 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
       lookback_days: useResolution === "intraday" ? Math.min(lookback, 45) : lookback,
       horizon_days: horizon,
       resolution: useResolution,
+      // Daily only -- a catalyst is a per-session fact, so attributing one
+      // story to all 78 bars of an intraday day would be meaningless.
+      with_catalysts: withCatalysts && useResolution === "daily",
     })
       .then((res) => {
         setResult(res);
@@ -166,6 +170,16 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
                 </option>
               ))}
             </select>
+          </label>
+        )}
+        {resolution === "daily" && (
+          <label title="Splits the result by whether each pick had a news catalyst that session. Costs one FMP request per symbol the first time, then cached.">
+            <input
+              type="checkbox"
+              checked={withCatalysts}
+              onChange={(e) => setWithCatalysts(e.target.checked)}
+            />
+            Split by news
           </label>
         )}
         <button type="button" onClick={() => run()} disabled={loading}>
@@ -282,6 +296,73 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
             market over the same window — the second is the one that says whether the screen added
             anything. Today's universe is applied to past dates, so results carry survivorship bias.
           </p>
+
+          {result.catalyst_split && (
+            <div className="screen-backtest-catalyst">
+              <strong>With vs without a news catalyst</strong>
+              {result.catalyst_split.with_catalyst && result.catalyst_split.without_catalyst ? (
+                <>
+                  <table className="scanner-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        <th>Picks</th>
+                        <th>Win rate</th>
+                        <th>Median</th>
+                        <th>Payoff</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>With catalyst</td>
+                        <td>{result.catalyst_split.with_catalyst.sample_size}</td>
+                        <td>{pct(result.catalyst_split.with_catalyst.win_rate)}</td>
+                        <td>{signed(result.catalyst_split.with_catalyst.median)}</td>
+                        <td>{result.catalyst_split.with_catalyst.payoff_ratio ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Without</td>
+                        <td>{result.catalyst_split.without_catalyst.sample_size}</td>
+                        <td>{pct(result.catalyst_split.without_catalyst.win_rate)}</td>
+                        <td>{signed(result.catalyst_split.without_catalyst.median)}</td>
+                        <td>{result.catalyst_split.without_catalyst.payoff_ratio ?? "—"}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p className="screener-summary">
+                    Catalyst delta:{" "}
+                    <span
+                      className={
+                        (result.catalyst_split.win_rate_delta_pp ?? 0) >= 0 ? "delta-up" : "delta-down"
+                      }
+                    >
+                      {result.catalyst_split.win_rate_delta_pp === null
+                        ? "—"
+                        : `${result.catalyst_split.win_rate_delta_pp > 0 ? "+" : ""}${result.catalyst_split.win_rate_delta_pp}pp`}
+                    </span>{" "}
+                    win rate,{" "}
+                    <span
+                      className={
+                        (result.catalyst_split.alpha_delta_pp ?? 0) >= 0 ? "delta-up" : "delta-down"
+                      }
+                    >
+                      {result.catalyst_split.alpha_delta_pp === null
+                        ? "—"
+                        : `${result.catalyst_split.alpha_delta_pp > 0 ? "+" : ""}${result.catalyst_split.alpha_delta_pp}pp`}
+                    </span>{" "}
+                    beating {result.catalyst_split.benchmark_symbol}. The live ranking assumes a
+                    catalyst is worth +9.1pp on gainers (formulas._CATALYST_BOOST); a delta near
+                    zero or negative says that 1.15x is unearned for this screen.
+                    {!result.catalyst_split.sufficient_sample && " Below the sample floor — noisy."}
+                  </p>
+                </>
+              ) : (
+                <p className="screener-summary">
+                  Every pick fell on one side of the split, so there's nothing to compare.
+                </p>
+              )}
+            </div>
+          )}
 
           {result.picks.length > 0 && (
             <div className="screen-backtest-picks">

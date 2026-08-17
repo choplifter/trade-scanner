@@ -530,6 +530,7 @@ async def run_backtest(
     batch_size: int = _FETCH_BATCH_SIZE,
     screen=None,
     fundamentals: dict | None = None,
+    catalysts: dict | None = None,
 ) -> dict:
     """Fetch/orchestration wrapper: chunks symbols (get_daily_bars_multi
     doesn't chunk itself), merges results, replays via simulate_from_bars,
@@ -563,6 +564,7 @@ async def run_backtest(
         benchmark_returns,
         screen,
         fundamentals,
+        catalysts,
     )
 
     # Every breakdown iterates a fixed view list, so a screened run -- which
@@ -614,9 +616,52 @@ async def run_backtest(
             "views": fade_risk_by_view(picks, views),
         },
         "min_sample_size": bucket_analysis.MIN_SAMPLE_SIZE,
+        "catalyst_split": catalyst_split(picks),
         "picks_truncated": False,
         # Raw per-pick rows, alongside the buckets above -- callers that
         # want to list individual wins/losses (see the Dash backtest page)
         # can use this directly instead of re-deriving it from bars.
         "picks": picks,
+    }
+
+
+def catalyst_split(picks: list[dict], benchmark_symbol: str = _BENCHMARK_SYMBOL) -> dict | None:
+    """How the same picks did with a news catalyst behind them versus without.
+
+    Returns None when catalysts weren't supplied, so a caller can tell "not
+    measured" from "measured, no difference" -- has_catalyst is False for
+    every pick in both cases and the two are otherwise indistinguishable.
+
+    Reported alongside alpha rather than win rate alone for the usual reason:
+    a catalyst day is often a broadly green day, so raw win rate flatters it.
+    """
+    if not picks or "has_catalyst" not in picks[0]:
+        return None
+
+    from app.scanners.metric_validation import expectancy
+
+    with_c = [p for p in picks if p["has_catalyst"]]
+    without = [p for p in picks if not p["has_catalyst"]]
+    if not with_c or not without:
+        return {
+            "with_catalyst": expectancy(with_c),
+            "without_catalyst": expectancy(without),
+            "win_rate_delta_pp": None,
+            "alpha_delta_pp": None,
+            "sufficient_sample": False,
+            "benchmark_symbol": benchmark_symbol,
+        }
+
+    w, wo = expectancy(with_c), expectancy(without)
+    wa = expectancy(with_c, key="alpha_vs_benchmark")
+    woa = expectancy(without, key="alpha_vs_benchmark")
+    return {
+        "with_catalyst": w,
+        "without_catalyst": wo,
+        "win_rate_delta_pp": round(w["win_rate"] - wo["win_rate"], 1),
+        "alpha_delta_pp": (
+            round(wa["win_rate"] - woa["win_rate"], 1) if wa and woa else None
+        ),
+        "sufficient_sample": min(w["sample_size"], wo["sample_size"]) >= bucket_analysis.MIN_SAMPLE_SIZE,
+        "benchmark_symbol": benchmark_symbol,
     }

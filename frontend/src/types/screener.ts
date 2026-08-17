@@ -99,6 +99,28 @@ export interface BucketRow {
   avg_return: number;
 }
 
+/** expectancy() output — win rate plus what a win and a loss are worth. */
+export interface Expectancy {
+  sample_size: number;
+  win_rate: number;
+  median: number;
+  mean: number;
+  avg_win: number;
+  avg_loss: number;
+  payoff_ratio: number | null;
+}
+
+/** Present only when a backtest was run with news catalysts. `null` deltas
+ * mean one side was empty, i.e. not measurable rather than no difference. */
+export interface CatalystSplit {
+  with_catalyst: Expectancy | null;
+  without_catalyst: Expectancy | null;
+  win_rate_delta_pp: number | null;
+  alpha_delta_pp: number | null;
+  sufficient_sample: boolean;
+  benchmark_symbol: string;
+}
+
 export interface ScreenBacktestResponse {
   resolution: BacktestResolution;
   symbol_count: number;
@@ -119,6 +141,7 @@ export interface ScreenBacktestResponse {
    * short interest have no historical series here, so a result using them
    * carries look-ahead bias and isn't validation. Empty on a clean run. */
   look_ahead_fields: string[];
+  catalyst_split?: CatalystSplit | null;
   picks: BacktestPick[];
   /** True when more picks matched than were sent. Every statistic above was
    * computed over the full set server-side; only this list is capped. */

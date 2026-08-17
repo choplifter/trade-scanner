@@ -10,12 +10,17 @@ the Dash page calls directly in-process -- so both surfaces run identical
 logic rather than one reimplementing the other.
 """
 
+import asyncio
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.scanners import backtest, screener
 from app.scanners.intraday_backtest_runner import run_intraday_backtest
+from app.scanners.news_history import catalyst_days, fetch_symbol_news
 from app.scanners.screener_service import screen_live_rows
+from app.services.market_clock import ET, trading_hours_for
 
 router = APIRouter(prefix="/api/screener", tags=["screener"])
 
@@ -55,6 +60,11 @@ class BacktestRequest(BaseModel):
     # volume_1h/volume_surge/rvol_1h replayable -- far heavier, so its
     # lookback defaults much shorter.
     resolution: str = "daily"
+    # Opt-in: building a historical catalyst map is one FMP request per
+    # symbol on a cold cache, so it isn't paid for unless asked. Daily
+    # resolution only -- a catalyst is a per-session fact, and the intraday
+    # replay would attribute the same story to all 78 bars of a day.
+    with_catalysts: bool = False
 
 
 @router.post("/backtest")
@@ -128,6 +138,12 @@ async def backtest_screen(body: BacktestRequest, request: Request) -> dict:
         "short_interest_pct": {s: engine.fundamentals.short_interest_pct(s) for s in symbols},
     }
 
+    catalysts = None
+    if body.with_catalysts and resolution == "daily":
+        catalysts = await _build_catalyst_map(
+            engine, settings, symbols[:_CATALYST_SYMBOL_CAP], body.lookback_days
+        )
+
     if resolution == "intraday":
         return {
             "look_ahead_fields": look_ahead,
@@ -155,5 +171,44 @@ async def backtest_screen(body: BacktestRequest, request: Request) -> dict:
             horizon_days=body.horizon_days,
             screen=body.screen,
             fundamentals=fundamentals,
+            catalysts=catalysts,
         ),
     }
+
+
+# A catalyst run costs one request per symbol on a cold cache, so the symbol
+# list is capped harder than a plain backtest's. Cached afterwards, keyed by
+# symbol and window, so re-running the same measurement is free.
+_CATALYST_SYMBOL_CAP = 150
+
+
+async def _build_catalyst_map(engine, settings, symbols: list[str], lookback_days: int) -> dict:
+    """{symbol: {trading_date: headline}} over the backtest window.
+
+    Sessions come from the real NYSE calendar rather than the fetched bars,
+    so this doesn't need the bars pulled first and can run concurrently with
+    nothing else depending on it.
+    """
+    end = datetime.now(ET).date()
+    start = end - timedelta(days=lookback_days)
+    sessions = []
+    day = start
+    while day <= end:
+        if trading_hours_for(day) is not None:
+            sessions.append(day)
+        day += timedelta(days=1)
+
+    catalysts: dict[str, dict] = {}
+    semaphore = asyncio.Semaphore(4)
+
+    async def one(symbol: str) -> None:
+        async with semaphore:
+            items = await fetch_symbol_news(
+                engine.fundamentals.http_client, settings.fmp_api_key, symbol, start, end
+            )
+        found = catalyst_days(items, sessions)
+        if found:
+            catalysts[symbol] = found
+
+    await asyncio.gather(*(one(s) for s in symbols))
+    return catalysts
