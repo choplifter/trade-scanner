@@ -94,12 +94,32 @@ def compute_performance(
     entries: list[TrackedAppearance],
     current_price_for: Callable[[str], float | None],
     current_benchmark_price: float | None,
+    current_headline_for: Callable[[str], str | None] | None = None,
 ) -> list[dict]:
     """Shared by both the FastAPI router and the Dash page (see
     app.dash_app.pages.benchmark) so the math lives in exactly one place --
     takes plain callables/values rather than a ScannerEngine reference to
     avoid a circular import (engine.py already imports this module for
     ScannerBenchmarkTracker itself).
+
+    `current_headline_for` supplies today's headline as it stands *now*,
+    reported alongside entry_headline rather than replacing it. The two
+    answer different questions and both are needed:
+
+      - entry_headline is a point-in-time snapshot, deliberately frozen. It
+        is what scanner_history stores and what the drift report and the
+        catalyst backtests read, so backfilling it with news published after
+        the flag would inject look-ahead bias into exactly those
+        measurements.
+      - current_headline is for a human reading a live monitor. Most
+        appearances are first flagged premarket, hours before the day's
+        story is written -- WETO was flagged at 08:04 ET up 168% with no
+        news yet, and picked up a headline mid-session -- so a column
+        showing only entry_headline reads as "no news" for symbols that
+        visibly do have some, and disagrees with the scanner table beside it.
+
+    Omitting the callable keeps current_headline None, which is what a caller
+    with no live news cache should get rather than a misleading blank.
     """
     now = datetime.now(timezone.utc)
     picks = []
@@ -135,6 +155,9 @@ def compute_performance(
                 "entry_pct_change": round(entry.entry_pct_change, 2),
                 "entry_rvol": round(entry.entry_rvol, 2),
                 "entry_headline": entry.entry_headline,
+                "current_headline": (
+                    current_headline_for(entry.symbol) if current_headline_for else None
+                ),
                 "current_price": round(current_price, 2) if current_price is not None else None,
                 "pct_change_since_entry": pct_change_since_entry,
                 "benchmark_pct_change_since_entry": benchmark_pct_change,

@@ -25,7 +25,12 @@ dash.register_page(__name__, path="/scanner-history", name="Scanner Match Histor
 _POLL_MS = 60_000
 _DAYS = 7
 
-_VIEW_LABEL = {"gainers": "Gainers", "losers": "Losers", "most_active": "Most Active"}
+_VIEW_LABEL = {
+    "gainers": "Gainers",
+    "losers": "Losers",
+    "most_active": "Most Active",
+    "moderate_movers": "Moderate 3-8%",
+}
 
 
 def _symbol_link(symbol: str) -> str:

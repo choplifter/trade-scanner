@@ -88,3 +88,38 @@ def test_compute_performance_sorts_most_recent_first():
 
     picks = compute_performance(tracker.all(), lambda symbol: None, None)
     assert [p["symbol"] for p in picks] == ["NEW", "OLD"]
+
+
+def test_current_headline_reported_beside_the_frozen_entry_headline():
+    """Both, never one replacing the other.
+
+    entry_headline is a point-in-time snapshot and must stay frozen -- it is
+    what scanner_history persists and what the drift report reads, so filling
+    it in with news published after the flag would put look-ahead bias into
+    that measurement. But most symbols are first flagged premarket, hours
+    before the day's story exists, so on its own it reads as "no news" for
+    symbols that plainly have some.
+    """
+    tracker = ScannerBenchmarkTracker()
+    tracker.record_if_new("WETO", "gainers", 10.0, 168.0, 3.0, 400.0, entry_headline=None)
+
+    picks = compute_performance(
+        tracker.all(),
+        lambda symbol: 12.0,
+        current_benchmark_price=404.0,
+        current_headline_for=lambda symbol: "12 Industrials Stocks Moving Intraday",
+    )
+
+    assert picks[0]["entry_headline"] is None
+    assert picks[0]["current_headline"] == "12 Industrials Stocks Moving Intraday"
+
+
+def test_current_headline_is_none_without_a_news_source():
+    """A caller with no live cache gets None rather than a stale or invented
+    value -- the Dash page and the router both pass one, but the default has
+    to be honest."""
+    tracker = ScannerBenchmarkTracker()
+    tracker.record_if_new("AAPL", "gainers", 10.0, 5.0, 2.0, 400.0, entry_headline="Real news")
+    picks = compute_performance(tracker.all(), lambda s: 11.0, 404.0)
+    assert picks[0]["entry_headline"] == "Real news"
+    assert picks[0]["current_headline"] is None

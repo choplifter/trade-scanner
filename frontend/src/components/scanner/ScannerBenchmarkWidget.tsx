@@ -195,8 +195,15 @@ export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: Scann
                     >
                       {pctText(p.alpha_vs_benchmark)}
                     </td>
-                    <td className="news-cell" title={p.entry_headline ?? undefined}>
-                      {p.entry_headline ?? "—"}
+                    <td
+                      className="news-cell"
+                      title={p.entry_headline ?? p.current_headline ?? undefined}
+                    >
+                      {/* Prefer the headline captured at entry; fall back to
+                          today's. Most entries are first flagged premarket
+                          with no news yet, so entry_headline alone reads as
+                          "no news" for symbols that plainly have some. */}
+                      {p.entry_headline ?? p.current_headline ?? "—"}
                     </td>
                   </tr>
                 ))}

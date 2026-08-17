@@ -24,7 +24,12 @@ dash.register_page(__name__, path="/benchmark", name="Scanner Benchmark")
 
 _POLL_MS = 30_000
 
-_VIEW_LABEL = {"gainers": "Gainers", "losers": "Losers", "most_active": "Most Active"}
+_VIEW_LABEL = {
+    "gainers": "Gainers",
+    "losers": "Losers",
+    "most_active": "Most Active",
+    "moderate_movers": "Moderate 3-8%",
+}
 
 
 def _symbol_link(symbol: str) -> str:
@@ -116,6 +121,9 @@ def _current_picks() -> tuple[list[dict], str]:
         tracker.all(),
         lambda symbol: (row.last_price if (row := engine.rows.get(symbol)) else None),
         engine.benchmark_price,
+        # Today's headline as it stands now, reported *beside* the frozen
+        # entry_headline rather than replacing it -- see compute_performance.
+        lambda symbol: engine.news_cache.get(symbol) if engine.news_cache else None,
     )
     return picks, engine.benchmark_symbol
 

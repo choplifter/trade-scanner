@@ -97,6 +97,25 @@ _BASELINE_FADE_RISK_AVG_RETURN = -10.38
 _FADE_RISK_RVOL_THRESHOLD = 15.0
 
 
+def _views_present(picks: list[dict]) -> list[str]:
+    """The views these picks actually contain, in reading order.
+
+    Derived from the rows rather than from a constant. bucket_analysis.VIEWS
+    can't be the source here: it describes what the *daily backtest simulator*
+    produces, and adding a live view to it would make those reports loop over
+    a view their picks never contain. This store reports on whatever the
+    engine has actually been recording, so a new tracked view (moderate_movers)
+    shows up without touching the backtest side.
+
+    Known views keep their reading order -- pooling is invalid across them
+    (see bucket_analysis.VIEWS) and the order is what makes that readable --
+    with anything newer appended alphabetically.
+    """
+    present = {p["view"] for p in picks}
+    known = [v for v in bucket_analysis.VIEWS if v in present]
+    return known + sorted(present.difference(bucket_analysis.VIEWS))
+
+
 def _is_trading_day(trading_date: str) -> bool:
     """Was the NYSE actually open on this ET date?
 
@@ -341,7 +360,7 @@ class ScannerHistoryStore:
 
         summary = []
         for horizon_name, picks in picks_by_horizon.items():
-            for view_name in ("gainers", "losers", "most_active"):
+            for view_name in _views_present(picks):
                 view_picks = [p for p in picks if p["view"] == view_name]
                 if not view_picks:
                     continue
@@ -500,7 +519,7 @@ class ScannerHistoryStore:
         # shipped multiplier, and it's the only thing that would show the
         # boost becoming justified there as more data accumulates.
         views = {}
-        for view_name in bucket_analysis.VIEWS:
+        for view_name in _views_present(picks):
             view_picks = [p for p in picks if p["view"] == view_name]
             if not view_picks:
                 continue

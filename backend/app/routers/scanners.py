@@ -21,6 +21,9 @@ async def get_benchmark_performance(request: Request) -> dict:
         tracker.all(),
         lambda symbol: (row.last_price if (row := engine.rows.get(symbol)) else None),
         engine.benchmark_price,
+        # Today's headline as it stands now, reported *beside* the frozen
+        # entry_headline rather than replacing it -- see compute_performance.
+        lambda symbol: engine.news_cache.get(symbol) if engine.news_cache else None,
     )
     return {"benchmark_symbol": engine.benchmark_symbol, "picks": picks}
 
