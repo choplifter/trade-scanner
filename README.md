@@ -3,18 +3,18 @@
 A personal, locally-run "stocks in play" scanner + chart dashboard in the
 spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: a live
 **screener** (table or treemap heatmap view) where you build your own filters
-over ~20 fields and results stream in over a WebSocket, with gainers /
+over 22 fields and results stream in over a WebSocket, with gainers /
 premarket gainers / losers / most-active shipped as editable presets ranked by
 a catalyst-boost/fade-risk-aware scoring formula, a click-to-chart candlestick
 widget with a session-anchored VWAP
 overlay, EMA/premarket/weekly/monthly range indicators, and company
 info/news, a dashboard-wide momentum alarm, AI-generated trade-idea
 annotations, a scanner-wide benchmark against SPY, a persistent scanner
-match history with fade-risk analysis, CLI tools for re-validating the
-ranking formula against live and historical data, and a Plotly Dash
-analytics app — powered by Alpaca Markets' real-time IEX data feed, with
-float/market cap/short interest/company info layered in from Financial
-Modeling Prep and FINRA.
+match history with fade-risk analysis, one-click backtesting of whatever
+screen you're looking at, CLI tools for re-validating the ranking formula
+against live and historical data, and a Plotly Dash analytics app — powered by Alpaca Markets' real-time IEX data feed, with
+float/market cap/short interest/company info and gap-filling news layered
+in from Financial Modeling Prep and FINRA.
 
 ## 1. Get Alpaca API credentials (required for live data)
 
@@ -115,6 +115,33 @@ backend on port 8000, so both must be running.
   `app/market_data/news.py`). **FADE RISK** and **⚡ MOMENTUM** badges on the
   symbol cell surface the RVOL and momentum-alarm flags directly, not just
   indirectly via rank order.
+- **News from two feeds.** Alpaca's Benzinga feed is thin on exactly the small
+  and mid caps this scanner surfaces — measured over 12 scanner symbols it had
+  a story for 3, while FMP had one for all 12 — so FMP fills the gaps. Alpaca
+  stays authoritative wherever it has an answer and FMP never overrides it,
+  because `_CATALYST_BOOST`'s +9.1pp was calibrated on Alpaca headlines and
+  pooling a second feed would change what "has a catalyst" means without
+  changing the multiplier derived from it. Each appearance records
+  `entry_headline_source` so the two can eventually be measured separately.
+
+  FMP is not simply better: ~30% of its raw items are securities-litigation
+  notices, which are *backwards* as a catalyst — they're published after a
+  collapse, so counting one would mark past losers as catalyst-backed. Every
+  FMP headline passes a filter that rejects those, 13F churn and opinion
+  pieces, by publisher (Seeking Alpha, Zacks, GuruFocus and friends never
+  publish a company's own announcement) as well as by headline pattern. It
+  rejects ~83% of raw items while still covering every symbol Alpaca missed.
+  Analyst upgrades and price targets are deliberately kept — an upgrade is a
+  real reason a stock moved today. FMP also mis-tags occasionally: a Western
+  Union story was observed returned under `IMXI`, which nothing here can
+  catch, so treat an FMP-sourced catalyst as lower-confidence.
+
+  "Recent" is anchored to the **last session that actually began**, not a flat
+  window: 48h measured on a Monday reaches only to Saturday and hides all of
+  Friday — the very session the scanner shows while closed. Note FMP's
+  timestamps are US/Eastern despite carrying no zone; reading them as UTC
+  shifts every story four hours and silently discards after-close earnings
+  releases.
 - Scanner columns: symbol (click to copy its unambiguous `EXCHANGE:SYMBOL`
   TradingView format), a 📰 flag when there's a recent news headline
   (hover for the headline; refreshed every 15 min for whatever's currently
@@ -141,6 +168,7 @@ adding a field there makes it appear in the UI with no frontend change.
 | `exchange` | Exchange | text | `eq`, `ne`, `contains`, `in` |
 | `last_price` | Price | currency | `gt`, `gte`, `lt`, `lte`, `between` |
 | `pct_change` | Change % | percent | `gt`, `gte`, `lt`, `lte`, `between` |
+| `gap_pct` | Gap % (overnight) | percent | `gt`, `gte`, `lt`, `lte`, `between` |
 | `volume_today` | Volume | number | `gt`, `gte`, `lt`, `lte`, `between` |
 | `avg_vol_20d` | Avg Volume (20d) | number | `gt`, `gte`, `lt`, `lte`, `between` |
 | `rvol` | Rel Volume | number | `gt`, `gte`, `lt`, `lte`, `between` |
@@ -156,7 +184,15 @@ adding a field there makes it appear in the UI with no frontend change.
 | `is_fade_risk` | Fade Risk | boolean | `is_true`, `is_false` |
 | `is_stale` | Stale Price | boolean | `is_true`, `is_false` |
 | `float_shares` | Float | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `short_interest_pct` | Short % of Float | percent | `gt`, `gte`, `lt`, `lte`, `between` |
 | `rank_score` | Rank Score | number | `gt`, `gte`, `lt`, `lte`, `between` |
+
+**`gap_pct` is not `pct_change`.** The former is the *overnight* gap — today's
+open against yesterday's close — and stops changing once the session opens.
+The latter is the current price against yesterday's close, so it absorbs
+everything since. On the last session CAPR gapped **+80.81%** and closed
+**+57.58%**; HTZ gapped **+3.83%** and closed **−5.11%**. "Gapped hard this
+morning" and "is up a lot right now" are different screens.
 
 **Operators.** `gt`/`gte`/`lt`/`lte` are the usual comparisons; `between`
 takes two bounds and is order-insensitive (40 and 10 means the same range as
@@ -206,6 +242,61 @@ they populate for your screen's results rather than the whole universe.
 
 Screens are not persisted yet — presets are server-side, but a screen you
 build yourself is lost on reload.
+
+### Backtesting a screen
+
+The scanner's **Backtest** button replays whatever filters are currently
+active over history — one click from the screen you're looking at, with the
+results inline. Clicking a pick loads that symbol's chart at the entry bar,
+marked with an arrow.
+
+Two resolutions, because they can reconstruct different things:
+
+| | replays | lookback | holds until |
+|---|---|---|---|
+| **Daily** | one bar per session | up to 365d | 1–5 days forward |
+| **Intraday (5m)** | every 5 minutes | capped at 45d | that session's close |
+
+**Daily** can reconstruct 16 of the 22 fields — anything derivable from an
+OHLCV bar and its trailing window. **Intraday** adds `volume_1h`,
+`volume_surge` and `rvol_1h`, which are rates measured *inside* a session and
+so have nothing to reconstruct from at daily resolution. It rebuilds each
+symbol's state as of every bar (volume so far, running high/low, the trailing
+hour) and screens cross-sectionally per timestamp, so `sort_by` and `limit`
+mean what they mean live.
+
+**It refuses rather than silently degrading.** `apply_filters` deliberately
+ignores unknown fields so a stale saved screen still runs live; inheriting
+that here would drop half your criteria and hand back a plausible number for a
+strategy you never described. Instead the run returns 422 naming the offending
+fields — and if switching resolution would fix it, says so and offers a retry
+rather than telling you to delete the filter your screen was built around.
+`spread_pct` (needs historical NBBO quotes nothing fetches) and `is_stale` (a
+live-feed freshness concept, meaningless for a past date) can't be replayed at
+any resolution. `exchange` isn't replayable either, but only because the
+backtest's row type doesn't carry it — a fixable omission rather than a real
+limit, since a listing venue barely changes.
+
+**`float_shares` and `short_interest_pct` are replayable but look-ahead.**
+Neither has a historical series here — float moves with offerings and lockups,
+and FINRA publishes short interest twice a month with a 2–4 week lag — so a
+backtest applies *today's* values to past dates. That asks "how did stocks
+that are low-float **today** behave last March", which isn't a question you
+could have acted on. They're supported because refusing outright would make
+the tool useless for exactly those setups, but any run using one returns
+`look_ahead_fields` and the panel says so beside the result. Treat it as
+exploratory, never as validation.
+
+**Read alpha, not win rate.** A raw win rate near 50% is what a coin flip
+looks like, and on a green day every long closes positive; only the
+benchmark-relative figure says whether the screen contributed. Intraday runs
+also report a **replication factor**: every qualifying bar is a pick, so one
+surge contributes a dozen near-identical rows — a real run showed 9,332 picks
+from 654 distinct symbol-days (14.3× per event), meaning the effective sample
+is nearer the second number.
+
+Survivorship bias applies throughout: today's universe is replayed against
+past dates.
 - **Momentum alarm** (React app only, off by default, long setups only):
   a dashboard-wide alert for a fast, still-confirming *upward* move -- 15m
   % at least a threshold (5% default, `ALARM_MOMENTUM_PCT_THRESHOLD`)
@@ -403,6 +494,10 @@ build yourself is lost on reload.
   publish schedule -- expect it to reflect a settlement date roughly 2-4
   weeks old, not this week's.
 - **Watchlists**: roadmap item, not built yet.
+- **Catalyst boost still pools two news feeds.** `entry_headline_source` is
+  recorded per appearance, but nothing reads it yet — so FMP-sourced headlines
+  currently feed a multiplier calibrated only on Alpaca ones. Splitting the
+  drift report by feed is the next step before either is trusted.
 - **Screener**: React app only — the Dash analytics app has no screening page
   (it briefly did; having two surfaces answer the same question differently,
   one live and one request-driven, was worse than having one). Screens you
