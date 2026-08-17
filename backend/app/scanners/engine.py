@@ -19,6 +19,8 @@ from app.market_data.market_conditions import (
     fetch_vix,
 )
 from app.market_data.news import fetch_headlines, is_roundup_headline
+from app.market_data import news_cache as news_cache_mod
+from app.market_data.fmp_news import fetch_fmp_headlines
 from app.market_data.news_cache import NewsCache
 from app.market_data import volume_surge
 from app.market_data.volume_profile import VolumeProfileCache
@@ -770,11 +772,30 @@ class ScannerEngine:
 
         new_symbols = {row.symbol for view_name, row in candidates if (row.symbol, view_name) not in existing_keys}
         headlines: dict[str, str] = {}
+        headline_sources: dict[str, str] = {}
         if new_symbols:
             try:
                 headlines = await fetch_headlines(self.clients, sorted(new_symbols))
+                headline_sources = {s: news_cache_mod.ALPACA for s in headlines}
             except Exception:
                 logger.exception("Failed fetching news headlines for new scanner appearances")
+
+            # Same Alpaca-first, FMP-for-the-gaps policy the live NewsCache
+            # uses, applied here too -- this is the path that writes
+            # scanner_history, so a coverage gap here becomes a permanently
+            # missing catalyst in every later drift report.
+            uncovered = sorted(new_symbols - set(headlines))
+            if uncovered and self.settings.has_fmp_credentials:
+                try:
+                    fallback = await fetch_fmp_headlines(
+                        self.http_client, self.settings.fmp_api_key, uncovered
+                    )
+                except Exception:
+                    logger.exception("FMP headline fallback failed for new scanner appearances")
+                    fallback = {}
+                for symbol, headline in fallback.items():
+                    headlines[symbol] = headline
+                    headline_sources[symbol] = news_cache_mod.FMP
 
         for view_name, row in candidates:
             self.benchmark_tracker.record_if_new(
@@ -796,6 +817,7 @@ class ScannerEngine:
                 entry_rvol=row.rvol,
                 benchmark_entry_price=self.benchmark_price,
                 entry_headline=headlines.get(row.symbol),
+                entry_headline_source=headline_sources.get(row.symbol),
                 # Taken from the universe-wide bulk float map rather than
                 # row.float_shares: the row's own copy is only populated once
                 # the symbol has been in a ranked view long enough for the

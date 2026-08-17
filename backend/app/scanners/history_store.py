@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS appearances (
     entry_rvol REAL NOT NULL,
     benchmark_entry_price REAL,
     entry_headline TEXT,
+    entry_headline_source TEXT,
     entry_float_shares REAL,
     first_seen_at TEXT NOT NULL,
     UNIQUE(symbol, view, trading_date)
@@ -64,6 +65,12 @@ _COLUMN_MIGRATIONS = [
     # fade-risk discount were. Without float at entry there is no way to ask
     # "did low float actually predict anything here" after the fact.
     ("appearances", "entry_float_shares", "REAL"),
+    # Which feed the headline came from ("alpaca" | "fmp"). The catalyst
+    # boost was calibrated on Alpaca headlines alone; FMP was added later as
+    # a gap-filler with a different noise profile, so pooling them would
+    # change what has_headline means without changing the multiplier derived
+    # from it. Recorded so compute_ranking_drift can split them.
+    ("appearances", "entry_headline_source", "TEXT"),
 ]
 
 # Target checkpoints for the aggregated performance view -- "latest" isn't a
@@ -119,6 +126,7 @@ class NewAppearance:
     entry_rvol: float
     benchmark_entry_price: float | None
     entry_headline: str | None = None
+    entry_headline_source: str | None = None
     entry_float_shares: float | None = None
 
 
@@ -150,8 +158,8 @@ class ScannerHistoryStore:
                 """INSERT OR IGNORE INTO appearances
                    (symbol, view, trading_date, entry_price, entry_pct_change,
                     entry_rvol, benchmark_entry_price, entry_headline,
-                    entry_float_shares, first_seen_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    entry_headline_source, entry_float_shares, first_seen_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         e.symbol,
@@ -162,6 +170,7 @@ class ScannerHistoryStore:
                         e.entry_rvol,
                         e.benchmark_entry_price,
                         e.entry_headline,
+                        e.entry_headline_source,
                         e.entry_float_shares,
                         first_seen_at,
                     )

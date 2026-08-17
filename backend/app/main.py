@@ -64,7 +64,9 @@ async def lifespan(app: FastAPI):
     fundamentals = FundamentalsCache(settings, fundamentals_client)
     app.state.fundamentals = fundamentals
 
-    news_cache = NewsCache(settings, clients)
+    # Shares the fundamentals client: both talk to FMP with the same key and
+    # the same timeout, and its lifetime already spans the app's.
+    news_cache = NewsCache(settings, clients, fundamentals_client)
     app.state.news_cache = news_cache
 
     momentum_cache = MomentumCache(settings, clients)

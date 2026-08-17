@@ -17,6 +17,7 @@ from collections.abc import Iterable
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
+from app.market_data.fmp_news import fetch_fmp_headlines
 from app.market_data.news import fetch_headlines
 
 logger = logging.getLogger(__name__)
@@ -28,15 +29,46 @@ logger = logging.getLogger(__name__)
 _BATCH_SIZE = 20
 
 
+ALPACA = "alpaca"
+FMP = "fmp"
+
+
 class NewsCache:
-    def __init__(self, settings: Settings, clients: AlpacaClients):
+    """Alpaca first, FMP only where Alpaca found nothing.
+
+    Not a swap, and the order matters. Alpaca's Benzinga feed is what the
+    catalyst boost was calibrated against (+9.1pp win rate on gainers, see
+    formulas._CATALYST_BOOST), so it stays authoritative wherever it has an
+    answer. FMP fills the gaps -- measured live, Alpaca covered 2 of 8
+    scanner symbols and FMP 7 of 8 -- but carries ~30% litigation spam, so
+    everything it returns passes fmp_news.is_low_signal_headline first.
+
+    The source is recorded per symbol so the drift report can measure the two
+    feeds separately. That matters: the boost's calibration describes Alpaca
+    headlines, and pooling a second feed's catalysts into it would silently
+    change what "has_headline" means without changing the multiplier derived
+    from it.
+    """
+
+    def __init__(self, settings: Settings, clients: AlpacaClients, http_client=None):
         self.settings = settings
         self.clients = clients
+        # Only needed for the FMP fallback; None disables it entirely, which
+        # is also what happens without an FMP key.
+        self.http_client = http_client
         self._headlines: dict[str, str | None] = {}
+        self._sources: dict[str, str | None] = {}
         self._fetched_at: dict[str, float] = {}
 
     def get(self, symbol: str) -> str | None:
         return self._headlines.get(symbol)
+
+    def source(self, symbol: str) -> str | None:
+        """Which feed the cached headline came from, or None if there isn't
+        one. Recorded onto each new scanner appearance so catalyst
+        performance can be re-checked per feed rather than pooled.
+        """
+        return self._sources.get(symbol)
 
     async def ensure_fresh(self, symbols: Iterable[str]) -> None:
         now = time.monotonic()
@@ -48,6 +80,7 @@ class NewsCache:
         if not stale:
             return
 
+        uncovered: list[str] = []
         for i in range(0, len(stale), _BATCH_SIZE):
             batch = stale[i : i + _BATCH_SIZE]
             try:
@@ -60,4 +93,38 @@ class NewsCache:
                 # Explicitly set (not just for symbols fetch_headlines
                 # found) so a headline that's aged out of the 48h lookback
                 # window correctly clears instead of sticking forever.
-                self._headlines[symbol] = fresh.get(symbol)
+                headline = fresh.get(symbol)
+                self._headlines[symbol] = headline
+                self._sources[symbol] = ALPACA if headline else None
+                if not headline:
+                    uncovered.append(symbol)
+
+        await self._fill_gaps_from_fmp(uncovered)
+
+    async def _fill_gaps_from_fmp(self, symbols: list[str]) -> None:
+        """Second pass, for symbols Alpaca had nothing for.
+
+        Only the gaps, never an override: where both feeds have a story,
+        Alpaca's wins, because that's the feed the catalyst boost's numbers
+        describe. Silent no-op without an HTTP client or an FMP key, same as
+        every other FMP-dependent feature here.
+        """
+        if not symbols or self.http_client is None or not self.settings.has_fmp_credentials:
+            return
+        try:
+            fallback = await fetch_fmp_headlines(
+                self.http_client, self.settings.fmp_api_key, symbols
+            )
+        except Exception:
+            logger.exception("FMP news fallback failed for %d symbols", len(symbols))
+            return
+
+        for symbol, headline in fallback.items():
+            self._headlines[symbol] = headline
+            self._sources[symbol] = FMP
+        if fallback:
+            logger.info(
+                "FMP news fallback filled %d of %d symbols Alpaca had no headline for",
+                len(fallback),
+                len(symbols),
+            )
