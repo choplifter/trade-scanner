@@ -5,6 +5,7 @@ from app.scanners.backtest import alpha_by_view, benchmark_returns_by_date, simu
 from app.scanners.metric_validation import (
     base_rate,
     expectancy,
+    implied_multiplier,
     overfitting_gauge,
     search_conditions,
     split_by_date,
@@ -229,3 +230,90 @@ def test_overfitting_gauge_ignores_thin_out_of_sample_rules():
         {"label": "x", "in_sample": {"win_rate": 90.0}, "out_of_sample": {"win_rate": 10.0, "sample_size": 3}}
     ]
     assert overfitting_gauge(results) is None
+
+
+def _gap_pick(symbol: str, day: str, gap: float, won: bool, catalyst: bool, alpha: float = 0.0) -> dict:
+    return {
+        "symbol": symbol,
+        "trading_date": day,
+        "entry_pct_change": gap,
+        "pct_change_since_entry": 1.0 if won else -1.0,
+        "alpha_vs_benchmark": alpha,
+        "has_catalyst": catalyst,
+    }
+
+
+def _calibrated_picks() -> list[dict]:
+    """Non-catalyst win rate rises exactly 10pp per doubling of gap (40/50/60%
+    at gaps of 1/2/4), and flagged picks win 55% against the 50% unflagged
+    average -- a +5pp edge.
+
+    So the answer is arithmetic, not approximate: half a doubling, hence
+    sqrt(2). Any change that starts scaling the multiplier with the edge
+    itself rather than with edge/slope breaks this.
+    """
+    picks = []
+    for gap, win_rate in ((1.0, 0.40), (2.0, 0.50), (4.0, 0.60)):
+        for i in range(200):
+            picks.append(_gap_pick(f"P{gap}_{i}", "2026-01-05", gap, i < 200 * win_rate, False))
+    for i in range(200):
+        picks.append(_gap_pick(f"C{i}", "2026-01-05", 2.0, i < 110, True))
+    return picks
+
+
+def test_implied_multiplier_is_edge_over_slope_not_edge():
+    result = implied_multiplier(_calibrated_picks(), bootstrap=0)
+    assert result["win_rate_slope_pp_per_doubling"] == 10.0
+    assert result["win_rate_edge_pp"] == 5.0
+    # 2 ** (5/10), not something proportional to the 5pp edge on its own.
+    assert result["win_rate_multiplier"] == round(2**0.5, 3)
+
+
+def test_flat_gap_slope_yields_no_multiplier():
+    """When gap predicts nothing, no multiplier expresses the edge -- dividing
+    by a ~zero slope would manufacture an enormous one out of noise."""
+    picks = []
+    for gap in (1.0, 2.0, 4.0):
+        for i in range(200):
+            picks.append(_gap_pick(f"P{gap}_{i}", "2026-01-05", gap, i < 100, False))
+    for i in range(200):
+        picks.append(_gap_pick(f"C{i}", "2026-01-05", 2.0, i < 140, True))
+    result = implied_multiplier(picks, bootstrap=0)
+    assert result["win_rate_slope_pp_per_doubling"] == 0.0
+    assert result["win_rate_multiplier"] is None
+
+
+def test_picks_above_the_inversion_are_excluded_not_fitted():
+    """Past GAP_INVERSION_PCT the gap/outcome relation flips sign. Those picks
+    are extreme enough to set an unweighted fit's sign by themselves, so they
+    must not reach the regression at all."""
+    picks = _calibrated_picks()
+    baseline = implied_multiplier(picks, bootstrap=0)
+    for i in range(300):
+        picks.append(_gap_pick(f"X{i}", "2026-01-06", 25.0, False, i % 2 == 0, alpha=-40.0))
+    result = implied_multiplier(picks, bootstrap=0)
+    assert result["picks_excluded_above_limit"] == 300
+    assert result["win_rate_multiplier"] == baseline["win_rate_multiplier"]
+    assert result["win_rate_slope_pp_per_doubling"] == baseline["win_rate_slope_pp_per_doubling"]
+
+
+def test_bootstrap_resamples_symbol_days_so_replication_cannot_narrow_it():
+    """The methodological guard. An intraday replay emits one pick per
+    qualifying 5-minute bar, so a single symbol-day arrives ~78 times over
+    with the same catalyst flag and near-identical outcome. Resampling picks
+    would read that as 78 independent observations and shrink the interval by
+    roughly sqrt(78); resampling symbol-days leaves it untouched.
+
+    Replicating every pick within its own symbol-day is therefore a no-op
+    here, exactly -- same bands, same weights, same draws.
+    """
+    picks = [_gap_pick(f"S{i}", f"2026-01-{5 + i % 20:02d}", gap, i < 200 * rate, flag)
+             for gap, rate, flag in ((1.0, 0.40, False), (2.0, 0.50, False),
+                                     (4.0, 0.60, False), (2.0, 0.55, True))
+             for i in range(200)]
+    once = implied_multiplier(picks, bootstrap=60)
+    replicated = implied_multiplier([p for p in picks for _ in range(20)], bootstrap=60)
+
+    assert replicated["picks_used"] == once["picks_used"] * 20
+    assert replicated["symbol_days"] == once["symbol_days"]
+    assert replicated["bootstrap"] == once["bootstrap"]

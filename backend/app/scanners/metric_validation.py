@@ -25,6 +25,8 @@ built from wins half the size of its losses is worse than a 45% one that
 isn't.
 """
 
+import math
+import random
 from collections import defaultdict
 from itertools import product
 from statistics import mean, median
@@ -248,3 +250,181 @@ def picks_by_horizon_summary(picks_by_horizon: dict[int, list[dict]]) -> list[di
                     {"horizon_days": horizon, "view": view_name, **(expectancy(by_view[view_name]) or {})}
                 )
     return summary
+
+
+# --- What multiplier does a measured edge actually justify? -----------------
+#
+# formulas._CATALYST_BOOST rescales ranking *magnitude*, so a boost of m ranks
+# a flagged name where an unflagged name with m-times the gap would sit. The
+# multiplier is therefore an exchange rate between "has a catalyst" and "moved
+# further", and the conversion factor is the slope of outcome against gap --
+# not the size of the edge. Setting m proportional to the edge is a units
+# error, and one worth guarding against in code: the naive rescaling of 1.15
+# by 1.7/9.1 gives 1.03, while solving it properly gives 1.2-2.1.
+
+# Gap bands, in %. Deliberately widening: gaps are roughly log-distributed, so
+# equal-width bands would put almost everything in the first one.
+_GAP_BANDS = (0.0, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0, float("inf"))
+# Below this gap, bigger moves predict better outcomes; above it the relation
+# inverts (the same exhaustion effect formulas._FADE_RISK_RVOL discounts), so
+# a single slope fit across the whole range is meaningless -- and the extreme
+# tail is far enough out to set an unweighted fit's *sign* by itself.
+GAP_INVERSION_PCT = 8.0
+# A band this thin can't carry a win rate worth fitting through.
+_MIN_BAND_SAMPLE = 100
+
+
+def outcome_by_gap(picks: list[dict], limit: float | None = None) -> list[dict]:
+    """Win rate and mean alpha per gap band, for picks with no catalyst.
+
+    The unflagged side alone, because it is the reference the flagged side is
+    being priced against -- mixing them in would let the very effect being
+    measured bend the yardstick.
+    """
+    bands = []
+    for low, high in zip(_GAP_BANDS, _GAP_BANDS[1:]):
+        if limit is not None and low >= limit:
+            break
+        rows = [p for p in picks if low <= p["entry_pct_change"] < high]
+        if len(rows) < _MIN_BAND_SAMPLE:
+            continue
+        alphas = [r["alpha_vs_benchmark"] for r in rows if r.get("alpha_vs_benchmark") is not None]
+        bands.append(
+            {
+                "low": low,
+                "high": high,
+                "mean_gap": mean(p["entry_pct_change"] for p in rows),
+                "sample_size": len(rows),
+                "win_rate": sum(1 for r in rows if r["pct_change_since_entry"] > 0) / len(rows) * 100,
+                "mean_alpha": mean(alphas) if alphas else 0.0,
+            }
+        )
+    return bands
+
+
+def _slope_per_doubling(bands: list[dict], key: str) -> float:
+    """Least-squares slope of `key` against log2(gap), weighted by band size.
+
+    Weighted because the bands differ by two orders of magnitude in
+    population; unweighted, a 114-pick tail band counts as much as a
+    9,000-pick one.
+    """
+    xs = [math.log2(b["mean_gap"]) for b in bands if b["mean_gap"] > 0]
+    if len(xs) < 3:
+        return 0.0
+    ys = [b[key] for b in bands if b["mean_gap"] > 0]
+    ws = [float(b["sample_size"]) for b in bands if b["mean_gap"] > 0]
+    total = sum(ws)
+    mx = sum(w * x for w, x in zip(ws, xs)) / total
+    my = sum(w * y for w, y in zip(ws, ys)) / total
+    denom = sum(w * (x - mx) ** 2 for w, x in zip(ws, xs))
+    if denom <= 0:
+        return 0.0
+    return sum(w * (x - mx) * (y - my) for w, x, y in zip(ws, xs, ys)) / denom
+
+
+def _win_rate(rows: list[dict]) -> float | None:
+    if not rows:
+        return None
+    return sum(1 for r in rows if r["pct_change_since_entry"] > 0) / len(rows) * 100
+
+
+def _mean_alpha(rows: list[dict]) -> float | None:
+    vals = [r["alpha_vs_benchmark"] for r in rows if r.get("alpha_vs_benchmark") is not None]
+    return mean(vals) if vals else None
+
+
+# Below this, the fitted slope is treated as flat: gap carries no outcome
+# signal, so no finite multiplier expresses the edge and dividing by it would
+# manufacture an enormous one out of nothing.
+_FLAT_SLOPE_PP = 0.05
+
+
+def _solve(picks: list[dict], limit: float) -> dict | None:
+    flagged = [p for p in picks if p["has_catalyst"]]
+    plain = [p for p in picks if not p["has_catalyst"]]
+    if len(flagged) < 50 or len(plain) < 200:
+        return None
+    bands = outcome_by_gap(plain, limit)
+    if len(bands) < 3:
+        return None
+    out = {}
+    for name, slope_key, edge in (
+        ("win_rate", "win_rate", (_win_rate(flagged) or 0) - (_win_rate(plain) or 0)),
+        ("alpha", "mean_alpha", (_mean_alpha(flagged) or 0) - (_mean_alpha(plain) or 0)),
+    ):
+        slope = _slope_per_doubling(bands, slope_key)
+        out[f"{name}_slope_pp_per_doubling"] = round(slope, 4)
+        out[f"{name}_edge_pp"] = round(edge, 4)
+        out[f"{name}_multiplier"] = (
+            None if abs(slope) < _FLAT_SLOPE_PP else round(2 ** (edge / slope), 3)
+        )
+    out["bands"] = bands
+    return out
+
+
+def implied_multiplier(
+    picks: list[dict],
+    *,
+    limit: float = GAP_INVERSION_PCT,
+    bootstrap: int = 400,
+    seed: int = 7,
+) -> dict | None:
+    """What formulas._CATALYST_BOOST should be, given these picks.
+
+    Long side only -- the boost is a gainers-side adjustment, and "gap times
+    m" only means anything for a move with a direction.
+
+    Restricted to gaps below `limit` because the slope everything divides by
+    only exists there (see GAP_INVERSION_PCT). The excluded count is returned
+    so a caller can see how much of the sample the answer doesn't cover.
+
+    The bootstrap resamples whole symbol-days, not picks. An intraday replay
+    emits one pick per qualifying 5-minute bar, all carrying the same day's
+    catalyst flag and near-identical outcomes, so resampling picks would treat
+    ~11k correlated rows as independent draws and report an interval several
+    times too tight -- which would turn "cannot distinguish 1.15 from 2.1"
+    into a false claim of precision.
+    """
+    longs = [p for p in picks if p["entry_pct_change"] > 0]
+    used = [p for p in longs if p["entry_pct_change"] < limit]
+    result = _solve(used, limit)
+    if result is None:
+        return None
+
+    by_day: dict[tuple, list[dict]] = defaultdict(list)
+    for pick in used:
+        by_day[(pick["symbol"], pick.get("trading_date"))].append(pick)
+
+    result.update(
+        {
+            "gap_limit_pct": limit,
+            "picks_used": len(used),
+            "picks_excluded_above_limit": len(longs) - len(used),
+            "symbol_days": len(by_day),
+            "flagged_symbol_days": len({k for k, v in by_day.items() if v[0]["has_catalyst"]}),
+        }
+    )
+
+    keys = list(by_day)
+    if bootstrap and keys:
+        rng = random.Random(seed)
+        draws = []
+        for _ in range(bootstrap):
+            resampled = [p for k in rng.choices(keys, k=len(keys)) for p in by_day[k]]
+            drawn = _solve(resampled, limit)
+            if drawn and drawn["win_rate_multiplier"] is not None:
+                draws.append(drawn["win_rate_multiplier"])
+        if draws:
+            draws.sort()
+            result["bootstrap"] = {
+                "draws": len(draws),
+                "requested": bootstrap,
+                "p05": round(draws[int(len(draws) * 0.05)], 3),
+                "median": round(draws[len(draws) // 2], 3),
+                "p95": round(draws[int(len(draws) * 0.95)], 3),
+                "share_below_one_pct": round(
+                    sum(1 for d in draws if d < 1.0) / len(draws) * 100, 1
+                ),
+            }
+    return result

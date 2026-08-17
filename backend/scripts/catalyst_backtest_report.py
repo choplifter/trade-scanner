@@ -35,11 +35,23 @@ are true, of different questions -- and the original +9.1pp asked the second
 one, since the live drift report reads each appearance's latest same-day
 snapshot.
 
-So the boost's *direction* survives on the measurement it was derived from,
-while its *magnitude* does not: +1.7pp measured over 40 days is a long way
-from the +9.1pp behind a 1.15x multiplier. And note the intraday sample
-replicates heavily -- every qualifying bar is a pick, so 21,303 catalyst
-picks come from 792 symbol-days, and the effective sample is the latter.
+So the boost's *direction* survives on the measurement it was derived from.
+Its magnitude looks refuted too -- +1.7pp is a long way from +9.1pp, which
+seems to say 1.15 should fall to about 1.03. Run --solve-multiplier: it
+doesn't, and the reasoning behind 1.03 is a units error.
+
+The boost rescales ranking *magnitude*, so it's an exchange rate between
+"has a catalyst" and "moved further", and the conversion factor is the slope
+of outcome against gap -- not the size of the edge. That slope is shallow
+(+2.9pp of win rate per *doubling* of gap, and only positive below ~8% gap),
+so even the reduced edge buys slightly over one doubling: m ~= 2.1 by win
+rate, 1.2 by alpha. Both sit at or above the shipped 1.15.
+
+What actually limits the answer is sample, not effect size. The intraday
+replay emits one pick per qualifying bar, so 11,405 catalyst picks come from
+210 symbol-days -- and bootstrapping over symbol-days puts the 90% interval
+at 0.50 .. 16.3, with 20% of draws implying no boost at all. 1.15 is inside
+that and conservative against both point estimates, so it stays.
 
 The original leading explanation, for the record: This enters
 at the *close* of the news day, by which point a catalyst is priced -- what's
@@ -78,7 +90,8 @@ from app.scanners.backtest import (
 )
 from app.scanners import screener
 from app.scanners.intraday_backtest_runner import run_intraday_backtest
-from app.scanners.metric_validation import expectancy
+from app.scanners import formulas
+from app.scanners.metric_validation import expectancy, implied_multiplier
 from app.scanners.news_history import catalyst_days, fetch_symbol_news
 from app.services.market_clock import ET
 
@@ -121,6 +134,43 @@ def _print_report(report: dict) -> None:
     print("A positive delta on gainers supports the boost; near zero or negative says the")
     print("1.15x is unearned. Read alpha alongside win rate -- on a green day everything")
     print("closes positive, so only the benchmark-relative split isolates the catalyst.")
+
+
+def _print_multiplier(result: dict | None) -> None:
+    if not result:
+        print("\nNot enough picks on both sides to solve for a multiplier.")
+        return
+    print("\n" + "=" * 72)
+    print("What multiplier does that edge justify?")
+    print("=" * 72)
+    print("formulas._CATALYST_BOOST rescales ranking *magnitude*, so a boost of m ranks a")
+    print("flagged name where an unflagged name with m-times the gap sits. The multiplier is")
+    print("therefore edge / (slope of outcome against gap) -- NOT the edge itself. Rescaling")
+    print("1.15 by the ratio of effect sizes is a units error.\n")
+
+    print("Outcome by gap band, unflagged picks (the yardstick being priced against):")
+    print("   gap band          n     win%     mean alpha")
+    for band in result["bands"]:
+        print("   %5.1f-%-6.1f %7d   %5.1f%%   %+9.3f%%"
+              % (band["low"], band["high"], band["sample_size"], band["win_rate"], band["mean_alpha"]))
+    print(f"   ({result['picks_excluded_above_limit']} picks above "
+          f"{result['gap_limit_pct']:.0f}% excluded -- the relation inverts there)\n")
+
+    for name in ("win_rate", "alpha"):
+        m = result[f"{name}_multiplier"]
+        print("   by %-8s  slope %+7.3fpp/doubling   edge %+6.2fpp   ->  %s"
+              % (name, result[f"{name}_slope_pp_per_doubling"], result[f"{name}_edge_pp"],
+                 "no multiplier (slope ~flat)" if m is None else f"m = {m:.2f}"))
+
+    boot = result.get("bootstrap")
+    if boot:
+        print(f"\nBootstrapped over {result['symbol_days']} symbol-days "
+              f"({result['flagged_symbol_days']} flagged), not over picks -- every 5-minute bar")
+        print("of a day repeats the same catalyst flag, so pick-level resampling would report")
+        print("an interval several times too tight.")
+        print(f"   90% interval: {boot['p05']:.2f} .. {boot['p95']:.2f}   (median {boot['median']:.2f})")
+        print(f"   draws implying no boost at all: {boot['share_below_one_pct']:.0f}%")
+    print(f"\nCurrently shipped: {formulas._CATALYST_BOOST}")
 
 
 async def _build(args) -> dict:
@@ -200,7 +250,15 @@ async def _build(args) -> dict:
             }
         )
 
+    # Only solvable on the intraday picks: it needs each pick's own gap, and
+    # a slope fit through picks whose edge is negative would price a boost
+    # below 1 for a question the ranking doesn't ask.
+    multiplier = (
+        implied_multiplier(picks) if getattr(args, "solve_multiplier", False) else None
+    )
+
     return {
+        "multiplier": multiplier,
         "lookback_days": args.lookback_days,
         "horizon_days": args.horizon_days,
         "symbol_count": len(symbols),
@@ -218,6 +276,9 @@ if __name__ == "__main__":
     parser.add_argument("--lookback-days", type=int, default=120)
     parser.add_argument("--horizon-days", type=int, default=1)
     parser.add_argument("--max-symbols", type=int, default=150)
+    parser.add_argument("--solve-multiplier", action="store_true",
+                        help="Solve for what formulas._CATALYST_BOOST should be, rather than "
+                             "only reporting the edge. Implies --intraday")
     parser.add_argument("--intraday", action="store_true",
                         help="Enter intraday and hold to that session's close, rather than "
                              "entering at the close and holding overnight")
@@ -226,4 +287,14 @@ if __name__ == "__main__":
                              "not third parties writing about the company")
     parser.add_argument("--from-history", action="store_true",
                         help="Use symbols that have actually been ranked rather than the universe's top-N")
-    _print_report(asyncio.run(_build(parser.parse_args())))
+    args = parser.parse_args()
+    if args.solve_multiplier:
+        # The multiplier can only be solved where the edge is real, and the
+        # edge is only positive on the intraday entry -- solving it against
+        # the overnight measurement would price a boost for a question the
+        # ranking doesn't ask.
+        args.intraday = True
+    report = asyncio.run(_build(args))
+    _print_report(report)
+    if args.solve_multiplier:
+        _print_multiplier(report["multiplier"])

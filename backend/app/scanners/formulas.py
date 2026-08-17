@@ -135,6 +135,39 @@ def is_stale(last_trade_at: datetime | None, now: datetime, threshold_seconds: f
 # effect is actually measurable, rather than everywhere on the strength of a
 # pooled number. Worth re-checking via scripts/ranking_drift_report.py as
 # more trading days accumulate; the current read rests on 3.
+#
+# Re-measured over 40 days of dated FMP news
+# (scripts/catalyst_backtest_report.py --intraday), the edge is +1.7pp, not
+# +9.1pp. That looks like it should shrink the multiplier by the same ratio,
+# to about 1.03. It shouldn't, and the reason is worth writing down because
+# the intuition is wrong in a way that would quietly mis-set the constant:
+#
+# This value is not a return forecast, it is an *exchange rate*. It rescales
+# magnitude, so a boost of m ranks a catalyst name where a non-catalyst name
+# with m-times the gap would sit. The right m is therefore the catalyst's
+# outcome edge divided by the slope of outcome against gap -- not the edge
+# itself. Scaling m with the edge alone is a units error.
+#
+# That slope is shallow, and only exists at all below ~8% gap (measured
+# non-catalyst win rate by gap band: 43.5 / 47.7 / 48.7 / 50.7 / 57.7%
+# climbing to 8%, then inverting -- 33.2% at 8-13%, 3.5% past 21%, which is
+# the same fade-risk effect _FADE_RISK_RVOL discounts). Fitting the 94% of
+# picks below the inversion gives +2.9pp of win rate per *doubling* of gap.
+# So the measured +3.2pp edge in that region buys slightly over one doubling:
+# m ~= 2.1 by win rate, ~1.2 by alpha.
+#
+# Both point estimates sit at or above the shipped 1.15, so the smaller
+# effect does not argue for a smaller multiplier. But bootstrapping over
+# symbol-days -- the real unit, since every 5-minute bar of a day repeats the
+# same catalyst flag -- puts the 90% interval at 0.50 .. 16.3, with 20% of
+# draws implying no boost at all. The measurement cannot distinguish 1.15
+# from 2.1, and cannot rule out 1.0.
+#
+# Left at 1.15: it is inside the interval, conservative against both point
+# estimates, and the honest reading is that 881 symbol-days can't justify
+# moving it in either direction. Note also the sign is entry-dependent --
+# positive intraday, negative held overnight (-3.0pp) -- so this constant is
+# only defensible for the same-session question the ranking actually asks.
 _CATALYST_BOOST = 1.15
 
 # Above this RVOL, the same history analysis found win rate *drops*
