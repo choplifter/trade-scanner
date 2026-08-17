@@ -4,6 +4,19 @@ interface SymbolInfoPanelProps {
   symbol: string | null;
 }
 
+/** Relative age of a story. The panel is headed "Recent News" but the FMP
+ * feed carries a symbol's whole history, so an item can easily be weeks old
+ * — without a date, a stale headline reads as an explanation for today's
+ * move. Shown per item rather than filtering them out: older context is
+ * still useful here, it just must not masquerade as fresh. */
+function newsAge(publishedAt: string): string {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(publishedAt).getTime()) / 60000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 export function SymbolInfoPanel({ symbol }: SymbolInfoPanelProps) {
   const { info, loading, error } = useSymbolInfo(symbol);
 
@@ -43,7 +56,10 @@ export function SymbolInfoPanel({ symbol }: SymbolInfoPanelProps) {
               ) : (
                 <span className="symbol-news-headline">{item.headline}</span>
               )}
-              <span className="symbol-news-source"> — {item.source}</span>
+              <span className="symbol-news-source">
+                {" "}
+                — {item.source} · {newsAge(item.published_at)}
+              </span>
             </div>
           ))}
         </div>

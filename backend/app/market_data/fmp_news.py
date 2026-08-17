@@ -37,8 +37,11 @@ that reason as well as the noise rate.
 
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 
 import httpx
+
+from app.services.market_clock import ET, trading_hours_for
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +49,64 @@ _URL = "https://financialmodelingprep.com/stable/news/stock"
 # Enough per request to have several candidates per symbol after filtering,
 # without pulling a page of history nobody reads.
 _LIMIT_PER_REQUEST = 250
-# FMP takes a comma-separated symbol list; kept modest so one oversized URL
-# doesn't fail the whole batch.
-_BATCH_SIZE = 25
+# Small on purpose. `limit` is shared across every symbol in the request, and
+# coverage is wildly uneven: asking for 25 symbols at limit=250 came back with
+# 250 items covering only 20 of them -- NVDA alone took 40, GOOG 34, AAPL 27 --
+# and CPRT, which had 40 of its own articles available, got zero. A quiet
+# symbol batched with loud ones is simply never reached. Five symbols to a
+# request gives each one room even when its neighbours are noisy.
+_BATCH_SIZE = 5
+
+# How far before the relevant session's open a story still counts. Wide
+# enough to catch a pre-market announcement or an after-hours release from
+# the session before, which is when a good share of catalysts land.
+_PRE_SESSION_BUFFER = timedelta(hours=18)
+
+
+def parse_published(value: str | None) -> datetime | None:
+    """FMP publishes "YYYY-MM-DD HH:MM:SS" with no zone. It is **US/Eastern**,
+    not UTC, and reading it as UTC shifts every story four hours earlier.
+
+    That is not cosmetic. Eton's Q2 release is stamped 2026-08-13 16:05 --
+    five minutes after the close, which is when earnings land. Read as UTC it
+    becomes 12:05 ET, mid-session, and fell the wrong side of a cutoff
+    anchored to the session open, so the actual catalyst behind a +44.98%
+    move was discarded as stale. The pre-market releases stamped 06:50 say
+    the same thing: 06:50 ET is a standard release slot, 02:50 ET is not.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=ET).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def recent_news_cutoff(now: datetime | None = None) -> datetime:
+    """The oldest a story can be and still explain the move on screen.
+
+    Anchored to the most recent trading session rather than a fixed number
+    of hours back, because a fixed window is wrong exactly when it matters.
+    A flat 48h measured from a Monday morning reaches back only to Saturday
+    -- excluding the whole of Friday's session, which is precisely the
+    session the scanner is showing while the market is closed. That is not
+    hypothetical: it cut flagged rows from 46 to 7 the first time it ran,
+    with the market closed over a weekend.
+
+    So: back to the open of the last session that has actually begun, less a
+    buffer for pre-market and prior-evening releases. During a live session
+    that's this morning's open; on a Monday it's Friday's.
+    """
+    now = now or datetime.now(timezone.utc)
+    day = now.astimezone(ET).date()
+    for _ in range(10):  # a 10-day walk clears any holiday-extended weekend
+        hours = trading_hours_for(day)
+        if hours is not None and hours[0] <= now.astimezone(ET):
+            return (hours[0] - _PRE_SESSION_BUFFER).astimezone(timezone.utc)
+        day -= timedelta(days=1)
+    # No session found at all (a data gap) -- fall back to a plain window
+    # rather than returning nothing and silently dropping every headline.
+    return now - timedelta(days=4)
 
 # The noise classes measured above. Matched against the headline only -- the
 # body isn't fetched, and these templates are recognisable from the title by
@@ -155,7 +213,10 @@ def is_low_signal_headline(headline: str, publisher: str | None = None) -> bool:
 
 
 async def fetch_fmp_headlines(
-    client: httpx.AsyncClient, api_key: str, symbols: list[str]
+    client: httpx.AsyncClient,
+    api_key: str,
+    symbols: list[str],
+    cutoff: datetime | None = None,
 ) -> dict[str, str]:
     """{symbol: most recent non-noise headline}. Symbols with nothing usable
     are absent rather than present-with-None, so a caller can tell "FMP had
@@ -168,9 +229,32 @@ async def fetch_fmp_headlines(
     if not symbols or not api_key:
         return {}
 
+    cutoff = cutoff or recent_news_cutoff()
     found: dict[str, str] = {}
-    for i in range(0, len(symbols), _BATCH_SIZE):
-        batch = symbols[i : i + _BATCH_SIZE]
+    await _collect(client, api_key, symbols, cutoff, found, _BATCH_SIZE)
+
+    # Second pass, one symbol at a time, for whatever the batched pass missed.
+    # Batching alone isn't enough however small the batch: `limit` is shared,
+    # and a single prolific name can swallow it -- CAPR took 212 of 250 items
+    # in a five-symbol request, starving neighbours that had news of their
+    # own. Retrying individually is bounded work (only the stragglers) and is
+    # what actually guarantees a symbol with news gets looked at.
+    missing = [s for s in symbols if s not in found]
+    if missing:
+        await _collect(client, api_key, missing, cutoff, found, 1)
+    return found
+
+
+async def _collect(
+    client: httpx.AsyncClient,
+    api_key: str,
+    symbols: list[str],
+    cutoff: datetime,
+    found: dict[str, str],
+    batch_size: int,
+) -> None:
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i : i + batch_size]
         try:
             response = await client.get(
                 _URL,
@@ -194,5 +278,7 @@ async def fetch_fmp_headlines(
                 continue
             if is_low_signal_headline(title, item.get("publisher")):
                 continue
+            published = parse_published(item.get("publishedDate"))
+            if published is None or published < cutoff:
+                continue
             found[symbol] = title
-    return found

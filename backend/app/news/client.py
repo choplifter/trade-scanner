@@ -15,7 +15,7 @@ from alpaca.data.requests import NewsRequest
 from pydantic import BaseModel
 
 from app.alpaca.client import AlpacaClients
-from app.market_data.fmp_news import is_low_signal_headline
+from app.market_data.fmp_news import is_low_signal_headline, parse_published
 
 logger = logging.getLogger(__name__)
 
@@ -132,13 +132,9 @@ async def fetch_recent_fmp_news(
 
 
 def _parse_fmp_date(value: str | None) -> datetime | None:
-    """FMP publishes "YYYY-MM-DD HH:MM:SS" without a zone. Treated as UTC so
-    it can be ordered against Alpaca's genuinely tz-aware timestamps -- a
-    naive datetime would raise the moment the two are compared.
+    """Shared with app.market_data.fmp_news.parse_published -- FMP's naive
+    timestamps are US/Eastern, not UTC. See that function for the evidence;
+    getting it wrong shifts every FMP story in this panel four hours earlier
+    than it happened, and mis-orders it against Alpaca's aware timestamps.
     """
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
+    return parse_published(value)

@@ -1,3 +1,4 @@
+from datetime import timedelta
 import httpx
 import pytest
 
@@ -77,6 +78,13 @@ def _client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+def _recent(hours_ago: float = 1) -> str:
+    """FMP's naive "YYYY-MM-DD HH:MM:SS", which it publishes in UTC."""
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 @pytest.mark.asyncio
 async def test_returns_the_most_recent_non_noise_headline_per_symbol():
     def handler(request):
@@ -85,9 +93,9 @@ async def test_returns_the_most_recent_non_noise_headline_per_symbol():
             json=[
                 # FMP returns newest first; the newest for AAA is noise, so
                 # the next real one should win rather than AAA being skipped.
-                {"symbol": "AAA", "title": "AAA Investor Alert: Law Offices of Someone"},
-                {"symbol": "AAA", "title": "AAA Announces FDA Clearance"},
-                {"symbol": "BBB", "title": "BBB Reports Record Quarterly Revenue"},
+                {"symbol": "AAA", "title": "AAA Investor Alert: Law Offices of Someone", "publishedDate": _recent(1)},
+                {"symbol": "AAA", "title": "AAA Announces FDA Clearance", "publishedDate": _recent(2)},
+                {"symbol": "BBB", "title": "BBB Reports Record Quarterly Revenue", "publishedDate": _recent(3)},
             ],
         )
 
@@ -105,7 +113,7 @@ async def test_a_symbol_with_only_noise_is_absent_not_none():
     # Absent lets a caller tell "FMP had nothing usable" from "FMP wasn't
     # asked", which matters because the fallback only fills gaps.
     def handler(request):
-        return httpx.Response(200, json=[{"symbol": "AAA", "title": "AAA Class Action Filed"}])
+        return httpx.Response(200, json=[{"symbol": "AAA", "title": "AAA Class Action Filed", "publishedDate": _recent()}])
 
     async with _client(handler) as client:
         assert await fetch_fmp_headlines(client, "key", ["AAA"]) == {}
@@ -116,7 +124,7 @@ async def test_symbols_outside_the_requested_batch_are_ignored():
     # FMP has been observed mis-tagging stories; this at least rejects ones
     # attributed to a symbol nobody asked about.
     def handler(request):
-        return httpx.Response(200, json=[{"symbol": "ZZZ", "title": "ZZZ Announces Merger"}])
+        return httpx.Response(200, json=[{"symbol": "ZZZ", "title": "ZZZ Announces Merger", "publishedDate": _recent()}])
 
     async with _client(handler) as client:
         assert await fetch_fmp_headlines(client, "key", ["AAA"]) == {}
@@ -254,3 +262,101 @@ def test_chart_news_is_capped():
         limit=6,
     )
     assert len(merged) == 6
+
+
+def test_stale_headlines_are_rejected():
+    """FMP returns a symbol's whole history with no date bound. CPRT's newest
+    item was five days old while the stock was up 7.55% today -- flagging that
+    as the reason for the move would be wrong, and feeding it to the catalyst
+    boost worse."""
+    import asyncio
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json=[
+                {"symbol": "AAA", "title": "AAA Announces Merger", "publishedDate": _recent(24 * 5)},
+                {"symbol": "BBB", "title": "BBB Announces Merger", "publishedDate": _recent(6)},
+            ],
+        )
+
+    async def run():
+        async with _client(handler) as client:
+            return await fetch_fmp_headlines(client, "key", ["AAA", "BBB"])
+
+    result = asyncio.run(run())
+    assert "AAA" not in result
+    assert result["BBB"] == "BBB Announces Merger"
+
+
+def test_undated_items_are_rejected_rather_than_assumed_fresh():
+    import asyncio
+
+    def handler(request):
+        return httpx.Response(200, json=[{"symbol": "AAA", "title": "AAA Announces Merger"}])
+
+    async def run():
+        async with _client(handler) as client:
+            return await fetch_fmp_headlines(client, "key", ["AAA"])
+
+    assert asyncio.run(run()) == {}
+
+
+def test_batches_stay_small_so_quiet_symbols_are_not_crowded_out():
+    """limit is shared across every symbol in a request. At 25 per batch, a
+    real response covered 20 symbols and gave CPRT zero of its 40 available
+    articles because NVDA/GOOG/AAPL consumed the quota."""
+    from app.market_data import fmp_news
+
+    assert fmp_news._BATCH_SIZE <= 5
+
+
+def test_cutoff_reaches_back_to_the_last_session_not_a_fixed_window():
+    """A flat 48h from a Monday morning reaches only to Saturday, excluding
+    the whole of Friday's session -- the exact session the scanner shows
+    while the market is closed. It cut flagged rows from 46 to 7 in practice."""
+    from datetime import datetime, timezone
+    from app.market_data.fmp_news import recent_news_cutoff
+    from app.services.market_clock import ET
+
+    # Monday 2026-08-17, pre-market.
+    monday = datetime(2026, 8, 17, 5, 0, tzinfo=timezone.utc)
+    cutoff = recent_news_cutoff(monday)
+
+    # Friday 2026-08-14 was the last session; the cutoff must precede its open.
+    assert cutoff.astimezone(ET).date().isoformat() == "2026-08-13"
+    # And a flat 48h would not have reached it.
+    assert cutoff < monday - timedelta(hours=48)
+
+
+def test_cutoff_uses_todays_open_once_the_session_has_begun():
+    from datetime import datetime, timezone
+    from app.market_data.fmp_news import recent_news_cutoff
+    from app.services.market_clock import ET
+
+    # Thursday 2026-08-13, mid-session (14:00 UTC = 10:00 ET).
+    midday = datetime(2026, 8, 13, 14, 0, tzinfo=timezone.utc)
+    cutoff = recent_news_cutoff(midday).astimezone(ET)
+    # 09:30 open minus the 18h buffer lands on the previous evening.
+    assert cutoff.date().isoformat() == "2026-08-12"
+
+
+def test_fmp_timestamps_are_eastern_not_utc():
+    """A Q2 release stamped 16:05 is five minutes after the ET close -- when
+    earnings land. Read as UTC it becomes 12:05 ET, mid-session, and fell the
+    wrong side of a session-anchored cutoff, discarding the actual catalyst
+    behind a +44.98% move."""
+    from app.market_data.fmp_news import parse_published
+    from app.services.market_clock import ET
+
+    parsed = parse_published("2026-08-13 16:05:00")
+    assert parsed.astimezone(ET).strftime("%H:%M") == "16:05"
+
+
+def test_an_after_close_release_survives_the_next_sessions_cutoff():
+    from datetime import datetime, timezone
+    from app.market_data.fmp_news import parse_published, recent_news_cutoff
+
+    # Friday pre-market: the cutoff must still admit Thursday's 16:05 release.
+    friday_premarket = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    assert parse_published("2026-08-13 16:05:00") >= recent_news_cutoff(friday_premarket)
