@@ -14,6 +14,28 @@ Fetches one request per symbol, disk-cached, so a repeat run over the same
 window and symbols costs nothing. The first run over 150 symbols is 150
 requests.
 
+What the measurement has survived so far, since "the flag must be wrong" is
+the natural first reaction to a negative result:
+
+  - not a loose flag: --primary-wire-only halves coverage and makes gainers
+    worse (-4.0pp rather than -3.0pp);
+  - not move size: catalyst days genuinely do move more (mean |gap| 3.52% vs
+    2.91%, RVOL 1.19 vs 1.02), but stratifying by gap bucket leaves the
+    effect intact at -1.5 / -3.4 / -1.0 / -3.6pp;
+  - not RVOL: same within RVOL buckets, -1.7 / -1.2 / -4.3pp;
+  - not the symbol population: --from-history (the small caps the boost was
+    originally derived from) gives -3.0pp, the same as the top-120 by dollar
+    volume.
+
+The leading untested explanation is the entry, not the catalyst. This enters
+at the *close* of the news day, by which point a catalyst is priced -- what's
+left is the overshoot reverting. The payoff ratio supports that: catalyst
+gainers run 0.94 against 1.19 without, so their wins are smaller relative to
+their losses, which is what buying an exhausted move looks like. Note also
+that the original +9.1pp came from each appearance's latest same-day snapshot
+-- "does it keep going today" -- while this asks "does it continue tomorrow".
+Those are different questions and can honestly have different answers.
+
 Read the per-view split, never the pooled number. "Win" means the opposite
 thing on losers -- a flagged loser rising is the move reversing -- and it was
 exactly that pooling which made the original catalyst figure look like +8.5pp
