@@ -103,6 +103,21 @@ async def get_historical_bars(clients: AlpacaClients, symbol: str, timeframe_key
     """Native-resolution historical bars for one of HISTORICAL_TIMEFRAMES'
     keys (1Hour/4Hour/1Day/1Week/1Month). No VWAP -- it's not a
     same-session concept once a bar spans more than one session.
+
+    Split-adjusted, unlike the intraday fetches above. These windows run to
+    two years, long enough to span corporate actions, and unadjusted prices
+    across one are not a chart -- they are two charts drawn on one axis.
+    IPST is the case that surfaced it: two 1-for-20 reverse splits inside a
+    year (2025-11-05 and 2026-04-23) put ~19x vertical cliffs in the daily
+    view, 0.284 to 5.33 overnight, with every bar before the older split
+    reading 400x too low. Nothing about that is a price move.
+
+    The intraday fetches stay RAW deliberately: they cover a few sessions,
+    so a split inside the window is rare, and the live websocket pushes
+    unadjusted trades -- adjusting the backfill but not the stream would put
+    a step at the join between them. get_daily_bars_multi and
+    get_5m_bars_multi already use SPLIT for the same reason this one now
+    does.
     """
     alpaca_timeframe, lookback = HISTORICAL_TIMEFRAMES[timeframe_key]
     request = StockBarsRequest(
@@ -110,7 +125,7 @@ async def get_historical_bars(clients: AlpacaClients, symbol: str, timeframe_key
         timeframe=alpaca_timeframe,
         start=datetime.now(timezone.utc) - lookback,
         feed=clients.feed,
-        adjustment=Adjustment.RAW,
+        adjustment=Adjustment.SPLIT,
     )
     bar_set = await asyncio.to_thread(clients.data.get_stock_bars, request)
     return bar_set.data.get(symbol, [])
