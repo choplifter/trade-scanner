@@ -176,13 +176,21 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
         </p>
       )}
 
-      {loading ? (
-        <p className="widget-empty">Loading…</p>
-      ) : viewMode === "table" ? (
-        <ScannerTable rows={rows} selectedSymbol={selectedSymbol} onSelectSymbol={onSelectSymbol} />
-      ) : (
-        <ScannerHeatmap rows={rows} selectedSymbol={selectedSymbol} onSelectSymbol={onSelectSymbol} />
-      )}
+      {/* .widget-body is the scroll container (flex:1 / min-height:0 /
+          overflow:auto). Everything above it -- header, filter bar, backtest
+          panel, summary -- is fixed height, so the results are what scrolls.
+          Dropping this wrapper is what stopped the scanner scrolling: the
+          table then sized to its content inside a widget with overflow
+          hidden, and the rows past the fold simply had nowhere to go. */}
+      <div className="widget-body">
+        {loading ? (
+          <div className="widget-empty">Loading…</div>
+        ) : viewMode === "table" ? (
+          <ScannerTable rows={rows} selectedSymbol={selectedSymbol} onSelectSymbol={onSelectSymbol} />
+        ) : (
+          <ScannerHeatmap rows={rows} selectedSymbol={selectedSymbol} onSelectSymbol={onSelectSymbol} />
+        )}
+      </div>
     </div>
   );
 }
