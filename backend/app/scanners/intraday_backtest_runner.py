@@ -22,6 +22,7 @@ from app.market_data.volume_profile import DEFAULT_REFERENCE_SYMBOL, build_fract
 from app.scanners import bucket_analysis, formulas
 from app.scanners.backtest import (
     _BENCHMARK_SYMBOL,
+    catalyst_split,
     _WARMUP_CALENDAR_PADDING_DAYS,
     alpha_by_view,
     fade_risk_by_view,
@@ -50,6 +51,7 @@ async def run_intraday_backtest(
     cache_dir: Path = DEFAULT_CACHE_DIR,
     force_refresh: bool = False,
     fundamentals: dict | None = None,
+    catalysts: dict | None = None,
 ) -> dict:
     """Replay `screen` at 5-minute resolution, holding each pick to its
     session close.
@@ -98,6 +100,7 @@ async def run_intraday_backtest(
         window,
         benchmark_to_close(benchmark_intraday),
         fundamentals,
+        catalysts,
     )
 
     return {
@@ -125,12 +128,16 @@ async def run_intraday_backtest(
             picks, lambda p: p["entry_rvol"], bucket_analysis.RVOL_BUCKETS, views=_VIEWS
         ),
         "alpha": alpha_by_view(picks, _VIEWS),
+        "catalyst_split": catalyst_split(picks),
         "fade_risk": {
             "threshold": formulas._FADE_RISK_RVOL,
             "views": fade_risk_by_view(picks, _VIEWS),
         },
         # Capped for transport, spread across the whole period -- every stat
         # above used the full list.
+        # Full list alongside the sampled one: every aggregate here already
+        # used it, and a CLI caller doing its own analysis needs it too.
+        "picks_all": picks,
         "picks": sample_picks(picks),
         "picks_truncated": len(picks) > len(sample_picks(picks)),
     }

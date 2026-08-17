@@ -61,9 +61,15 @@ class BacktestRequest(BaseModel):
     # lookback defaults much shorter.
     resolution: str = "daily"
     # Opt-in: building a historical catalyst map is one FMP request per
-    # symbol on a cold cache, so it isn't paid for unless asked. Daily
-    # resolution only -- a catalyst is a per-session fact, and the intraday
-    # replay would attribute the same story to all 78 bars of a day.
+    # symbol on a cold cache, so it isn't paid for unless asked.
+    #
+    # Available at both resolutions, and the difference between them is the
+    # finding. A catalyst *is* a per-session fact, so the intraday replay
+    # does carry the same story on all 78 bars of a day -- but that's the
+    # right question, not a flaw: it asks whether the move continues through
+    # the session, which is what the boost's original +9.1pp measured.
+    # Measured both ways, the sign flips: -3.0pp entering at the close and
+    # holding overnight, +1.7pp entering intraday and holding to the close.
     with_catalysts: bool = False
 
 
@@ -139,7 +145,7 @@ async def backtest_screen(body: BacktestRequest, request: Request) -> dict:
     }
 
     catalysts = None
-    if body.with_catalysts and resolution == "daily":
+    if body.with_catalysts:
         catalysts = await _build_catalyst_map(
             engine, settings, symbols[:_CATALYST_SYMBOL_CAP], body.lookback_days
         )
@@ -157,6 +163,7 @@ async def backtest_screen(body: BacktestRequest, request: Request) -> dict:
                 # rather than silently honoured.
                 lookback_days=min(body.lookback_days, 45),
                 fundamentals=fundamentals,
+                catalysts=catalysts,
             ),
         }
 

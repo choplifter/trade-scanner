@@ -238,6 +238,7 @@ def simulate_intraday_screen(
     window: timedelta,
     benchmark_to_close_by_ts: dict[datetime, float] | None = None,
     fundamentals: dict | None = None,
+    catalysts: dict[str, dict[date, str]] | None = None,
 ) -> list[dict]:
     """One pick per (symbol, bar) the screen matches, held to that session's
     close.
@@ -256,15 +257,30 @@ def simulate_intraday_screen(
         tradable = _tradable(cohort, min_dollar_volume)
         if not tradable:
             continue
+        trading_date = timestamp.astimezone(ET).date()
+        # One catalyst per symbol per session, so every bar of a news day
+        # carries it. That is the point: the question is whether the move
+        # *continues through the session*, which is what the original +9.1pp
+        # measured (each appearance's latest same-day snapshot) and what the
+        # daily replay cannot ask, since it enters only at the close.
+        day_catalysts = (
+            {s: m[trading_date] for s, m in catalysts.items() if trading_date in m}
+            if catalysts
+            else {}
+        )
         derived = {
             "rank_score": {
-                r.symbol: formulas.rank_score(r.pct_change, False, r.rvol, catalyst_boost=r.pct_change > 0)
+                r.symbol: formulas.rank_score(
+                    r.pct_change,
+                    r.symbol in day_catalysts,
+                    r.rvol,
+                    catalyst_boost=r.pct_change > 0,
+                )
                 for r in tradable
             },
             # Today's values on a past date -- see backtest.LOOK_AHEAD_FIELDS.
             **(fundamentals or {}),
         }
-        trading_date = timestamp.astimezone(ET).date()
         for row in screener.run_screen(tradable, screen, derived).rows:
             close = exit_price.get((row.symbol, trading_date))
             if close is None or row.last_price <= 0:
@@ -287,6 +303,8 @@ def simulate_intraday_screen(
                     "entry_rvol_1h": row.rvol_1h,
                     "entry_dollar_volume": row.dollar_volume_today,
                     "is_shaved_top": row.is_shaved_top,
+                    "entry_headline": day_catalysts.get(row.symbol),
+                    "has_catalyst": row.symbol in day_catalysts,
                     "pct_change_since_entry": pct_since_entry,
                     "benchmark_pct_change_since_entry": benchmark_pct,
                     "alpha_vs_benchmark": (

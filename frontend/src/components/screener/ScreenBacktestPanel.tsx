@@ -114,9 +114,7 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
       lookback_days: useResolution === "intraday" ? Math.min(lookback, 45) : lookback,
       horizon_days: horizon,
       resolution: useResolution,
-      // Daily only -- a catalyst is a per-session fact, so attributing one
-      // story to all 78 bars of an intraday day would be meaningless.
-      with_catalysts: withCatalysts && useResolution === "daily",
+      with_catalysts: withCatalysts,
     })
       .then((res) => {
         setResult(res);
@@ -172,16 +170,14 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
             </select>
           </label>
         )}
-        {resolution === "daily" && (
-          <label title="Splits the result by whether each pick had a news catalyst that session. Costs one FMP request per symbol the first time, then cached.">
+        <label title="Splits the result by whether each pick had a news catalyst that session. Costs one FMP request per symbol the first time, then cached. Note the answer depends on the entry: measured over 40-120 days, a catalyst is worth -3.0pp entering at the close and holding overnight, but +1.7pp entering intraday and holding to that session's close.">
             <input
               type="checkbox"
               checked={withCatalysts}
               onChange={(e) => setWithCatalysts(e.target.checked)}
             />
-            Split by news
-          </label>
-        )}
+          Split by news
+        </label>
         <button type="button" onClick={() => run()} disabled={loading}>
           {loading ? "Running…" : "Run"}
         </button>

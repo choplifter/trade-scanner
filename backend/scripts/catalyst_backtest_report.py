@@ -27,7 +27,21 @@ the natural first reaction to a negative result:
     originally derived from) gives -3.0pp, the same as the top-120 by dollar
     volume.
 
-The leading untested explanation is the entry, not the catalyst. This enters
+That explanation has now been tested, and it holds: the entry, not the
+catalyst, is what decides the sign. Entering at the close of a news day and
+holding overnight gives -3.0pp; entering intraday and holding to that
+session's close (--intraday) gives **+1.7pp win rate and +1.5pp alpha**. Both
+are true, of different questions -- and the original +9.1pp asked the second
+one, since the live drift report reads each appearance's latest same-day
+snapshot.
+
+So the boost's *direction* survives on the measurement it was derived from,
+while its *magnitude* does not: +1.7pp measured over 40 days is a long way
+from the +9.1pp behind a 1.15x multiplier. And note the intraday sample
+replicates heavily -- every qualifying bar is a pick, so 21,303 catalyst
+picks come from 792 symbol-days, and the effective sample is the latter.
+
+The original leading explanation, for the record: This enters
 at the *close* of the news day, by which point a catalyst is priced -- what's
 left is the overshoot reverting. The payoff ratio supports that: catalyst
 gainers run 0.94 against 1.19 without, so their wins are smaller relative to
@@ -62,6 +76,8 @@ from app.scanners.backtest import (
     benchmark_returns_by_date,
     simulate_from_bars,
 )
+from app.scanners import screener
+from app.scanners.intraday_backtest_runner import run_intraday_backtest
 from app.scanners.metric_validation import expectancy
 from app.scanners.news_history import catalyst_days, fetch_symbol_news
 from app.services.market_clock import ET
@@ -144,16 +160,29 @@ async def _build(args) -> dict:
     async with httpx.AsyncClient(timeout=40) as client:
         await asyncio.gather(*(one(client, s) for s in bars))
 
-    picks = simulate_from_bars(
-        bars,
-        settings.scanner_min_dollar_volume,
-        args.horizon_days,
-        benchmark_returns_by_date(benchmark, args.horizon_days),
-        catalysts=catalysts,
-    )
+    if args.intraday:
+        # Entry intraday, held to that session's close -- the same question
+        # the original +9.1pp asked (each appearance's latest same-day
+        # snapshot), which a close-entry daily replay structurally cannot.
+        result = await run_intraday_backtest(
+            clients, settings, list(bars), screener.Screen(limit=50),
+            lookback_days=min(args.lookback_days, 45), catalysts=catalysts,
+        )
+        picks = result["picks_all"]
+    else:
+        picks = simulate_from_bars(
+            bars,
+            settings.scanner_min_dollar_volume,
+            args.horizon_days,
+            benchmark_returns_by_date(benchmark, args.horizon_days),
+            catalysts=catalysts,
+        )
 
+    # The intraday replay produces one "screen" view rather than the three
+    # named ones -- looping VIEWS there finds nothing at all.
+    view_names = ("screen",) if args.intraday else bucket_analysis.VIEWS
     views = []
-    for view in bucket_analysis.VIEWS:
+    for view in view_names:
         vp = [p for p in picks if p["view"] == view]
         with_c = [p for p in vp if p["has_catalyst"]]
         without = [p for p in vp if not p["has_catalyst"]]
@@ -189,6 +218,9 @@ if __name__ == "__main__":
     parser.add_argument("--lookback-days", type=int, default=120)
     parser.add_argument("--horizon-days", type=int, default=1)
     parser.add_argument("--max-symbols", type=int, default=150)
+    parser.add_argument("--intraday", action="store_true",
+                        help="Enter intraday and hold to that session's close, rather than "
+                             "entering at the close and holding overnight")
     parser.add_argument("--primary-wire-only", action="store_true",
                         help="Count only company announcements (GlobeNewsWire/Business Wire/PRNewsWire), "
                              "not third parties writing about the company")
