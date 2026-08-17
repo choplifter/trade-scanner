@@ -339,6 +339,28 @@ PRESETS: dict[str, dict] = {
             limit=50,
         ),
     },
+    "moderate_movers": {
+        "label": "Moderate Movers (3-8%)",
+        "description": (
+            "Up 3-8% on the day -- the only band that survived an out-of-sample test. "
+            "Measured intraday (enter on a 5-minute bar, exit at the close) it won 52.0% "
+            "in-sample and 58.7% out-of-sample at +0.31% alpha, the one result here that got "
+            "better on unseen days rather than falling apart. Below 3% there is nothing to "
+            "trade; above 8% it inverts hard (34.3% out-of-sample at 8-13%). "
+            "An upper bound is the unusual part of this screen and the part that carries the "
+            "finding -- 'up a lot' is not a stronger version of this, it is the failure case. "
+            "Sorted by dollar volume rather than by move size: nothing ordered outcomes within "
+            "the band out-of-sample, so the sort optimises for what is left, which is fill "
+            "quality. The edge is small enough that spread can eat it -- consider adding a "
+            "spread_pct filter before trading it."
+        ),
+        "screen": Screen(
+            filters=[Filter(field="pct_change", op="between", value=3, value2=8)],
+            sort_by="dollar_volume_today",
+            descending=True,
+            limit=50,
+        ),
+    },
     "low_float_runners": {
         "label": "Low Float Runners",
         "description": "Under 20M float, up 5%+, trading at least 3x normal volume -- the setup float was made screenable for.",

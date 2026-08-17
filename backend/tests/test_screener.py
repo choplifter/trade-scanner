@@ -204,6 +204,27 @@ def test_every_preset_references_only_real_fields():
             assert f.op in spec.operators, f"{name} -> {f.field} {f.op}"
 
 
+def test_moderate_movers_is_bounded_at_both_ends():
+    """The upper bound carries the finding and is the part most likely to get
+    "fixed" later: measured intraday, 3-8% won 58.7% out-of-sample while 8-13%
+    won 34.3%. Dropping the ceiling to catch bigger movers inverts the screen
+    rather than strengthening it, so both edges are pinned here.
+
+    Ordered by dollar volume on purpose -- nothing ranked outcomes *within*
+    the band out-of-sample, so the sort buys fill quality rather than making a
+    prediction the data doesn't support.
+    """
+    rows = [
+        _row("QUIET", pct=1.5, volume=9e6),
+        _row("BAND_BIG", pct=4.0, volume=5e6),
+        _row("BAND_SMALL", pct=7.5, volume=1e6),
+        _row("TOOFAR", pct=11.0, volume=9e6),
+        _row("BLOWOFF", pct=45.0, volume=9e6),
+    ]
+    result = run_screen(rows, PRESETS["moderate_movers"]["screen"])
+    assert [r.symbol for r in result.rows] == ["BAND_BIG", "BAND_SMALL"]
+
+
 def test_preset_list_exposes_editable_screens():
     entries = {p["name"]: p for p in preset_list()}
     # Presets travel as full filter specs so a UI can load one and let the
