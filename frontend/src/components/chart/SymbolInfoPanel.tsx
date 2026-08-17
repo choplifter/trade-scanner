@@ -63,12 +63,19 @@ export function SymbolInfoPanel({ symbol }: SymbolInfoPanelProps) {
             </div>
           ))}
         </div>
+      ) : hasProfile ? (
+        // Says so explicitly rather than rendering nothing. The news list is
+        // now bounded to the last session, so an empty one is a real answer
+        // -- "nothing explains today's move" -- and an absent section would
+        // read as still loading.
+        <div className="symbol-news-list">
+          <h3 className="symbol-news-title">Recent News</h3>
+          <div className="symbol-info-empty">No news since the last session.</div>
+        </div>
       ) : (
-        !hasProfile && (
-          <div className="symbol-info-empty widget-empty">
-            No company info or news available right now.
-          </div>
-        )
+        <div className="symbol-info-empty widget-empty">
+          No company info or news available right now.
+        </div>
       )}
     </div>
   );

@@ -15,10 +15,18 @@ from alpaca.data.requests import NewsRequest
 from pydantic import BaseModel
 
 from app.alpaca.client import AlpacaClients
-from app.market_data.fmp_news import is_low_signal_headline, parse_published
+from app.market_data.fmp_news import (
+    is_low_signal_headline,
+    parse_published,
+    recent_news_cutoff,
+)
 
 logger = logging.getLogger(__name__)
 
+# Retained for reference; the fetch now uses recent_news_cutoff() instead --
+# see the comment at its use site. Deliberately NOT changed in
+# app.market_data.news, whose 48h window is the baseline _CATALYST_BOOST was
+# calibrated against.
 _LOOKBACK = timedelta(hours=48)
 
 _FMP_URL = "https://financialmodelingprep.com/stable/news/stock"
@@ -49,7 +57,11 @@ async def fetch_recent_news(alpaca: AlpacaClients, symbol: str, limit: int = 5) 
     try:
         request = NewsRequest(
             symbols=symbol,
-            start=datetime.now(timezone.utc) - _LOOKBACK,
+            # Session-anchored, not a flat 48h back from now: measured on a
+            # Monday a flat window reaches only to Saturday and hides the
+            # whole of Friday's session. Shared with the FMP half below so
+            # one panel doesn't apply two different notions of "recent".
+            start=recent_news_cutoff(),
             sort=Sort.DESC,
             limit=limit,
         )
@@ -88,6 +100,12 @@ async def fetch_recent_fmp_news(
     """
     if not api_key:
         return []
+    # Same session-anchored cutoff the scanner flag uses. Without it this
+    # panel is headed "Recent News" while showing whatever FMP has, which for
+    # a quiet name is months old -- CPRT's four Business Wire items were all
+    # stale, and a stale story sitting under that heading reads as the
+    # explanation for today's move.
+    cutoff = recent_news_cutoff()
     try:
         response = await http_client.get(
             _FMP_URL,
@@ -111,7 +129,7 @@ async def fetch_recent_fmp_news(
         if is_low_signal_headline(title, publisher):
             continue
         published = _parse_fmp_date(item.get("publishedDate"))
-        if published is None:
+        if published is None or published < cutoff:
             continue
         results.append(
             NewsItem(
