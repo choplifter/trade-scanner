@@ -231,17 +231,28 @@ async def fetch_fmp_headlines(
 
     cutoff = cutoff or recent_news_cutoff()
     found: dict[str, str] = {}
-    await _collect(client, api_key, symbols, cutoff, found, _BATCH_SIZE)
+    starved = await _collect(client, api_key, symbols, cutoff, found, _BATCH_SIZE)
 
-    # Second pass, one symbol at a time, for whatever the batched pass missed.
-    # Batching alone isn't enough however small the batch: `limit` is shared,
-    # and a single prolific name can swallow it -- CAPR took 212 of 250 items
-    # in a five-symbol request, starving neighbours that had news of their
-    # own. Retrying individually is bounded work (only the stragglers) and is
-    # what actually guarantees a symbol with news gets looked at.
-    missing = [s for s in symbols if s not in found]
-    if missing:
-        await _collect(client, api_key, missing, cutoff, found, 1)
+    # Second pass, one symbol at a time -- but only for symbols whose batch
+    # came back truncated.
+    #
+    # `limit` is shared across a request, so one prolific name can swallow it
+    # and starve its neighbours: CAPR took 212 of 250 items in a five-symbol
+    # request. That is the case this rescues, and it needs an individual
+    # retry to fix.
+    #
+    # Retrying every symbol that simply wasn't found is what this used to do,
+    # and it was the single largest consumer of the FMP quota in the app:
+    # most symbols have no recent news at all, so "missing" was nearly the
+    # whole list, re-asked every refresh forever. Measured over three days,
+    # 10,428 of 12,642 news requests were these one-symbol retries -- 82% of
+    # news traffic, spent confirming that quiet stocks were still quiet, while
+    # the account sat over its daily cap and dropped real fetches.
+    #
+    # A response holding fewer items than the limit cannot have been
+    # truncated, so absence in it is a real answer and needs no retry.
+    if starved:
+        await _collect(client, api_key, sorted(starved), cutoff, found, 1)
     return found
 
 
@@ -252,7 +263,11 @@ async def _collect(
     cutoff: datetime,
     found: dict[str, str],
     batch_size: int,
-) -> None:
+) -> set[str]:
+    """Fills `found` in place; returns the symbols whose answer may be
+    incomplete because their batch hit the item limit.
+    """
+    starved: set[str] = set()
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i : i + batch_size]
         try:
@@ -268,6 +283,7 @@ async def _collect(
 
         if not isinstance(items, list):
             continue
+        truncated = len(items) >= _LIMIT_PER_REQUEST
         # Newest first is FMP's own ordering; taking the first usable one per
         # symbol therefore yields the most recent real story rather than the
         # most recent anything.
@@ -282,3 +298,11 @@ async def _collect(
             if published is None or published < cutoff:
                 continue
             found[symbol] = title
+
+        # Only a truncated response can have hidden a story. Single-symbol
+        # requests are excluded: there is no neighbour to starve them and no
+        # further pass to escalate to.
+        if truncated and batch_size > 1:
+            starved.update(s for s in batch if s not in found)
+
+    return starved

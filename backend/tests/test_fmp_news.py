@@ -2,6 +2,7 @@ from datetime import timedelta
 import httpx
 import pytest
 
+from app.market_data import fmp_news
 from app.market_data.fmp_news import fetch_fmp_headlines, is_low_signal_headline
 
 # Real headlines observed from FMP while measuring its noise profile -- 30%
@@ -360,3 +361,62 @@ def test_an_after_close_release_survives_the_next_sessions_cutoff():
     # Friday pre-market: the cutoff must still admit Thursday's 16:05 release.
     friday_premarket = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
     assert parse_published("2026-08-13 16:05:00") >= recent_news_cutoff(friday_premarket)
+
+
+class _Resp:
+    def __init__(self, items):
+        self._items = items
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._items
+
+
+class _CountingClient:
+    """Records every request so the retry behaviour is measurable, which is
+    the whole point -- the bug was invisible per-call and only showed up as
+    request volume."""
+
+    def __init__(self, by_symbols):
+        self._by_symbols = by_symbols
+        self.calls: list[list[str]] = []
+
+    async def get(self, url, params=None):
+        symbols = (params or {}).get("symbols", "").split(",")
+        self.calls.append(symbols)
+        return _Resp(self._by_symbols(symbols))
+
+
+def _story(symbol, title="Real news", published="2100-01-01 09:00:00"):
+    return {"symbol": symbol, "title": title, "publishedDate": published, "publisher": "GlobeNewsWire"}
+
+
+@pytest.mark.asyncio
+async def test_quiet_symbols_are_not_retried_individually():
+    """A short response cannot have been truncated, so "no news" is a real
+    answer. Re-asking each quiet symbol was 82% of the app's FMP news traffic
+    and pushed the account past its daily cap.
+    """
+    client = _CountingClient(lambda symbols: [])
+    await fetch_fmp_headlines(client, "key", [f"S{i}" for i in range(10)])
+    assert len(client.calls) == 2, f"expected 2 batched calls, got {len(client.calls)}"
+    assert all(len(c) > 1 for c in client.calls), "no single-symbol retry should have fired"
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_batch_still_retries_its_missing_symbols():
+    """The CAPR case this retry exists for: one prolific name swallows the
+    shared limit, so its neighbours need asking again on their own."""
+    limit = fmp_news._LIMIT_PER_REQUEST
+
+    def respond(symbols):
+        if len(symbols) > 1:
+            return [_story("LOUD", f"story {i}") for i in range(limit)]
+        return [_story(symbols[0])] if symbols[0] == "QUIET" else []
+
+    client = _CountingClient(respond)
+    found = await fetch_fmp_headlines(client, "key", ["LOUD", "QUIET"])
+    assert any(c == ["QUIET"] for c in client.calls), "starved symbol was never retried"
+    assert found.get("QUIET") == "Real news"
