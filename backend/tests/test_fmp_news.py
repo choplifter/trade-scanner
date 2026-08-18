@@ -420,3 +420,55 @@ async def test_a_truncated_batch_still_retries_its_missing_symbols():
     found = await fetch_fmp_headlines(client, "key", ["LOUD", "QUIET"])
     assert any(c == ["QUIET"] for c in client.calls), "starved symbol was never retried"
     assert found.get("QUIET") == "Real news"
+
+
+@pytest.mark.asyncio
+async def test_a_symbol_the_response_mentioned_is_not_retried():
+    """The condition that actually separates the two cases.
+
+    `found` only collects symbols with a *usable* headline, so a name whose
+    every article was litigation noise looked identical to a starved one --
+    and got re-asked. It should not: the response carried its news and the
+    filter judged it. Gating on truncation alone did nothing in production;
+    the retry rate was unchanged because five active symbols at limit=250
+    fill the response nearly every time.
+    """
+    limit = fmp_news._LIMIT_PER_REQUEST
+
+    def respond(symbols):
+        if len(symbols) > 1:
+            # Truncated, and NOISY is present but only with junk.
+            items = [_story("LOUD", f"story {i}") for i in range(limit - 1)]
+            items.append(
+                {
+                    "symbol": "NOISY",
+                    "title": "INVESTOR ALERT: Pomerantz Law Firm Reminds Investors",
+                    "publishedDate": "2100-01-01 09:00:00",
+                    "publisher": "Business Wire",
+                }
+            )
+            return items
+        return []
+
+    client = _CountingClient(respond)
+    await fetch_fmp_headlines(client, "key", ["LOUD", "NOISY"])
+    assert not any(c == ["NOISY"] for c in client.calls), (
+        "a symbol the response mentioned was retried anyway"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_symbol_missing_from_a_truncated_response_is_still_retried():
+    """The CAPR case the retry exists for is untouched: absent entirely from
+    a response that hit its limit means something may genuinely be hidden."""
+    limit = fmp_news._LIMIT_PER_REQUEST
+
+    def respond(symbols):
+        if len(symbols) > 1:
+            return [_story("LOUD", f"story {i}") for i in range(limit)]
+        return [_story(symbols[0])] if symbols[0] == "HIDDEN" else []
+
+    client = _CountingClient(respond)
+    found = await fetch_fmp_headlines(client, "key", ["LOUD", "HIDDEN"])
+    assert any(c == ["HIDDEN"] for c in client.calls)
+    assert found.get("HIDDEN") == "Real news"

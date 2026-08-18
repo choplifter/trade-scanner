@@ -243,14 +243,21 @@ async def fetch_fmp_headlines(
     #
     # Retrying every symbol that simply wasn't found is what this used to do,
     # and it was the single largest consumer of the FMP quota in the app:
-    # most symbols have no recent news at all, so "missing" was nearly the
-    # whole list, re-asked every refresh forever. Measured over three days,
-    # 10,428 of 12,642 news requests were these one-symbol retries -- 82% of
-    # news traffic, spent confirming that quiet stocks were still quiet, while
-    # the account sat over its daily cap and dropped real fetches.
+    # 10,428 of 12,642 news requests over three days were one-symbol retries,
+    # 82% of news traffic, spent confirming that quiet stocks were still
+    # quiet while the account sat over its daily cap.
     #
-    # A response holding fewer items than the limit cannot have been
-    # truncated, so absence in it is a real answer and needs no retry.
+    # Gating on a truncated response was the first attempt and did nothing --
+    # measured afterwards, the retry rate was unchanged. Five active symbols
+    # at limit=250 almost always fill the response, so "truncated" was true
+    # nearly every time.
+    #
+    # The condition that actually distinguishes the two cases is whether the
+    # response mentioned the symbol *at all*. `found` only collects symbols
+    # with a usable headline, so a name whose every article was litigation
+    # noise looked identical to one that was starved -- yet we already have
+    # its news and have judged it. Only a symbol with zero items in a
+    # truncated response might have had something hidden.
     if starved:
         await _collect(client, api_key, sorted(starved), cutoff, found, 1)
     return found
@@ -284,6 +291,8 @@ async def _collect(
         if not isinstance(items, list):
             continue
         truncated = len(items) >= _LIMIT_PER_REQUEST
+        # Every symbol the response said anything about, usable or not.
+        seen = {item.get("symbol") for item in items if isinstance(item, dict)}
         # Newest first is FMP's own ordering; taking the first usable one per
         # symbol therefore yields the most recent real story rather than the
         # most recent anything.
@@ -299,10 +308,11 @@ async def _collect(
                 continue
             found[symbol] = title
 
-        # Only a truncated response can have hidden a story. Single-symbol
-        # requests are excluded: there is no neighbour to starve them and no
-        # further pass to escalate to.
+        # Only a truncated response can have hidden a story, and only for a
+        # symbol it never mentioned. Single-symbol requests are excluded:
+        # there is no neighbour to starve them and no further pass to
+        # escalate to.
         if truncated and batch_size > 1:
-            starved.update(s for s in batch if s not in found)
+            starved.update(s for s in batch if s not in seen)
 
     return starved

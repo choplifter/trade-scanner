@@ -57,6 +57,9 @@ class NewsCache:
         # is also what happens without an FMP key.
         self.http_client = http_client
         self._headlines: dict[str, str | None] = {}
+        # symbol -> monotonic time before which FMP is not worth asking again,
+        # because it already said it had nothing. See _FMP_MISS_TTL_SECONDS.
+        self._fmp_miss_until: dict[str, float] = {}
         self._sources: dict[str, str | None] = {}
         self._fetched_at: dict[str, float] = {}
 
@@ -101,6 +104,14 @@ class NewsCache:
 
         await self._fill_gaps_from_fmp(uncovered)
 
+    # How long a "FMP had nothing for this symbol" answer is trusted before
+    # asking again. Deliberately longer than scanner_news_refresh_interval:
+    # Alpaca is re-checked on that cadence, so a story breaking in the gap is
+    # still caught by the primary feed. What this stops is the fallback
+    # re-confirming, every fifteen minutes, that a quiet stock is still quiet
+    # -- which was the bulk of this app's FMP traffic.
+    _FMP_MISS_TTL_SECONDS = 1800.0
+
     async def _fill_gaps_from_fmp(self, symbols: list[str]) -> None:
         """Second pass, for symbols Alpaca had nothing for.
 
@@ -111,20 +122,36 @@ class NewsCache:
         """
         if not symbols or self.http_client is None or not self.settings.has_fmp_credentials:
             return
+
+        now = time.monotonic()
+        askable = [s for s in symbols if now >= self._fmp_miss_until.get(s, 0.0)]
+        if not askable:
+            return
+
         try:
             fallback = await fetch_fmp_headlines(
-                self.http_client, self.settings.fmp_api_key, symbols
+                self.http_client, self.settings.fmp_api_key, askable
             )
         except Exception:
-            logger.exception("FMP news fallback failed for %d symbols", len(symbols))
+            logger.exception("FMP news fallback failed for %d symbols", len(askable))
             return
+
+        # Remember the misses. A symbol FMP answered for is cleared, so a
+        # story that arrives later is not suppressed by a stale miss.
+        for symbol in askable:
+            if symbol in fallback:
+                self._fmp_miss_until.pop(symbol, None)
+            else:
+                self._fmp_miss_until[symbol] = now + self._FMP_MISS_TTL_SECONDS
 
         for symbol, headline in fallback.items():
             self._headlines[symbol] = headline
             self._sources[symbol] = FMP
         if fallback:
             logger.info(
-                "FMP news fallback filled %d of %d symbols Alpaca had no headline for",
+                "FMP news fallback filled %d of %d symbols Alpaca had no headline for "
+                "(%d skipped as recent misses)",
                 len(fallback),
-                len(symbols),
+                len(askable),
+                len(symbols) - len(askable),
             )
