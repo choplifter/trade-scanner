@@ -1520,3 +1520,22 @@ a.symbol-news-headline {
   line-height: 1.4;
   color: var(--text-muted);
 }
+
+/* Per-row destructive action. Quiet until hovered: these sit in a dense table
+   next to a row click that only selects a symbol, so they must not read as
+   the primary thing to press. */
+.row-action {
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.row-action:hover {
+  color: var(--status-critical);
+  border-color: var(--status-critical);
+}

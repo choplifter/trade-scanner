@@ -4,6 +4,7 @@ import { useTrading } from "../../hooks/useTrading";
 import type { Account, Order, Position } from "../../types/trading";
 import { num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
+import { Modal } from "../common/Modal";
 import { OrderTicket } from "./OrderTicket";
 
 type Tab = "ticket" | "positions" | "orders" | "account";
@@ -49,9 +50,48 @@ interface TradingWidgetProps {
  * orders and the balance line. Read-only for now -- order entry lands in the
  * next milestone, behind TRADING_ENABLED and a paper-account check. */
 export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetProps) {
-  const { account, paper, tradingEnabled, defaultRiskPct, positions, orders, loading, error, afterAction } =
-    useTrading();
+  const {
+    account,
+    paper,
+    tradingEnabled,
+    defaultRiskPct,
+    positions,
+    orders,
+    loading,
+    error,
+    afterAction,
+    cancel,
+    close,
+  } = useTrading();
   const [tab, setTab] = useState<Tab>("ticket");
+  // One pending destructive action at a time, confirmed before it runs.
+  // Cancelling a protective stop and flattening a position are both easy to
+  // hit by accident in a dense table, and neither is undoable.
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const runPending = async () => {
+    if (!pending) return;
+    setBusy(true);
+    try {
+      if (pending.kind === "cancel") await cancel(pending.id);
+      else await close(pending.symbol);
+      setPending(null);
+      setActionError(null);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Cancelling a stop while still holding the shares leaves the position with
+  // no protective exit. Worth saying out loud rather than leaving it to be
+  // noticed later.
+  const orphansPosition =
+    pending?.kind === "cancel" &&
+    positions.some((pos) => pos.symbol === pending.symbol && Number(pos.qty) !== 0);
 
   const count = tab === "positions" ? positions.length : tab === "orders" ? orders.length : 0;
 
@@ -96,29 +136,88 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             positions={positions}
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
+            onClosePosition={(symbol) => setPending({ kind: "close", symbol })}
           />
         ) : tab === "orders" ? (
           <OrdersTable
             orders={orders}
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
+            onCancelOrder={(id, symbol) => setPending({ kind: "cancel", id, symbol })}
           />
         ) : (
           <AccountPanel account={account} paper={paper} tradingEnabled={tradingEnabled} />
         )}
       </div>
+
+      <Modal
+        open={pending !== null}
+        title={pending?.kind === "cancel" ? "Cancel order" : "Close position"}
+        onClose={() => {
+          setPending(null);
+          setActionError(null);
+        }}
+      >
+        <div className="order-confirm">
+          {pending?.kind === "cancel" ? (
+            <>
+              <p className="order-confirm-line">
+                Cancel the working order on <strong>{pending.symbol}</strong>?
+              </p>
+              {orphansPosition && (
+                <p className="order-rejection">
+                  You still hold {pending.symbol}. Cancelling this order leaves that position
+                  without a protective stop.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="order-confirm-line">
+              Close the entire <strong>{pending?.symbol}</strong> position at market?
+            </p>
+          )}
+          <p className="order-confirm-mode">PAPER &mdash; simulated account</p>
+          {actionError && <p className="order-rejection">{actionError}</p>}
+          <div className="order-confirm-actions">
+            <button
+              type="button"
+              className="timeframe-button"
+              onClick={() => {
+                setPending(null);
+                setActionError(null);
+              }}
+            >
+              Keep it
+            </button>
+            <button
+              type="button"
+              className="generate-button"
+              disabled={busy}
+              onClick={() => void runPending()}
+            >
+              {busy ? "Working" : pending?.kind === "cancel" ? "Cancel order" : "Close position"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
+
+type PendingAction =
+  | { kind: "cancel"; id: string; symbol: string }
+  | { kind: "close"; symbol: string };
 
 function PositionsTable({
   positions,
   selectedSymbol,
   onSelectSymbol,
+  onClosePosition,
 }: {
   positions: Position[];
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
+  onClosePosition: (symbol: string) => void;
 }) {
   if (positions.length === 0) {
     return <div className="widget-empty">No open positions.</div>;
@@ -135,6 +234,7 @@ function PositionsTable({
           <th>Value</th>
           <th>P&amp;L</th>
           <th>P&amp;L %</th>
+          <th />
         </tr>
       </thead>
       <tbody>
@@ -155,6 +255,18 @@ function PositionsTable({
               <td>{money(p.market_value)}</td>
               <td className={pl.cls}>{pl.text}</td>
               <td className={plpc.cls}>{plpc.text}</td>
+              <td>
+                <button
+                  type="button"
+                  className="row-action"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClosePosition(p.symbol);
+                  }}
+                >
+                  Close
+                </button>
+              </td>
             </tr>
           );
         })}
@@ -167,10 +279,12 @@ function OrdersTable({
   orders,
   selectedSymbol,
   onSelectSymbol,
+  onCancelOrder,
 }: {
   orders: Order[];
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
+  onCancelOrder: (id: string, symbol: string) => void;
 }) {
   if (orders.length === 0) {
     return <div className="widget-empty">No working orders.</div>;
@@ -187,6 +301,7 @@ function OrdersTable({
           <th>Limit</th>
           <th>Stop</th>
           <th>Status</th>
+          <th />
         </tr>
       </thead>
       <tbody>
@@ -204,6 +319,20 @@ function OrdersTable({
             <td>{money(o.limit_price)}</td>
             <td>{money(o.stop_price)}</td>
             <td>{o.status}</td>
+            <td>
+              <button
+                type="button"
+                className="row-action"
+                onClick={(e) => {
+                  // The row click selects the symbol; without this, cancelling
+                  // would also retarget the chart.
+                  e.stopPropagation();
+                  onCancelOrder(o.id, o.symbol);
+                }}
+              >
+                Cancel
+              </button>
+            </td>
           </tr>
         ))}
       </tbody>
