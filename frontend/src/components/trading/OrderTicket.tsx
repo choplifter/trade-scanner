@@ -59,6 +59,24 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
   // id would defeat that, since a retry would arrive with a new one.
   const clientOrderIdRef = useRef<string | null>(null);
 
+  // What the ticket still needs before it can be priced at all. Used both
+  // to skip pointless preview requests and to say, on the button itself, why
+  // nothing happens -- a control that silently refuses to act reads as
+  // broken, which is exactly how the empty-stop case got reported.
+  const missing: string | null = !symbol
+    ? "Select a symbol"
+    : orderType === "limit" && !numberOrUndefined(limitPrice)
+      ? "Enter a limit price"
+      : sizingMode === "shares"
+        ? !numberOrUndefined(qty)
+          ? "Enter a quantity"
+          : null
+        : !numberOrUndefined(stopPrice)
+          ? "Enter a stop price — it is what sizes the order"
+          : !numberOrUndefined(riskPct)
+            ? "Enter a risk %"
+            : null;
+
   useEffect(() => {
     if (!symbol) {
       setPreview(null);
@@ -84,11 +102,7 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
 
     // Don't ask the server to price a ticket that is obviously incomplete --
     // it would answer with a validation error the user hasn't earned yet.
-    const incomplete =
-      (sizingMode === "shares" && !ticket.qty) ||
-      (sizingMode === "risk" && (!ticket.risk?.stop_price || !ticket.risk?.risk_pct_of_equity)) ||
-      (orderType === "limit" && !ticket.limit_price);
-    if (incomplete) {
+    if (missing) {
       setPreview(null);
       setRejection(null);
       return;
@@ -121,7 +135,7 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
       cancelled = true;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [symbol, side, orderType, sizingMode, qty, limitPrice, stopPrice, riskPct, takeProfit]);
+  }, [symbol, side, orderType, sizingMode, qty, limitPrice, stopPrice, riskPct, takeProfit, missing]);
 
   if (!symbol) {
     return <div className="widget-empty">Select a symbol to build an order.</div>;
@@ -129,6 +143,12 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
 
   const order = preview?.order;
   const canSubmit = Boolean(order && preview?.can_submit) && !submitting;
+  const disabledReason = canSubmit
+    ? null
+    : (missing ??
+      (preview && !preview.can_submit
+        ? "Order placement is switched off. Set TRADING_ENABLED=true in backend/.env and restart."
+        : null));
 
   const openConfirm = () => {
     clientOrderIdRef.current = crypto.randomUUID();
@@ -309,16 +329,14 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
 
       {placed && <div className="order-preview">Order submitted.</div>}
 
+      {disabledReason && <div className="order-hint">{disabledReason}</div>}
+
       <button
         type="button"
         className="generate-button"
         disabled={!canSubmit}
         onClick={openConfirm}
-        title={
-          preview && !preview.can_submit
-            ? "Order placement is switched off. Set TRADING_ENABLED=true in backend/.env and restart."
-            : undefined
-        }
+        title={disabledReason ?? undefined}
       >
         {submitting ? "Submitting…" : `${side === "buy" ? "Buy" : "Sell"} ${symbol}`}
       </button>

@@ -1510,3 +1510,13 @@ a.symbol-news-headline {
   width: auto;
   padding: 4px 14px;
 }
+
+/* Why the submit button is inert. Shown in the panel rather than only as a
+   title attribute: a disabled control with a tooltip-only explanation is
+   indistinguishable from a broken one. */
+.order-hint {
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
