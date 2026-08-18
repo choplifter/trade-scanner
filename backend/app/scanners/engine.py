@@ -669,13 +669,10 @@ class ScannerEngine:
         for rows in views.values():
             for row in rows:
                 row.pct_change_last_15m = self.momentum_cache.get(row.symbol)
-                # How much of the real tape our feed saw today. The alert's
-                # above-VWAP leg is only as good as this -- see
+                # How much of the real tape our feed saw today -- a health
+                # figure for volume levels, not for VWAP. See
                 # FundamentalsCache.tape_coverage_pct.
                 row.tape_coverage_pct = self.fundamentals.tape_coverage_pct(
-                    row.symbol, row.volume_today
-                )
-                row.is_vwap_reliable = self.fundamentals.is_vwap_reliable(
                     row.symbol, row.volume_today
                 )
                 row.is_momentum_alert = formulas.is_momentum_alert(
@@ -684,7 +681,6 @@ class ScannerEngine:
                     self.momentum_cache.is_green(row.symbol),
                     self.momentum_cache.is_above_vwap(row.symbol),
                     self.settings.alarm_momentum_pct_threshold,
-                    is_vwap_reliable=row.is_vwap_reliable,
                 )
                 # Computed here rather than in the cache because this is the
                 # only place holding all three inputs: the cache's window

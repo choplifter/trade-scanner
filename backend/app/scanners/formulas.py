@@ -217,7 +217,6 @@ def is_momentum_alert(
     is_green: bool,
     is_above_vwap: bool,
     threshold: float,
-    is_vwap_reliable: bool | None = None,
 ) -> bool:
     """A fast, still-confirming *upward* move, long setups only: the
     trailing-15-minute price change is at least `threshold`, and the most
@@ -238,30 +237,18 @@ def is_momentum_alert(
     a *worse* outcome) -- this is about catching a move while it's
     actively happening, not judging whether it'll continue.
 
-    `is_vwap_reliable=False` suppresses the alert outright. The above-VWAP
-    leg is a *confirmation*, so the safe failure is to withhold the alert,
-    not to drop the condition -- dropping it would leave a two-of-three
-    alert firing more often precisely where the data is worst. On the IEX
-    feed that is not a rare edge: our own VWAP was 7.81 against a true 7.38
-    on IPST 2026-08-17, reporting price below VWAP for an afternoon it spent
-    above. See FundamentalsCache.tape_coverage_pct.
-
-    The cost is real and worth stating: thin, fast-moving names are both the
-    ones this alert is for and the ones with the worst coverage, so this
-    will silence some genuine setups. That is the deliberate trade -- a
-    confirmation you cannot verify is not a confirmation. The row still
-    carries tape_coverage_pct so the UI can say why.
+    Not gated on tape coverage, despite our feed seeing only a fraction of
+    the consolidated tape on thin names. That gate was added and removed:
+    the VWAP it was meant to protect against turned out to be accurate. On
+    IPST 2026-08-17, at 0.24% coverage, our session VWAP was 7.8122 against
+    7.8149 computed from full-tape FMP bars -- the IEX sample was
+    representative. Partial volume does distort volume *levels*
+    (see FundamentalsCache.tape_coverage_pct); it does not, on the evidence,
+    distort the volume-weighted *average price*.
     """
     if pct_change_last_15m is None:
         return False
     if pct_change_last_15m <= 0 or pct_change_last_15m < threshold:
-        return False
-    # An explicit False means we checked the feed's tape coverage and found
-    # the VWAP unusable, so the third leg cannot be evaluated -- suppress
-    # rather than fire. None (unknown) keeps the old behaviour: this defaults
-    # to None so nothing that hasn't been taught about coverage silently
-    # stops alerting.
-    if is_vwap_reliable is False:
         return False
     return is_shaved_top and is_green and is_above_vwap
 

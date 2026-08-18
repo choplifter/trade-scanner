@@ -93,12 +93,9 @@ class ScannerRow(BaseModel):
     is_fade_risk: bool = False
     # What share of today's consolidated-tape volume our own feed actually
     # saw, in % (see FundamentalsCache.tape_coverage_pct). None = unknown.
+    # A health figure for volume levels -- volume_today, rvol, volume_surge --
+    # not for VWAP, which measurement showed survives a thin sample.
     tape_coverage_pct: float | None = None
-    # False means this symbol's VWAP is computed from too thin a slice of the
-    # tape to act on -- not that price is below it. None = unknown. Measured
-    # on IPST 2026-08-17: 0.24% coverage put our VWAP at 7.81 against a true
-    # 7.38, showing price below VWAP all afternoon when it was above.
-    is_vwap_reliable: bool | None = None
     updated_at: datetime
 
 

@@ -133,26 +133,3 @@ def test_rvol_zero_session_fraction_falls_back_to_full_day():
 
 def test_rvol_zero_avg_volume_is_none():
     assert rvol(500_000.0, 0.0, 0.5) is None
-
-
-def test_momentum_alert_suppressed_when_vwap_is_unreliable():
-    """The above-VWAP leg is a confirmation, so an unverifiable one withholds
-    the alert rather than being dropped from the condition.
-
-    Dropping it would leave a two-of-three alert firing *more* often exactly
-    where the feed is worst -- thin fast movers, which is both what this alert
-    is for and where IEX sees least of the tape.
-    """
-    args = (5.0, True, True, True, 2.0)
-    assert is_momentum_alert(*args) is True
-    assert is_momentum_alert(*args, is_vwap_reliable=True) is True
-    assert is_momentum_alert(*args, is_vwap_reliable=False) is False
-
-
-def test_unknown_vwap_reliability_does_not_change_behaviour():
-    """None means "not checked", and must stay inert -- otherwise every
-    caller that hasn't been taught about tape coverage silently stops
-    alerting."""
-    args = (5.0, True, True, True, 2.0)
-    assert is_momentum_alert(*args, is_vwap_reliable=None) is True
-    assert is_momentum_alert(5.0, True, True, False, 2.0, is_vwap_reliable=None) is False
