@@ -50,6 +50,10 @@ class RedactSecretsFilter(logging.Filter):
     Installed on the root handler rather than the httpx logger specifically,
     so it also covers our own log lines that include a request URL (e.g.
     app.fundamentals.finra_short_interest logging the URL it fetched).
+
+    Covers record.msg and record.args only. Tracebacks are not reachable from
+    a filter -- they are rendered later, from exc_info, by the formatter --
+    which is what RedactingFormatter is for. Both are needed.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -63,10 +67,36 @@ class RedactSecretsFilter(logging.Filter):
         return True
 
 
+class RedactingFormatter(logging.Formatter):
+    """Redacts the fully rendered record, tracebacks included.
+
+    The filter above cannot do this. logger.exception() puts the exception in
+    record.exc_info, and the traceback text only comes into being when a
+    formatter renders it -- after every filter has run. httpx builds its
+    HTTPStatusError message out of the full request URL, so an FMP or Alpaca
+    call that raises for status writes the API key into that traceback in
+    clear text while the INFO line for the very same request sits redacted
+    two lines above it. Observed exactly that way: an FMP 429 logged
+    "apikey=REDACTED" and then the raw key in the stack trace underneath.
+
+    Wraps whatever formatter the handler already had rather than replacing
+    it, so uvicorn's own formatting (and its colours) survive.
+    """
+
+    def __init__(self, inner: logging.Formatter | None) -> None:
+        super().__init__()
+        self._inner = inner or logging.Formatter()
+
+    def format(self, record: logging.LogRecord) -> str:
+        return _redact(self._inner.format(record))
+
+
 def _install_redaction(handlers: list[logging.Handler]) -> None:
     for handler in handlers:
         if not any(isinstance(f, RedactSecretsFilter) for f in handler.filters):
             handler.addFilter(RedactSecretsFilter())
+        if not isinstance(handler.formatter, RedactingFormatter):
+            handler.setFormatter(RedactingFormatter(handler.formatter))
 
 
 def setup_logging(level: int = logging.INFO) -> None:
@@ -80,6 +110,8 @@ def setup_logging(level: int = logging.INFO) -> None:
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
     )
-    handler.addFilter(RedactSecretsFilter())
+    # Same install as the pre-configured branch above, so the traceback
+    # redaction can't be present on one path and missing on the other.
+    _install_redaction([handler])
     root.addHandler(handler)
     root.setLevel(level)
