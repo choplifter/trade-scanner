@@ -306,7 +306,9 @@ class ScannerHistoryStore:
                 (row["minutes_since_entry"], row["price"], row["benchmark_price"])
             )
 
-        picks_by_horizon: dict[str, list[dict]] = {name: [] for name in (*_HORIZON_MINUTES, "latest")}
+        picks_by_horizon: dict[str, list[dict]] = {
+            name: [] for name in (*_HORIZON_MINUTES, "session_close", "latest")
+        }
         for appearance in appearances:
             snaps = snaps_by_appearance.get(appearance["id"])
             if not snaps:
@@ -325,6 +327,15 @@ class ScannerHistoryStore:
                 name: self._closest_snapshot(snaps, minutes) for name, minutes in _HORIZON_MINUTES.items()
             }
             checkpoints["latest"] = max(snaps, key=lambda s: s[0])
+            # Entry to the end of that same session -- the only horizon here
+            # that answers the question the backtests ask. "latest" spans
+            # every night since the appearance, and overnight is the worst
+            # hold this project has measured (-3.0pp on the catalyst split),
+            # so comparing a backtest to it flatters or damns the strategy for
+            # reasons that have nothing to do with the strategy.
+            session_close = self._session_close_snapshot(snaps, appearance["first_seen_at"])
+            if session_close is not None:
+                checkpoints["session_close"] = session_close
 
             for horizon_name, (minutes_since, price, benchmark_price) in checkpoints.items():
                 pct_change = (price - entry_price) / entry_price * 100 if entry_price else None
@@ -340,6 +351,17 @@ class ScannerHistoryStore:
                 )
                 picks_by_horizon[horizon_name].append(
                     {
+                        # The feed never reported a new trade for this symbol
+                        # between the entry and this checkpoint, so the price
+                        # is the entry price unchanged. That is an absence of
+                        # information, not a flat outcome, and counting it as
+                        # a loss is what pushed every 30-minute win rate to
+                        # ~28% when the same checkpoints excluding it read
+                        # ~51%. On the IEX feed, which sees a fraction of the
+                        # tape on thin names, 45% of 30-minute checkpoints
+                        # land here. Same reasoning as the non-trading-day
+                        # exclusion above, applied within a session.
+                        "price_unconfirmed": price == entry_price,
                         "symbol": appearance["symbol"],
                         "view": appearance["view"],
                         "trading_date": appearance["trading_date"],
@@ -364,14 +386,25 @@ class ScannerHistoryStore:
                 view_picks = [p for p in picks if p["view"] == view_name]
                 if not view_picks:
                     continue
-                with_return = [p for p in view_picks if p["pct_change_since_entry"] is not None]
-                with_alpha = [p for p in view_picks if p["alpha_vs_benchmark"] is not None]
+                # Unconfirmed checkpoints are dropped from the return and
+                # win statistics entirely rather than counted either way --
+                # they say nothing about the outcome. They are still counted
+                # in sample_size, and reported separately, so a view whose
+                # numbers rest on very little confirmed data cannot look as
+                # solid as one that does not.
+                measurable = [p for p in view_picks if not p["price_unconfirmed"]]
+                with_return = [p for p in measurable if p["pct_change_since_entry"] is not None]
+                with_alpha = [p for p in measurable if p["alpha_vs_benchmark"] is not None]
                 wins = sum(1 for p in with_return if p["pct_change_since_entry"] > 0)
                 summary.append(
                     {
                         "horizon": horizon_name,
                         "view": view_name,
                         "sample_size": len(view_picks),
+                        # How much of that sample the feed actually confirmed
+                        # a price move for. A low number here means the win
+                        # rate beside it rests on a fraction of the rows.
+                        "measured_size": len(with_return),
                         "win_rate": round(wins / len(with_return) * 100, 1) if with_return else None,
                         "avg_return": (
                             round(sum(p["pct_change_since_entry"] for p in with_return) / len(with_return), 2)
@@ -410,6 +443,32 @@ class ScannerHistoryStore:
 
     async def compute_performance(self, days: int = 7, view: str | None = None) -> dict:
         return await asyncio.to_thread(self._compute_performance_sync, days, view)
+
+    @staticmethod
+    def _session_close_snapshot(
+        snaps: list[tuple[float, float, float | None]], first_seen_at: str
+    ) -> tuple[float, float, float | None] | None:
+        """The last snapshot still inside the appearance's own ET session.
+
+        Snapshots carry minutes-since-entry rather than a timestamp, so the
+        boundary is computed from the entry time: minutes remaining until
+        16:00 ET that day. An appearance first seen after the close has no
+        session-close checkpoint at all, which is correct -- there is no
+        remainder of that session to hold through.
+        """
+        try:
+            entry = datetime.fromisoformat(first_seen_at)
+        except (TypeError, ValueError):
+            return None
+        entry_et = entry.astimezone(ET) if entry.tzinfo else entry
+        close_et = entry_et.replace(hour=16, minute=0, second=0, microsecond=0)
+        minutes_to_close = (close_et - entry_et).total_seconds() / 60.0
+        if minutes_to_close <= 0:
+            return None
+        within = [s for s in snaps if s[0] <= minutes_to_close]
+        if not within:
+            return None
+        return max(within, key=lambda s: s[0])
 
     @staticmethod
     def _catalyst_drift(picks: list[dict]) -> dict:

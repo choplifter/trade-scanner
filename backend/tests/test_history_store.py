@@ -237,3 +237,28 @@ def test_entry_float_shares_defaults_to_null_when_unknown(tmp_path):
             "SELECT entry_float_shares FROM appearances WHERE symbol = 'AAA'"
         ).fetchone()[0]
     assert value is None
+
+
+def test_unconfirmed_prices_are_excluded_from_win_rates(tmp_path):
+    """A snapshot whose price equals the entry price means the feed reported
+    no new trade, not that the position went nowhere.
+
+    Counting those as losses put every 30-minute win rate near 28% when the
+    same checkpoints excluding them read ~51%. On the IEX feed 45% of
+    30-minute checkpoints land here, so this was not an edge case -- it was
+    most of the measurement. Same reasoning as the non-trading-day exclusion,
+    applied within a session.
+    """
+    store = _store(tmp_path)
+    _seed(store, "UP", entry_rvol=2.0, headline=None, entry_price=10.0, latest_price=11.0)
+    _seed(store, "FLAT", entry_rvol=2.0, headline=None, entry_price=10.0, latest_price=10.0)
+
+    report = asyncio.run(store.compute_performance(days=3650))
+    row = next(r for r in report["summary"] if r["horizon"] == "latest" and r["view"] == "gainers")
+
+    # Both still count as sample, so a view resting on little confirmed data
+    # cannot look as solid as one that is not.
+    assert row["sample_size"] == 2
+    assert row["measured_size"] == 1
+    # The one confirmed move was up. Counting FLAT as a loss would say 50%.
+    assert row["win_rate"] == 100.0

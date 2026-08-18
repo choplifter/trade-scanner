@@ -135,17 +135,20 @@ async def main(args) -> None:
 
     # "latest" is the closest live analogue of the backtest's entry-to-close
     # hold; the 30m/60m horizons answer a different question.
-    latest = next((r for r in rows if r["horizon"] == "latest"), None)
+    # session_close is the only horizon that matches what the backtest
+    # measured: entry to the end of that same session.
+    at_close = next((r for r in rows if r["horizon"] == "session_close"), None)
     print("\nAgainst the claim")
     print(f"   backtest (out-of-sample):  {BACKTEST_WIN_RATE}% win, {BACKTEST_ALPHA:+.2f}% alpha")
     print(f"   random pick, same universe: {BASE_RATE}% win")
-    if latest:
+    if at_close:
         se = _standard_error_pp(trading_days or symbol_days)
-        print(f"   live (latest horizon):     {latest['win_rate']}% win, "
-              f"{latest['avg_alpha']:+.2f}% alpha")
+        print(f"   live (session close):      {at_close['win_rate']}% win, "
+              f"{at_close['avg_alpha']:+.2f}% alpha "
+              f"[{at_close.get('measured_size')} of {at_close['sample_size']} confirmed]")
         if se is not None:
             print(f"   two-sigma band at this sample: +/-{2 * se:.1f}pp")
-        print(f"\n   {_verdict(latest['win_rate'], trading_days or symbol_days)}")
+        print(f"\n   {_verdict(at_close['win_rate'], trading_days or symbol_days)}")
 
     need_random = _needed_for(BACKTEST_WIN_RATE - BASE_RATE)
     print("\nHow much more is needed")
