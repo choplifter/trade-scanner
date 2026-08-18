@@ -109,17 +109,32 @@ function barToVolume(bar: Bar): HistogramData {
 const MIN_SPACING = 3;
 const MAX_SPACING = 10;
 
+// Room reserved at the right edge when level lines are shown. Their axis
+// labels ("Monthly Range High 12.91", "VWAP +1 SD 14.24") are badges wide
+// enough to reach back into the plot, and with the newest bar pinned to the
+// right edge they land squarely on the candles you are actually watching.
+// Measured against the widest labels the indicators produce, with a little
+// slack -- the alternative, shortening the labels, loses the reading you
+// turned them on for.
+const LABEL_CLEARANCE_PX = 130;
+
 // Show as many bars as fit at a readable spacing: fit everything when there's
 // little data (capped at MAX_SPACING so a handful of bars doesn't stretch into
 // oversized candles), or the most recent bars at MIN_SPACING when there's more
 // data than the pane can show at once. Shared by the data effect and the
 // resize handler so the two can't drift apart -- the pane's width is an input
 // either way, so a resize has to recompute this just as a new bar does.
-function visibleLogicalRange(width: number, barCount: number) {
+function visibleLogicalRange(width: number, barCount: number, clearancePx = 0) {
   if (barCount <= 0 || width <= 0) return null;
   const spacing = Math.min(MAX_SPACING, Math.max(MIN_SPACING, width / barCount));
   const visibleCount = Math.min(barCount, Math.max(1, Math.ceil(width / spacing)));
-  return { from: barCount - visibleCount, to: barCount - 1 };
+  // Shift the whole window right rather than widening it: the span stays
+  // `visibleCount` bars, so candles keep their size and simply sit further
+  // left, leaving empty chart at the right for the labels to occupy.
+  // Widening instead would squeeze more bars into the same pixels and make
+  // every candle thinner the moment Levels was switched on.
+  const padBars = clearancePx > 0 ? Math.ceil(clearancePx / spacing) : 0;
+  return { from: barCount - visibleCount + padBars, to: barCount - 1 + padBars };
 }
 
 // Chart instance is created once and mutated imperatively via the
@@ -166,6 +181,11 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
   // can't close over the current bars. A ref rather than a dep of the mount
   // effect, which would rebuild the whole chart on every tick.
   const barCountRef = useRef(0);
+  // The resize handler is created once in the mount effect, so it cannot
+  // close over showIndicators -- it would capture the value from first
+  // render and stop matching after a toggle. A ref keeps it current.
+  const showIndicatorsRef = useRef(showIndicators);
+  showIndicatorsRef.current = showIndicators;
   // Applying a range can itself change the time scale's width (different
   // visible bars -> different price labels -> a wider/narrower price scale),
   // which fires subscribeSizeChange again. This swallows that echo.
@@ -246,7 +266,11 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
       if (applyingRangeRef.current) return;
       const container = containerRef.current;
       if (!container) return;
-      const range = visibleLogicalRange(container.clientWidth || 1, barCountRef.current);
+      const range = visibleLogicalRange(
+        container.clientWidth || 1,
+        barCountRef.current,
+        showIndicatorsRef.current ? LABEL_CLEARANCE_PX : 0,
+      );
       if (!range) return;
       applyingRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange(range);
@@ -306,12 +330,19 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
 
     const container = containerRef.current;
     if (container) {
-      const range = visibleLogicalRange(container.clientWidth || 1, bars.length);
+      const range = visibleLogicalRange(
+        container.clientWidth || 1,
+        bars.length,
+        showIndicators ? LABEL_CLEARANCE_PX : 0,
+      );
       if (range) {
         chartRef.current?.timeScale().setVisibleLogicalRange(range);
       }
     }
-  }, [bars, vwap, focusTime]);
+    // showIndicators belongs here, not only in the indicators effect: toggling
+    // it changes how much right-hand room the labels need, and the viewport
+    // has to be re-anchored to match.
+  }, [bars, vwap, focusTime, showIndicators]);
 
   // Scroll a clicked backtest pick into view and pin it with an arrow. Runs
   // after the data effect above, so the bars it needs are already on the
