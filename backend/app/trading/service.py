@@ -148,6 +148,7 @@ class OrderService:
             buying_power=_number(account.get("buying_power")),
             max_qty=self._settings.trading_max_order_qty,
             max_notional=self._settings.trading_max_order_notional,
+            max_notional_pct=self._settings.trading_max_order_notional_pct,
         )
 
     # --- write path ---------------------------------------------------

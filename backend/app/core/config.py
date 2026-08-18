@@ -22,7 +22,18 @@ class Settings(BaseSettings):
     # are fat-finger guards, not a risk policy: a mistyped quantity is the
     # failure they exist for, and refusing locally gives a clearer message
     # than a broker rejection would.
-    trading_max_order_notional: float = 5_000.0
+    #
+    # The percentage is the one that matters, because a notional ceiling has
+    # to scale with the account to mean anything. Sizing from a stop makes
+    # notional = risk x (entry / stop-distance), so 1% of a 100k account with
+    # a 5%-away stop is already a 20k position -- a fixed 5k ceiling (the
+    # first value here) blocked every realistic trade while looking like a
+    # safety feature. 25% of equity permits normal sizing and still refuses
+    # an order that would be a quarter of the account in one name.
+    trading_max_order_notional_pct: float = 25.0
+    # Absolute backstop, applied as well as the percentage. Independent on
+    # purpose: it still bounds the damage if equity is ever misreported.
+    trading_max_order_notional: float = 25_000.0
     trading_max_order_qty: int = 10_000
 
     # Default share of equity risked per trade when sizing from a stop, used

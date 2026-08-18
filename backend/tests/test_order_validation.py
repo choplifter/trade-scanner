@@ -18,6 +18,7 @@ def _resolve(ticket: OrderTicket, **overrides):
         buying_power=400_000.0,
         max_qty=10_000,
         max_notional=50_000.0,
+        max_notional_pct=None,
     )
     kwargs.update(overrides)
     return resolve_ticket(ticket, **kwargs)
@@ -157,3 +158,39 @@ def test_ceilings_and_buying_power_apply_to_resolved_quantity():
         _resolve(OrderTicket(symbol="AAPL", side="buy", qty=9_000), max_notional=1_000.0)
     with pytest.raises(OrderRejected, match="buying power"):
         _resolve(OrderTicket(symbol="AAPL", side="buy", qty=1_000), buying_power=500.0)
+
+
+def test_notional_ceiling_scales_with_equity():
+    """A fixed ceiling cannot work at every account size. Sizing from a stop
+    makes notional = risk x (entry / stop-distance), so a 1% risk on a large
+    account routinely builds a position many times the risk -- the first
+    version of this shipped a flat 5,000 alongside a 1% default and blocked
+    every realistic trade while looking like a safety feature."""
+    ticket = OrderTicket(symbol="AAPL", side="buy", qty=1_000)  # 10,000 notional at 10.0
+
+    # 25% of a 100k account is 25,000 -- allowed.
+    _resolve(ticket, equity=100_000.0, max_notional=1e9, max_notional_pct=25.0)
+
+    # The same order against a 20k account is half the account -- refused.
+    with pytest.raises(OrderRejected, match="order ceiling"):
+        _resolve(ticket, equity=20_000.0, max_notional=1e9, max_notional_pct=25.0)
+
+
+def test_the_absolute_backstop_still_applies_independently():
+    """It exists so the percentage does not have to be right on its own --
+    if equity were ever misreported high, this still bounds the order."""
+    with pytest.raises(OrderRejected, match="order ceiling"):
+        _resolve(
+            OrderTicket(symbol="AAPL", side="buy", qty=1_000),
+            equity=10_000_000.0,  # absurd equity would permit anything by percentage
+            max_notional=5_000.0,
+            max_notional_pct=25.0,
+        )
+
+
+def test_the_ceiling_message_says_what_to_change():
+    """The number alone does not explain why a small risk produced a large
+    position."""
+    with pytest.raises(OrderRejected) as exc:
+        _resolve(OrderTicket(symbol="AAPL", side="buy", qty=1_000), max_notional=500.0)
+    assert "widen" in exc.value.message and "risk %" in exc.value.message

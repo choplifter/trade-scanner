@@ -141,6 +141,7 @@ def resolve_ticket(
     buying_power: float | None,
     max_qty: int,
     max_notional: float,
+    max_notional_pct: float | None = None,
 ) -> ResolvedOrder:
     """Price, size and bounds-check a ticket. Never touches the network.
 
@@ -178,12 +179,17 @@ def resolve_ticket(
         qty = ticket.qty or 0
 
     notional = qty * entry
+    # The tighter of the absolute backstop and the equity-scaled ceiling.
+    # Both exist so neither has to be right on its own.
+    ceiling = max_notional
+    if max_notional_pct is not None and equity:
+        ceiling = min(ceiling, equity * max_notional_pct / 100.0)
     assert_within_limits(
         qty=qty,
         notional=notional,
         buying_power=buying_power,
         max_qty=max_qty,
-        max_notional=max_notional,
+        max_notional=ceiling,
     )
 
     # Sizing from a stop implies that stop is the protective exit, so adopt it

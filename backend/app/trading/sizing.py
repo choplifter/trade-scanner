@@ -128,8 +128,15 @@ def assert_within_limits(
             f"{qty:,} shares exceeds the {max_qty:,} share ceiling.", field="qty"
         )
     if notional > max_notional:
+        # Say what to change. A risk-sized order's notional is
+        # risk x (entry / stop-distance), so a tight stop inflates position
+        # size even when the risk itself is small -- which is not obvious
+        # from the number alone.
         raise OrderRejected(
-            f"{notional:,.2f} exceeds the {max_notional:,.2f} order ceiling.", field="qty"
+            f"{notional:,.2f} exceeds the {max_notional:,.2f} order ceiling. "
+            "A tighter stop means a bigger position for the same risk, so widen "
+            "the stop, lower the risk %, or raise TRADING_MAX_ORDER_NOTIONAL_PCT.",
+            field="qty",
         )
     if buying_power is not None and notional > buying_power:
         # Rejected, not clamped. A silently reduced size is not the trade
