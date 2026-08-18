@@ -1432,3 +1432,81 @@ a.symbol-news-headline {
   border: 1px solid var(--status-critical);
   border-radius: 3px;
 }
+
+/* Shares its look with .alarms-backdrop / .alarms-panel, which predate it.
+   AlarmsOverlay should migrate onto Modal eventually; not done in the change
+   that introduced order confirmation. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-panel {
+  min-width: 320px;
+  max-width: 460px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+.modal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-panel-header h2 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.order-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+}
+
+.order-confirm-line {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.order-confirm-mode {
+  margin: 2px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.order-confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.order-confirm-actions .generate-button {
+  width: auto;
+  padding: 4px 14px;
+}

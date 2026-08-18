@@ -45,3 +45,28 @@ class TradingDisabled(TradingError):
     """The feature is switched off in settings (the default)."""
 
     code = "trading_disabled"
+
+
+def rejection_from_api_error(exc: Exception) -> OrderRejected | None:
+    """Translate an Alpaca APIError into a rejection, or None to re-raise.
+
+    A broker saying "not enough buying power" or "asset not tradable" is an
+    expected answer the user can act on, not a server fault, so it becomes a
+    422 with the reason rather than a 502.
+
+    Every access to exc.message / exc.code is wrapped. Both properties do an
+    unguarded json.loads(self._error) followed by error["message"], so an
+    HTML error page or a body without that key raises from inside the
+    exception handler -- an error while handling an error, which would
+    replace a useful rejection with a confusing traceback.
+    """
+    status = getattr(exc, "status_code", None)
+    if status not in (403, 422):
+        return None
+
+    try:
+        detail = str(exc.message)  # type: ignore[attr-defined]
+    except Exception:
+        detail = str(exc)
+
+    return OrderRejected(f"The broker rejected this order: {detail}")

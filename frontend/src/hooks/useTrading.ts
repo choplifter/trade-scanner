@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getAccount, getOrders, getPositions } from "../api/http";
+import { cancelOrder, closePosition, getAccount, getOrders, getPositions } from "../api/http";
 import type { Account, Order, Position } from "../types/trading";
 
 /** Positions and orders change when *you* act, not on every tick, so this
@@ -13,6 +13,10 @@ import type { Account, Order, Position } from "../types/trading";
  * StreamManager.subscribe about subscribe calls deadlocking the loop -- and
  * it is not worth that until the panel has earned its place. */
 const POLL_MS = 4_000;
+/** After you act, "did it fill?" is the only latency that matters, so poll
+ * harder for a short window rather than holding a socket open all day. */
+const HOT_POLL_MS = 1_200;
+const HOT_WINDOW_MS = 12_000;
 
 export interface TradingState {
   account: Account | null;
@@ -38,9 +42,19 @@ const EMPTY_STATE: TradingState = {
   error: null,
 };
 
-export function useTrading(): TradingState & { refresh: () => void } {
+export interface TradingActions {
+  refresh: () => void;
+  /** Refetch now and poll harder for a short window -- call after any
+   * mutation so the tables do not lag the fill. */
+  afterAction: () => void;
+  cancel: (orderId: string) => Promise<void>;
+  close: (symbol: string) => Promise<void>;
+}
+
+export function useTrading(): TradingState & TradingActions {
   const [state, setState] = useState<TradingState>(EMPTY_STATE);
   const cancelledRef = useRef(false);
+  const hotUntilRef = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -77,12 +91,40 @@ export function useTrading(): TradingState & { refresh: () => void } {
   useEffect(() => {
     cancelledRef.current = false;
     void refresh();
-    const timer = setInterval(() => void refresh(), POLL_MS);
+    // One short interval that decides each tick whether it is in the hot
+    // window, rather than swapping intervals -- fewer moving parts, and no
+    // window where both are running.
+    let sinceLast = 0;
+    const timer = setInterval(() => {
+      sinceLast += HOT_POLL_MS;
+      const hot = Date.now() < hotUntilRef.current;
+      if (hot || sinceLast >= POLL_MS) {
+        sinceLast = 0;
+        void refresh();
+      }
+    }, HOT_POLL_MS);
     return () => {
       cancelledRef.current = true;
       clearInterval(timer);
     };
   }, [refresh]);
 
-  return { ...state, refresh: () => void refresh() };
+  const afterAction = useCallback(() => {
+    hotUntilRef.current = Date.now() + HOT_WINDOW_MS;
+    void refresh();
+  }, [refresh]);
+
+  return {
+    ...state,
+    refresh: () => void refresh(),
+    afterAction,
+    cancel: async (orderId: string) => {
+      await cancelOrder(orderId);
+      afterAction();
+    },
+    close: async (symbol: string) => {
+      await closePosition(symbol);
+      afterAction();
+    },
+  };
 }

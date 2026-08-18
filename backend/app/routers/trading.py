@@ -119,3 +119,52 @@ async def preview_order(ticket: OrderTicket, request: Request) -> dict:
             "default_risk_pct": settings.trading_default_risk_pct,
         },
     }
+
+
+@router.post("/orders")
+async def submit_order(ticket: OrderTicket, request: Request) -> dict:
+    """Place an order.
+
+    Every refusal -- switched off, live account, bad stop, past a ceiling,
+    or the broker's own -- arrives as a 422 with the same structured body
+    the preview uses, so the ticket renders them all through one path.
+    """
+    try:
+        order = await _service(request).submit(ticket)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Order submission failed for %s", ticket.symbol)
+        raise HTTPException(status_code=502, detail="Failed to submit the order")
+    return {"order": order}
+
+
+@router.delete("/orders/{order_id}")
+async def cancel_order(order_id: str, request: Request) -> dict:
+    try:
+        await _service(request).cancel(order_id)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Order cancel failed for %s", order_id)
+        raise HTTPException(status_code=502, detail="Failed to cancel the order")
+    return {"cancelled": order_id}
+
+
+@router.delete("/positions/{symbol}")
+async def close_position(symbol: str, request: Request) -> dict:
+    """Flatten one position. There is deliberately no close-all endpoint."""
+    try:
+        order = await _service(request).close_position(symbol)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Close position failed for %s", symbol)
+        raise HTTPException(status_code=502, detail="Failed to close the position")
+    return {"order": order}

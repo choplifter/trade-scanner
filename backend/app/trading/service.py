@@ -17,7 +17,12 @@ from typing import Any
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
-from app.trading.errors import LiveTradingRefused, OrderRejected, TradingDisabled
+from app.trading.errors import (
+    LiveTradingRefused,
+    OrderRejected,
+    TradingDisabled,
+    rejection_from_api_error,
+)
 from app.trading.models import OrderTicket, ResolvedOrder, resolve_ticket
 
 logger = logging.getLogger(__name__)
@@ -145,6 +150,62 @@ class OrderService:
             max_notional=self._settings.trading_max_order_notional,
         )
 
+    # --- write path ---------------------------------------------------
+
+    async def submit(self, ticket: OrderTicket) -> dict:
+        """Place an order. The only function here that can lose money.
+
+        Guard first, before anything is built or fetched, so a refusal costs
+        nothing and cannot be reached by a caller that skipped the route.
+        """
+        self._assert_can_trade()
+        resolved = await self.preview(ticket)
+        request = _build_request(resolved)
+
+        try:
+            order = await asyncio.to_thread(self._clients.trading.submit_order, request)
+        except Exception as exc:
+            rejection = rejection_from_api_error(exc)
+            if rejection is not None:
+                raise rejection from exc
+            raise
+
+        logger.info(
+            "Submitted %s %s %s x%d (%s) client_order_id=%s",
+            resolved.order_class,
+            resolved.side,
+            resolved.symbol,
+            resolved.qty,
+            resolved.order_type,
+            resolved.client_order_id,
+        )
+        return _plain(order)
+
+    async def cancel(self, order_id: str) -> None:
+        self._assert_can_trade()
+        try:
+            await asyncio.to_thread(self._clients.trading.cancel_order_by_id, order_id)
+        except Exception as exc:
+            rejection = rejection_from_api_error(exc)
+            if rejection is not None:
+                raise rejection from exc
+            raise
+
+    async def close_position(self, symbol: str) -> dict:
+        """Flatten one position at market. Deliberately per-symbol: a
+        close-everything button is exactly the one hit by accident."""
+        self._assert_can_trade()
+        try:
+            order = await asyncio.to_thread(
+                self._clients.trading.close_position, symbol.upper()
+            )
+        except Exception as exc:
+            rejection = rejection_from_api_error(exc)
+            if rejection is not None:
+                raise rejection from exc
+            raise
+        return _plain(order)
+
 
 def _number(value) -> float | None:
     """Alpaca's decimal strings -> float, for arithmetic on this side."""
@@ -154,3 +215,41 @@ def _number(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _build_request(resolved):
+    """ResolvedOrder -> the alpaca-py request object.
+
+    Kept apart from submit() so the mapping is testable without a client:
+    the bracket/OTO leg construction is the part most likely to be wrong,
+    and it is pure.
+    """
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import (
+        LimitOrderRequest,
+        MarketOrderRequest,
+        StopLossRequest,
+        TakeProfitRequest,
+    )
+
+    kwargs = {
+        "symbol": resolved.symbol,
+        "qty": resolved.qty,
+        "side": OrderSide.BUY if resolved.side == "buy" else OrderSide.SELL,
+        "time_in_force": TimeInForce(resolved.time_in_force),
+        "order_class": {
+            "simple": OrderClass.SIMPLE,
+            "oto": OrderClass.OTO,
+            "bracket": OrderClass.BRACKET,
+        }[resolved.order_class],
+    }
+    if resolved.client_order_id:
+        kwargs["client_order_id"] = resolved.client_order_id
+    if resolved.take_profit_price is not None:
+        kwargs["take_profit"] = TakeProfitRequest(limit_price=resolved.take_profit_price)
+    if resolved.stop_loss_price is not None:
+        kwargs["stop_loss"] = StopLossRequest(stop_price=resolved.stop_loss_price)
+
+    if resolved.order_type == "limit":
+        return LimitOrderRequest(limit_price=resolved.limit_price, **kwargs)
+    return MarketOrderRequest(**kwargs)

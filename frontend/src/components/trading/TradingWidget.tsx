@@ -49,7 +49,7 @@ interface TradingWidgetProps {
  * orders and the balance line. Read-only for now -- order entry lands in the
  * next milestone, behind TRADING_ENABLED and a paper-account check. */
 export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetProps) {
-  const { account, paper, tradingEnabled, defaultRiskPct, positions, orders, loading, error } =
+  const { account, paper, tradingEnabled, defaultRiskPct, positions, orders, loading, error, afterAction } =
     useTrading();
   const [tab, setTab] = useState<Tab>("ticket");
 
@@ -86,7 +86,11 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
         ) : loading ? (
           <div className="widget-empty">Loading account…</div>
         ) : tab === "ticket" ? (
-          <OrderTicket symbol={selectedSymbol} defaultRiskPct={defaultRiskPct} />
+          <OrderTicket
+            symbol={selectedSymbol}
+            defaultRiskPct={defaultRiskPct}
+            onSubmitted={afterAction}
+          />
         ) : tab === "positions" ? (
           <PositionsTable
             positions={positions}

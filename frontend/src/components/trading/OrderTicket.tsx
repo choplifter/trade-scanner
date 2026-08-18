@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
-import { OrderRejectedError, previewOrder } from "../../api/http";
+import { OrderRejectedError, previewOrder, submitOrder } from "../../api/http";
+import { Modal } from "../common/Modal";
 import type { OrderPreview, OrderTicketRequest, TradingRejection } from "../../types/trading";
 
 type SizingMode = "shares" | "risk";
@@ -19,6 +20,9 @@ function numberOrUndefined(value: string): number | undefined {
 interface OrderTicketProps {
   symbol: string | null;
   defaultRiskPct: number;
+  /** Called after a successful submit so the positions/orders tables and the
+   * account line refresh immediately rather than waiting for the next poll. */
+  onSubmitted: () => void;
 }
 
 /** The order ticket. Sizes and prices through the server on every edit, so
@@ -26,10 +30,10 @@ interface OrderTicketProps {
  * duplicated client-side, where it could drift from the ceilings that
  * actually gate a submit.
  *
- * Submit is not wired up yet: this milestone deliberately ships the whole
- * validation surface with no write path, so every refusal can be exercised
- * before an order is possible. */
-export function OrderTicket({ symbol, defaultRiskPct }: OrderTicketProps) {
+ * Submit is gated twice over: the button only enables when the server says
+ * can_submit (TRADING_ENABLED and a paper account), and the confirmation
+ * dialog stands between the button and the order. */
+export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicketProps) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [sizingMode, setSizingMode] = useState<SizingMode>("risk");
@@ -44,7 +48,16 @@ export function OrderTicket({ symbol, defaultRiskPct }: OrderTicketProps) {
   const [rejection, setRejection] = useState<TradingRejection | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [placed, setPlaced] = useState<string | null>(null);
+
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Minted once when the dialog opens, not per attempt: Alpaca rejects a
+  // duplicate client_order_id, so retrying after a timeout resubmits the
+  // *same* order rather than opening a second position. A server-generated
+  // id would defeat that, since a retry would arrive with a new one.
+  const clientOrderIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!symbol) {
@@ -115,6 +128,49 @@ export function OrderTicket({ symbol, defaultRiskPct }: OrderTicketProps) {
   }
 
   const order = preview?.order;
+  const canSubmit = Boolean(order && preview?.can_submit) && !submitting;
+
+  const openConfirm = () => {
+    clientOrderIdRef.current = crypto.randomUUID();
+    setPlaced(null);
+    setConfirming(true);
+  };
+
+  const doSubmit = async () => {
+    if (!order) return;
+    setSubmitting(true);
+    try {
+      const ticket: OrderTicketRequest = {
+        symbol: order.symbol,
+        side: order.side as "buy" | "sell",
+        order_type: order.order_type as "market" | "limit",
+        ...(order.limit_price !== null ? { limit_price: order.limit_price } : {}),
+        ...(order.take_profit_price !== null ? { take_profit_price: order.take_profit_price } : {}),
+        // Submit the resolved quantity rather than re-sending the risk inputs:
+        // the user confirmed a specific size, and re-sizing server-side could
+        // silently place a different one if the price moved between the
+        // preview and the click.
+        qty: order.qty,
+        ...(order.stop_loss_price !== null ? { stop_loss_price: order.stop_loss_price } : {}),
+        client_order_id: clientOrderIdRef.current ?? undefined,
+      };
+      const result = await submitOrder(ticket);
+      setPlaced(result.order?.id ?? "submitted");
+      setRejection(null);
+      setError(null);
+      setConfirming(false);
+      onSubmitted();
+    } catch (err: unknown) {
+      if (err instanceof OrderRejectedError) {
+        setRejection(err.detail);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      setConfirming(false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="order-ticket">
@@ -251,18 +307,61 @@ export function OrderTicket({ symbol, defaultRiskPct }: OrderTicketProps) {
         </div>
       )}
 
+      {placed && <div className="order-preview">Order submitted.</div>}
+
       <button
         type="button"
         className="generate-button"
-        disabled
+        disabled={!canSubmit}
+        onClick={openConfirm}
         title={
           preview && !preview.can_submit
-            ? "Order placement is switched off. Set TRADING_ENABLED=true in backend/.env."
-            : "Order submission is not implemented yet -- preview only."
+            ? "Order placement is switched off. Set TRADING_ENABLED=true in backend/.env and restart."
+            : undefined
         }
       >
-        Submit (preview only)
+        {submitting ? "Submitting…" : `${side === "buy" ? "Buy" : "Sell"} ${symbol}`}
       </button>
+
+      <Modal open={confirming} title="Confirm order" onClose={() => setConfirming(false)}>
+        {order && (
+          <div className="order-confirm">
+            <p className="order-confirm-line">
+              <strong>
+                {order.side.toUpperCase()} {order.qty.toLocaleString()} {order.symbol}
+              </strong>{" "}
+              {order.order_type}
+              {order.limit_price !== null ? ` @ ${order.limit_price}` : ""}
+            </p>
+            <p className="order-confirm-line">
+              Notional {order.notional.toFixed(2)}
+              {order.risk_amount !== null ? ` · risk ${order.risk_amount.toFixed(2)}` : ""}
+              {order.risk_pct_of_equity !== null ? ` (${order.risk_pct_of_equity}% of equity)` : ""}
+            </p>
+            {(order.stop_loss_price !== null || order.take_profit_price !== null) && (
+              <p className="order-confirm-line">
+                {order.stop_loss_price !== null ? `Stop ${order.stop_loss_price}` : ""}
+                {order.stop_loss_price !== null && order.take_profit_price !== null ? " · " : ""}
+                {order.take_profit_price !== null ? `Target ${order.take_profit_price}` : ""}
+              </p>
+            )}
+            <p className="order-confirm-mode">PAPER — simulated account</p>
+            <div className="order-confirm-actions">
+              <button type="button" className="timeframe-button" onClick={() => setConfirming(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="generate-button"
+                disabled={submitting}
+                onClick={() => void doSubmit()}
+              >
+                {submitting ? "Submitting…" : "Place order"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

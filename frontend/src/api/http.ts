@@ -15,6 +15,7 @@ import type {
   AccountResponse,
   OrderPreview,
   OrderTicketRequest,
+  Order,
   OrdersResponse,
   PositionsResponse,
   TradingRejection,
@@ -195,4 +196,43 @@ export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPre
     throw new Error(await extractErrorMessage(res, `Preview failed: ${res.status}`));
   }
   return (await res.json()) as OrderPreview;
+}
+
+/** Place an order. Refusals -- switched off, live account, bad stop, past a
+ * ceiling, or the broker's own -- all arrive as a typed 422 so the ticket
+ * renders them through one path. */
+export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: Order }> {
+  const res = await fetch(`${API_BASE}/trading/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ticket),
+  });
+  if (res.status === 422) {
+    const body = (await res.json()) as { detail: TradingRejection };
+    throw new OrderRejectedError(body.detail);
+  }
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res, `Order failed: ${res.status}`));
+  }
+  return (await res.json()) as { order: Order };
+}
+
+async function deleteJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+  if (res.status === 422) {
+    const body = (await res.json()) as { detail: TradingRejection };
+    throw new OrderRejectedError(body.detail);
+  }
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res, `DELETE ${path} failed: ${res.status}`));
+  }
+  return (await res.json()) as T;
+}
+
+export function cancelOrder(orderId: string): Promise<{ cancelled: string }> {
+  return deleteJson<{ cancelled: string }>(`/trading/orders/${encodeURIComponent(orderId)}`);
+}
+
+export function closePosition(symbol: string): Promise<{ order: Order }> {
+  return deleteJson<{ order: Order }>(`/trading/positions/${encodeURIComponent(symbol)}`);
 }
