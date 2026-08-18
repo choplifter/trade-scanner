@@ -1315,3 +1315,50 @@ a.symbol-news-headline {
   border-top: 1px solid var(--border);
   font-size: 12px;
 }
+
+/* --- Trading panel ------------------------------------------------------ */
+
+/* The header packs a badge, a tab strip and a count, so let it wrap rather
+   than crushing the tabs at narrow widths -- this widget is only 3 of 12
+   grid columns by default. */
+.trading-widget .widget-header {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Whether the money is real is the one thing on this panel that must never
+   be ambiguous, so it is always shown -- not only when live. */
+.trading-mode-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+}
+
+.trading-mode-badge.paper {
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+.trading-mode-badge.live {
+  color: var(--status-critical);
+  border-color: var(--status-critical);
+}
+
+.trading-account {
+  padding: 4px 0;
+}
+
+.trading-account-label {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.trading-account-note {
+  margin: 8px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}

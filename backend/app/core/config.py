@@ -11,6 +11,24 @@ class Settings(BaseSettings):
     alpaca_api_secret_key: str = ""
     alpaca_paper: bool = True
 
+    # Master switch for the trading panel's *write* paths. Off by default and
+    # deliberately separate from alpaca_paper: shipping order placement should
+    # not change how anyone's dashboard behaves until they opt in, and the two
+    # switches then fail independently. Read paths (account, positions, order
+    # history) ignore this -- looking at an account harms nothing.
+    trading_enabled: bool = False
+
+    # Pre-flight ceilings, checked before an order reaches the broker. These
+    # are fat-finger guards, not a risk policy: a mistyped quantity is the
+    # failure they exist for, and refusing locally gives a clearer message
+    # than a broker rejection would.
+    trading_max_order_notional: float = 5_000.0
+    trading_max_order_qty: int = 10_000
+
+    # Default share of equity risked per trade when sizing from a stop, used
+    # to prefill the ticket. 1% is the common day-trading convention.
+    trading_default_risk_pct: float = 1.0
+
     # Never hardcode a feed elsewhere in the app -- every Alpaca data call must
     # read this value, so upgrading to a paid SIP subscription later is a
     # one-line config change instead of a code change.

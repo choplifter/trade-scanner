@@ -12,7 +12,7 @@ export type LayoutMode = "panels" | "grid";
  * would remount subtrees -- destroying CandleChart's chart instance, every
  * widget's local useState, and restarting the three analytics widgets'
  * poll intervals. Keying by id means dragging only moves a cell. */
-export type WidgetId = "scanner" | "chart" | "ideas" | "benchmark" | "history";
+export type WidgetId = "scanner" | "chart" | "ideas" | "benchmark" | "history" | "trading";
 
 /** Render order of grid cells. Deliberately constant and independent of
  * `layout` -- position comes from the layout item's x/y, never from DOM
@@ -23,6 +23,7 @@ export const WIDGET_IDS: readonly WidgetId[] = [
   "ideas",
   "benchmark",
   "history",
+  "trading",
 ];
 
 export const GRID_COLS = 12;
@@ -39,9 +40,14 @@ export const GRID_MARGIN = 8;
  * actually drag something. minW/minH approximate the old minSizePx clamps.
  * `chart` gets a taller minH because .symbol-info-panel reserves up to 220px
  * inside ChartWidget, which would otherwise squeeze the canvas to nothing. */
+// The grid was already full at 12x12, so trading takes width from the top
+// row rather than adding a sixth row -- total height and GRID_ROWS stay put.
+// minH is higher than the other bottom-row widgets because the account
+// summary plus a table needs vertical room before it starts clipping.
 export const DEFAULT_LAYOUT: Layout = [
-  { i: "scanner", x: 0, y: 0, w: 5, h: 8, minW: 3, minH: 3 },
-  { i: "chart", x: 5, y: 0, w: 7, h: 8, minW: 3, minH: 4 },
+  { i: "scanner", x: 0, y: 0, w: 4, h: 8, minW: 3, minH: 3 },
+  { i: "chart", x: 4, y: 0, w: 5, h: 8, minW: 3, minH: 4 },
+  { i: "trading", x: 9, y: 0, w: 3, h: 8, minW: 3, minH: 5 },
   { i: "ideas", x: 0, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
   { i: "benchmark", x: 4, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
   { i: "history", x: 8, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
@@ -56,7 +62,10 @@ const MODE_STORAGE_KEY = "layout:mode";
 // gone again. isValidLayout requires every id exactly once, so both the v1
 // and v2 shapes are incompatible; bumping discards a stored layout rather
 // than leaving a widget invisible or an orphan id in the grid.
-const LAYOUT_VERSION = 3;
+// 4: added "trading". isValidLayout's id check would already reject a v3
+// layout on its own, so this bump is belt-and-braces -- but it keeps the
+// version honest about the geometry change to the top row.
+const LAYOUT_VERSION = 4;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */

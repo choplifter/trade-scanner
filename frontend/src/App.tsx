@@ -11,6 +11,7 @@ import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
+import { TradingWidget } from "./components/trading/TradingWidget";
 import type { ChartFocus } from "./types/screener";
 import { useAlarms } from "./hooks/useAlarms";
 import { useDashboardLayout, type WidgetId } from "./hooks/useDashboardLayout";
@@ -76,6 +77,13 @@ export default function App() {
       ),
       history: (
         <ScannerHistoryWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+      ),
+      // Owns its own polling hook rather than taking state from here. If that
+      // state were lifted into App, this memo would recompute every poll tick
+      // and remount CandleChart -- exactly what the comment above guards
+      // against. Revisit when position lines need the data on the chart.
+      trading: (
+        <TradingWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
     }),
     [selectedSymbol, chartFocus, selectSymbol, selectPick],
@@ -148,11 +156,12 @@ export default function App() {
             <ResizablePanels
               direction="row"
               storageKey="layout:top-row"
-              defaultSizes={[0.45, 0.55]}
+              defaultSizes={[0.32, 0.44, 0.24]}
               minSizePx={220}
             >
               {widgets.scanner}
               {widgets.chart}
+              {widgets.trading}
             </ResizablePanels>
             <ResizablePanels
               direction="row"

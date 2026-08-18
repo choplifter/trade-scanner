@@ -11,6 +11,7 @@ import type {
   ScreenBacktestResponse,
 } from "../types/screener";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
+import type { AccountResponse, OrdersResponse, PositionsResponse } from "../types/trading";
 import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types/tradeIdeas";
 
 const API_BASE = "/api";
@@ -32,8 +33,13 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function postJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "POST" });
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    ...(body === undefined
+      ? {}
+      : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+  });
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res, `POST ${path} failed: ${res.status}`));
   }
@@ -139,4 +145,19 @@ export async function backtestScreen(
     throw new Error(await extractErrorMessage(res, `Backtest failed: ${res.status}`));
   }
   return (await res.json()) as ScreenBacktestResponse;
+}
+
+/** Connected Alpaca account, plus which mode the backend is in. Read-only:
+ * available whenever credentials exist, regardless of TRADING_ENABLED. */
+export function getAccount(): Promise<AccountResponse> {
+  return getJson<AccountResponse>("/trading/account");
+}
+
+export function getPositions(): Promise<PositionsResponse> {
+  return getJson<PositionsResponse>("/trading/positions");
+}
+
+/** Working orders by default; "all" or "closed" for history. */
+export function getOrders(status = "open"): Promise<OrdersResponse> {
+  return getJson<OrdersResponse>(`/trading/orders?status=${encodeURIComponent(status)}`);
 }

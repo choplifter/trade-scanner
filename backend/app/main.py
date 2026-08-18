@@ -18,7 +18,7 @@ from app.dash_app.state import bind as bind_dash_state
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.news_cache import NewsCache
 from app.market_data.stream_manager import StreamManager
-from app.routers import meta, scanners, screener, symbols, trade_ideas
+from app.routers import meta, scanners, screener, symbols, trade_ideas, trading
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.engine import ScannerEngine
 from app.scanners.history_store import ScannerHistoryStore
@@ -140,6 +140,7 @@ app.include_router(scanners.router)
 app.include_router(screener.router)
 app.include_router(symbols.router)
 app.include_router(trade_ideas.router)
+app.include_router(trading.router)
 app.include_router(scanner_ws.router)
 app.include_router(chart_ws.router)
 
