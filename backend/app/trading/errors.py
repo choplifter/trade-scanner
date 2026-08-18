@@ -69,4 +69,14 @@ def rejection_from_api_error(exc: Exception) -> OrderRejected | None:
     except Exception:
         detail = str(exc)
 
+    # "available: 0" on a symbol you plainly hold means the shares are held by
+    # a resting order, not that the position is missing. Say so, because the
+    # raw message reads like the opposite.
+    if "insufficient qty" in detail.lower():
+        detail += (
+            " -- those shares are held by a working order on the same symbol. "
+            "Cancel it first, or use Close position, which cancels resting "
+            "orders before flattening."
+        )
+
     return OrderRejected(f"The broker rejected this order: {detail}")

@@ -1539,3 +1539,11 @@ a.symbol-news-headline {
   color: var(--status-critical);
   border-color: var(--status-critical);
 }
+
+/* Secondary line inside a confirmation -- a consequence worth stating, not a
+   warning about danger. */
+.order-confirm-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}

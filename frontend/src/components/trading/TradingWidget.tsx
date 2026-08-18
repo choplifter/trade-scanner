@@ -172,9 +172,18 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
               )}
             </>
           ) : (
-            <p className="order-confirm-line">
-              Close the entire <strong>{pending?.symbol}</strong> position at market?
-            </p>
+            <>
+              <p className="order-confirm-line">
+                Close the entire <strong>{pending?.symbol}</strong> position at market?
+              </p>
+              {pending && orders.some((o) => o.symbol === pending.symbol) && (
+                <p className="order-confirm-line order-confirm-note">
+                  Any working order on {pending.symbol} will be cancelled first. Alpaca counts
+                  shares held by a resting stop as unavailable, so the close cannot go through
+                  while it is live.
+                </p>
+              )}
+            </>
           )}
           <p className="order-confirm-mode">PAPER &mdash; simulated account</p>
           {actionError && <p className="order-rejection">{actionError}</p>}

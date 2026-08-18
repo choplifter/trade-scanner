@@ -193,19 +193,65 @@ class OrderService:
             raise
 
     async def close_position(self, symbol: str) -> dict:
-        """Flatten one position at market. Deliberately per-symbol: a
-        close-everything button is exactly the one hit by accident."""
+        """Flatten one position at market, cancelling what holds it first.
+
+        Deliberately per-symbol: a close-everything button is exactly the one
+        hit by accident.
+
+        The cancel step is not optional. A bracket or OTO entry leaves its
+        stop resting against the whole position, and Alpaca counts those
+        shares as held -- so closing without cancelling fails with
+        "insufficient qty available for order (requested: 233, available: 0)",
+        which reads like the position does not exist. Flattening has to mean
+        flattening, so the resting orders go first.
+        """
         self._assert_can_trade()
+        symbol = symbol.upper()
+
+        cancelled = await self._cancel_orders_for(symbol)
+
         try:
-            order = await asyncio.to_thread(
-                self._clients.trading.close_position, symbol.upper()
-            )
+            order = await asyncio.to_thread(self._clients.trading.close_position, symbol)
         except Exception as exc:
             rejection = rejection_from_api_error(exc)
             if rejection is not None:
                 raise rejection from exc
             raise
-        return _plain(order)
+        result = _plain(order)
+        if isinstance(result, dict):
+            result["cancelled_orders"] = cancelled
+        return result
+
+    async def _cancel_orders_for(self, symbol: str) -> list[str]:
+        """Cancel every working order on one symbol. Returns what was cancelled.
+
+        Best-effort per order: one that has already filled or been cancelled
+        between listing and cancelling is not a failure worth aborting the
+        close for -- the close is the thing the user asked for.
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        try:
+            request = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+            orders = await asyncio.to_thread(self._clients.trading.get_orders, request)
+        except Exception:
+            logger.exception("Could not list working orders for %s before closing", symbol)
+            return []
+
+        cancelled: list[str] = []
+        for order in orders or []:
+            order_id = str(getattr(order, "id", "") or "")
+            if not order_id:
+                continue
+            try:
+                await asyncio.to_thread(self._clients.trading.cancel_order_by_id, order_id)
+                cancelled.append(order_id)
+            except Exception:
+                logger.warning(
+                    "Could not cancel %s on %s before closing", order_id, symbol, exc_info=True
+                )
+        return cancelled
 
 
 def _number(value) -> float | None:
