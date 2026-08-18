@@ -1362,3 +1362,73 @@ a.symbol-news-headline {
   line-height: 1.5;
   color: var(--text-muted);
 }
+
+.order-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.order-ticket-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.order-ticket-symbol {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.order-ticket label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.order-ticket input[type="number"] {
+  width: 78px;
+  padding: 3px 5px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+/* Buy/sell reads better in the direction colours the rest of the app already
+   uses for up and down, rather than the generic accent. */
+.side-toggle .timeframe-button[aria-pressed="true"]:first-child {
+  color: var(--delta-up);
+}
+
+.side-toggle .timeframe-button[aria-pressed="true"]:last-child {
+  color: var(--delta-down);
+}
+
+.order-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border-radius: 3px;
+}
+
+/* Reuses the widget-error colouring: a refusal is information, not a crash,
+   but it must read as clearly blocking. */
+.order-rejection {
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--status-critical);
+  border: 1px solid var(--status-critical);
+  border-radius: 3px;
+}

@@ -11,7 +11,14 @@ import type {
   ScreenBacktestResponse,
 } from "../types/screener";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
-import type { AccountResponse, OrdersResponse, PositionsResponse } from "../types/trading";
+import type {
+  AccountResponse,
+  OrderPreview,
+  OrderTicketRequest,
+  OrdersResponse,
+  PositionsResponse,
+  TradingRejection,
+} from "../types/trading";
 import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types/tradeIdeas";
 
 const API_BASE = "/api";
@@ -160,4 +167,32 @@ export function getPositions(): Promise<PositionsResponse> {
 /** Working orders by default; "all" or "closed" for history. */
 export function getOrders(status = "open"): Promise<OrdersResponse> {
   return getJson<OrdersResponse>(`/trading/orders?status=${encodeURIComponent(status)}`);
+}
+
+/** Thrown when the backend refuses a ticket -- a stop on the wrong side, a
+ * size past a ceiling, trading switched off. Carries the structured reason
+ * so the ticket can point at the offending field instead of showing a
+ * generic failure. Same pattern as BacktestRefusedError above. */
+export class OrderRejectedError extends Error {
+  constructor(readonly detail: TradingRejection) {
+    super(detail.message);
+    this.name = "OrderRejectedError";
+  }
+}
+
+/** Size and price a ticket without placing anything. */
+export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPreview> {
+  const res = await fetch(`${API_BASE}/trading/orders/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ticket),
+  });
+  if (res.status === 422) {
+    const body = (await res.json()) as { detail: TradingRejection };
+    throw new OrderRejectedError(body.detail);
+  }
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res, `Preview failed: ${res.status}`));
+  }
+  return (await res.json()) as OrderPreview;
 }

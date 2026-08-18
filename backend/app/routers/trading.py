@@ -15,6 +15,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from app.trading.errors import TradingError
+from app.trading.models import OrderTicket
 from app.trading.service import OrderService
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,11 @@ def _service(request: Request) -> OrderService:
     settings = request.app.state.settings
     if not settings.has_credentials:
         raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
-    return OrderService(request.app.state.alpaca_clients, settings)
+    return OrderService(
+        request.app.state.alpaca_clients,
+        settings,
+        engine=getattr(request.app.state, "scanner_engine", None),
+    )
 
 
 @router.get("/account")
@@ -49,6 +54,9 @@ async def get_account(request: Request) -> dict:
         "account": account,
         "paper": settings.alpaca_paper,
         "trading_enabled": settings.trading_enabled,
+        # Prefills the ticket, so changing the setting is reflected in the UI
+        # rather than the two drifting apart.
+        "default_risk_pct": settings.trading_default_risk_pct,
     }
 
 
@@ -77,3 +85,37 @@ async def get_orders(request: Request, status: str = "open") -> dict:
         logger.exception("Alpaca orders fetch failed")
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
     return {"orders": orders, "status": status}
+
+
+@router.post("/orders/preview")
+async def preview_order(ticket: OrderTicket, request: Request) -> dict:
+    """Size and price a ticket without placing anything.
+
+    Ungated on purpose: this is arithmetic, and seeing the size and risk of
+    an order you are not permitted to place is useful rather than dangerous.
+    It is also what lets the ticket show a rejection *before* the user
+    commits to anything.
+
+    The limits travel with the response so the UI can explain a refusal in
+    terms of the ceiling that caused it rather than restating a number.
+    """
+    settings = request.app.state.settings
+    try:
+        resolved = await _service(request).preview(ticket)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Order preview failed for %s", ticket.symbol)
+        raise HTTPException(status_code=502, detail="Failed to price the order")
+
+    return {
+        "order": resolved.model_dump(mode="json"),
+        "can_submit": settings.trading_enabled and settings.alpaca_paper,
+        "limits": {
+            "max_order_qty": settings.trading_max_order_qty,
+            "max_order_notional": settings.trading_max_order_notional,
+            "default_risk_pct": settings.trading_default_risk_pct,
+        },
+    }

@@ -4,10 +4,12 @@ import { useTrading } from "../../hooks/useTrading";
 import type { Account, Order, Position } from "../../types/trading";
 import { num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
+import { OrderTicket } from "./OrderTicket";
 
-type Tab = "positions" | "orders" | "account";
+type Tab = "ticket" | "positions" | "orders" | "account";
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "ticket", label: "Ticket" },
   { id: "positions", label: "Positions" },
   { id: "orders", label: "Orders" },
   { id: "account", label: "Account" },
@@ -47,8 +49,9 @@ interface TradingWidgetProps {
  * orders and the balance line. Read-only for now -- order entry lands in the
  * next milestone, behind TRADING_ENABLED and a paper-account check. */
 export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetProps) {
-  const { account, paper, tradingEnabled, positions, orders, loading, error } = useTrading();
-  const [tab, setTab] = useState<Tab>("positions");
+  const { account, paper, tradingEnabled, defaultRiskPct, positions, orders, loading, error } =
+    useTrading();
+  const [tab, setTab] = useState<Tab>("ticket");
 
   const count = tab === "positions" ? positions.length : tab === "orders" ? orders.length : 0;
 
@@ -82,6 +85,8 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
           <div className="widget-error">{error}</div>
         ) : loading ? (
           <div className="widget-empty">Loading account…</div>
+        ) : tab === "ticket" ? (
+          <OrderTicket symbol={selectedSymbol} defaultRiskPct={defaultRiskPct} />
         ) : tab === "positions" ? (
           <PositionsTable
             positions={positions}

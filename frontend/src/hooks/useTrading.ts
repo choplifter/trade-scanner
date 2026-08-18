@@ -20,6 +20,7 @@ export interface TradingState {
   paper: boolean;
   /** Whether write paths are switched on server-side. */
   tradingEnabled: boolean;
+  defaultRiskPct: number;
   positions: Position[];
   orders: Order[];
   loading: boolean;
@@ -30,6 +31,7 @@ const EMPTY_STATE: TradingState = {
   account: null,
   paper: true,
   tradingEnabled: false,
+  defaultRiskPct: 1,
   positions: [],
   orders: [],
   loading: true,
@@ -54,6 +56,7 @@ export function useTrading(): TradingState & { refresh: () => void } {
         account: account.account,
         paper: account.paper,
         tradingEnabled: account.trading_enabled,
+        defaultRiskPct: account.default_risk_pct ?? 1,
         positions: positions.positions,
         orders: orders.orders,
         loading: false,
