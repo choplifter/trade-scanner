@@ -12,7 +12,12 @@ import logging
 
 from app.core.logging import RedactingFormatter, RedactSecretsFilter
 
-SECRET = "FMP_API_KEY_REDACTED"
+# A synthetic value, deliberately not a real key. The point of this file
+# is that secrets never reach a log; putting a live credential in it to
+# prove that would defeat the exercise, and secret scanners are right to
+# flag it. Shape matters, not provenance: 32 alphanumerics, matching what
+# FMP issues, so the redaction regex is exercised the same way.
+SECRET = "FAKEKEYFAKEKEYFAKEKEYFAKEKEY1234"
 URL = f"https://financialmodelingprep.com/stable/profile?symbol=IPST&apikey={SECRET}"
 
 
