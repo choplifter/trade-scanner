@@ -38,6 +38,11 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   // Always kept live regardless of the selected timeframe: it's the source
   // for the intraday buckets below, and also drives the header's last-price
   // (which should track real trades even while looking at a Daily chart).
+  // Which VWAP anchor the chart draws. Session (09:30) is the day-trading
+  // convention and the default; premarket-anchored is what TradingView shows.
+  // On a gapper these are genuinely different lines -- IPST 2026-08-17 closed
+  // at 7.39 with the session line at 7.81 and the premarket one near 7.18.
+  const [vwapFromPremarket, setVwapFromPremarket] = useState(false);
   const intraday = useChartFeed(symbol);
   const historical = useHistoricalBars(
     symbol,
@@ -46,7 +51,12 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
 
   const displayed = useMemo(() => {
     if (option.kind === "intraday") {
-      return aggregateBars(intraday.bars, intraday.vwap, option.minutes ?? 1, intraday.indicators);
+      return aggregateBars(
+        intraday.bars,
+        vwapFromPremarket ? intraday.vwapPremarket : intraday.vwap,
+        option.minutes ?? 1,
+        intraday.indicators,
+      );
     }
     // "series"-kind indicators (e.g. an EMA) are minute-resolution -- on an
     // hourly/daily/weekly/monthly chart that's both semantically odd to
@@ -58,7 +68,16 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
       vwap: historical.vwap,
       indicators: intraday.indicators.filter((i) => i.kind === "level"),
     };
-  }, [option, intraday.bars, intraday.vwap, intraday.indicators, historical.bars, historical.vwap]);
+  }, [
+    option,
+    intraday.bars,
+    intraday.vwap,
+    intraday.vwapPremarket,
+    vwapFromPremarket,
+    intraday.indicators,
+    historical.bars,
+    historical.vwap,
+  ]);
 
   const lastPrice =
     intraday.bars[intraday.bars.length - 1]?.c ??
@@ -96,9 +115,19 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             ))}
           </div>
           {option.kind === "intraday" && (
-            <span className="vwap-legend">
-              <span className="vwap-swatch" /> VWAP
-            </span>
+            <button
+              type="button"
+              className="vwap-legend"
+              aria-pressed={vwapFromPremarket}
+              onClick={() => setVwapFromPremarket((v) => !v)}
+              title={
+                vwapFromPremarket
+                  ? "VWAP anchored at the premarket open, counting every print (what TradingView draws). Click for the 09:30 session anchor."
+                  : "VWAP anchored at the 09:30 session open, premarket excluded. Click to anchor at the premarket open instead."
+              }
+            >
+              <span className="vwap-swatch" /> VWAP {vwapFromPremarket ? "(pre)" : "(session)"}
+            </button>
           )}
           <button
             type="button"

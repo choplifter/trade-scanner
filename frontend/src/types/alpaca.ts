@@ -75,6 +75,7 @@ export interface ChartBarMessage {
   symbol: string;
   bar: Bar;
   vwap: number | null;
+  vwap_premarket: number | null;
 }
 
 export interface ChartErrorMessage {
@@ -102,6 +103,7 @@ export interface SymbolBarsResponse {
   symbol: string;
   bars: Bar[];
   vwap: (number | null)[];
+  vwap_premarket: (number | null)[];
   indicators: IndicatorResult[];
 }
 

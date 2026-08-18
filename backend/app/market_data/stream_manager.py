@@ -86,5 +86,10 @@ class StreamManager:
                     "v": bar.volume,
                 },
                 "vwap": vwap,
+                # The premarket-anchored line, shipped alongside rather than
+                # instead: the chart toggles between them client-side, which
+                # is the only way one shared accumulator per symbol can serve
+                # viewers who have chosen different anchors.
+                "vwap_premarket": vwap_state.premarket_anchored_vwap,
             },
         )

@@ -118,6 +118,7 @@ async def get_symbol_bars(
             "symbol": symbol,
             "bars": [_bar_to_dict(b) for b in bars],
             "vwap": [None] * len(bars),
+            "vwap_premarket": [None] * len(bars),
             "indicators": indicators,
         }
 
@@ -135,12 +136,13 @@ async def get_symbol_bars(
 
     bars = await get_intraday_minute_bars(clients, symbol, start=start)
     if not bars:
-        return {"symbol": symbol, "bars": [], "vwap": [], "indicators": []}
+        return {"symbol": symbol, "bars": [], "vwap": [], "vwap_premarket": [], "indicators": []}
 
     # Replay bars through a fresh accumulator to build the VWAP series for
     # the chart backfill...
     vwap_state = SessionVwapState(symbol=symbol)
     vwap_series = []
+    vwap_premarket_series = []
     for bar in bars:
         vwap = vwap_state.update(
             timestamp=bar.timestamp,
@@ -151,6 +153,7 @@ async def get_symbol_bars(
             bar_vwap=getattr(bar, "vwap", None),
         )
         vwap_series.append(vwap)
+        vwap_premarket_series.append(vwap_state.premarket_anchored_vwap)
 
     # ...then copy the resulting accumulator into StreamManager's live state
     # for this symbol, so the first live tick after backfill continues the
@@ -159,6 +162,8 @@ async def get_symbol_bars(
     live_state = stream_manager.get_or_create_vwap_state(symbol)
     live_state.cum_pv = vwap_state.cum_pv
     live_state.cum_vol = vwap_state.cum_vol
+    live_state.cum_pv_premarket = vwap_state.cum_pv_premarket
+    live_state.cum_vol_premarket = vwap_state.cum_vol_premarket
     live_state.session_date = vwap_state.session_date
 
     indicators = await _compute_indicators(clients, symbol, bars)
@@ -167,5 +172,6 @@ async def get_symbol_bars(
         "symbol": symbol,
         "bars": [_bar_to_dict(b) for b in bars],
         "vwap": vwap_series,
+        "vwap_premarket": vwap_premarket_series,
         "indicators": indicators,
     }
