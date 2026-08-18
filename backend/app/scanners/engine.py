@@ -958,27 +958,52 @@ class ScannerEngine:
             await self._record_new_appearances(views)
             await self._write_periodic_snapshots()
 
-            # Evaluate live user screens *before* enrichment so their rows can
-            # be enriched alongside the ranked ones. History recording above
-            # deliberately runs first and only over the four canonical views:
-            # scanner_history is what the drift report, benchmark tracker and
-            # every backtest read, and letting an arbitrary user screen write
-            # into it would corrupt that continuity.
+            # History recording above deliberately runs first and only over the
+            # four canonical views: scanner_history is what the drift report,
+            # benchmark tracker and every backtest read, and letting an
+            # arbitrary user screen write into it would corrupt that continuity.
+            #
+            # Momentum is attached BEFORE screens are evaluated, over every
+            # tradable row rather than just the ranked ones.
+            #
+            # Screens used to be evaluated first, on the reasoning that their
+            # matched rows could then be enriched in place. That is circular
+            # for a screen that *filters* on an enriched field. Every poll
+            # builds fresh ScannerRow objects (see _poll_once), so rvol_1h and
+            # volume_surge start as None each tick; a screen evaluated before
+            # enrichment therefore saw None, and apply_filters treats missing
+            # as no-match. The Volume Accelerating preset showed its rows once
+            # -- the immediate reply on subscribe, against rows still enriched
+            # from the previous tick -- and then emptied on the first poll and
+            # stayed empty, because matching nothing meant nothing was enriched
+            # to match next time.
+            #
+            # Only momentum is widened, and only to the tradable set the screen
+            # already runs against, so this cannot exceed the universe. News and
+            # fundamentals stay scoped to ranked plus matched rows: those cost
+            # FMP requests, and that quota is already the tightest budget here.
+            momentum_scope = dict(views)
+            if self.screen_subscriptions is not None and self.screen_subscriptions.any_active():
+                momentum_scope["_screen_candidates"] = _tradable(
+                    list(self.rows.values()) or list((self._latest_session_rows or {}).values()),
+                    self.settings.scanner_min_dollar_volume,
+                )
+            await self._attach_momentum(momentum_scope)
+
             screen_results = self._evaluate_screens()
             enriched = dict(views)
             if screen_results:
                 # Rows are shared objects, so attaching to them here is what
                 # populates the same rows in the screen payloads below --
-                # which is how a custom screen gets company name, market cap,
-                # short interest and 15m momentum without widening any fetch
-                # to the whole universe. Bounded by the screens' own limits.
+                # which is how a custom screen gets company name, market cap
+                # and short interest without widening those fetches to the
+                # whole universe. Bounded by the screens' own limits.
                 enriched["_screened"] = [
                     row for _, rows, _ in screen_results for row in rows
                 ]
 
             await self._attach_fundamentals(enriched)
             await self._attach_news(enriched)
-            await self._attach_momentum(enriched)
             await self._broadcast_screens(screen_results)
             is_fallback = self.is_latest_session_fallback
             for name, rows in views.items():
