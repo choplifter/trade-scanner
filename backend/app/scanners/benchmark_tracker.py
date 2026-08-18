@@ -47,6 +47,14 @@ class TrackedAppearance:
     # found, not that anything's wrong with this entry.
     entry_headline: str | None
     first_seen_at: datetime
+    # Dollar volume at the moment it was flagged. Entry-time like everything
+    # else here, not live -- this table answers what the scanner picked and
+    # how it did, so the inputs must be the ones the decision was made on.
+    #
+    # Defaulted, and therefore last: the fields above have no defaults, and a
+    # defaulted field cannot precede them. None covers entries recorded before
+    # this existed, which clears within a poll after a restart.
+    entry_dollar_volume: float | None = None
 
 
 class ScannerBenchmarkTracker:
@@ -68,6 +76,7 @@ class ScannerBenchmarkTracker:
         entry_rvol: float,
         benchmark_entry_price: float | None,
         entry_headline: str | None = None,
+        entry_dollar_volume: float | None = None,
     ) -> None:
         key = (symbol, view)
         if key in self._entries:
@@ -78,6 +87,7 @@ class ScannerBenchmarkTracker:
             entry_price=entry_price,
             entry_pct_change=entry_pct_change,
             entry_rvol=entry_rvol,
+            entry_dollar_volume=entry_dollar_volume,
             benchmark_entry_price=benchmark_entry_price,
             entry_headline=entry_headline,
             first_seen_at=datetime.now(timezone.utc),
@@ -154,6 +164,7 @@ def compute_performance(
                 "entry_price": round(entry.entry_price, 2),
                 "entry_pct_change": round(entry.entry_pct_change, 2),
                 "entry_rvol": round(entry.entry_rvol, 2),
+                "entry_dollar_volume": entry.entry_dollar_volume,
                 "entry_headline": entry.entry_headline,
                 "current_headline": (
                     current_headline_for(entry.symbol) if current_headline_for else None

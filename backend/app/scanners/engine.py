@@ -856,6 +856,7 @@ class ScannerEngine:
                 entry_rvol=row.rvol,
                 benchmark_entry_price=self.benchmark_price,
                 entry_headline=headlines.get(row.symbol),
+                entry_dollar_volume=row.dollar_volume_today,
             )
 
         new_entries = [

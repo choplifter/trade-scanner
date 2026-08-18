@@ -123,3 +123,25 @@ def test_current_headline_is_none_without_a_news_source():
     picks = compute_performance(tracker.all(), lambda s: 11.0, 404.0)
     assert picks[0]["entry_headline"] == "Real news"
     assert picks[0]["current_headline"] is None
+
+
+def test_entry_dollar_volume_is_recorded_and_reported():
+    """Entry-time, like every other input here. What the table answers is
+    what the scanner picked and how it did, so the figures have to be the
+    ones the decision was made on rather than today's."""
+    tracker = ScannerBenchmarkTracker()
+    tracker.record_if_new(
+        "AAPL", "gainers", 10.0, 5.0, 2.0, 400.0, entry_dollar_volume=6_600_000.0
+    )
+    picks = compute_performance(tracker.all(), lambda s: 11.0, 404.0)
+    assert picks[0]["entry_dollar_volume"] == 6_600_000.0
+
+
+def test_dollar_volume_is_none_when_it_was_not_supplied():
+    """The tracker is in-memory, so entries made before this field existed
+    vanish on restart -- but the column still has to tolerate a gap rather
+    than showing a misleading zero."""
+    tracker = ScannerBenchmarkTracker()
+    tracker.record_if_new("AAPL", "gainers", 10.0, 5.0, 2.0, 400.0)
+    picks = compute_performance(tracker.all(), lambda s: 11.0, 404.0)
+    assert picks[0]["entry_dollar_volume"] is None

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getScannerBenchmarkPerformance } from "../../api/http";
 import type { ScannerBenchmarkPick } from "../../types/scannerBenchmark";
-import { formatPrice, formatRvol } from "../../utils/format";
+import { formatDollarVolume, formatPrice, formatRvol } from "../../utils/format";
 
 const POLL_MS = 30_000;
 
@@ -29,6 +29,7 @@ type SortColumn =
   | "minutes_since"
   | "entry_pct_change"
   | "entry_rvol"
+  | "entry_dollar_volume"
   | "entry_price"
   | "current_price"
   | "pct_change_since_entry"
@@ -46,6 +47,7 @@ const SORT_KEYS: Record<SortColumn, (p: ScannerBenchmarkPick) => number | string
   minutes_since: (p) => p.minutes_since,
   entry_pct_change: (p) => p.entry_pct_change,
   entry_rvol: (p) => p.entry_rvol,
+  entry_dollar_volume: (p) => p.entry_dollar_volume,
   entry_price: (p) => p.entry_price,
   current_price: (p) => p.current_price,
   pct_change_since_entry: (p) => p.pct_change_since_entry,
@@ -154,6 +156,10 @@ export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: Scann
                   <th {...headerProps("minutes_since")}>Flagged{sortIndicator("minutes_since")}</th>
                   <th {...headerProps("entry_pct_change")}>Entry Gap%{sortIndicator("entry_pct_change")}</th>
                   <th {...headerProps("entry_rvol")}>Entry RVol{sortIndicator("entry_rvol")}</th>
+                  <th {...headerProps("entry_dollar_volume")}>
+                    $ VOL
+                    {sortIndicator("entry_dollar_volume")}
+                  </th>
                   <th {...headerProps("entry_price")}>Entry ${sortIndicator("entry_price")}</th>
                   <th {...headerProps("current_price")}>Now ${sortIndicator("current_price")}</th>
                   <th {...headerProps("pct_change_since_entry")}>Change{sortIndicator("pct_change_since_entry")}</th>
@@ -181,6 +187,11 @@ export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: Scann
                     <td>{p.minutes_since < 1 ? "just now" : `${Math.round(p.minutes_since)}m ago`}</td>
                     <td className={pctClass(p.entry_pct_change)}>{pctText(p.entry_pct_change)}</td>
                     <td>{formatRvol(p.entry_rvol)}</td>
+                    <td>
+                      {p.entry_dollar_volume === null
+                        ? "—"
+                        : formatDollarVolume(p.entry_dollar_volume)}
+                    </td>
                     <td>{formatPrice(p.entry_price)}</td>
                     <td>{p.current_price != null ? formatPrice(p.current_price) : "—"}</td>
                     <td className={pctClass(p.pct_change_since_entry)}>

@@ -6,6 +6,9 @@ export interface ScannerBenchmarkPick {
   entry_price: number;
   entry_pct_change: number;
   entry_rvol: number;
+  /** Dollar volume when it was flagged. Null on entries recorded before
+   * this field existed, which clears within a poll after a restart. */
+  entry_dollar_volume: number | null;
   entry_headline: string | null;
   /** Today's headline as it stands now. entry_headline is a frozen
    * point-in-time snapshot and is usually null -- most symbols are first
