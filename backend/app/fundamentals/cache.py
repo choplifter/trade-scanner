@@ -89,6 +89,54 @@ class FundamentalsCache:
             return None
         return shares_short / float_shares * 100
 
+    # Below this share of the consolidated tape, a volume-weighted figure
+    # computed from our own feed stops meaning anything. Calibrated on a
+    # measured pair rather than picked: on 2026-08-17 we saw 3.04% of AAPL's
+    # tape and our session VWAP was 0.10% off the true volume-weighted price,
+    # while on IPST we saw 0.24% and were 5.83% off -- 7.81 against 7.38,
+    # which put price on the wrong side of VWAP for the whole afternoon. 1%
+    # sits between the two, nearer the broken end.
+    MIN_TAPE_COVERAGE_PCT = 1.0
+
+    def tape_coverage_pct(self, symbol: str, observed_volume: float | None) -> float | None:
+        """What share of today's real volume our feed actually saw, in %.
+
+        None when FMP hasn't reported a volume for this symbol yet, which is
+        "unknown", not "fine" -- callers must not read a missing value as good
+        coverage.
+
+        The Alpaca IEX feed reports only trades routed through IEX, and that
+        share varies enormously by symbol: a few percent on a mega cap, a
+        fraction of one percent on a thin one. Any figure weighted by our
+        volume inherits that -- VWAP most of all, since it is *defined* as a
+        volume weighting. FMP's profile carries consolidated-tape volume in
+        the same request that already fetches market cap, so this costs no
+        extra call.
+
+        Note both sides move during the session and FMP's figure refreshes on
+        its own cadence, so this is an order-of-magnitude check, not a precise
+        ratio. That is all it needs to be: the gap between usable and useless
+        here is 3% versus 0.24%.
+        """
+        data = self._data.get(symbol)
+        if data is None or not data.full_tape_volume or observed_volume is None:
+            return None
+        if observed_volume <= 0:
+            return 0.0
+        return min(observed_volume / data.full_tape_volume * 100, 100.0)
+
+    def is_vwap_reliable(self, symbol: str, observed_volume: float | None) -> bool | None:
+        """Whether a VWAP computed from our own feed is worth acting on.
+
+        None means unknown -- see tape_coverage_pct. Kept tri-state on purpose
+        so a caller can tell "we checked and it is thin" apart from "we have
+        no idea", which are very different things to show a trader.
+        """
+        coverage = self.tape_coverage_pct(symbol, observed_volume)
+        if coverage is None:
+            return None
+        return coverage >= self.MIN_TAPE_COVERAGE_PCT
+
     @property
     def float_universe_size(self) -> int:
         return len(self._float_shares)
@@ -159,9 +207,18 @@ class FundamentalsCache:
             float_shares: float | None = None
             market_cap: float | None = None
             profile: CompanyProfile | None = None
+            full_tape_volume: float | None = None
+            full_tape_avg_volume: float | None = None
             retry_after: float | None = None
             try:
-                float_shares, market_cap, profile, retry_after = await fetch_float_and_market_cap(
+                (
+                    float_shares,
+                    market_cap,
+                    profile,
+                    full_tape_volume,
+                    full_tape_avg_volume,
+                    retry_after,
+                ) = await fetch_float_and_market_cap(
                     self._client, symbol, self.settings.fmp_api_key
                 )
             except Exception:
@@ -197,6 +254,8 @@ class FundamentalsCache:
             market_cap=market_cap,
             short_interest_pct=short_interest_pct,
             profile=profile,
+            full_tape_volume=full_tape_volume,
+            full_tape_avg_volume=full_tape_avg_volume,
             updated_at=datetime.now(timezone.utc),
         )
 

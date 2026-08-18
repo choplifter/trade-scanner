@@ -112,6 +112,11 @@ FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("is_lod", "At Low of Day", BOOLEAN),
     FieldSpec("is_fade_risk", "Fade Risk", BOOLEAN),
     FieldSpec("is_stale", "Stale Price", BOOLEAN),
+    # How much of the consolidated tape our own feed saw today. Low values
+    # invalidate anything volume-weighted -- VWAP above all. See
+    # FundamentalsCache.tape_coverage_pct.
+    FieldSpec("tape_coverage_pct", "Tape Coverage %", PERCENT),
+    FieldSpec("is_vwap_reliable", "VWAP Reliable", BOOLEAN),
     # Universe-wide from the bulk shares-float file rather than the row --
     # see the module docstring.
     FieldSpec("float_shares", "Float", NUMBER, derived=True),

@@ -50,6 +50,8 @@ async def fetch_float_and_market_cap(
     float_shares: float | None = None
     market_cap: float | None = None
     profile: CompanyProfile | None = None
+    full_tape_volume: float | None = None
+    full_tape_avg_volume: float | None = None
     retry_after: float | None = None
 
     def _note_failure(exc: Exception) -> None:
@@ -82,6 +84,10 @@ async def fetch_float_and_market_cap(
         if rows:
             row = rows[0]
             market_cap = row.get("marketCap")
+            # Same request, no extra call: FMP reports consolidated-tape
+            # volume, which is what makes an IEX coverage check possible.
+            full_tape_volume = row.get("volume")
+            full_tape_avg_volume = row.get("averageVolume")
             profile = CompanyProfile(
                 name=row.get("companyName"),
                 sector=row.get("sector"),
@@ -95,4 +101,4 @@ async def fetch_float_and_market_cap(
         logger.warning("FMP profile fetch failed for %s: %s", symbol, exc)
         _note_failure(exc)
 
-    return float_shares, market_cap, profile, retry_after
+    return float_shares, market_cap, profile, full_tape_volume, full_tape_avg_volume, retry_after

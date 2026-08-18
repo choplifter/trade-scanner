@@ -15,6 +15,7 @@ import {
   type ISeriesMarkersPluginApi,
   type LineData,
   type Time,
+  type WhitespaceData,
   type UTCTimestamp,
 } from "lightweight-charts";
 
@@ -125,6 +126,31 @@ function visibleLogicalRange(width: number, barCount: number) {
 // lightweight-charts API rather than re-rendered through React, since it
 // owns its own canvas and re-creating it per tick would be far too slow for
 // live data.
+/** A nullable series as line points, with gaps kept as gaps.
+ *
+ * lightweight-charts joins consecutive *data* points with a straight line, so
+ * dropping the nulls does not leave a hole -- it welds the two sides
+ * together. On a session-anchored series that is badly wrong: VWAP is null
+ * through premarket and restarts each morning, so filtering produced a
+ * diagonal running from one session's closing VWAP straight up to the next
+ * session's, drawn across the gap as though it were a price move. On IPST,
+ * which went from $2 to $8 overnight, that diagonal was the most prominent
+ * line on the chart and described nothing.
+ *
+ * A whitespace point (time, no value) reserves the slot and breaks the line.
+ */
+function toLinePoints<T>(
+  items: T[],
+  time: (item: T, index: number) => UTCTimestamp,
+  value: (item: T, index: number) => number | null | undefined,
+): (LineData | WhitespaceData)[] {
+  return items.map((item, i) => {
+    const v = value(item, i);
+    return v == null ? { time: time(item, i) } : { time: time(item, i), value: v };
+  });
+}
+
+
 export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -263,14 +289,13 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
     candleSeries.setData(bars.map(barToCandle));
     volumeSeries.setData(bars.map(barToVolume));
 
-    const vwapPoints: LineData[] = [];
-    bars.forEach((bar, i) => {
-      const value = vwap[i];
-      if (value != null) {
-        vwapPoints.push({ time: toUnixSeconds(bar.t), value });
-      }
-    });
-    vwapSeries.setData(vwapPoints);
+    vwapSeries.setData(
+      toLinePoints(
+        bars,
+        (bar) => toUnixSeconds(bar.t),
+        (_bar, i) => vwap[i],
+      ),
+    );
 
     barCountRef.current = bars.length;
 
@@ -383,10 +408,13 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
               lastValueVisible: true,
               title,
             });
-            const points: LineData[] = value
-              .filter((p) => p.value != null)
-              .map((p) => ({ time: toUnixSeconds(p.t), value: p.value as number }));
-            series.setData(points);
+            series.setData(
+              toLinePoints(
+                value,
+                (p) => toUnixSeconds(p.t),
+                (p) => p.value,
+              ),
+            );
             indicatorSeriesRef.current.push(series);
           }
         });

@@ -217,6 +217,7 @@ def is_momentum_alert(
     is_green: bool,
     is_above_vwap: bool,
     threshold: float,
+    is_vwap_reliable: bool | None = None,
 ) -> bool:
     """A fast, still-confirming *upward* move, long setups only: the
     trailing-15-minute price change is at least `threshold`, and the most
@@ -236,10 +237,31 @@ def is_momentum_alert(
     Distinct from is_fade_risk (extreme RVOL, which historically predicts
     a *worse* outcome) -- this is about catching a move while it's
     actively happening, not judging whether it'll continue.
+
+    `is_vwap_reliable=False` suppresses the alert outright. The above-VWAP
+    leg is a *confirmation*, so the safe failure is to withhold the alert,
+    not to drop the condition -- dropping it would leave a two-of-three
+    alert firing more often precisely where the data is worst. On the IEX
+    feed that is not a rare edge: our own VWAP was 7.81 against a true 7.38
+    on IPST 2026-08-17, reporting price below VWAP for an afternoon it spent
+    above. See FundamentalsCache.tape_coverage_pct.
+
+    The cost is real and worth stating: thin, fast-moving names are both the
+    ones this alert is for and the ones with the worst coverage, so this
+    will silence some genuine setups. That is the deliberate trade -- a
+    confirmation you cannot verify is not a confirmation. The row still
+    carries tape_coverage_pct so the UI can say why.
     """
     if pct_change_last_15m is None:
         return False
     if pct_change_last_15m <= 0 or pct_change_last_15m < threshold:
+        return False
+    # An explicit False means we checked the feed's tape coverage and found
+    # the VWAP unusable, so the third leg cannot be evaluated -- suppress
+    # rather than fire. None (unknown) keeps the old behaviour: this defaults
+    # to None so nothing that hasn't been taught about coverage silently
+    # stops alerting.
+    if is_vwap_reliable is False:
         return False
     return is_shaved_top and is_green and is_above_vwap
 

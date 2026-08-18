@@ -91,6 +91,14 @@ class ScannerRow(BaseModel):
     # the frontend also warn the user directly rather than only showing it
     # indirectly via rank order. See app.scanners.formulas.is_fade_risk.
     is_fade_risk: bool = False
+    # What share of today's consolidated-tape volume our own feed actually
+    # saw, in % (see FundamentalsCache.tape_coverage_pct). None = unknown.
+    tape_coverage_pct: float | None = None
+    # False means this symbol's VWAP is computed from too thin a slice of the
+    # tape to act on -- not that price is below it. None = unknown. Measured
+    # on IPST 2026-08-17: 0.24% coverage put our VWAP at 7.81 against a true
+    # 7.38, showing price below VWAP all afternoon when it was above.
+    is_vwap_reliable: bool | None = None
     updated_at: datetime
 
 
