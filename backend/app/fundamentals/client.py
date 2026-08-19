@@ -30,7 +30,14 @@ ERROR_RETRY_SECONDS = 60.0
 
 async def fetch_float_and_market_cap(
     client: httpx.AsyncClient, symbol: str, api_key: str
-) -> tuple[float | None, float | None, CompanyProfile | None, float | None]:
+) -> tuple[
+    float | None,
+    float | None,
+    CompanyProfile | None,
+    float | None,
+    float | None,
+    float | None,
+]:
     """Float shares (FMP /shares-float) and market cap + company profile
     (both from the same FMP /profile call -- profile fields beyond
     marketCap are otherwise-free, no extra HTTP request), plus a

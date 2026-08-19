@@ -671,7 +671,9 @@ class ScannerEngine:
                 row.pct_change_last_15m = self.momentum_cache.get(row.symbol)
                 # How much of the real tape our feed saw today -- a health
                 # figure for volume levels, not for VWAP. See
-                # FundamentalsCache.tape_coverage_pct.
+                # FundamentalsCache.tape_coverage_pct. Correct here only
+                # because run_loop refreshes the fundamentals cache before
+                # calling this; see the prefetch there.
                 row.tape_coverage_pct = self.fundamentals.tape_coverage_pct(
                     row.symbol, row.volume_today
                 )
@@ -982,6 +984,23 @@ class ScannerEngine:
             # already runs against, so this cannot exceed the universe. News and
             # fundamentals stay scoped to ranked plus matched rows: those cost
             # FMP requests, and that quota is already the tightest budget here.
+            #
+            # Fundamentals are FETCHED here, before momentum and screens, and
+            # merely attached later. row.tape_coverage_pct is set during
+            # _attach_momentum and read off the row by any screen filtering on
+            # it, so both need this tick's cache rather than last tick's --
+            # without the prefetch it is null on a symbol's first appearance
+            # and one tick stale forever after.
+            #
+            # Scoped to the ranked views only: those are exactly the symbols
+            # _attach_fundamentals would fetch for anyway, so pulling the call
+            # forward costs no additional FMP requests. Screen-matched rows
+            # are not known yet and stay where they were, fetched by
+            # _attach_fundamentals once _evaluate_screens has named them.
+            await self.fundamentals.ensure_fresh(
+                {r.symbol for rows in views.values() for r in rows}
+            )
+
             momentum_scope = dict(views)
             if self.screen_subscriptions is not None and self.screen_subscriptions.any_active():
                 momentum_scope["_screen_candidates"] = _tradable(
