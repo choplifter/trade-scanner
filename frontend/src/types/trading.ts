@@ -91,6 +91,46 @@ export function num(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** The exit orders protecting one position, if any exist.
+ *
+ * Alpaca's position object carries no take-profit or stop-loss: they are
+ * ordinary open orders on the same symbol, which is why the two tables used
+ * to sit side by side with no way to see that a position had no stop at
+ * all. This is the join.
+ */
+export interface PositionExits {
+  takeProfit: number | null;
+  stopLoss: number | null;
+}
+
+/** Orders flattened so a bracket parent's legs are matched too -- Alpaca may
+ * return the two exits nested under the entry order rather than as
+ * top-level orders, depending on how the bracket was placed. */
+function withLegs(orders: Order[]): Order[] {
+  return orders.flatMap((o) => [o, ...(o.legs ?? [])]);
+}
+
+export function exitsForPosition(position: Position, orders: Order[]): PositionExits {
+  // An exit closes the position, so it sits on the opposite side. Filtering
+  // on this is what stops a *pyramiding* order -- another buy on a symbol
+  // already long -- being read as a take-profit.
+  const closingSide = position.side === "long" ? "sell" : "buy";
+  const candidates = withLegs(orders).filter(
+    (o) => o.symbol === position.symbol && o.side === closingSide,
+  );
+
+  // Classified by order_type rather than by comparing prices to the entry:
+  // a stop_limit carries both a stop and a limit price, so "whichever is
+  // above" would report one order as both exits.
+  const stop = candidates.find((o) => o.order_type.includes("stop"));
+  const limit = candidates.find((o) => o.order_type === "limit");
+
+  return {
+    takeProfit: limit ? num(limit.limit_price) : null,
+    stopLoss: stop ? num(stop.stop_price) : null,
+  };
+}
+
 /** What the ticket sends. Exactly one of qty / risk, and exactly one of
  * risk_amount / risk_pct_of_equity -- the backend rejects both-or-neither
  * rather than picking for you. */

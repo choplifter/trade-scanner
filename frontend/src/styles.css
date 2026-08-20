@@ -643,6 +643,21 @@ body {
   cursor: default;
 }
 
+/* A position with no working stop order. Critical rather than warning: the
+   other badges describe data quality, this one describes an open exposure
+   with nothing closing it. */
+.badge-no-stop {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--status-critical);
+  border: 1px solid var(--status-critical);
+  vertical-align: middle;
+  cursor: default;
+}
+
 .badge-momentum-alert {
   display: inline-block;
   margin-left: 6px;

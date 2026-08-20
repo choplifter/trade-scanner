@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { useTrading } from "../../hooks/useTrading";
 import type { Account, Order, Position } from "../../types/trading";
-import { num } from "../../types/trading";
+import { exitsForPosition, num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { OrderTicket } from "./OrderTicket";
@@ -134,6 +134,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
         ) : tab === "positions" ? (
           <PositionsTable
             positions={positions}
+            orders={orders}
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
             onClosePosition={(symbol) => setPending({ kind: "close", symbol })}
@@ -219,11 +220,16 @@ type PendingAction =
 
 function PositionsTable({
   positions,
+  orders,
   selectedSymbol,
   onSelectSymbol,
   onClosePosition,
 }: {
   positions: Position[];
+  /** The working orders, so each row can show its own exits. Alpaca keeps
+   * take-profit and stop-loss as separate orders, never on the position --
+   * see exitsForPosition. */
+  orders: Order[];
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
   onClosePosition: (symbol: string) => void;
@@ -243,6 +249,8 @@ function PositionsTable({
           <th>Value</th>
           <th>P&amp;L</th>
           <th>P&amp;L %</th>
+          <th>TP</th>
+          <th>SL</th>
           <th />
         </tr>
       </thead>
@@ -250,6 +258,7 @@ function PositionsTable({
         {positions.map((p) => {
           const pl = signedMoney(p.unrealized_pl);
           const plpc = signedPct(p.unrealized_plpc);
+          const exits = exitsForPosition(p, orders);
           return (
             <tr
               key={p.symbol}
@@ -264,6 +273,19 @@ function PositionsTable({
               <td>{money(p.market_value)}</td>
               <td className={pl.cls}>{pl.text}</td>
               <td className={plpc.cls}>{plpc.text}</td>
+              <td>{exits.takeProfit === null ? "—" : exits.takeProfit.toFixed(2)}</td>
+              <td>
+                {exits.stopLoss === null ? (
+                  /* Called out rather than left as a bare em dash: a missing
+                     take-profit only forgoes an exit price, a missing stop
+                     means nothing closes this position on the way down. */
+                  <span className="badge-no-stop" title="No stop order is working for this position">
+                    NO STOP
+                  </span>
+                ) : (
+                  exits.stopLoss.toFixed(2)
+                )}
+              </td>
               <td>
                 <button
                   type="button"
