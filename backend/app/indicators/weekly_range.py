@@ -1,6 +1,12 @@
-"""Prior completed week's high/low (Alpaca's native weekly bars) -- a
+"""Prior completed week's high/low/close (Alpaca's native weekly bars) -- a
 classic swing-trading reference level, distinct from any single day's
 range.
+
+The close is carried alongside the range because the two answer different
+questions: the high and low bound where price *went* last week, while the
+close is where it was finally accepted -- the level a new week gaps away
+from and often returns to. It comes off the same bar, so reporting it costs
+nothing extra.
 """
 
 import pandas as pd
@@ -9,11 +15,19 @@ from app.indicators.context import prior_completed_period
 
 NAME = "Weekly Range"
 KIND = "level"
-COLORS = {"High": "#7a4fd6", "Low": "#7a4fd6"}
+# Close in a lighter shade of the same purple: same period, different kind of
+# level, and it should not read as a third boundary of the range.
+COLORS = {"High": "#7a4fd6", "Low": "#7a4fd6", "Close": "#a98ae8"}
+
+_EMPTY = {"High": None, "Low": None, "Close": None}
 
 
 def compute(ctx) -> dict:
     bar = prior_completed_period(ctx.weekly_bars, lambda ts: ts + pd.Timedelta(days=7))
     if bar is None:
-        return {"High": None, "Low": None}
-    return {"High": float(bar["high"]), "Low": float(bar["low"])}
+        return _EMPTY
+    return {
+        "High": float(bar["high"]),
+        "Low": float(bar["low"]),
+        "Close": float(bar["close"]),
+    }
