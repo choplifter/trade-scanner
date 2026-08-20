@@ -27,6 +27,31 @@ from app.trading.models import OrderTicket, ResolvedOrder, resolve_ticket
 
 logger = logging.getLogger(__name__)
 
+# Statuses in which an order can still fill or still be cancelled -- i.e.
+# what a "working orders" table means by open. Taken from Alpaca's order
+# lifecycle rather than from its OPEN query filter, which omits `held`; see
+# OrderService.orders for why that distinction cost a visible stop-loss.
+_WORKING_STATUSES = frozenset(
+    {
+        "new",
+        "accepted",
+        "accepted_for_bidding",
+        "pending_new",
+        "partially_filled",
+        "held",
+        "pending_cancel",
+        "pending_replace",
+        "calculated",
+        "suspended",
+        "stopped",
+    }
+)
+
+# Upper bound on the history pulled to find those working orders. Alpaca caps
+# this at 500 per request; an account with more than 500 orders in its recent
+# history has enough churn that paging here would be the wrong fix anyway.
+_ORDER_FETCH_LIMIT = 500
+
 
 def _plain(obj: Any) -> Any:
     """Alpaca SDK model -> JSON-safe plain data.
@@ -73,6 +98,18 @@ class OrderService:
     async def orders(self, status: str = "open") -> list[dict]:
         """Orders by status. Defaults to open, which is what a working-orders
         table wants; "all" or "closed" cover the history view.
+
+        "open" is NOT delegated to Alpaca's own OPEN filter, because that
+        filter omits `held` -- and `held` is exactly where a bracket parks
+        its stop-loss leg while the take-profit leg sits at `new`. Asking
+        Alpaca for open orders on a filled bracket therefore returns the
+        target and hides the stop, which made the UI report "no stop" for a
+        position that had one (observed on QDEL: stop at 13.80, held, absent
+        from the OPEN response while the 14.80 target came back `new`).
+
+        So: fetch everything and keep the statuses that are still live. The
+        list is bounded by _ORDER_FETCH_LIMIT rather than unbounded, since
+        "all" on a busy account is mostly filled history nobody asked for.
         """
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
@@ -81,6 +118,12 @@ class OrderService:
             query = QueryOrderStatus(status)
         except ValueError:
             raise OrderRejected(f"Unknown order status: {status}", field="status") from None
+
+        if query is QueryOrderStatus.OPEN:
+            request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=_ORDER_FETCH_LIMIT)
+            rows = _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
+            return [o for o in rows if str(o.get("status", "")).lower() in _WORKING_STATUSES]
+
         request = GetOrdersRequest(status=query)
         return _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
 

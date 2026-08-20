@@ -88,3 +88,75 @@ def test_unexpected_status_codes_are_re_raised_not_swallowed():
     """A 500 from the broker is a fault, not an answer -- it must surface as
     a 502 rather than be presented to the user as a rejection they caused."""
     assert rejection_from_api_error(_FakeAPIError(500, '{"message": "boom"}')) is None
+
+
+# --- working orders ---------------------------------------------------------
+
+
+class _StubTradingClient:
+    """Records the request it was handed and replays a canned order list."""
+
+    def __init__(self, orders):
+        self._orders = orders
+        self.last_request = None
+
+    def get_orders(self, request):
+        self.last_request = request
+        return self._orders
+
+
+def _order(symbol, order_type, status, **prices):
+    return {"symbol": symbol, "order_type": order_type, "status": status, **prices}
+
+
+@pytest.mark.asyncio
+async def test_open_orders_include_the_held_stop_leg_of_a_bracket():
+    """A filled bracket leaves its target at `new` and its stop at `held`.
+
+    Alpaca's own OPEN filter drops `held`, so delegating to it returned the
+    take-profit and silently hid the stop -- the position then read as
+    unprotected in the UI while a stop was working the whole time (QDEL:
+    stop 13.80, held).
+    """
+    from alpaca.trading.enums import QueryOrderStatus
+
+    client = _StubTradingClient(
+        [
+            _order("QDEL", "limit", "new", limit_price="14.8"),
+            _order("QDEL", "stop", "held", stop_price="13.8"),
+            _order("QDEL", "market", "filled"),
+            _order("BYND", "stop", "canceled", stop_price="13.5"),
+        ]
+    )
+    service = OrderService(
+        clients=type("C", (), {"trading": client})(),  # type: ignore[arg-type]
+        settings=Settings(alpaca_api_key_id="k", alpaca_api_secret_key="s"),
+    )
+
+    orders = await service.orders("open")
+
+    # Asked Alpaca for everything, then filtered here -- the whole point.
+    assert client.last_request.status is QueryOrderStatus.ALL
+    assert [(o["order_type"], o["status"]) for o in orders] == [
+        ("limit", "new"),
+        ("stop", "held"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_non_open_statuses_are_still_delegated_to_the_broker():
+    """Only "open" needs the local filter; history queries must not pull 500
+    orders and then throw most of them away.
+    """
+    from alpaca.trading.enums import QueryOrderStatus
+
+    client = _StubTradingClient([_order("QDEL", "market", "filled")])
+    service = OrderService(
+        clients=type("C", (), {"trading": client})(),  # type: ignore[arg-type]
+        settings=Settings(alpaca_api_key_id="k", alpaca_api_secret_key="s"),
+    )
+
+    orders = await service.orders("closed")
+
+    assert client.last_request.status is QueryOrderStatus.CLOSED
+    assert len(orders) == 1
