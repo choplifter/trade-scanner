@@ -64,6 +64,7 @@ export interface Order {
   time_in_force: string;
   submitted_at: string | null;
   created_at: string | null;
+  filled_at: string | null;
   legs: Order[] | null;
 }
 
@@ -74,6 +75,43 @@ export interface PositionsResponse {
 export interface OrdersResponse {
   orders: Order[];
   status: string;
+}
+
+/** The ranges the balance curve offers. The matching Alpaca period and
+ * timeframe are chosen server-side -- the valid timeframe depends on the
+ * period's length, so the pair is not the UI's to assemble. */
+export type BalanceRange = "1D" | "1W" | "1M" | "3M" | "1Y" | "ALL";
+
+/** One sample on the equity curve.
+ *
+ * Unlike Account/Position/Order above, these really are numbers: the values
+ * come from Alpaca's portfolio-history arrays rather than its decimal-string
+ * money fields, and the backend normalises them (including converting
+ * profit_loss_pct from a fraction to a percentage) before they get here. So
+ * no num() at the point of display.
+ */
+export interface BalancePoint {
+  /** Unix seconds, as lightweight-charts wants them. */
+  t: number;
+  equity: number;
+  profit_loss: number | null;
+  profit_loss_pct: number | null;
+}
+
+export interface PortfolioHistoryResponse {
+  range: BalanceRange;
+  /** Alpaca's sampling interval for this range -- "5Min", "1D", etc. Shown
+   * so the curve's resolution is legible rather than guessed from density. */
+  timeframe: string;
+  /** Already trimmed of the pre-inception zero padding Alpaca pads short
+   * account histories with, and extended to the live equity on daily
+   * ranges. See OrderService.portfolio_history. */
+  points: BalancePoint[];
+  start_equity: number | null;
+  end_equity: number | null;
+  /** End minus start across the plotted window -- the period's P&L. */
+  change: number | null;
+  change_pct: number | null;
 }
 
 /** Structured rejection body, same shape as the screener's 422 refusal. */

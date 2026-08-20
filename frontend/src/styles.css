@@ -1378,6 +1378,53 @@ a.symbol-news-headline {
   color: var(--text-muted);
 }
 
+/* Tabs that carry their own sub-toggle (Orders' Working/Filled, Balance's
+   range strip) lay out as a fixed bar over a body that takes the rest. The
+   height has to resolve without depending on content, because the balance
+   chart sizes itself from its container -- a content-driven height there
+   would leave the canvas at zero. */
+.trading-subview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.trading-subview-bar {
+  padding: 8px 12px 4px;
+  flex-shrink: 0;
+}
+
+.trading-subview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.trading-balance-chart {
+  flex: 1;
+  /* A floor rather than only flex, so the curve stays readable when the
+     widget is dragged down to a couple of grid rows. */
+  min-height: 120px;
+  padding: 4px 4px 0;
+}
+
+.trading-balance-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trading-balance-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .order-ticket {
   display: flex;
   flex-direction: column;

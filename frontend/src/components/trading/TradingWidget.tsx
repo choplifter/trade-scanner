@@ -1,20 +1,35 @@
 import { useState } from "react";
 
+import { useBalanceHistory } from "../../hooks/useBalanceHistory";
+import { useOrderHistory } from "../../hooks/useOrderHistory";
 import { useTrading } from "../../hooks/useTrading";
-import type { Account, Order, Position } from "../../types/trading";
+import type { Account, BalanceRange, Order, Position, PortfolioHistoryResponse } from "../../types/trading";
 import { exitsForPosition, num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
 import { Modal } from "../common/Modal";
+import { BalanceChart } from "./BalanceChart";
 import { OrderTicket } from "./OrderTicket";
 
-type Tab = "ticket" | "positions" | "orders" | "account";
+type Tab = "ticket" | "positions" | "orders" | "balance" | "account";
+
+/** Working orders and completed fills are both "orders", but one is a thing
+ * you can still act on and the other is a record. Same tab, two views. */
+type OrdersView = "working" | "filled";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "ticket", label: "Ticket" },
   { id: "positions", label: "Positions" },
   { id: "orders", label: "Orders" },
+  { id: "balance", label: "Balance" },
   { id: "account", label: "Account" },
 ];
+
+const BALANCE_RANGES: BalanceRange[] = ["1D", "1W", "1M", "3M", "1Y", "ALL"];
+
+/** Ranges whose points are one-per-session, so the chart labels them as
+ * dates. Mirrors _DAILY_TIMEFRAMES on the backend, matched on the timeframe
+ * the response reports rather than on the range, so the two cannot drift. */
+const DAILY_TIMEFRAME = "1D";
 
 function money(value: string | null | undefined): string {
   const parsed = num(value);
@@ -64,6 +79,12 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
     close,
   } = useTrading();
   const [tab, setTab] = useState<Tab>("ticket");
+  const [ordersView, setOrdersView] = useState<OrdersView>("working");
+  const [balanceRange, setBalanceRange] = useState<BalanceRange>("1M");
+  // Both hooks are held here rather than inside their panels so the header
+  // count can read them, and both stay idle until their tab is open.
+  const orderHistory = useOrderHistory(tab === "orders" && ordersView === "filled");
+  const balance = useBalanceHistory(balanceRange, tab === "balance");
   // One pending destructive action at a time, confirmed before it runs.
   // Cancelling a protective stop and flattening a position are both easy to
   // hit by accident in a dense table, and neither is undoable.
@@ -93,7 +114,14 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
     pending?.kind === "cancel" &&
     positions.some((pos) => pos.symbol === pending.symbol && Number(pos.qty) !== 0);
 
-  const count = tab === "positions" ? positions.length : tab === "orders" ? orders.length : 0;
+  const count =
+    tab === "positions"
+      ? positions.length
+      : tab === "orders"
+        ? ordersView === "filled"
+          ? orderHistory.fills.length
+          : orders.length
+        : 0;
 
   return (
     <div className="widget trading-widget">
@@ -117,7 +145,9 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             </button>
           ))}
         </div>
-        {tab !== "account" && <span className="widget-count">{count}</span>}
+        {tab !== "account" && tab !== "balance" && (
+          <span className="widget-count">{count}</span>
+        )}
       </div>
 
       <div className="widget-body">
@@ -140,11 +170,22 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             onClosePosition={(symbol) => setPending({ kind: "close", symbol })}
           />
         ) : tab === "orders" ? (
-          <OrdersTable
+          <OrdersPanel
+            view={ordersView}
+            onViewChange={setOrdersView}
             orders={orders}
+            history={orderHistory}
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
             onCancelOrder={(id, symbol) => setPending({ kind: "cancel", id, symbol })}
+          />
+        ) : tab === "balance" ? (
+          <BalancePanel
+            range={balanceRange}
+            onRangeChange={setBalanceRange}
+            history={balance.history}
+            loading={balance.loading}
+            error={balance.error}
           />
         ) : (
           <AccountPanel account={account} paper={paper} tradingEnabled={tradingEnabled} />
@@ -368,6 +409,212 @@ function OrdersTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+const FILL_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
+  day: "2-digit",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function fillTime(order: Order): string {
+  const stamp = order.filled_at ?? order.submitted_at ?? order.created_at;
+  if (!stamp) return "—";
+  const parsed = Date.parse(stamp);
+  return Number.isFinite(parsed) ? FILL_TIME_FORMAT.format(new Date(parsed)) : "—";
+}
+
+/** The Orders tab: working orders you can still cancel, or the fills that
+ * already happened. Split rather than merged, because the two want different
+ * columns and only one of them has an action. */
+function OrdersPanel({
+  view,
+  onViewChange,
+  orders,
+  history,
+  selectedSymbol,
+  onSelectSymbol,
+  onCancelOrder,
+}: {
+  view: OrdersView;
+  onViewChange: (view: OrdersView) => void;
+  orders: Order[];
+  history: { fills: Order[]; loading: boolean; error: string | null };
+  selectedSymbol: string | null;
+  onSelectSymbol: (symbol: string) => void;
+  onCancelOrder: (id: string, symbol: string) => void;
+}) {
+  return (
+    <div className="trading-subview">
+      <div className="trading-subview-bar">
+        <div className="timeframe-selector">
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={view === "working"}
+            onClick={() => onViewChange("working")}
+          >
+            Working
+          </button>
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={view === "filled"}
+            onClick={() => onViewChange("filled")}
+          >
+            Filled
+          </button>
+        </div>
+      </div>
+      <div className="trading-subview-body">
+        {view === "working" ? (
+          <OrdersTable
+            orders={orders}
+            selectedSymbol={selectedSymbol}
+            onSelectSymbol={onSelectSymbol}
+            onCancelOrder={onCancelOrder}
+          />
+        ) : history.error ? (
+          <div className="widget-error">{history.error}</div>
+        ) : history.loading && history.fills.length === 0 ? (
+          <div className="widget-empty">Loading fills&hellip;</div>
+        ) : (
+          <FillsTable
+            fills={history.fills}
+            selectedSymbol={selectedSymbol}
+            onSelectSymbol={onSelectSymbol}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Completed fills, newest first. No action column: a fill is a record of
+ * something that already happened, and there is nothing to do to it. */
+function FillsTable({
+  fills,
+  selectedSymbol,
+  onSelectSymbol,
+}: {
+  fills: Order[];
+  selectedSymbol: string | null;
+  onSelectSymbol: (symbol: string) => void;
+}) {
+  if (fills.length === 0) {
+    return <div className="widget-empty">No fills yet.</div>;
+  }
+  return (
+    <table className="performance-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Symbol</th>
+          <th>Side</th>
+          <th>Qty</th>
+          <th>Price</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {fills.map((o) => {
+          const qty = num(o.filled_qty);
+          const price = num(o.filled_avg_price);
+          return (
+            <tr
+              key={o.id}
+              aria-selected={o.symbol === selectedSymbol}
+              onClick={() => onSelectSymbol(o.symbol)}
+            >
+              <td>{fillTime(o)}</td>
+              <td className="symbol-cell">{o.symbol}</td>
+              <td>{o.side}</td>
+              <td>{qty ?? "—"}</td>
+              <td>{money(o.filled_avg_price)}</td>
+              <td>{qty !== null && price !== null ? formatPrice(qty * price) : "—"}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/** The Balance tab: the equity curve over a chosen range, with what it adds
+ * up to underneath it. */
+function BalancePanel({
+  range,
+  onRangeChange,
+  history,
+  loading,
+  error,
+}: {
+  range: BalanceRange;
+  onRangeChange: (range: BalanceRange) => void;
+  history: PortfolioHistoryResponse | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  const points = history?.points ?? [];
+  const change = history?.change ?? null;
+  const changePct = history?.change_pct ?? null;
+  const changeText =
+    change === null
+      ? "—"
+      : `${change > 0 ? "+" : ""}${formatPrice(change)}${
+          changePct === null ? "" : ` (${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%)`
+        }`;
+
+  return (
+    <div className="trading-subview">
+      <div className="trading-subview-bar">
+        <div className="timeframe-selector">
+          {BALANCE_RANGES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              className="timeframe-button"
+              aria-pressed={range === r}
+              onClick={() => onRangeChange(r)}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="trading-balance-chart">
+        {error ? (
+          <div className="widget-error">{error}</div>
+        ) : loading ? (
+          <div className="widget-empty">Loading balance&hellip;</div>
+        ) : points.length < 2 ? (
+          /* One point draws no line, and an account younger than the range
+             legitimately has only a handful. Saying so beats an empty pane. */
+          <div className="widget-empty">Not enough history yet for this range.</div>
+        ) : (
+          <BalanceChart points={points} daily={history?.timeframe === DAILY_TIMEFRAME} />
+        )}
+      </div>
+
+      <div className="trading-balance-summary">
+        <span className="trading-balance-figure">
+          <span className="trading-account-label">Equity</span>
+          <strong>{history?.end_equity == null ? "—" : formatPrice(history.end_equity)}</strong>
+        </span>
+        <span className="trading-balance-figure">
+          <span className="trading-account-label">Period P&amp;L</span>
+          <strong
+            className={change === null || change === 0 ? "" : change > 0 ? "delta-up" : "delta-down"}
+          >
+            {changeText}
+          </strong>
+        </span>
+      </div>
+    </div>
   );
 }
 

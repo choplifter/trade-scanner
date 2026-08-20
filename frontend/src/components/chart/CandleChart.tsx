@@ -6,7 +6,6 @@ import {
   HistogramSeries,
   LineSeries,
   LineStyle,
-  TickMarkType,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
@@ -20,6 +19,7 @@ import {
 } from "lightweight-charts";
 
 import type { Bar, IndicatorResult } from "../../types/alpaca";
+import { crosshairTimeFormatter, tickMarkFormatter } from "../../utils/chartTime";
 
 interface CandleChartProps {
   bars: Bar[];
@@ -60,37 +60,6 @@ function nearestBarTime(bars: Bar[], time: number): UTCTimestamp | null {
 
 function toUnixSeconds(iso: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
-}
-
-// lightweight-charts formats axis/crosshair labels using the Date object's
-// UTC getters, so by default every label shows UTC time regardless of the
-// viewer's timezone. Intl.DateTimeFormat with no explicit `timeZone` uses
-// the browser's local timezone, so overriding both formatters with it makes
-// the chart display in whatever timezone the viewer is actually in.
-const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-const DAY_FORMAT = new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short" });
-const MONTH_FORMAT = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
-const YEAR_FORMAT = new Intl.DateTimeFormat(undefined, { year: "numeric" });
-const CROSSHAIR_FORMAT = new Intl.DateTimeFormat(undefined, {
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
-function tickMarkFormatter(time: Time, tickMarkType: TickMarkType): string {
-  const date = new Date((time as number) * 1000);
-  switch (tickMarkType) {
-    case TickMarkType.Year:
-      return YEAR_FORMAT.format(date);
-    case TickMarkType.Month:
-      return MONTH_FORMAT.format(date);
-    case TickMarkType.DayOfMonth:
-      return DAY_FORMAT.format(date);
-    default:
-      return TIME_FORMAT.format(date);
-  }
 }
 
 function barToCandle(bar: Bar): CandlestickData {
@@ -229,9 +198,7 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
         minBarSpacing: 3,
         tickMarkFormatter,
       },
-      localization: {
-        timeFormatter: (time: Time) => CROSSHAIR_FORMAT.format(new Date((time as number) * 1000)),
-      },
+      localization: { timeFormatter: crosshairTimeFormatter },
       autoSize: true,
     });
 

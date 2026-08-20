@@ -13,10 +13,12 @@ import type {
 import type { SymbolInfoResponse } from "../types/symbolInfo";
 import type {
   AccountResponse,
+  BalanceRange,
   OrderPreview,
   OrderTicketRequest,
   Order,
   OrdersResponse,
+  PortfolioHistoryResponse,
   PositionsResponse,
   TradingRejection,
 } from "../types/trading";
@@ -169,6 +171,13 @@ export function getPositions(): Promise<PositionsResponse> {
 /** Working orders by default; "all" or "closed" for history. */
 export function getOrders(status = "open"): Promise<OrdersResponse> {
   return getJson<OrdersResponse>(`/trading/orders?status=${encodeURIComponent(status)}`);
+}
+
+/** The account equity curve for one range. Read-only, like getAccount. */
+export function getPortfolioHistory(range: BalanceRange): Promise<PortfolioHistoryResponse> {
+  return getJson<PortfolioHistoryResponse>(
+    `/trading/portfolio-history?range=${encodeURIComponent(range)}`,
+  );
 }
 
 /** Thrown when the backend refuses a ticket -- a stop on the wrong side, a

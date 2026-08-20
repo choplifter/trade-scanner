@@ -13,6 +13,7 @@ get_all_assets/get_asset/get_corporate_announcements.
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from app.alpaca.client import AlpacaClients
@@ -51,6 +52,32 @@ _WORKING_STATUSES = frozenset(
 # this at 500 per request; an account with more than 500 orders in its recent
 # history has enough churn that paging here would be the wrong fix anyway.
 _ORDER_FETCH_LIMIT = 500
+
+# The ranges the balance curve offers, each mapped to the Alpaca period and
+# timeframe that serve it.
+#
+# Both halves are decided here rather than accepted from the client, because
+# the valid timeframe *depends on* the period: anything longer than 30 days
+# must be "1D", and asking for "1H" over 1M comes back as a 400 ("invalid
+# timeframe provided: 1H. Valid timeframe for days > 30 is 1D"). Letting a
+# caller supply the pair would make that constraint the UI's problem, and a
+# wrong combination would surface as a broker error rather than a refusal.
+#
+# "all" is Alpaca's own keyword for the account's lifetime. It is preferred
+# over a large fixed period like "10A" because the latter pads the series out
+# to its full nominal length -- see _curve_points on the zero padding.
+_HISTORY_RANGES: dict[str, tuple[str, str]] = {
+    "1D": ("1D", "5Min"),
+    "1W": ("1W", "15Min"),
+    "1M": ("1M", "1D"),
+    "3M": ("3M", "1D"),
+    "1Y": ("1A", "1D"),
+    "ALL": ("all", "1D"),
+}
+
+# Timeframes that sample once per session, so the newest point is the last
+# *completed* day and today is missing entirely. See portfolio_history.
+_DAILY_TIMEFRAMES = frozenset({"1D"})
 
 
 def _plain(obj: Any) -> Any:
@@ -124,8 +151,66 @@ class OrderService:
             rows = _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
             return [o for o in rows if str(o.get("status", "")).lower() in _WORKING_STATUSES]
 
-        request = GetOrdersRequest(status=query)
+        request = GetOrdersRequest(status=query, limit=_ORDER_FETCH_LIMIT)
         return _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
+
+    async def portfolio_history(self, range_key: str = "1M") -> dict:
+        """The account equity curve, for one of the ranges in _HISTORY_RANGES.
+
+        Two corrections are applied to what Alpaca returns, both of which
+        change the shape of the plotted line:
+
+        *Leading zeros are dropped.* A period reaching back past the account's
+        inception is padded with equity=0.0 for every earlier session rather
+        than truncated, so a one-month curve on a two-week-old account arrives
+        as eleven zeros followed by the real series. Plotted raw that draws a
+        line starting at $0 and leaping to the opening balance -- an enormous
+        gain that never happened.
+
+        *A daily series is extended to now.* The "1D" timeframe samples once
+        per session and stops at the last *completed* one, so the curve would
+        end at yesterday's close while the Account tab showed today's equity:
+        the same quantity in two places, disagreeing by a day of P&L.
+        Appending the account's own current equity closes that with a real
+        value rather than an extrapolation.
+        """
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+
+        key = (range_key or "").upper()
+        try:
+            period, timeframe = _HISTORY_RANGES[key]
+        except KeyError:
+            raise OrderRejected(
+                f"Unknown balance range: {range_key!r}. "
+                f"Expected one of {', '.join(_HISTORY_RANGES)}.",
+                field="range",
+            ) from None
+
+        request = GetPortfolioHistoryRequest(period=period, timeframe=timeframe)
+        history = await asyncio.to_thread(self._clients.trading.get_portfolio_history, request)
+        points = _curve_points(history)
+
+        if timeframe in _DAILY_TIMEFRAMES:
+            equity = _number((await self.account()).get("equity"))
+            if equity is not None:
+                points = _with_live_point(points, equity)
+
+        start = points[0]["equity"] if points else None
+        end = points[-1]["equity"] if points else None
+        change = None if start is None or end is None else end - start
+        return {
+            "range": key,
+            "timeframe": timeframe,
+            "points": points,
+            "start_equity": start,
+            "end_equity": end,
+            "change": change,
+            # Measured against the first *plotted* point rather than Alpaca's
+            # base_value, which belongs to the untrimmed series and can sit
+            # inside the zero-padded region -- dividing by a balance the
+            # account never held.
+            "change_pct": (change / start * 100.0) if change is not None and start else None,
+        }
 
     # --- guards -------------------------------------------------------
 
@@ -295,6 +380,73 @@ class OrderService:
                     "Could not cancel %s on %s before closing", order_id, symbol, exc_info=True
                 )
         return cancelled
+
+
+def _curve_points(history) -> list[dict]:
+    """PortfolioHistory's parallel arrays -> plottable points, padding removed.
+
+    Alpaca returns timestamp/equity/profit_loss/profit_loss_pct as separate
+    lists to be read positionally. Only the *leading* run of zero-equity
+    samples is dropped -- those are the pre-inception padding described in
+    OrderService.portfolio_history. A zero after the account has held funds
+    would be a real (if catastrophic) balance, so the scan stops at the first
+    non-zero sample instead of filtering zeros out of the whole series.
+    """
+    timestamps = list(getattr(history, "timestamp", None) or [])
+    equity = list(getattr(history, "equity", None) or [])
+    profit_loss = list(getattr(history, "profit_loss", None) or [])
+    profit_loss_pct = list(getattr(history, "profit_loss_pct", None) or [])
+
+    first_funded = 0
+    while first_funded < len(equity) and not equity[first_funded]:
+        first_funded += 1
+
+    def at(values: list, index: int) -> float | None:
+        if index >= len(values) or values[index] is None:
+            return None
+        return float(values[index])
+
+    points: list[dict] = []
+    for i in range(first_funded, min(len(timestamps), len(equity))):
+        value = at(equity, i)
+        if value is None:
+            continue
+        pct = at(profit_loss_pct, i)
+        points.append(
+            {
+                "t": int(timestamps[i]),
+                "equity": value,
+                "profit_loss": at(profit_loss, i),
+                # Alpaca reports this as a fraction, the same way a position's
+                # unrealized_plpc is a fraction -- see signedPct in the
+                # frontend's TradingWidget. Converted once, here.
+                "profit_loss_pct": None if pct is None else pct * 100.0,
+            }
+        )
+    return points
+
+
+def _with_live_point(points: list[dict], equity: float) -> list[dict]:
+    """Append the account's current equity so a daily curve reaches today.
+
+    Timestamped now rather than at the next session boundary: it is what the
+    balance *is* at the moment of the request, and dating it forward would put
+    a point in the future, which the chart would happily draw.
+    """
+    now = int(datetime.now(timezone.utc).timestamp())
+    if points and now <= points[-1]["t"]:
+        return points
+    previous = points[-1]["equity"] if points else None
+    change = None if previous is None else equity - previous
+    return [
+        *points,
+        {
+            "t": now,
+            "equity": equity,
+            "profit_loss": change,
+            "profit_loss_pct": None if not previous else change / previous * 100.0,
+        },
+    ]
 
 
 def _number(value) -> float | None:

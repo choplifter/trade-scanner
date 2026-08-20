@@ -12,7 +12,7 @@ detail off a 422 -- see BacktestRefusedError in frontend/src/api/http.ts.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.trading.errors import TradingError
 from app.trading.models import OrderTicket
@@ -85,6 +85,31 @@ async def get_orders(request: Request, status: str = "open") -> dict:
         logger.exception("Alpaca orders fetch failed")
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
     return {"orders": orders, "status": status}
+
+
+@router.get("/portfolio-history")
+async def get_portfolio_history(
+    request: Request,
+    # Aliased so the query string reads ?range=1M while the parameter avoids
+    # shadowing the builtin. Which ranges exist is the service's business --
+    # the period/timeframe pairing is constrained by Alpaca, so an unknown
+    # one is refused there and arrives here as the usual typed 422.
+    range_key: str = Query("1M", alias="range"),
+) -> dict:
+    """The account equity curve, for the balance chart.
+
+    A read path like account/positions/orders, and ungated for the same
+    reason: looking at a balance is harmless whichever account it is.
+    """
+    try:
+        return await _service(request).portfolio_history(range_key)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Alpaca portfolio history fetch failed for range %s", range_key)
+        raise HTTPException(status_code=502, detail="Failed to reach the trading API")
 
 
 @router.post("/orders/preview")
