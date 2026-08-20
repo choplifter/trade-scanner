@@ -69,6 +69,18 @@ class UniverseSymbol:
     prev_close: float
     avg_vol_20d: float
     avg_dollar_vol_20d: float
+    # Whether the broker will let this be sold short at all. Roughly half the
+    # scannable universe cannot be (measured: 4014 of 7229 candidates are
+    # shortable), so it is worth knowing before building a short thesis on a
+    # name that can only be bought.
+    #
+    # Alpaca also reports easy_to_borrow, deliberately not carried: measured
+    # against the full active-asset list the two agree on all but a single
+    # symbol (5276 shortable vs 5277 easy-to-borrow, and nothing shortable
+    # that is not also borrowable), so a second field would say the same
+    # thing twice. Note this is the broker's *static* flag, not a live
+    # locate -- borrow can still fail at order time.
+    shortable: bool = False
 
 
 def _chunk(items: list[str], size: int) -> list[list[str]]:
@@ -102,6 +114,7 @@ async def build_universe(
         and not _looks_like_etf(a.name)
     ]
     exchange_by_symbol = {a.symbol: a.exchange.value for a in assets}
+    shortable_by_symbol = {a.symbol: bool(a.shortable) for a in assets}
     logger.info("Universe candidates after exchange/ticker filter: %d", len(candidates))
 
     start = datetime.now(timezone.utc) - timedelta(days=40)
@@ -143,6 +156,11 @@ async def build_universe(
                 prev_close=prev_close,
                 avg_vol_20d=avg_vol_20d,
                 avg_dollar_vol_20d=avg_dollar_vol_20d,
+                # Missing from the asset list means "not known to be
+                # shortable", and the conservative reading of that is False:
+                # the marker this drives must never claim a borrow that was
+                # never confirmed.
+                shortable=shortable_by_symbol.get(symbol, False),
             )
 
     ranked = sorted(universe.values(), key=lambda u: u.avg_dollar_vol_20d, reverse=True)
@@ -187,7 +205,8 @@ async def fetch_movers_backstop(
     if not candidates:
         return {}
 
-    qualified: dict[str, str] = {}
+    # symbol -> (exchange, shortable), both read off the same asset lookup.
+    qualified: dict[str, tuple[str, bool]] = {}
     for symbol in candidates:
         try:
             asset = await asyncio.to_thread(clients.trading.get_asset, symbol)
@@ -199,7 +218,7 @@ async def fetch_movers_backstop(
             and not _looks_like_etf(asset.name)
             and not _looks_like_warrant(asset.name)
         ):
-            qualified[symbol] = asset.exchange.value
+            qualified[symbol] = (asset.exchange.value, bool(asset.shortable))
 
     if not qualified:
         return {}
@@ -221,7 +240,7 @@ async def fetch_movers_backstop(
         return {}
 
     result: dict[str, UniverseSymbol] = {}
-    for symbol, exchange in qualified.items():
+    for symbol, (exchange, shortable) in qualified.items():
         mover = candidates[symbol]
         bars = bar_set.data.get(symbol, [])
         # New listings may have little or no daily-bar history yet -- fall
@@ -247,6 +266,7 @@ async def fetch_movers_backstop(
             prev_close=prev_close,
             avg_vol_20d=avg_vol_20d,
             avg_dollar_vol_20d=avg_vol_20d * mover.price,
+            shortable=shortable,
         )
 
     logger.info("Movers backstop qualified %d new symbol(s): %s", len(result), sorted(result))

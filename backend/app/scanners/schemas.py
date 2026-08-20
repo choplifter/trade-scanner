@@ -91,6 +91,16 @@ class ScannerRow(BaseModel):
     # the frontend also warn the user directly rather than only showing it
     # indirectly via rank order. See app.scanners.formulas.is_fade_risk.
     is_fade_risk: bool = False
+    # Whether the broker will let this symbol be sold short. Sourced from
+    # the Alpaca asset record at universe build (see
+    # app.alpaca.universe.UniverseSymbol.shortable), so it is known for the
+    # whole universe rather than only for ranked rows.
+    #
+    # False also covers "not known", which is the safe direction: the marker
+    # this drives says a short is possible, and it must not say so on a
+    # symbol whose status never arrived. It is the broker's static flag, not
+    # a live locate -- a borrow can still fail when the order is placed.
+    shortable: bool = False
     # What share of today's consolidated-tape volume our own feed actually
     # saw, in % (see FundamentalsCache.tape_coverage_pct). None = unknown.
     # A health figure for volume levels -- volume_today, rvol, volume_surge --

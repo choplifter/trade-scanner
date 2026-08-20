@@ -24,6 +24,10 @@ async def get_benchmark_performance(request: Request) -> dict:
         # Today's headline as it stands now, reported *beside* the frozen
         # entry_headline rather than replacing it -- see compute_performance.
         lambda symbol: engine.news_cache.get(symbol) if engine.news_cache else None,
+        # Read off the universe rather than engine.rows: a symbol flagged
+        # earlier may have since dropped out of every ranked view, and the
+        # universe entry is where the asset's shortable flag actually lives.
+        lambda symbol: bool(uni.shortable) if (uni := engine.universe.get(symbol)) else False,
     )
     return {"benchmark_symbol": engine.benchmark_symbol, "picks": picks}
 

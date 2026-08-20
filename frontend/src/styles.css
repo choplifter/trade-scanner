@@ -643,6 +643,38 @@ body {
   cursor: default;
 }
 
+/* Shortable. Neutral rather than good/bad: it describes a capability, not a
+   judgement about the setup, and roughly half the universe qualifies
+   (measured 4014 of 7229 candidates) so a loud colour here would drown out
+   the badges that do carry a warning. */
+.badge-shortable {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  cursor: default;
+}
+
+/* The heatmap's shortable glyph. Deliberately faint and corner-parked: the
+   tile already encodes dollar volume as area and %-change as colour, and
+   roughly half of all tiles carry this, so it has to read as a footnote
+   rather than as a third signal. */
+.heatmap-tile-shortable {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 /* A position with no working stop order. Critical rather than warning: the
    other badges describe data quality, this one describes an open exposure
    with nothing closing it. */

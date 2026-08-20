@@ -145,3 +145,62 @@ def test_dollar_volume_is_none_when_it_was_not_supplied():
     tracker.record_if_new("AAPL", "gainers", 10.0, 5.0, 2.0, 400.0)
     picks = compute_performance(tracker.all(), lambda s: 11.0, 404.0)
     assert picks[0]["entry_dollar_volume"] is None
+
+
+# --- shortability -------------------------------------------------------
+
+
+def _tracked(symbol="AAPL"):
+    tracker = ScannerBenchmarkTracker()
+    tracker.record_if_new(
+        symbol=symbol,
+        view="gainers",
+        entry_price=100.0,
+        entry_pct_change=8.0,
+        entry_rvol=3.0,
+        benchmark_entry_price=400.0,
+    )
+    return tracker
+
+
+def test_shortable_is_resolved_live_rather_than_frozen_at_entry():
+    """The reason it is a callable and not a TrackedAppearance field. A
+    borrow withdrawn after the flag must stop being advertised -- unlike
+    entry_price, the historical value is of no use to anyone here."""
+    tracker = _tracked()
+
+    borrowable = compute_performance(
+        tracker.all(), lambda s: 110.0, 410.0, shortable_for=lambda s: True
+    )
+    withdrawn = compute_performance(
+        tracker.all(), lambda s: 110.0, 410.0, shortable_for=lambda s: False
+    )
+
+    assert borrowable[0]["shortable"] is True
+    assert withdrawn[0]["shortable"] is False
+
+
+def test_shortable_defaults_to_false_without_a_resolver():
+    """A caller with no universe to consult gets the conservative answer,
+    not a missing key the client would read as undefined."""
+    picks = compute_performance(_tracked().all(), lambda s: 110.0, 410.0)
+
+    assert picks[0]["shortable"] is False
+
+
+def test_shortable_is_resolved_per_symbol():
+    tracker = _tracked("AAA")
+    tracker.record_if_new(
+        symbol="BBB",
+        view="gainers",
+        entry_price=50.0,
+        entry_pct_change=4.0,
+        entry_rvol=2.0,
+        benchmark_entry_price=400.0,
+    )
+
+    picks = compute_performance(
+        tracker.all(), lambda s: 60.0, 410.0, shortable_for=lambda s: s == "AAA"
+    )
+
+    assert {p["symbol"]: p["shortable"] for p in picks} == {"AAA": True, "BBB": False}

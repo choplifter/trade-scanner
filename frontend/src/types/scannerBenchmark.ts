@@ -1,6 +1,10 @@
 export interface ScannerBenchmarkPick {
   symbol: string;
   view: string;
+  /** Whether the symbol can be sold short *now* -- resolved live from the
+   * universe rather than frozen at entry, unlike the entry_* fields. False
+   * also covers "unknown". */
+  shortable: boolean;
   first_seen_at: string;
   minutes_since: number;
   entry_price: number;

@@ -128,6 +128,9 @@ FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("is_hod", "At High of Day", BOOLEAN),
     FieldSpec("is_lod", "At Low of Day", BOOLEAN),
     FieldSpec("is_fade_risk", "Fade Risk", BOOLEAN),
+    # Universe-wide from the asset record rather than a per-symbol fetch, so
+    # it satisfies the module docstring's rule about what may be screenable.
+    FieldSpec("shortable", "Shortable", BOOLEAN),
     FieldSpec("is_stale", "Stale Price", BOOLEAN),
     # How much of the consolidated tape our own feed saw today. Low values
     # mean every volume *level* on the row is a small fraction of reality.

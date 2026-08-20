@@ -331,6 +331,7 @@ class ScannerEngine:
                     last_trade_at, now, self.settings.scanner_stale_row_seconds
                 ),
                 is_fade_risk=formulas.is_fade_risk(row_rvol),
+                shortable=uni.shortable,
                 updated_at=now,
             )
 
@@ -495,6 +496,7 @@ class ScannerEngine:
                     is_hod=False,
                     is_lod=False,
                     is_fade_risk=formulas.is_fade_risk(bar_rvol),
+                    shortable=uni.shortable,
                     updated_at=datetime.now(timezone.utc),
                 )
 

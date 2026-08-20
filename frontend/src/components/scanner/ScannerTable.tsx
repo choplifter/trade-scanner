@@ -191,6 +191,14 @@ export function ScannerTable({
                   STALE
                 </span>
               )}
+              {row.shortable && (
+                <span
+                  className="badge-shortable"
+                  title="Shortable -- the broker lists this symbol as available to sell short. A static flag, not a live locate: the borrow can still fail at order time."
+                >
+                  SHORT OK
+                </span>
+              )}
               {row.is_fade_risk && (
                 <span
                   className="badge-fade-risk"

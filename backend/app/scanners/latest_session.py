@@ -71,6 +71,11 @@ async def compute_latest_session_rows(
                     is_lod=formulas.is_lod(last_bar.close, last_bar.low),
                     spread_pct=None,
                     is_fade_risk=formulas.is_fade_risk(row_rvol),
+                    # Set here as well as in the live path, or the shortable
+                    # marker would disappear from every row whenever the
+                    # market is closed -- which is when a session gets
+                    # reviewed and shorts get planned.
+                    shortable=uni.shortable,
                     updated_at=now,
                 )
             )

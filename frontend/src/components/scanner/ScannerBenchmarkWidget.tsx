@@ -182,7 +182,17 @@ export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: Scann
                     aria-selected={p.symbol === selectedSymbol}
                     onClick={() => onSelectSymbol(p.symbol)}
                   >
-                    <td className="symbol-cell">{p.symbol}</td>
+                    <td className="symbol-cell">
+                      {p.symbol}
+                      {p.shortable && (
+                        <span
+                          className="badge-shortable"
+                          title="Shortable -- the broker lists this symbol as available to sell short. A static flag, not a live locate: the borrow can still fail at order time."
+                        >
+                          SHORT OK
+                        </span>
+                      )}
+                    </td>
                     <td>{VIEW_LABEL[p.view] ?? p.view}</td>
                     <td>{p.minutes_since < 1 ? "just now" : `${Math.round(p.minutes_since)}m ago`}</td>
                     <td className={pctClass(p.entry_pct_change)}>{pctText(p.entry_pct_change)}</td>

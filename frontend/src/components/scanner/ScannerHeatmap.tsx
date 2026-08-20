@@ -75,12 +75,27 @@ export function ScannerHeatmap({ rows, selectedSymbol, onSelectSymbol }: Scanner
                 background: heatmapFill(tile.pct_change, maxAbsPct),
               }}
               onClick={() => onSelectSymbol(tile.symbol)}
-              title={`${tile.symbol} · ${formatPrice(tile.last_price)} · ${formatPct(tile.pct_change)} · Vol ${formatVolume(tile.volume_today)}`}
+              /* Shortability goes in the tooltip unconditionally, because the
+                 corner glyph below only renders on tiles big enough to carry
+                 a label -- and a small tile is exactly where a reader falls
+                 back to hovering. */
+              title={`${tile.symbol} · ${formatPrice(tile.last_price)} · ${formatPct(tile.pct_change)} · Vol ${formatVolume(tile.volume_today)}${
+                tile.shortable ? " · shortable" : ""
+              }`}
             >
               {showLabel && (
                 <>
                   <span className="heatmap-tile-symbol">{tile.symbol}</span>
                   <span className="heatmap-tile-pct">{formatPct(tile.pct_change)}</span>
+                  {/* A glyph rather than the table's "SHORT OK" pill: size and
+                      colour are already spoken for here (dollar volume and
+                      %-change), so a third encoding has to stay quiet or it
+                      competes with the two that carry the actual signal. */}
+                  {tile.shortable && (
+                    <span className="heatmap-tile-shortable" aria-label="Shortable">
+                      S
+                    </span>
+                  )}
                 </>
               )}
             </div>

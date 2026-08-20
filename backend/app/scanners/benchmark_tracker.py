@@ -105,6 +105,7 @@ def compute_performance(
     current_price_for: Callable[[str], float | None],
     current_benchmark_price: float | None,
     current_headline_for: Callable[[str], str | None] | None = None,
+    shortable_for: Callable[[str], bool] | None = None,
 ) -> list[dict]:
     """Shared by both the FastAPI router and the Dash page (see
     app.dash_app.pages.benchmark) so the math lives in exactly one place --
@@ -130,6 +131,13 @@ def compute_performance(
 
     Omitting the callable keeps current_headline None, which is what a caller
     with no live news cache should get rather than a misleading blank.
+
+    `shortable_for` is resolved the same way, and for the same reason it is a
+    callable rather than a field on TrackedAppearance: shortability is a
+    property of the symbol *now*, not of the moment it was flagged. Freezing
+    it at entry would leave the marker asserting a borrow that may since have
+    been withdrawn -- and unlike entry_price, nothing downstream wants the
+    historical value. Omitting it yields False, the conservative reading.
     """
     now = datetime.now(timezone.utc)
     picks = []
@@ -159,6 +167,7 @@ def compute_performance(
             {
                 "symbol": entry.symbol,
                 "view": entry.view,
+                "shortable": bool(shortable_for(entry.symbol)) if shortable_for else False,
                 "first_seen_at": entry.first_seen_at.isoformat(),
                 "minutes_since": round((now - entry.first_seen_at).total_seconds() / 60, 1),
                 "entry_price": round(entry.entry_price, 2),

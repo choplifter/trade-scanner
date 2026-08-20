@@ -48,6 +48,12 @@ export interface ScannerRow {
    * rate) rather than an extra-bullish one; ranking already discounts for
    * it, this flags it directly too. */
   is_fade_risk: boolean;
+  /** True when the broker will let this symbol be sold short. Known for the
+   * whole universe (it comes off the Alpaca asset record), and false also
+   * covers "unknown" -- so a true here is a positive signal while a false is
+   * only the absence of one. The broker's static flag, not a live locate:
+   * a borrow can still fail when the order is placed. */
+  shortable: boolean;
   updated_at: string;
 }
 
