@@ -58,6 +58,7 @@ export interface ScannerResponse {
   scanner: string;
   session: string;
   is_latest_session: boolean;
+  window_minutes: number;
   rows: ScannerRow[];
 }
 

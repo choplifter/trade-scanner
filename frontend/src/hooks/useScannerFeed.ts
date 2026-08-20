@@ -11,6 +11,10 @@ export interface ScannerFeedState {
   /** True when there's nothing live (e.g. markets closed) and rows are the
    * most recently completed session's real data instead. */
   isLatestSession: boolean;
+  /** The trailing window row.rvol_1h was computed with, in minutes. Fixed
+   * views always run on the server's global setting; the column labels
+   * itself from this rather than assuming 60. */
+  windowMinutes: number;
 }
 
 /**
@@ -26,6 +30,7 @@ export function useScannerFeed(scanner: string | null): ScannerFeedState {
   const [session, setSession] = useState("closed");
   const [loading, setLoading] = useState(true);
   const [isLatestSession, setIsLatestSession] = useState(false);
+  const [windowMinutes, setWindowMinutes] = useState(0);
 
   useEffect(() => {
     if (scanner === null) return;
@@ -38,6 +43,7 @@ export function useScannerFeed(scanner: string | null): ScannerFeedState {
         setRows(res.rows);
         setSession(res.session);
         setIsLatestSession(res.is_latest_session);
+        setWindowMinutes(res.window_minutes);
         setLoading(false);
       })
       .catch(() => {
@@ -48,6 +54,7 @@ export function useScannerFeed(scanner: string | null): ScannerFeedState {
       setRows(msg.rows);
       setSession(msg.session);
       setIsLatestSession(msg.is_latest_session);
+      setWindowMinutes(msg.window_minutes);
       setLoading(false);
     });
 
@@ -57,5 +64,5 @@ export function useScannerFeed(scanner: string | null): ScannerFeedState {
     };
   }, [scanner]);
 
-  return { rows, session, loading, isLatestSession };
+  return { rows, session, loading, isLatestSession, windowMinutes };
 }

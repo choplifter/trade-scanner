@@ -74,6 +74,12 @@ async def scanners_ws(websocket: WebSocket) -> None:
                         "scanner": scanner,
                         "session": engine.session,
                         "is_latest_session": engine.is_latest_session_fallback,
+                        # The window row.rvol_1h was computed with. Fixed
+                        # views always run on the global setting -- only a
+                        # custom screen can override it -- but the client
+                        # labels its column from this either way rather than
+                        # assuming 60.
+                        "window_minutes": engine.settings.scanner_volume_surge_window_minutes,
                         "rows": [r.model_dump(mode="json") for r in rows],
                     }
                 )

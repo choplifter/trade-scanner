@@ -108,6 +108,23 @@ FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("volume_1h", "Volume (1h)", NUMBER),
     FieldSpec("volume_surge", "Volume Surge (vs prior 1h)", NUMBER),
     FieldSpec("rvol_1h", "Rel Volume (1h)", NUMBER),
+    # The same measure as rvol_1h but at the screen's own window rather than
+    # the global one -- derived, because it has to be recomputed per screen.
+    # No window in the label: it is whatever the screen asked for, and the
+    # response's meta.window_minutes carries the number so a column header
+    # can say "RVol (30m)" without the registry pretending to know.
+    FieldSpec("rvol_window", "Rel Volume (window)", NUMBER, derived=True),
+    # rvol_window over rvol -- what share of today's volume landed in the
+    # window, against the share that normally would. Ranks identically
+    # (rho = 1.0000, measured) to "window volume / today's volume" while
+    # staying comparable across times of day, which the raw share is not:
+    # measured medians run 52.6% at 11:00 down to 13.7% at 15:00, so a
+    # fixed threshold on the raw share would select the clock.
+    FieldSpec("volume_concentration", "Volume Concentration", NUMBER, derived=True),
+    # Did the most recent 5-minute bar close up. Exists so the long bias
+    # that used to be hardcoded inside the volume maths can be stated as a
+    # filter instead -- see volume_surge.is_green.
+    FieldSpec("is_green_candle", "Green Candle", BOOLEAN, derived=True),
     FieldSpec("is_hod", "At High of Day", BOOLEAN),
     FieldSpec("is_lod", "At Low of Day", BOOLEAN),
     FieldSpec("is_fade_risk", "Fade Risk", BOOLEAN),
@@ -148,10 +165,25 @@ class Filter(BaseModel):
 
 
 class Screen(BaseModel):
+    """One screen. `window_minutes` is the odd one out: the other three
+    describe how rows are chosen and ordered, this one changes what a
+    column *means*.
+
+    It sets the trailing window behind rvol_window (and, through it,
+    volume_concentration) -- "3x normal for the last 30 minutes" instead of
+    for the last hour. A property of the screen rather than of a filter,
+    for the same reason limit and sort_by are: a screen has one time
+    context, and two filters disagreeing about it would leave the displayed
+    column ambiguous. None means "use the global default"
+    (settings.scanner_volume_surge_window_minutes), which is what the fixed
+    views run on.
+    """
+
     filters: list[Filter] = []
     sort_by: str = "pct_change"
     descending: bool = True
     limit: int = 100
+    window_minutes: int | None = None
 
 
 @dataclass
@@ -330,15 +362,18 @@ PRESETS: dict[str, dict] = {
         "description": (
             "Trading at 2x+ the volume normal for this time of day and still green -- catches a "
             "name picking up late, which cumulative RVOL cannot see. Deliberately filters on "
-            "rvol_1h, not volume_surge: session volume is U-shaped, so near the close the raw "
-            "hour-over-hour ratio is above 1 for most of the market."
+            "rvol_window, not volume_surge: session volume is U-shaped, so near the close the raw "
+            "hour-over-hour ratio is above 1 for most of the market. The green-candle condition "
+            "is a filter here rather than a silent rule inside the volume maths -- edit it away "
+            "and this screen will happily show you the names being dumped on heavy volume."
         ),
         "screen": Screen(
             filters=[
-                Filter(field="rvol_1h", op="gt", value=2),
+                Filter(field="rvol_window", op="gt", value=2),
                 Filter(field="pct_change", op="gt", value=0),
+                Filter(field="is_green_candle", op="is_true"),
             ],
-            sort_by="rvol_1h",
+            sort_by="rvol_window",
             descending=True,
             limit=50,
         ),

@@ -61,21 +61,26 @@ const SORT_ACCESSORS: Record<SortKey, (row: ScannerRow) => SortValue> = {
   country: (r) => r.country,
 };
 
-const COLUMNS: { id: SortKey; label: string }[] = [
-  { id: "symbol", label: "Symbol" },
-  { id: "company_name", label: "Company" },
-  { id: "last", label: "Last" },
-  { id: "chg", label: "Chg %" },
-  { id: "mom15", label: "15m %" },
-  { id: "vol", label: "$ Vol" },
-  { id: "rvol", label: "RVol" },
-  { id: "rvol_1h", label: "RVol 1h" },
-  { id: "float", label: "Float" },
-  { id: "market_cap", label: "Mkt Cap" },
-  { id: "short_interest_pct", label: "Short %" },
-  { id: "exchange", label: "Exchange" },
-  { id: "country", label: "Country" },
-];
+/** The window column is the one label that isn't fixed: it reports whatever
+ * trailing window the screen asked for (Screen.window_minutes), so calling it
+ * "1h" was a lie the moment that became configurable. */
+function columns(windowMinutes: number): { id: SortKey; label: string }[] {
+  return [
+    { id: "symbol", label: "Symbol" },
+    { id: "company_name", label: "Company" },
+    { id: "last", label: "Last" },
+    { id: "chg", label: "Chg %" },
+    { id: "mom15", label: "15m %" },
+    { id: "vol", label: "$ Vol" },
+    { id: "rvol", label: "RVol" },
+    { id: "rvol_1h", label: windowMinutes ? `RVol ${windowMinutes}m` : "RVol (win)" },
+    { id: "float", label: "Float" },
+    { id: "market_cap", label: "Mkt Cap" },
+    { id: "short_interest_pct", label: "Short %" },
+    { id: "exchange", label: "Exchange" },
+    { id: "country", label: "Country" },
+  ];
+}
 
 interface SortState {
   key: SortKey;
@@ -109,10 +114,26 @@ interface ScannerTableProps {
   rows: ScannerRow[];
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
+  /** Derived columns from the screen response. rvol_window lives here rather
+   * than on the row because it depends on the screen's window, not on the
+   * global setting row.rvol_1h was built with. */
+  derived?: Record<string, Record<string, number | null>>;
+  windowMinutes?: number;
 }
 
-export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTableProps) {
+export function ScannerTable({
+  rows,
+  selectedSymbol,
+  onSelectSymbol,
+  derived,
+  windowMinutes = 0,
+}: ScannerTableProps) {
   const [sort, setSort] = useState<SortState | null>(null);
+  const COLUMNS = useMemo(() => columns(windowMinutes), [windowMinutes]);
+  /** The screen's own windowed value where there is one, the row's global
+   * one otherwise -- so the number always matches the header above it. */
+  const windowedRvol = (row: ScannerRow) =>
+    derived?.rvol_window?.[row.symbol] ?? row.rvol_1h;
 
   const sortedRows = useMemo(() => (sort ? sortRows(rows, sort) : rows), [rows, sort]);
 
@@ -214,7 +235,7 @@ export function ScannerTable({ rows, selectedSymbol, onSelectSymbol }: ScannerTa
             <td>{formatDollarVolume(row.dollar_volume_today)}</td>
             <td>{formatRvol(row.rvol)}</td>
             <td title="Volume in the last hour vs. what this symbol normally trades in that same clock hour -- a rate, unlike RVol, which is cumulative since the open and only ever climbs">
-              {cell(row.rvol_1h, formatRvol)}
+              {cell(windowedRvol(row), formatRvol)}
             </td>
             <td>{cell(row.float_shares, formatShares)}</td>
             <td>{cell(row.market_cap, formatMarketCap)}</td>

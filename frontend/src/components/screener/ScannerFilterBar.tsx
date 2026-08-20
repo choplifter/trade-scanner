@@ -4,6 +4,10 @@ interface Props {
   fields: FieldSpec[];
   screen: Screen;
   onChange: (screen: Screen) => void;
+  /** The window the server actually used, shown as the placeholder while
+   * the field is empty -- so "unset" reads as the real default rather than
+   * as blank. */
+  activeWindowMinutes?: number;
 }
 
 /** Human wording per operator, keyed by the backend's own operator names --
@@ -51,7 +55,8 @@ function display(value: ScreenFilter["value"]): string {
  * which operators apply to that type all come from `fields`, so a field added
  * on the backend appears here with no change to this file.
  */
-export function ScannerFilterBar({ fields, screen, onChange }: Props) {
+export function ScannerFilterBar({ fields, screen, onChange, activeWindowMinutes }: Props) {
+  const windowPlaceholder = activeWindowMinutes ? String(activeWindowMinutes) : "default";
   const fieldsByName = new Map(fields.map((f) => [f.name, f]));
   const filterable = fields.filter((f) => f.operators.length > 0);
 
@@ -150,6 +155,34 @@ export function ScannerFilterBar({ fields, screen, onChange }: Props) {
             value={screen.limit}
             onChange={(e) => onChange({ ...screen, limit: Math.max(1, Number(e.target.value) || 1) })}
           />
+        </label>
+        {/* One control for the whole screen, not one per filter row: the
+            window decides what the RVol (window) column *means*, and two
+            filters disagreeing about it would make that column ambiguous.
+            Empty falls back to the server default rather than to a
+            hardcoded 60 here, so the two can't drift apart. */}
+        <label title="Trailing window behind RVol (window) and Volume Concentration">
+          Window
+          <input
+            type="number"
+            min={5}
+            step={5}
+            placeholder={windowPlaceholder}
+            value={screen.window_minutes ?? ""}
+            /* Passed through unclamped, on purpose. Clamping per keystroke
+               made "30" impossible to type: the 3 became a 5 the moment it
+               was entered and the 0 landed after it, yielding 50. Same rule
+               as coerce() above -- never block a keystroke mid-edit; the
+               server floors the value (see run_live_screen). */
+            onChange={(e) => {
+              const raw = Number(e.target.value);
+              onChange({
+                ...screen,
+                window_minutes: e.target.value === "" || !Number.isFinite(raw) ? null : raw,
+              });
+            }}
+          />
+          min
         </label>
       </div>
     </div>

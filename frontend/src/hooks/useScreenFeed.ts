@@ -14,6 +14,9 @@ export interface ScreenFeedState {
   totalMatched: number;
   tradableSize: number;
   universeSize: number;
+  /** The trailing window the server resolved for this screen, in minutes.
+   * Labels the RVol (window) column and the filter bar's placeholder. */
+  windowMinutes: number;
   loading: boolean;
 }
 
@@ -25,6 +28,7 @@ const EMPTY: ScreenFeedState = {
   totalMatched: 0,
   tradableSize: 0,
   universeSize: 0,
+  windowMinutes: 0,
   loading: true,
 };
 
@@ -61,6 +65,7 @@ export function useScreenFeed(screen: Screen | null): ScreenFeedState {
         totalMatched: msg.total_matched,
         tradableSize: msg.tradable_size,
         universeSize: msg.universe_size,
+        windowMinutes: msg.window_minutes,
         loading: false,
       });
     });

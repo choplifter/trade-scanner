@@ -203,14 +203,32 @@ def test_surge_ratio_needs_two_full_windows_not_one():
     assert prior == 1200.0
 
 
-def test_both_metrics_are_long_only():
+def test_neither_metric_judges_direction():
+    """A red run reads exactly like the same volume on a green one.
+
+    This asserts the opposite of what it used to. _anchor gated on a green
+    anchor bar, so both ratios returned None on a red one -- the long bias
+    baked into the arithmetic. Measured over 12 sessions, 54.0% of hourly
+    anchors sit on a red bar, which left rvol_1h readable 36.6% of the time
+    instead of 83.1% and made "--" mean two different things. The bias is
+    still there, as an explicit filter: PRESETS["late_volume_surge"] asks
+    for is_green_candle.
+    """
     red = _bars(time(13, 0), 36, 100.0, green=False)
-    assert trailing_windows(red, _WINDOW) == (None, None)
-    assert windowed_rvol(red, 1_000_000.0, _U_CURVE, _WINDOW) is None
+    green = _bars(time(13, 0), 36, 100.0, green=True)
+    assert trailing_windows(red, _WINDOW) == trailing_windows(green, _WINDOW)
+    assert windowed_rvol(red, 1_000_000.0, _U_CURVE, _WINDOW) == windowed_rvol(
+        green, 1_000_000.0, _U_CURVE, _WINDOW
+    )
+    assert windowed_rvol(red, 1_000_000.0, _U_CURVE, _WINDOW) is not None
 
 
-def test_direction_is_judged_on_the_anchor_bar_alone():
-    # Red run, then a green bar: the reading is about what is happening now,
-    # so the latest bar decides.
-    bars = _bars(time(13, 0), 35, 100.0, green=False) + _bars(time(15, 55), 1, 100.0)
-    assert windowed_rvol(bars, 1_000_000.0, _U_CURVE, _WINDOW) is not None
+def test_the_window_is_a_parameter_not_a_constant():
+    """Same bars, two windows, two different readings -- the property
+    Screen.window_minutes relies on.
+    """
+    bars = _bars(time(13, 0), 36, 100.0)
+    hour = windowed_rvol(bars, 1_000_000.0, _U_CURVE, timedelta(minutes=60))
+    half = windowed_rvol(bars, 1_000_000.0, _U_CURVE, timedelta(minutes=30))
+    assert hour is not None and half is not None
+    assert hour != half

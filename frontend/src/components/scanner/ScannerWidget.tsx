@@ -156,7 +156,12 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
       {error && <p className="widget-error">{error}</p>}
 
       {showFilters && !frozenActive && (
-        <ScannerFilterBar fields={fields} screen={screen} onChange={updateScreen} />
+        <ScannerFilterBar
+          fields={fields}
+          screen={screen}
+          onChange={updateScreen}
+          activeWindowMinutes={screenFeed.windowMinutes || undefined}
+        />
       )}
 
       {showBacktest && !frozenActive && (
@@ -186,7 +191,13 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
         {loading ? (
           <div className="widget-empty">Loading…</div>
         ) : viewMode === "table" ? (
-          <ScannerTable rows={rows} selectedSymbol={selectedSymbol} onSelectSymbol={onSelectSymbol} />
+          <ScannerTable
+            rows={rows}
+            selectedSymbol={selectedSymbol}
+            onSelectSymbol={onSelectSymbol}
+            derived={screenFeed.derived}
+            windowMinutes={frozenActive ? frozenFeed.windowMinutes : screenFeed.windowMinutes}
+          />
         ) : (
           <ScannerHeatmap rows={rows} selectedSymbol={selectedSymbol} onSelectSymbol={onSelectSymbol} />
         )}

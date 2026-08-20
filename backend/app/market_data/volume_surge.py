@@ -25,7 +25,13 @@ trap on its own:
   quiet lunch hour. This is the one to screen on.
 
 Both are computed from the 5-minute bars the momentum cache already fetches
-for ranked and screened symbols, so neither costs an extra API call.
+for ranked and screened symbols, so neither costs an extra API call. Both
+are also window-agnostic: the window is a parameter, defaulted from
+settings.scanner_volume_surge_window_minutes for the ranked views and
+overridable per screen (Screen.window_minutes), so "accelerating" can mean
+the last 30 minutes or the last two hours without a second code path.
+
+Neither ratio judges direction. That belongs to the caller -- see is_green.
 """
 
 from datetime import datetime, timedelta
@@ -73,13 +79,20 @@ def window_volume(bars: list, start: datetime, end: datetime, reference) -> floa
 
 
 def is_green(bar) -> bool:
-    """Long side only, matching formulas.is_momentum_alert.
+    """Whether the bar closed up. Exported so the long bias can be applied
+    as an ordinary screen filter (`is_green_candle`) rather than baked into
+    the volume maths.
 
-    A volume surge on a red bar is a real event but a different setup --
-    distribution rather than accumulation -- and this scanner is long-biased
-    throughout. Reporting one number for both would mean a screen for
-    "volume accelerating" silently returned the names being dumped alongside
-    the ones being bought.
+    It used to gate _anchor: a volume surge on a red bar is a different
+    setup -- distribution rather than accumulation -- so both ratios simply
+    returned None there. The intent was right, the layer was wrong.
+    Measured over 12 sessions and 6337 hourly anchors, 54.0% of them sit on
+    a red bar, so the gate left rvol_1h readable only 36.6% of the time
+    against 83.1% without it, and "--" in the column meant either "volume
+    is not accelerating" or "the last candle happened to be red" with no
+    way to tell which. Now the number is always computed and the direction
+    is a filter the screen states out loud -- see PRESETS
+    ["late_volume_surge"], which asks for it explicitly.
     """
     return bar.close > bar.open
 
@@ -104,9 +117,12 @@ def _anchor(bars: list, window: timedelta, require_prior: bool):
     session, which volume_surge needs and rvol_1h doesn't: comparing against
     a half-empty prior hour inflates the ratio exactly when the session is
     youngest.
+
+    Direction is deliberately NOT checked here -- see is_green for why that
+    check moved out to the filter layer.
     """
     reference = latest_session_bar(bars)
-    if reference is None or not is_green(reference):
+    if reference is None:
         return None
     # The anchor bar's own interval counts as part of the recent window, so
     # the window ends at the bar's end, not its start.

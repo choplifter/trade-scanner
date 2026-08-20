@@ -44,6 +44,13 @@ export interface Screen {
   sort_by: string;
   descending: boolean;
   limit: number;
+  /** Trailing window, in minutes, behind rvol_window and
+   * volume_concentration. A property of the screen rather than of a single
+   * filter: a screen has one time context, and two filters disagreeing
+   * about it would leave the displayed column ambiguous. null means "use
+   * the server's default" -- read the resolved number back from
+   * ScreenResponse.window_minutes. */
+  window_minutes?: number | null;
 }
 
 export interface Preset {
@@ -61,6 +68,10 @@ export interface ScreenResponse {
   total_matched: number;
   tradable_size: number;
   universe_size: number;
+  /** The window actually used, always resolved -- never the null a Screen
+   * may have been submitted with. Column headers label themselves from
+   * this. */
+  window_minutes: number;
   rows: ScannerRow[];
   /** { field_name: { symbol: value } } for derived fields only. */
   derived: Record<string, Record<string, number | null>>;

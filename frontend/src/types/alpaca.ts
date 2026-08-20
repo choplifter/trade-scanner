@@ -58,6 +58,9 @@ export interface ScannerUpdateMessage {
   /** True when there's nothing live (e.g. markets closed) and these rows
    * are the most recently completed session's real data instead. */
   is_latest_session: boolean;
+  /** Trailing window behind row.rvol_1h, in minutes -- so the column can
+   * label itself instead of hardcoding "1h". */
+  window_minutes: number;
   rows: ScannerRow[];
 }
 
