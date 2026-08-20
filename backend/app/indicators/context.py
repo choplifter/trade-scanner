@@ -14,12 +14,39 @@ from datetime import datetime, timezone
 import pandas as pd
 
 
+# Chart timeframes, finest to coarsest. The ordering is what lets an
+# indicator declare a single ceiling ("not above this") instead of
+# enumerating every timeframe it applies to -- see MAX_TIMEFRAME in
+# app.indicators.loader.
+#
+# 1m/5m/15m are all fetched as "1Min" and bucketed client-side (see
+# utils/aggregateBars in the frontend), so they arrive here as one key.
+TIMEFRAME_ORDER: tuple[str, ...] = ("1Min", "1Hour", "4Hour", "1Day", "1Week", "1Month")
+
+
+def timeframe_rank(timeframe: str) -> int:
+    """Position on TIMEFRAME_ORDER.
+
+    An unrecognised timeframe ranks finest rather than raising, so adding a
+    new chart resolution shows every indicator until someone decides
+    otherwise -- the opposite default would silently blank the whole panel.
+    """
+    try:
+        return TIMEFRAME_ORDER.index(timeframe)
+    except ValueError:
+        return 0
+
+
 @dataclass
 class IndicatorContext:
     symbol: str
     minute_bars: pd.DataFrame
     weekly_bars: pd.DataFrame
     monthly_bars: pd.DataFrame
+    # Which chart resolution the caller asked for. Indicators do not read
+    # this themselves -- the loader uses it to decide which of them run at
+    # all, so an indicator's compute() never has to think about zoom.
+    timeframe: str = "1Min"
 
 
 _COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "vwap"]
@@ -48,13 +75,18 @@ def _bars_to_df(bars: list) -> pd.DataFrame:
 
 
 def build_context(
-    symbol: str, minute_bars: list, weekly_bars: list, monthly_bars: list
+    symbol: str,
+    minute_bars: list,
+    weekly_bars: list,
+    monthly_bars: list,
+    timeframe: str = "1Min",
 ) -> IndicatorContext:
     return IndicatorContext(
         symbol=symbol,
         minute_bars=_bars_to_df(minute_bars),
         weekly_bars=_bars_to_df(weekly_bars),
         monthly_bars=_bars_to_df(monthly_bars),
+        timeframe=timeframe,
     )
 
 

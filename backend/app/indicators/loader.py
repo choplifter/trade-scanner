@@ -13,8 +13,22 @@ Each indicator file exposes:
     NAME: str -- display group name, e.g. "Premarket Range"
     KIND: "level" | "series"
     COLORS: dict[str, str] (optional) -- sub-series name -> hex color
+    MAX_TIMEFRAME: str (optional) -- the coarsest chart timeframe this still
+        says something at; omitted means every timeframe
     def compute(ctx: IndicatorContext) -> dict[str, ...] -- sub-series name
         -> value (float|None for "level") or point list (for "series")
+
+MAX_TIMEFRAME exists because an indicator describing one period is noise
+once a single candle covers that period or more: yesterday's high sits
+*inside* one bar of a weekly chart, so drawing it there adds a line that
+cannot be crossed. Filtering here rather than inside each compute() keeps
+the rule declarative and keeps zoom out of the indicator files entirely --
+they are handed a context and asked for numbers, never asked to decide
+whether they should have been called.
+
+Filtered indicators are omitted from the response rather than returned
+empty, so the client renders nothing for them rather than an empty legend
+entry.
 """
 
 from __future__ import annotations
@@ -24,7 +38,7 @@ import logging
 from pathlib import Path
 from types import ModuleType
 
-from app.indicators.context import IndicatorContext
+from app.indicators.context import IndicatorContext, timeframe_rank
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +60,11 @@ def run_indicators(ctx: IndicatorContext) -> list[dict]:
             continue
         try:
             module = _load_module(path)
+            max_timeframe = getattr(module, "MAX_TIMEFRAME", None)
+            if max_timeframe is not None and timeframe_rank(ctx.timeframe) > timeframe_rank(
+                max_timeframe
+            ):
+                continue
             result = {
                 "name": module.NAME,
                 "kind": module.KIND,

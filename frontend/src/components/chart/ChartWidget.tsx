@@ -58,7 +58,14 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
         intraday.indicators,
       );
     }
-    // "series"-kind indicators (e.g. an EMA) are minute-resolution -- on an
+    // This timeframe's *own* indicators, not the intraday feed's. Reusing
+    // the minute feed's list here meant the backend's per-timeframe gating
+    // never reached the chart at all: a weekly view still drew the daily
+    // range, because those lines came from the 1Min request rather than
+    // from the weekly one that had already dropped them.
+    //
+    // The "level" filter stays, and is a separate concern: "series"-kind
+    // indicators (e.g. an EMA) are minute-resolution -- on an
     // hourly/daily/weekly/monthly chart that's both semantically odd to
     // overlay and, left unaggregated, would trip the same
     // resolution-mismatch zoom bug aggregateBars exists to avoid. "level"
@@ -66,7 +73,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     return {
       bars: historical.bars,
       vwap: historical.vwap,
-      indicators: intraday.indicators.filter((i) => i.kind === "level"),
+      indicators: historical.indicators.filter((i) => i.kind === "level"),
     };
   }, [
     option,
@@ -77,6 +84,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     intraday.indicators,
     historical.bars,
     historical.vwap,
+    historical.indicators,
   ]);
 
   const lastPrice =

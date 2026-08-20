@@ -10,6 +10,9 @@ from app.services.market_clock import ET, trading_hours_for
 NAME = "Premarket Range"
 KIND = "level"
 COLORS = {"High": "#2a78d6", "Low": "#2a78d6"}
+# Today's premarket is a fraction of one session, so it is already the
+# finest-grained of the range levels -- a daily candle contains it whole.
+MAX_TIMEFRAME = "1Day"
 
 
 def compute(ctx) -> dict:

@@ -9,6 +9,11 @@ from app.indicators.context import prior_completed_period
 NAME = "Monthly Range"
 KIND = "level"
 COLORS = {"High": "#c9862f", "Low": "#c9862f"}
+# The coarsest timeframe the chart offers, so this one is never filtered --
+# declared anyway rather than omitted, so the ceiling is stated for every
+# range indicator instead of being absent on the one that happens not to
+# need it.
+MAX_TIMEFRAME = "1Month"
 
 
 def compute(ctx) -> dict:

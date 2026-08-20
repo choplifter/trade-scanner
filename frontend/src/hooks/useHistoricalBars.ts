@@ -1,16 +1,28 @@
 import { useEffect, useState } from "react";
 
 import { getSymbolBars } from "../api/http";
-import type { Bar } from "../types/alpaca";
+import type { Bar, IndicatorResult } from "../types/alpaca";
 
 export interface HistoricalBarsState {
   bars: Bar[];
   vwap: (number | null)[];
+  /** This timeframe's own indicators. Which ones come back is decided
+   * server-side -- a level describing a period the chart draws as a single
+   * candle is left out entirely (see MAX_TIMEFRAME in the backend's
+   * indicator loader), so this is NOT interchangeable with the intraday
+   * feed's list. */
+  indicators: IndicatorResult[];
   error: string | null;
   loading: boolean;
 }
 
-const EMPTY_STATE: HistoricalBarsState = { bars: [], vwap: [], error: null, loading: false };
+const EMPTY_STATE: HistoricalBarsState = {
+  bars: [],
+  vwap: [],
+  indicators: [],
+  error: null,
+  loading: false,
+};
 
 /**
  * One-shot fetch at a native Alpaca resolution (1Hour/4Hour/1Day/1Week/
@@ -35,7 +47,14 @@ export function useHistoricalBars(
 
     getSymbolBars(symbol, alpacaTimeframe)
       .then((res) => {
-        if (!cancelled) setState({ bars: res.bars, vwap: res.vwap, error: null, loading: false });
+        if (!cancelled)
+          setState({
+            bars: res.bars,
+            vwap: res.vwap,
+            indicators: res.indicators,
+            error: null,
+            loading: false,
+          });
       })
       .catch((err: unknown) => {
         if (!cancelled) setState((s) => ({ ...s, error: String(err), loading: false }));

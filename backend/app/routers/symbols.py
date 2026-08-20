@@ -44,10 +44,17 @@ def _bar_to_dict(bar) -> dict:
     }
 
 
-async def _compute_indicators(clients: AlpacaClients, symbol: str, minute_bars: list) -> list[dict]:
-    """Indicators (premarket/weekly/monthly range) are reference lines
-    independent of the chart's own zoom -- always computed the same way
-    regardless of which timeframe the caller actually requested.
+async def _compute_indicators(
+    clients: AlpacaClients, symbol: str, minute_bars: list, timeframe: str
+) -> list[dict]:
+    """Reference lines and overlays for the chart.
+
+    Each is computed from its own source data rather than from the bars the
+    caller asked for, so a level means the same thing at every zoom. What the
+    timeframe *does* decide is which indicators run at all: one describing a
+    period the chart shows as a single candle is noise, so each declares a
+    ceiling and the loader drops the rest. See MAX_TIMEFRAME in
+    app.indicators.loader.
 
     Weekly/monthly bars are two independent Alpaca calls -- run them
     concurrently rather than sequentially so this doesn't add up to two
@@ -59,7 +66,7 @@ async def _compute_indicators(clients: AlpacaClients, symbol: str, minute_bars: 
         get_historical_bars(clients, symbol, "1Week"),
         get_historical_bars(clients, symbol, "1Month"),
     )
-    ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars)
+    ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars, timeframe)
     return run_indicators(ctx)
 
 
@@ -113,7 +120,7 @@ async def get_symbol_bars(
             get_historical_bars(clients, symbol, timeframe),
             get_intraday_minute_bars(clients, symbol),
         )
-        indicators = await _compute_indicators(clients, symbol, minute_bars)
+        indicators = await _compute_indicators(clients, symbol, minute_bars, timeframe)
         return {
             "symbol": symbol,
             "bars": [_bar_to_dict(b) for b in bars],
@@ -166,7 +173,7 @@ async def get_symbol_bars(
     live_state.cum_vol_premarket = vwap_state.cum_vol_premarket
     live_state.session_date = vwap_state.session_date
 
-    indicators = await _compute_indicators(clients, symbol, bars)
+    indicators = await _compute_indicators(clients, symbol, bars, timeframe)
 
     return {
         "symbol": symbol,
