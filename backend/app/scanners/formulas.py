@@ -8,8 +8,9 @@ from datetime import datetime
 # tick rather than a real move -- a genuine trade prices into that same
 # day's aggregated high/low by definition, so anything wildly outside it
 # (seen in practice: a thin backstop-admitted penny name reporting a single
-# ~20-40x-off print on IEX, then correcting on the next poll) almost
-# certainly isn't real. 2x is generous on purpose: real penny-stock
+# ~20-40x-off print, back when this ran on the IEX feed, then correcting on
+# the next poll) almost certainly isn't real. The guard stays on SIP -- a
+# consolidated tape makes a lone bad print rarer, not impossible. 2x is generous on purpose: real penny-stock
 # intraday moves of 50-100% happen and shouldn't get discarded, only the
 # implausible multi-hundred-percent single-tick discontinuities should.
 _LAST_TRADE_SANITY_MULTIPLE = 2.0
@@ -105,11 +106,12 @@ def is_stale(last_trade_at: datetime | None, now: datetime, threshold_seconds: f
     or daily bar (or has no such backing at all).
 
     The engine recomputes every row on every poll tick regardless of
-    whether the feed actually reported anything new, so a symbol whose
-    feed has stopped seeing prints (e.g. it's genuinely trading elsewhere
-    on the tape, outside single-exchange IEX coverage) keeps producing the
-    same price/pct_change every tick, indistinguishable from a symbol that
-    printed a fresh trade seconds ago. Without this check that stuck value
+    whether the feed actually reported anything new, so a symbol the feed
+    has stopped seeing prints for keeps producing the same
+    price/pct_change every tick, indistinguishable from a symbol that
+    printed a fresh trade seconds ago. Less frequent on SIP, which sees
+    every exchange rather than only trades routed through IEX, but not
+    eliminated: a genuinely quiet name still goes minutes without a print. Without this check that stuck value
     can sit at the top of a ranked view (e.g. "gainers") indefinitely,
     looking exactly as current as rows the feed is actually still
     confirming.
@@ -237,14 +239,15 @@ def is_momentum_alert(
     a *worse* outcome) -- this is about catching a move while it's
     actively happening, not judging whether it'll continue.
 
-    Not gated on tape coverage, despite our feed seeing only a fraction of
-    the consolidated tape on thin names. That gate was added and removed:
-    the VWAP it was meant to protect against turned out to be accurate. On
-    IPST 2026-08-17, at 0.24% coverage, our session VWAP was 7.8122 against
-    7.8149 computed from full-tape FMP bars -- the IEX sample was
-    representative. Partial volume does distort volume *levels*
-    (see FundamentalsCache.tape_coverage_pct); it does not, on the evidence,
-    distort the volume-weighted *average price*.
+    Not gated on tape coverage. Moot since 2026-08-20 -- on SIP the feed
+    sees the whole tape -- but the gate was already added and removed
+    before that, and the reason it was removed is worth keeping: the VWAP
+    it was meant to protect against turned out to be accurate anyway. On
+    IPST 2026-08-17, at 0.24% IEX coverage, our session VWAP was 7.8122
+    against 7.8149 computed from full-tape FMP bars. Partial volume
+    distorts volume *levels* (see FundamentalsCache.tape_coverage_pct); it
+    does not, on the evidence, distort the volume-weighted *average
+    price*. That's why nothing here needed re-calibrating for SIP.
     """
     if pct_change_last_15m is None:
         return False

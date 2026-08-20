@@ -18,10 +18,11 @@ class FundamentalsData(BaseModel):
     float_shares: float | None = None
     market_cap: float | None = None
     # Today's volume across the whole consolidated tape, from FMP, and the
-    # 20-day average of the same. The Alpaca IEX feed only reports the slice
-    # of trades that routed through IEX, so these are the only full-tape
-    # figures the app holds -- see FundamentalsCache.tape_coverage for what
-    # they are used for.
+    # 20-day average of the same. These were the only full-tape figures the
+    # app held while it ran on the IEX feed. On SIP the Alpaca numbers are
+    # full-tape too, and these become the independent second opinion the
+    # feed-health check compares against -- see
+    # FundamentalsCache.tape_coverage_pct.
     full_tape_volume: float | None = None
     full_tape_avg_volume: float | None = None
     short_interest_pct: float | None = None

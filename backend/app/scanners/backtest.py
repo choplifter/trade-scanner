@@ -12,15 +12,17 @@ OHLC bar, daily included, so this doesn't need minute data the way the
 momentum alarm's 15m % check does.
 
 "most_active" is replayed here too, but it is not a like-for-like replay
-the way gainers/losers are, for two reasons worth keeping in mind before
-reading anything into its numbers:
-- Tape mismatch. Daily bars carry *consolidated*-tape volume; the live
-  scanner reads a partial IEX slice, which is exactly why that view ranks
-  on dollar volume in the first place (see engine._rank_most_active). So
-  this replays the same formula over a *better* tape than production
-  sees -- the cohort it produces is not the cohort live ranking would
-  have produced. Gainers/losers rank on gap %, a ratio that survives a
-  partial tape, so they don't have this problem.
+the way gainers/losers are. One reason, not the two once listed here:
+- Tape mismatch -- WITHDRAWN, it was never real. This used to warn that
+  daily bars carry consolidated-tape volume while the live scanner read a
+  partial IEX slice, so most_active replayed over a *better* tape than
+  production saw. Measured 2026-08-20: daily bars are scoped to whatever
+  feed requests them (get_daily_bars_multi passes clients.feed like every
+  other call), so on the free plan they were IEX-only too -- AAPL
+  2026-08-19 came back as 1,649,295 shares on iex against 51,604,134 on
+  sip, the same ~3% coverage measured elsewhere. Backtest and live were
+  reading the same partial tape all along. Moot now regardless: since
+  2026-08-20 both are SIP.
 - Selection bias from the caller's symbol cap. Both callers pick the top
   N of the universe *by avg_dollar_vol_20d* (see _top_symbols in the Dash
   backtest page and backtest_report.py's own sort), so "rank by dollar

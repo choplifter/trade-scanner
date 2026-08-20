@@ -439,8 +439,7 @@ def _daily_section():
                 "to check whether gap%/RVOL predict win rate, whether high-RVOL entries fade, and "
                 "whether a shaved-top entry candle says anything about outcome. No catalyst/headline "
                 "boost (needs historical news, unbuilt) and no float (bulk float is today's, not "
-                "point-in-time). Read Most Active with care: daily bars carry consolidated-tape volume "
-                "where the live scanner sees a partial IEX slice, and Max symbols already selects by "
+                "point-in-time). Read Most Active with care: Max symbols already selects by "
                 "dollar volume — so its picks repeat much more than the other two views' (measured at "
                 "300 symbols over 180 days: it drew on 62.6% of the pool with 16 names present on 90%+ "
                 "of days, against ~100% and none for Gainers/Losers), and more so as Max symbols shrinks.",

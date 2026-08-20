@@ -245,8 +245,9 @@ def test_unconfirmed_prices_are_excluded_from_win_rates(tmp_path):
 
     Counting those as losses put every 30-minute win rate near 28% when the
     same checkpoints excluding them read ~51%. On the IEX feed 45% of
-    30-minute checkpoints land here, so this was not an edge case -- it was
-    most of the measurement. Same reasoning as the non-trading-day exclusion,
+    30-minute checkpoints landed here, so this was not an edge case -- it was
+    most of the measurement. SIP (since 2026-08-20) should shrink that share
+    a lot without removing it; a genuinely quiet name still doesn't print. Same reasoning as the non-trading-day exclusion,
     applied within a session.
     """
     store = _store(tmp_path)

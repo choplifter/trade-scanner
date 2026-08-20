@@ -357,9 +357,10 @@ class ScannerHistoryStore:
                         # information, not a flat outcome, and counting it as
                         # a loss is what pushed every 30-minute win rate to
                         # ~28% when the same checkpoints excluding it read
-                        # ~51%. On the IEX feed, which sees a fraction of the
+                        # ~51%. On the IEX feed, which saw a fraction of the
                         # tape on thin names, 45% of 30-minute checkpoints
-                        # land here. Same reasoning as the non-trading-day
+                        # landed here; expect materially fewer on SIP (since
+                        # 2026-08-20), which sees every exchange's prints. Same reasoning as the non-trading-day
                         # exclusion above, applied within a session.
                         "price_unconfirmed": price == entry_price,
                         "symbol": appearance["symbol"],

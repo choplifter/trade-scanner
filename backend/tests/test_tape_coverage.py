@@ -1,9 +1,12 @@
 """How much of the real tape our feed saw.
 
-The Alpaca IEX feed reports only trades routed through IEX, and that share
-swings by orders of magnitude between symbols -- 3.04% of AAPL's tape and
-0.24% of IPST's on 2026-08-17. Every volume *level* the app computes is that
-same fraction of reality.
+Since 2026-08-20 the app runs on SIP and this should read ~100% everywhere;
+the check now earns its keep as a feed-health alarm (a low reading means
+ALPACA_DATA_FEED is back on iex or the subscription lapsed). The figures
+below are from the IEX era and stay as the fixtures: IEX reported only
+trades routed through IEX, a share that swung by orders of magnitude between
+symbols -- 3.04% of AAPL's tape and 0.24% of IPST's on 2026-08-17 -- and
+every volume *level* the app computed was that same fraction of reality.
 
 Deliberately not used to invalidate VWAP, which is where this started: at
 0.24% coverage our IPST VWAP was 7.8122 against 7.8149 from full-tape FMP

@@ -149,8 +149,8 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
           <div className="widget-empty">Loading {symbol}…</div>
         ) : noBarsYet ? (
           <div className="widget-empty">
-            No trades printed on the IEX feed for {symbol} yet today. Premarket volume on IEX is
-            thin — this fills in once trades start (most reliably at 9:30 ET open).
+            No trades printed for {symbol} yet today. Premarket volume is thin — this fills in
+            once trades start (most reliably at 9:30 ET open).
           </div>
         ) : noHistoricalData ? (
           <div className="widget-empty">No {option.label} history available for {symbol}.</div>

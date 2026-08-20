@@ -41,8 +41,17 @@ class Settings(BaseSettings):
     trading_default_risk_pct: float = 1.0
 
     # Never hardcode a feed elsewhere in the app -- every Alpaca data call must
-    # read this value, so upgrading to a paid SIP subscription later is a
-    # one-line config change instead of a code change.
+    # read this value. That held up: moving to the paid SIP subscription on
+    # 2026-08-20 was a one-line .env change, no code touched.
+    #
+    # Stays "iex" as the *default* deliberately, even though this deployment
+    # runs "sip": iex is the feed a fresh clone with free credentials can
+    # actually use, and sip 403s without a paid market-data subscription. The
+    # difference is not cosmetic -- iex reports only trades routed through one
+    # exchange, so every volume level (volume_today, dollar_volume_today,
+    # rvol, volume_surge) is a small, symbol-dependent fraction of the real
+    # tape, while ratios like gap % and VWAP survive it nearly intact. See
+    # FundamentalsCache.tape_coverage_pct for the measured spread.
     alpaca_data_feed: Literal["iex", "sip"] = "iex"
 
     scanner_poll_interval_regular: float = 5.0
@@ -178,6 +187,9 @@ class Settings(BaseSettings):
     scanner_history_db_path: str = "scanner_history.sqlite3"
     scanner_history_snapshot_interval: float = 900.0
 
+    # Concurrent live chart subscriptions. 30 is the free plan's websocket
+    # ceiling, kept as the default for the same reason alpaca_data_feed
+    # defaults to "iex"; a paid subscription lifts it and .env raises this.
     max_stream_symbols: int = 30
 
     cors_origins: list[str] = ["http://localhost:5173"]

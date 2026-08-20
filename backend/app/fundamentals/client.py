@@ -92,7 +92,7 @@ async def fetch_float_and_market_cap(
             row = rows[0]
             market_cap = row.get("marketCap")
             # Same request, no extra call: FMP reports consolidated-tape
-            # volume, which is what makes an IEX coverage check possible.
+            # volume, which is what makes the feed-coverage check possible.
             full_tape_volume = row.get("volume")
             full_tape_avg_volume = row.get("averageVolume")
             profile = CompanyProfile(

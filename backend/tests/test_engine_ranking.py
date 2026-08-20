@@ -110,8 +110,8 @@ def test_roundup_headline_earns_no_boost_in_gainers():
 
 def test_most_active_ranks_by_dollar_volume_not_share_volume():
     # PENNY trades 5x the shares but at 1/20th the price. Ranking on raw share
-    # volume puts it first; ranking on dollar volume -- which is what survives
-    # a partial IEX tape more usefully -- puts PRICEY first.
+    # volume puts it first; ranking on dollar volume puts PRICEY first, which
+    # is the point of "most active" -- where the money went, not share count.
     rows = [
         _row("PENNY", 5.0, volume_today=1_000_000.0, last_price=1.0),  # $1M
         _row("PRICEY", 5.0, volume_today=200_000.0, last_price=20.0),  # $4M

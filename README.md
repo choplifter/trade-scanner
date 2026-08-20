@@ -12,7 +12,7 @@ info/news, a dashboard-wide momentum alarm, AI-generated trade-idea
 annotations, a scanner-wide benchmark against SPY, a persistent scanner
 match history with fade-risk analysis, one-click backtesting of whatever
 screen you're looking at, CLI tools for re-validating the ranking formula
-against live and historical data, and a Plotly Dash analytics app — powered by Alpaca Markets' real-time IEX data feed, with
+against live and historical data, and a Plotly Dash analytics app — powered by Alpaca Markets' real-time consolidated (SIP) data feed, with
 float/market cap/short interest/company info and gap-filling news layered
 in from Financial Modeling Prep and FINRA.
 
@@ -92,10 +92,9 @@ backend on port 8000, so both must be running.
   **Most Active** are ordinary screens you can open, read and edit — load one
   and its filters and sort appear in the filter bar. Editing it shows
   "Custom" instead of claiming you're still on the preset. **Most Active**
-  ranks by **dollar** volume, direction-agnostic: a raw share-volume level is
-  the most IEX-distorted number available, since IEX is one exchange's varying
-  slice of the tape, whereas weighting by price tracks where the money
-  actually went. **Premarket Gainers** is the one exception and stays a fixed
+  ranks by **dollar** volume, direction-agnostic: weighting by price tracks
+  where the money actually went, rather than ranking a $6 name above a $45 one
+  on share count alone. **Premarket Gainers** is the one exception and stays a fixed
   view — it's the gap frozen at the 09:30 open, not a question about the
   current rows, so no filter expresses it and the filter bar hides itself
   there.
@@ -429,15 +428,19 @@ past dates.
 
 ## Known limitations
 
-- **Feed**: uses Alpaca's free real-time **IEX** feed, which is a
-  single-exchange view, not the consolidated SIP tape. Gap %/volume numbers
-  will be directionally right but won't exactly match SIP-based tools like
-  Trade-Ideas. Upgrading later is a one-line change: set `ALPACA_DATA_FEED=sip`
-  in `backend/.env` once you have a paid Alpaca market-data subscription.
-  IEX can also occasionally return a stale/erroneous single-trade print for
+- **Feed**: runs on Alpaca's consolidated **SIP** tape, which needs a paid
+  Alpaca market-data subscription. Without one, set `ALPACA_DATA_FEED=iex` in
+  `backend/.env` — the free single-exchange feed. Everything still works on
+  it, but every volume *level* (today's volume, dollar volume, RVOL, volume
+  surge) is then a small and symbol-dependent fraction of reality — measured
+  2026-08-19, IEX saw 3.2% of AAPL's volume and 3.9% of F's — while ratios
+  like gap % and VWAP survive nearly intact. The **Tape Coverage %** column
+  reports this per row and should read ~100% on SIP. Note the volume-based
+  universe filters (`UNIVERSE_MIN_AVG_VOLUME`) and `SCANNER_MIN_DOLLAR_VOLUME`
+  mean very different things across the two feeds, so they need re-tuning if
+  you switch. A feed can also return a stale/erroneous single-trade print for
   thin names; `resolve_last_price` (`app/scanners/formulas.py`) discards a
-  print that falls outside 2x the day's own recorded high/low range, but
-  this is a sanity check, not a substitute for the consolidated tape.
+  print that falls outside 2x the day's own recorded high/low range.
 - **Recent stock splits**: Alpaca's live snapshot endpoint has no
   split-adjustment option, so a symbol that split recently would show a
   nonsensical gap % (prev_close on the old share basis vs. a post-split
@@ -541,9 +544,7 @@ past dates.
   daily-bar lookback can re-derive `_FADE_RISK_RVOL` for it. That one is
   answered by `rvol_backtest_report.py` instead (see above).
   And `most_active` is replayed but doesn't read like the other two views:
-  daily bars carry consolidated-tape volume where the live scanner sees a
-  partial IEX slice (the reason that view ranks on dollar volume at all),
-  and `--max-symbols` selects the universe's top N *by dollar volume*, so
+  `--max-symbols` selects the universe's top N *by dollar volume*, so
   it ranks by dollar volume over a set already sorted by dollar volume and
   its picks repeat far more than the other views'. Measured at the CLI
   defaults (180 days, 300 symbols): `most_active` drew on 62.6% of the

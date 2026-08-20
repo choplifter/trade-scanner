@@ -95,20 +95,32 @@ class FundamentalsCache:
         None when FMP hasn't reported a volume for this symbol yet, which is
         "unknown", not "fine".
 
-        The Alpaca IEX feed reports only trades routed through IEX, and that
-        share swings by orders of magnitude between symbols -- measured on
-        2026-08-17, 3.04% of AAPL's tape and 0.24% of IPST's. Every volume
-        *level* the app computes inherits that: volume_today,
-        dollar_volume_today, rvol, volume_surge and rvol_1h are all a small
-        and symbol-dependent fraction of reality.
+        Its original job is done. This existed to quantify the damage the
+        free IEX feed did: IEX reports only trades routed through IEX, a
+        share that swung by orders of magnitude between symbols -- measured
+        2026-08-17, 3.04% of AAPL's tape and 0.24% of IPST's -- and every
+        volume *level* the app computes inherited that (volume_today,
+        dollar_volume_today, rvol, volume_surge, rvol_1h were all a small,
+        symbol-dependent fraction of reality). Since 2026-08-20 the app runs
+        on SIP, the consolidated tape, so this should now read ~100% for
+        every symbol.
 
-        Note what this does NOT invalidate. VWAP was the original motivation
-        and turned out not to need it: on that same IPST session, at 0.24%
-        coverage, our VWAP came out 7.8122 against 7.8149 computed from
-        full-tape FMP bars. A ratio of two quantities drawn from the same
-        sample survives a small sample far better than either quantity does
-        alone, so partial volume damages levels while leaving the
-        volume-weighted average price close to right.
+        It stays, as the instrument that says so. A reading well below 100%
+        on SIP is a real signal -- a feed misconfiguration (ALPACA_DATA_FEED
+        silently back on iex, a lapsed subscription) that would otherwise
+        show up only as quietly wrong volume everywhere. Note FMP and Alpaca
+        move on different cadences intraday, so expect noise around 100%
+        rather than the number exactly; read an *order of magnitude* below
+        as the alarm.
+
+        Note what partial coverage never invalidated, in case this app ever
+        runs on iex again. VWAP was the original motivation and turned out
+        not to need it: on that same IPST session, at 0.24% coverage, our
+        VWAP came out 7.8122 against 7.8149 computed from full-tape FMP
+        bars. A ratio of two quantities drawn from the same sample survives
+        a small sample far better than either quantity does alone, so
+        partial volume damaged levels while leaving the volume-weighted
+        average price close to right.
 
         FMP's profile carries consolidated-tape volume in the request that
         already fetches market cap, so this costs no extra call. Both sides

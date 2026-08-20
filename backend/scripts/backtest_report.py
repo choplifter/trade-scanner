@@ -22,10 +22,9 @@ docstring for why each is out of scope for this pass:
     against past dates, which has survivorship bias.
 
 The "most_active" view is replayed but reads differently from the other
-two: daily bars are consolidated-tape volume where the live scanner sees
-a partial IEX slice, and --max-symbols selects by avg_dollar_vol_20d, so
-this ranks by dollar volume over a set already pre-sorted by dollar
-volume. Expect it near-degenerate at small --max-symbols.
+two: --max-symbols selects by avg_dollar_vol_20d, so this ranks by dollar
+volume over a set already pre-sorted by dollar volume. Expect it
+near-degenerate at small --max-symbols.
 
 Does cover is_shaved_top (app.market_data.candle_shape) on its own,
 without the 15m % gate the live momentum alarm pairs it with: did the
@@ -70,8 +69,7 @@ def _print_report(report: dict) -> None:
     print("   resolution), the momentum alarm itself (15m % is a minute-resolution")
     print("   concept), and today's universe membership is applied across the whole")
     print("   lookback window (survivorship bias).")
-    print("   most_active reads differently from the other two views: daily bars are")
-    print("   consolidated-tape volume vs. the live partial IEX slice, and --max-symbols")
+    print("   most_active reads differently from the other two views: --max-symbols")
     print("   already pre-sorts by dollar volume, so its picks repeat far more than the")
     print("   other views' -- measured at the defaults it drew on 62.6% of the symbol")
     print("   pool with 16 names present on >=90% of days, against ~100% and none for")

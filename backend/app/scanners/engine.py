@@ -98,15 +98,15 @@ def _rank_most_active(
     """By dollar volume traded today -- direction-agnostic, unlike
     gainers/losers, so no pct_change filter.
 
-    Ranked on dollar volume rather than raw share volume specifically because
-    of the IEX feed: IEX is one exchange's slice of the consolidated tape, and
-    that slice varies by symbol, so a raw volume *level* is only ever a partial
-    count. Dollar volume is computed from the same partial count but weights by
-    price, which makes the ordering track "where the money actually went"
-    instead of "which symbol happens to route more flow through IEX". A ratio
-    like gap % survives a partial tape; an absolute level is the most distorted
-    thing this feed can be asked for. (Setting ALPACA_DATA_FEED=sip with a paid
-    subscription resolves the underlying issue.)
+    Ranked on dollar volume rather than raw share volume. The original reason
+    was the IEX feed -- one exchange's slice of the consolidated tape, varying
+    by symbol, so a raw volume *level* was only ever a partial count and
+    weighting by price at least made the ordering track "where the money went"
+    instead of "which symbol routes more flow through IEX". That reason is
+    gone as of 2026-08-20 (ALPACA_DATA_FEED=sip: the volume is now the real
+    volume), but the ranking stays as-is on its own merit: dollar volume is
+    the better "most active" measure regardless of feed, since it doesn't rank
+    a $6 name above a $45 one purely on share count.
 
     catalyst_boost=False for the same reason as _rank_losers: the headline
     multiplier is gainers-only (see formulas._CATALYST_BOOST).
