@@ -43,6 +43,15 @@ class IndicatorContext:
     minute_bars: pd.DataFrame
     weekly_bars: pd.DataFrame
     monthly_bars: pd.DataFrame
+    # Hourly bars, alongside the weekly and monthly ones above: one more
+    # resolution an indicator can choose, not a property of the request.
+    #
+    # This is the structural anchor. A level is worth trading because it held
+    # on a timeframe with real participation, and it has to stay put while
+    # you drop to a faster chart to time the entry -- so the indicator that
+    # draws it reads this regardless of what the chart is showing. See
+    # app.indicators.market_structure.
+    hourly_bars: pd.DataFrame
     # Which chart resolution the caller asked for. Indicators do not read
     # this themselves -- the loader uses it to decide which of them run at
     # all, so an indicator's compute() never has to think about zoom.
@@ -80,6 +89,7 @@ def build_context(
     weekly_bars: list,
     monthly_bars: list,
     timeframe: str = "1Min",
+    hourly_bars: list | None = None,
 ) -> IndicatorContext:
     return IndicatorContext(
         symbol=symbol,
@@ -87,6 +97,7 @@ def build_context(
         weekly_bars=_bars_to_df(weekly_bars),
         monthly_bars=_bars_to_df(monthly_bars),
         timeframe=timeframe,
+        hourly_bars=_bars_to_df(hourly_bars or []),
     )
 
 

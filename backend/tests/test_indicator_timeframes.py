@@ -53,6 +53,7 @@ def test_every_indicator_is_offered_on_the_minute_chart():
         "Daily Range",
         "Weekly Range",
         "Monthly Range",
+        "Market Structure",
     }
 
 
@@ -86,6 +87,19 @@ def test_the_weekly_range_survives_up_to_the_weekly_chart():
     assert "Weekly Range" not in _names_at("1Month")
 
 
+def test_market_structure_is_drawn_up_to_its_anchor():
+    """Anchored on hourly bars and shown on the charts traded from -- the
+    levels have to be identical on 1m, 5m/15m and 1h or the workflow of
+    marking structure on the hourly chart and dropping down to enter is
+    broken. Above the anchor they would be sixty days of hourly structure
+    pinned to the edge of a multi-year chart."""
+    assert "Market Structure" in _names_at("1Min")
+    assert "Market Structure" in _names_at("1Hour")
+    assert "Market Structure" not in _names_at("4Hour")
+    assert "Market Structure" not in _names_at("1Day")
+    assert "Market Structure" not in _names_at("1Month")
+
+
 def test_the_premarket_range_drops_above_the_daily_chart():
     """A fraction of one session, so a daily candle already contains it whole."""
     assert "Premarket Range" in _names_at("1Day")
@@ -93,7 +107,7 @@ def test_the_premarket_range_drops_above_the_daily_chart():
 
 
 def test_the_monthly_chart_keeps_only_the_monthly_range():
-    """Of the range levels, that is -- the ungated overlays stay throughout."""
+    """Of the range levels, that is -- the ungated indicators stay throughout."""
     assert _names_at("1Month") == {"Monthly Range", "VWAP", "EMA"}
 
 

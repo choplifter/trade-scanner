@@ -44,8 +44,18 @@ def _bar_to_dict(bar) -> dict:
     }
 
 
+async def _already_fetched(bars: list) -> list:
+    """Lets a bar list the caller already holds take part in the gather below
+    without a second round trip."""
+    return bars
+
+
 async def _compute_indicators(
-    clients: AlpacaClients, symbol: str, minute_bars: list, timeframe: str
+    clients: AlpacaClients,
+    symbol: str,
+    minute_bars: list,
+    timeframe: str,
+    hourly_bars: list | None = None,
 ) -> list[dict]:
     """Reference lines and overlays for the chart.
 
@@ -62,11 +72,17 @@ async def _compute_indicators(
     single chart load (this endpoint fires on every symbol click,
     including rapid ones from the heatmap).
     """
-    weekly_bars, monthly_bars = await asyncio.gather(
+    weekly_bars, monthly_bars, anchor_bars = await asyncio.gather(
         get_historical_bars(clients, symbol, "1Week"),
         get_historical_bars(clients, symbol, "1Month"),
+        # Hourly bars are the structural anchor (see the market-structure
+        # indicator), needed whatever the chart is showing -- except when the
+        # chart *is* hourly and the caller already has them.
+        _already_fetched(hourly_bars)
+        if hourly_bars is not None
+        else get_historical_bars(clients, symbol, "1Hour"),
     )
-    ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars, timeframe)
+    ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars, timeframe, anchor_bars)
     return run_indicators(ctx)
 
 
@@ -120,7 +136,9 @@ async def get_symbol_bars(
             get_historical_bars(clients, symbol, timeframe),
             get_intraday_minute_bars(clients, symbol),
         )
-        indicators = await _compute_indicators(clients, symbol, minute_bars, timeframe)
+        indicators = await _compute_indicators(
+            clients, symbol, minute_bars, timeframe, bars if timeframe == "1Hour" else None
+        )
         return {
             "symbol": symbol,
             "bars": [_bar_to_dict(b) for b in bars],
