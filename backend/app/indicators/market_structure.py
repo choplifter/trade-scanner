@@ -150,6 +150,16 @@ def _shade(kisses: int) -> str:
     return _SHADES.get(kisses, _STRONGEST)
 
 
+# How these lines are drawn. Width in pixels, dash one of solid / dotted /
+# dashed / large-dashed / sparse-dotted. Omit either key for the default.
+#
+# Heavier than the range levels rather than a differently dashed: these are
+# derived from a count of visits rather than read off one completed period,
+# and the extra weight says "more evidence behind this line" without adding a
+# fourth pattern to tell apart at a glance.
+STYLE = {"width": 3, "dash": "dashed"}
+
+
 def _key(kisses: int, ordinal: int) -> str:
     """Label for one level: how many times it was kissed, plus a
     disambiguator when two levels tie -- the dict the loader returns is keyed

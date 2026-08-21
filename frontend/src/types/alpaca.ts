@@ -101,11 +101,21 @@ export type ChartSocketMessage = ChartBarMessage | ChartErrorMessage;
  * both frontends draw generically either way). Backed by whatever .py files
  * currently exist in backend/app/indicators/ -- this list is not a fixed
  * set of names. */
+/** How one indicator's lines are drawn. Declared per indicator file
+ * (see STYLE in the backend's indicator loader) so weight and dash pattern
+ * can distinguish one kind of line from another; either key may be absent,
+ * and an absent STYLE leaves the default for the indicator's kind. */
+export interface IndicatorStyle {
+  width?: number;
+  dash?: "solid" | "dotted" | "dashed" | "large-dashed" | "sparse-dotted";
+}
+
 export interface IndicatorResult {
   name: string;
   kind: "level" | "series";
   series: Record<string, number | null | { t: string; value: number | null }[]>;
   colors: Record<string, string>;
+  style?: IndicatorStyle;
 }
 
 export interface SymbolBarsResponse {

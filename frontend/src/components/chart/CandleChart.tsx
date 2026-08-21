@@ -19,7 +19,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 
-import type { Bar, IndicatorResult } from "../../types/alpaca";
+import type { Bar, IndicatorResult, IndicatorStyle } from "../../types/alpaca";
 import { crosshairTimeFormatter, tickMarkFormatter } from "../../utils/chartTime";
 
 /** Candles carry open/high/low; a line carries only the close. Both read the
@@ -155,6 +155,33 @@ function toLinePoints<T>(
   });
 }
 
+
+/** The dash patterns an indicator may name, mapped to the library's enum.
+ * Kept as names on the wire so an indicator file declares intent ("dotted")
+ * rather than a number that only means something inside lightweight-charts. */
+const DASH_PATTERNS: Record<string, LineStyle> = {
+  solid: LineStyle.Solid,
+  dotted: LineStyle.Dotted,
+  dashed: LineStyle.Dashed,
+  "large-dashed": LineStyle.LargeDashed,
+  "sparse-dotted": LineStyle.SparseDotted,
+};
+
+/** Defaults per indicator kind, chosen to reproduce exactly what every
+ * indicator looked like before STYLE existed -- so a file that declares
+ * nothing renders unchanged. */
+const DEFAULT_LEVEL_STYLE = { width: 1, dash: LineStyle.Dashed };
+const DEFAULT_SERIES_STYLE = { width: 2, dash: LineStyle.Solid };
+
+function resolveStyle(style: IndicatorStyle | undefined, defaults: { width: number; dash: LineStyle }) {
+  return {
+    width: style?.width ?? defaults.width,
+    // An unrecognised name falls back rather than throwing: a new pattern
+    // added backend-side should degrade to the default line, not blank the
+    // whole indicator.
+    dash: (style?.dash && DASH_PATTERNS[style.dash]) ?? defaults.dash,
+  };
+}
 
 export function CandleChart({
   bars,
@@ -492,19 +519,22 @@ export function CandleChart({
 
           if (indicator.kind === "level") {
             if (typeof value !== "number") return;
+            const style = resolveStyle(indicator.style, DEFAULT_LEVEL_STYLE);
             const line = priceSeries.createPriceLine({
               price: value,
               color,
-              lineWidth: 1,
-              lineStyle: LineStyle.Dashed,
+              lineWidth: style.width as 1 | 2 | 3 | 4,
+              lineStyle: style.dash,
               axisLabelVisible: true,
               title,
             });
             priceLinesRef.current.push(line);
           } else if (indicator.kind === "series" && Array.isArray(value)) {
+            const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
             const series = chart.addSeries(LineSeries, {
               color,
-              lineWidth: 2,
+              lineWidth: style.width as 1 | 2 | 3 | 4,
+              lineStyle: style.dash,
               crosshairMarkerVisible: false,
               lastValueVisible: true,
               title,

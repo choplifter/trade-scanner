@@ -22,6 +22,9 @@ from app.services.market_clock import ET, trading_hours_for
 NAME = "Daily Range"
 KIND = "level"
 COLORS = {"High": "#2f9c8f", "Low": "#2f9c8f"}
+# How these lines are drawn. Width in pixels, dash one of solid / dotted /
+# dashed / large-dashed / sparse-dotted. Omit either key for the default.
+STYLE = {"width": 1, "dash": "dashed"}
 # A day's range is contained inside a single weekly candle, so above 1Day
 # these lines describe something the chart cannot show being crossed.
 MAX_TIMEFRAME = "1Day"

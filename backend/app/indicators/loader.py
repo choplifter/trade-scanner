@@ -13,10 +13,22 @@ Each indicator file exposes:
     NAME: str -- display group name, e.g. "Premarket Range"
     KIND: "level" | "series"
     COLORS: dict[str, str] (optional) -- sub-series name -> hex color
+    STYLE: dict (optional) -- how this indicator's lines are drawn:
+        {"width": int, "dash": "solid"|"dotted"|"dashed"|"large-dashed"|
+         "sparse-dotted"}. Either key may be omitted. Omitting STYLE
+        entirely leaves the client's default for the indicator's kind, which
+        is what every indicator got before this existed.
     MAX_TIMEFRAME: str (optional) -- the coarsest chart timeframe this still
         says something at; omitted means every timeframe
     def compute(ctx: IndicatorContext) -> dict[str, ...] -- sub-series name
         -> value (float|None for "level") or point list (for "series")
+
+STYLE is per indicator rather than one setting in the renderer because
+weight and dash pattern are how a reader tells one *kind* of line from
+another at a glance -- a level tested nine times and a premarket boundary
+should not look identical just because both happen to be horizontal. Keeping
+it here means an indicator file owns its whole appearance, colour included,
+instead of half of it living in the chart component.
 
 MAX_TIMEFRAME exists because an indicator describing one period is noise
 once a single candle covers that period or more: yesterday's high sits
@@ -45,6 +57,11 @@ logger = logging.getLogger(__name__)
 _DIR = Path(__file__).parent
 _EXCLUDED = {"__init__.py", "context.py", "loader.py"}
 
+# The dash patterns STYLE may name. Mirrored by the client, which maps them to
+# its own drawing enum -- kept here as well so a typo in an indicator file is
+# caught by a test rather than silently rendering as the default line.
+DASH_PATTERNS = ("solid", "dotted", "dashed", "large-dashed", "sparse-dotted")
+
 
 def _load_module(path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(f"_indicator_{path.stem}", path)
@@ -70,6 +87,7 @@ def run_indicators(ctx: IndicatorContext) -> list[dict]:
                 "kind": module.KIND,
                 "series": module.compute(ctx),
                 "colors": getattr(module, "COLORS", {}),
+                "style": getattr(module, "STYLE", {}),
             }
         except Exception:
             logger.exception("Indicator %s failed to load/compute -- skipping", path.name)

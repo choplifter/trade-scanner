@@ -18,6 +18,9 @@ KIND = "level"
 # Close in a lighter shade of the same purple: same period, different kind of
 # level, and it should not read as a third boundary of the range.
 COLORS = {"High": "#7a4fd6", "Low": "#7a4fd6", "Close": "#a98ae8"}
+# How these lines are drawn. Width in pixels, dash one of solid / dotted /
+# dashed / large-dashed / sparse-dotted. Omit either key for the default.
+STYLE = {"width": 1, "dash": "dashed"}
 # Same reasoning as the daily range one step up: a week fits inside one
 # monthly candle.
 MAX_TIMEFRAME = "1Week"

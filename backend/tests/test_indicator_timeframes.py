@@ -12,8 +12,9 @@ here instead of on the chart.
 
 import pytest
 
+from app.indicators import daily_range, market_structure, weekly_range
 from app.indicators.context import TIMEFRAME_ORDER, build_context, timeframe_rank
-from app.indicators.loader import run_indicators
+from app.indicators.loader import DASH_PATTERNS, run_indicators
 
 
 def _names_at(timeframe):
@@ -125,3 +126,58 @@ def test_the_offered_set_only_ever_shrinks_as_the_chart_coarsens():
         if previous is not None:
             assert names <= previous, f"{timeframe} added indicators back: {names - previous}"
         previous = names
+
+
+# --- how each indicator says it should be drawn -------------------------
+
+
+def _results_at(timeframe="1Min"):
+    return run_indicators(build_context("TEST", [], [], [], timeframe))
+
+
+def test_every_indicator_reports_a_style():
+    """Present even when the file declares nothing, so the client always has
+    the key and falls back on its own defaults rather than on undefined."""
+    for result in _results_at():
+        assert "style" in result, result["name"]
+        assert isinstance(result["style"], dict)
+
+
+def test_a_declared_style_reaches_the_client():
+    """Checks the pass-through, deliberately not the specific look: which
+    dash an indicator uses is a preference its file owns, and a test that
+    pins one turns every restyling into a failing build."""
+    styles = {r["name"]: r["style"] for r in _results_at()}
+    declared = {
+        "Market Structure": market_structure.STYLE,
+        "Daily Range": daily_range.STYLE,
+        "Weekly Range": weekly_range.STYLE,
+    }
+
+    for name, expected in declared.items():
+        assert styles[name] == expected, name
+
+
+def test_an_indicator_without_a_style_gets_an_empty_one():
+    """VWAP and the EMAs declare none, so they keep the client's default for
+    a series -- exactly what they rendered as before STYLE existed."""
+    styles = {r["name"]: r["style"] for r in _results_at()}
+
+    assert styles["VWAP"] == {}
+    assert styles["EMA"] == {}
+
+
+def test_declared_dash_patterns_are_spelled_correctly():
+    """A typo would not raise anywhere -- the client falls back to its
+    default line -- so the indicator would just quietly stop looking the way
+    its author wrote down."""
+    for result in _results_at():
+        dash = result["style"].get("dash")
+        assert dash is None or dash in DASH_PATTERNS, f"{result['name']}: {dash!r}"
+
+
+def test_declared_widths_are_drawable():
+    """lightweight-charts takes 1-4; anything else is silently ignored."""
+    for result in _results_at():
+        width = result["style"].get("width")
+        assert width is None or width in (1, 2, 3, 4), f"{result['name']}: {width!r}"
