@@ -6,6 +6,7 @@ import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
 import { CandleChart } from "./CandleChart";
+import type { ChartType } from "./CandleChart";
 import { SymbolInfoPanel } from "./SymbolInfoPanel";
 
 interface ChartWidgetProps {
@@ -16,6 +17,15 @@ interface ChartWidgetProps {
 }
 
 const DEFAULT_TIMEFRAME_KEY = "5m";
+
+const CHART_TYPES: { key: ChartType; label: string; title: string }[] = [
+  { key: "candles", label: "Candles", title: "Open/high/low/close candles" },
+  {
+    key: "line",
+    label: "Line",
+    title: "Closing price only -- the shape of the move without the wicks",
+  },
+];
 
 export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   const [timeframeKey, setTimeframeKey] = useState(DEFAULT_TIMEFRAME_KEY);
@@ -43,6 +53,9 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   // On a gapper these are genuinely different lines -- IPST 2026-08-17 closed
   // at 7.39 with the session line at 7.81 and the premarket one near 7.18.
   const [vwapFromPremarket, setVwapFromPremarket] = useState(false);
+  // Kept across symbol and timeframe changes: how someone wants price drawn
+  // is a preference, not a property of what they are looking at.
+  const [chartType, setChartType] = useState<ChartType>("candles");
   const intraday = useChartFeed(symbol);
   const historical = useHistoricalBars(
     symbol,
@@ -122,6 +135,20 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
               </button>
             ))}
           </div>
+          <div className="timeframe-selector" role="group" aria-label="Chart type">
+            {CHART_TYPES.map((type) => (
+              <button
+                key={type.key}
+                type="button"
+                className="timeframe-button"
+                aria-pressed={chartType === type.key}
+                onClick={() => setChartType(type.key)}
+                title={type.title}
+              >
+                {type.label}
+              </button>
+            ))}
+          </div>
           {option.kind === "intraday" && (
             <button
               type="button"
@@ -165,6 +192,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
         ) : (
           <CandleChart
             bars={displayed.bars}
+            chartType={chartType}
             vwap={displayed.vwap}
             indicators={displayed.indicators}
             showIndicators={showIndicators}

@@ -13,6 +13,7 @@ import {
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type LineData,
+  type IRange,
   type Time,
   type WhitespaceData,
   type UTCTimestamp,
@@ -21,8 +22,14 @@ import {
 import type { Bar, IndicatorResult } from "../../types/alpaca";
 import { crosshairTimeFormatter, tickMarkFormatter } from "../../utils/chartTime";
 
+/** Candles carry open/high/low; a line carries only the close. Both read the
+ * same bars -- the line is for seeing the shape of a move without the wicks,
+ * which on a thin premarket tape is mostly noise. */
+export type ChartType = "candles" | "line";
+
 interface CandleChartProps {
   bars: Bar[];
+  chartType: ChartType;
   vwap: (number | null)[];
   indicators: IndicatorResult[];
   showIndicators: boolean;
@@ -64,6 +71,10 @@ function toUnixSeconds(iso: string): UTCTimestamp {
 
 function barToCandle(bar: Bar): CandlestickData {
   return { time: toUnixSeconds(bar.t), open: bar.o, high: bar.h, low: bar.l, close: bar.c };
+}
+
+function barToClose(bar: Bar): LineData {
+  return { time: toUnixSeconds(bar.t), value: bar.c };
 }
 
 function barToVolume(bar: Bar): HistogramData {
@@ -145,10 +156,25 @@ function toLinePoints<T>(
 }
 
 
-export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime }: CandleChartProps) {
+export function CandleChart({
+  bars,
+  chartType,
+  vwap,
+  indicators,
+  showIndicators,
+  focusTime,
+}: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  // Whichever series is currently drawing price. Held as one ref rather than
+  // two because everything else on the chart -- the markers primitive, the
+  // indicator price lines -- attaches to "the price series" and should not
+  // care which shape it is.
+  const priceSeriesRef = useRef<ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | null>(null);
+  // Viewport captured just before a candle/line swap, for the data effect to
+  // put back. Held in a ref rather than restored on the spot because the new
+  // series has no data yet at that point.
+  const pendingRangeRef = useRef<IRange<Time> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
@@ -202,15 +228,10 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
       autoSize: true,
     });
 
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#0ca30c",
-      downColor: "#d03b3b",
-      borderVisible: false,
-      wickUpColor: "#0ca30c",
-      wickDownColor: "#d03b3b",
-    });
-    candleSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.3 } });
-
+    // The price series itself is created by its own effect below, so
+    // switching between candles and a line swaps one series instead of
+    // tearing down the chart (which would lose the user's zoom on every
+    // toggle).
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceScaleId: "volume",
       priceFormat: { type: "volume" },
@@ -227,7 +248,6 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
     });
 
     chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
     vwapSeriesRef.current = vwapSeries;
 
@@ -259,7 +279,7 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
       chart.timeScale().unsubscribeSizeChange(handleSizeChange);
       chart.remove();
       chartRef.current = null;
-      candleSeriesRef.current = null;
+      priceSeriesRef.current = null;
       volumeSeriesRef.current = null;
       // Belonged to the series just disposed -- left set, the focus effect
       // would call setMarkers on a dead primitive after a remount.
@@ -277,13 +297,72 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
     };
   }, []);
 
+  // Creating the price series separately from the chart is what makes the
+  // candle/line toggle cheap: only this series is torn down and rebuilt, so
+  // the chart, its volume pane and the user's zoom all survive the switch.
   useEffect(() => {
-    const candleSeries = candleSeriesRef.current;
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const series =
+      chartType === "line"
+        ? chart.addSeries(LineSeries, {
+            // The palette's foreground rather than a colour of its own: a
+            // close-only line is the price itself, not one more overlay
+            // competing with VWAP and the level lines.
+            color:
+              getComputedStyle(document.body).getPropertyValue("--text-primary").trim() ||
+              "#0b0b0b",
+            lineWidth: 2,
+            lastValueVisible: true,
+          })
+        : chart.addSeries(CandlestickSeries, {
+            upColor: "#0ca30c",
+            downColor: "#d03b3b",
+            borderVisible: false,
+            wickUpColor: "#0ca30c",
+            wickDownColor: "#d03b3b",
+          });
+    // Leaves the bottom third to the volume histogram, as before.
+    series.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.3 } });
+    priceSeriesRef.current = series;
+
+    return () => {
+      // Guarded on the chart still being live: on unmount the mount effect's
+      // chart.remove() has already disposed every series, and removeSeries on
+      // a disposed chart throws.
+      const liveChart = chartRef.current;
+      if (liveChart) {
+        // Before the series goes. Without this the toggle snaps back to the
+        // default right-anchored window, throwing away whatever the user had
+        // scrolled to -- which makes comparing the two renderings of the same
+        // stretch of chart impossible.
+        pendingRangeRef.current = liveChart.timeScale().getVisibleRange();
+      }
+      if (liveChart && priceSeriesRef.current) {
+        liveChart.removeSeries(priceSeriesRef.current);
+      }
+      priceSeriesRef.current = null;
+      // Both belonged to the series just removed. Left set, the effects that
+      // own them would act on a dead object after the swap.
+      markersRef.current = null;
+      priceLinesRef.current = [];
+    };
+  }, [chartType]);
+
+  useEffect(() => {
+    const priceSeries = priceSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
     const vwapSeries = vwapSeriesRef.current;
-    if (!candleSeries || !volumeSeries || !vwapSeries) return;
+    if (!priceSeries || !volumeSeries || !vwapSeries) return;
 
-    candleSeries.setData(bars.map(barToCandle));
+    // Narrowed rather than unioned: setData is the one method whose argument
+    // genuinely differs between the two series shapes.
+    if (chartType === "line") {
+      (priceSeries as ISeriesApi<"Line">).setData(bars.map(barToClose));
+    } else {
+      (priceSeries as ISeriesApi<"Candlestick">).setData(bars.map(barToCandle));
+    }
     volumeSeries.setData(bars.map(barToVolume));
 
     vwapSeries.setData(
@@ -296,10 +375,23 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
 
     barCountRef.current = bars.length;
 
+    const pendingRange = pendingRangeRef.current;
+    pendingRangeRef.current = null;
+
     // A focused pick owns the viewport: re-applying the default
     // right-anchored range here would immediately scroll away from the bar
     // the user just clicked, on this render and again on every live tick.
     if (focusTime != null) return;
+
+    if (pendingRange) {
+      // Same stretch of chart, drawn the other way.
+      const chart = chartRef.current;
+      if (chart) {
+        chart.timeScale().setVisibleRange(pendingRange);
+        applyLabelClearance(chart, showIndicators);
+      }
+      return;
+    }
 
     const container = containerRef.current;
     if (container) {
@@ -312,21 +404,26 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
     }
     // showIndicators is a dependency because this effect repositions the
     // viewport, and the margin has to be re-asserted whenever it does.
-  }, [bars, vwap, focusTime, showIndicators]);
+    // chartType is one because the swap above leaves a brand-new, empty
+    // series behind -- without it, toggling would blank the price until the
+    // next tick.
+  }, [bars, vwap, focusTime, showIndicators, chartType]);
 
   // Scroll a clicked backtest pick into view and pin it with an arrow. Runs
   // after the data effect above, so the bars it needs are already on the
   // series.
   useEffect(() => {
     const chart = chartRef.current;
-    const candleSeries = candleSeriesRef.current;
-    if (!chart || !candleSeries) return;
+    const priceSeries = priceSeriesRef.current;
+    if (!chart || !priceSeries) return;
 
     // Created once and reused, because createSeriesMarkers stacks a fresh
     // primitive layer on the series every call -- so calling it per focus
-    // change would pile up layers instead of replacing the marker.
+    // change would pile up layers instead of replacing the marker. The
+    // series swap clears this ref, so a toggle re-attaches it to the new
+    // series rather than to the disposed one.
     if (!markersRef.current) {
-      markersRef.current = createSeriesMarkers(candleSeries, []);
+      markersRef.current = createSeriesMarkers(priceSeries, []);
     }
     const markerTime = focusTime == null ? null : nearestBarTime(bars, focusTime);
     markersRef.current.setMarkers(
@@ -356,7 +453,7 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
       from: Math.max(first, target - FOCUS_PADDING_SECONDS) as UTCTimestamp,
       to: Math.min(last, target + FOCUS_PADDING_SECONDS) as UTCTimestamp,
     });
-  }, [focusTime, bars]);
+  }, [focusTime, bars, chartType]);
 
   // Separate from the bars/vwap effect above: indicators only change when
   // the symbol changes or the toggle flips, not on every live tick, and
@@ -366,8 +463,8 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
   // just a value on the existing candle series.
   useEffect(() => {
     const chart = chartRef.current;
-    const candleSeries = candleSeriesRef.current;
-    if (!chart || !candleSeries) return;
+    const priceSeries = priceSeriesRef.current;
+    if (!chart || !priceSeries) return;
 
     // Adding/removing a "series"-kind indicator (e.g. an EMA, sourced from
     // 1-minute bars regardless of the displayed timeframe) can be a much
@@ -379,7 +476,7 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
     // it.
     const preservedRange = chart.timeScale().getVisibleRange();
 
-    priceLinesRef.current.forEach((line) => candleSeries.removePriceLine(line));
+    priceLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
     priceLinesRef.current = [];
     indicatorSeriesRef.current.forEach((series) => chart.removeSeries(series));
     indicatorSeriesRef.current = [];
@@ -395,7 +492,7 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
 
           if (indicator.kind === "level") {
             if (typeof value !== "number") return;
-            const line = candleSeries.createPriceLine({
+            const line = priceSeries.createPriceLine({
               price: value,
               color,
               lineWidth: 1,
@@ -431,7 +528,9 @@ export function CandleChart({ bars, vwap, indicators, showIndicators, focusTime 
     // After the restore, never before: setVisibleRange repositions the
     // content and drops the margin.
     applyLabelClearance(chart, showIndicators);
-  }, [indicators, showIndicators]);
+    // chartType, because the price lines live on the price series and the
+    // swap disposes them along with it.
+  }, [indicators, showIndicators, chartType]);
 
   return <div ref={containerRef} className="chart-container" />;
 }
