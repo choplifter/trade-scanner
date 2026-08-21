@@ -33,6 +33,14 @@ class ScannerRow(BaseModel):
     short_interest_pct: float | None = None
     country: str | None = None
     company_name: str | None = None
+    # The company's sector, off the same FMP profile the fields above come
+    # from -- carried so the sector-attribution page can work as a pure
+    # function over rows rather than reaching into FundamentalsCache while
+    # rendering (where it could see a different cache generation than the
+    # rows it is drawing). Ranked-only like its neighbours, which is why it
+    # is deliberately absent from the screener's field registry -- see the
+    # module docstring in app.scanners.screener.
+    sector: str | None = None
     # Most recent news headline, if any, refreshed on a slow cadence for
     # whatever's currently ranked -- see app.market_data.news_cache.NewsCache.
     recent_headline: str | None = None

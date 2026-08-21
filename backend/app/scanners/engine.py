@@ -30,10 +30,16 @@ from app.scanners.history_store import NewAppearance, ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
 from app.scanners.latest_session import compute_latest_session_rows
 from app.scanners.schemas import ScannerRow
+from app.scanners.sector_attribution import SECTOR_ETFS
 from app.services.market_clock import ET, current_session, trading_hours_for
 from app.ws.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
+
+# Sector ETFs move on a different timescale than the names being scanned --
+# a whole sector does not reprice inside five seconds -- so they are refreshed
+# on their own slower clock rather than on every poll tick.
+_SECTOR_ETF_INTERVAL = 60.0
 
 _SNAPSHOT_BATCH_SIZE = 300
 _TOP_N = 50
@@ -216,6 +222,14 @@ class ScannerEngine:
         self._premarket_snapshot: list[ScannerRow] | None = None
         self._latest_session_rows: dict[str, ScannerRow] | None = None
         self._last_backstop_refresh: float = 0.0
+        # Day % change per sector ETF, for app.scanners.sector_attribution.
+        # Polled here rather than by the page that reads it so stock and
+        # sector prices go stale together: both are gated on the same
+        # can_poll, and comparing a live ETF against closed-market fallback
+        # rows would subtract two different days from each other.
+        self.sector_etf_pct_change: dict[str, float] = {}
+        self.sector_etf_updated_at: datetime | None = None
+        self._last_sector_etf_refresh: float = 0.0
         self._last_history_snapshot: float = 0.0
         self._split_ratios: dict[str, tuple[float, date]] = {}
         self._last_split_refresh: float = 0.0
@@ -641,6 +655,7 @@ class ScannerEngine:
                     row.short_interest_pct = data.short_interest_pct
                     row.country = data.profile.country if data.profile else None
                     row.company_name = data.profile.name if data.profile else None
+                    row.sector = data.profile.sector if data.profile else None
 
     async def _attach_news(self, views: dict[str, list[ScannerRow]]) -> None:
         """Fill in each row's most recent news headline for whatever's
@@ -788,6 +803,64 @@ class ScannerEngine:
                 self.benchmark_price = price
         except Exception:
             logger.exception("Benchmark (%s) snapshot poll failed", self.benchmark_symbol)
+
+    async def _poll_sector_etfs(self) -> None:
+        """Refresh self.sector_etf_pct_change -- one snapshot for the eleven
+        SPDR sector ETFs plus SPY.
+
+        Like the benchmark above, these sit outside the universe's price
+        filter and need their own small call. Unlike it, what is wanted here
+        is a *day change* rather than a bare price, because the attribution
+        subtracts three same-day percentages -- benchmark_price is a price
+        because the tracker measures entry-to-now instead.
+
+        Throttled on the same monotonic guard the movers backstop uses.
+        """
+        now = time.monotonic()
+        if (
+            self.sector_etf_pct_change
+            and now - self._last_sector_etf_refresh < _SECTOR_ETF_INTERVAL
+        ):
+            return
+        self._last_sector_etf_refresh = now
+
+        symbols = sorted({*SECTOR_ETFS.values(), self.benchmark_symbol})
+        try:
+            snap = await asyncio.to_thread(
+                self.clients.data.get_stock_snapshot,
+                StockSnapshotRequest(symbol_or_symbols=symbols, feed=self.clients.feed),
+            )
+        except Exception:
+            logger.exception("Sector ETF snapshot poll failed")
+            return
+
+        for symbol in symbols:
+            # Per symbol, and never clearing the dict wholesale: one
+            # unparseable snapshot must not cost the other eleven.
+            try:
+                s = snap.get(symbol)
+                if s is None or s.previous_daily_bar is None:
+                    continue
+                prev_close = s.previous_daily_bar.close
+                last = formulas.resolve_last_price(
+                    s.latest_trade.price if s.latest_trade else None,
+                    s.daily_bar.close if s.daily_bar else None,
+                    prev_close,
+                    # Passed so the bad-print sanity check applies, the way
+                    # _compute_rows does -- _poll_benchmark omits them.
+                    s.daily_bar.low if s.daily_bar else None,
+                    s.daily_bar.high if s.daily_bar else None,
+                )
+                if last is None:
+                    continue
+                pct = formulas.pct_change(last, prev_close)
+                if pct is not None:
+                    self.sector_etf_pct_change[symbol] = pct
+            except Exception:
+                logger.warning("Could not read sector ETF snapshot for %s", symbol, exc_info=True)
+
+        if self.sector_etf_pct_change:
+            self.sector_etf_updated_at = datetime.now(timezone.utc)
 
     async def _record_new_appearances(self, views: dict[str, list[ScannerRow]]) -> None:
         """Log the first time each symbol shows up in a *ranked* view (not
@@ -945,6 +1018,7 @@ class ScannerEngine:
                 )
                 await self._poll_once()
                 await self._poll_benchmark()
+                await self._poll_sector_etfs()
             else:
                 interval = self.settings.scanner_poll_interval_regular
                 if new_symbols:

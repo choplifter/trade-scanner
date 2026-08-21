@@ -36,7 +36,8 @@ type SortKey =
   | "market_cap"
   | "short_interest_pct"
   | "exchange"
-  | "country";
+  | "country"
+  | "sector";
 
 type SortValue = string | number | null;
 
@@ -59,6 +60,7 @@ const SORT_ACCESSORS: Record<SortKey, (row: ScannerRow) => SortValue> = {
   short_interest_pct: (r) => r.short_interest_pct,
   exchange: (r) => r.exchange,
   country: (r) => r.country,
+  sector: (r) => r.sector,
 };
 
 /** The window column is the one label that isn't fixed: it reports whatever
@@ -79,6 +81,7 @@ function columns(windowMinutes: number): { id: SortKey; label: string }[] {
     { id: "short_interest_pct", label: "Short %" },
     { id: "exchange", label: "Exchange" },
     { id: "country", label: "Country" },
+    { id: "sector", label: "Sector" },
   ];
 }
 
@@ -250,6 +253,7 @@ export function ScannerTable({
             <td>{cell(row.short_interest_pct, formatShortInterestPct)}</td>
             <td>{stringCell(row.exchange)}</td>
             <td>{stringCell(row.country)}</td>
+            <td>{stringCell(row.sector)}</td>
           </tr>
         ))}
       </tbody>

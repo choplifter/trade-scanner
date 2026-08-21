@@ -16,6 +16,11 @@ export interface ScannerRow {
   market_cap: number | null;
   short_interest_pct: number | null;
   country: string | null;
+  /** The company's sector, from the same FMP profile as country/company_name
+   * and populated for ranked rows only. Drives the sector-attribution page;
+   * deliberately not a screener field, since a filter on something null for
+   * most of the universe would silently match nothing. */
+  sector: string | null;
   company_name: string | null;
   recent_headline: string | null;
   /** % price change over just the trailing 15 minutes -- distinct from
