@@ -43,6 +43,10 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
   const [stopPrice, setStopPrice] = useState("");
   const [riskPct, setRiskPct] = useState(String(defaultRiskPct));
   const [takeProfit, setTakeProfit] = useState("");
+  // null means "whatever the server derives from the ticket" -- a protected
+  // ticket defaults to gtc so its legs outlive the close. Clicking either
+  // button pins the choice instead.
+  const [timeInForce, setTimeInForce] = useState<"day" | "gtc" | null>(null);
 
   const [preview, setPreview] = useState<OrderPreview | null>(null);
   const [rejection, setRejection] = useState<TradingRejection | null>(null);
@@ -88,6 +92,9 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
       symbol,
       side,
       order_type: orderType,
+      // Only when pinned. Left out, the server decides -- keeping that rule
+      // in one place instead of restating it here where it could drift.
+      ...(timeInForce ? { time_in_force: timeInForce } : {}),
       ...(orderType === "limit" ? { limit_price: numberOrUndefined(limitPrice) } : {}),
       ...(takeProfit.trim() ? { take_profit_price: numberOrUndefined(takeProfit) } : {}),
       ...(sizingMode === "shares"
@@ -164,6 +171,11 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
         symbol: order.symbol,
         side: order.side as "buy" | "sell",
         order_type: order.order_type as "market" | "limit",
+        // Carried from the priced order rather than recomputed: the user
+        // confirmed a ticket that said gtc or day, and submitting without it
+        // would silently fall back to the default -- which is how a bracket
+        // ends up as a day order nobody chose.
+        time_in_force: order.time_in_force as "day" | "gtc",
         ...(order.limit_price !== null ? { limit_price: order.limit_price } : {}),
         ...(order.take_profit_price !== null ? { take_profit_price: order.take_profit_price } : {}),
         // Submit the resolved quantity rather than re-sending the risk inputs:
@@ -191,6 +203,13 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
       setSubmitting(false);
     }
   };
+
+  // What the ticket will actually be sent as: the server's own answer once it
+  // has priced one, the same rule applied locally before that.
+  const effectiveTimeInForce =
+    (preview?.order.time_in_force as "day" | "gtc" | undefined) ??
+    timeInForce ??
+    (takeProfit.trim() || sizingMode === "risk" ? "gtc" : "day");
 
   return (
     <div className="order-ticket">
@@ -227,6 +246,24 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
               onClick={() => setOrderType(t)}
             >
               {t === "market" ? "Market" : "Limit"}
+            </button>
+          ))}
+        </div>
+        <div className="timeframe-selector">
+          {(["day", "gtc"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="timeframe-button"
+              aria-pressed={effectiveTimeInForce === t}
+              onClick={() => setTimeInForce(t)}
+              title={
+                t === "day"
+                  ? "Expires at the close -- including any take-profit and stop-loss legs, which leaves an overnight position unprotected."
+                  : "Stays working until filled or cancelled, so the protective legs survive the close."
+              }
+            >
+              {t === "day" ? "Day" : "GTC"}
             </button>
           ))}
         </div>

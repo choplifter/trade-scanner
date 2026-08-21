@@ -45,7 +45,10 @@ class OrderTicket(BaseModel):
     symbol: str = Field(min_length=1, max_length=12)
     side: Side
     order_type: OrderType = "market"
-    time_in_force: Literal["day", "gtc"] = "day"
+    # None means "decide from the ticket" -- see resolve_time_in_force. Day
+    # and gtc are the only two Alpaca accepts on a bracket, and every ticket
+    # here can become one.
+    time_in_force: Literal["day", "gtc"] | None = None
 
     # Exactly one of qty / risk, for the same reason as above.
     qty: int | None = Field(default=None, gt=0)
@@ -61,6 +64,27 @@ class OrderTicket(BaseModel):
     client_order_id: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
+    def resolve_time_in_force(self) -> "OrderTicket":
+        """Default a protected ticket to gtc, an unprotected one to day.
+
+        A day order's legs die at the close while the position they were
+        protecting does not. Observed on this account: four positions held
+        overnight, every one of them with its take-profit `expired` and its
+        stop-loss `canceled` at the previous close, leaving them naked. A
+        stop that silently stops existing is worse than no stop at all,
+        because the position still looks protected on the ticket that placed
+        it.
+
+        Alpaca has no per-leg time_in_force -- TakeProfitRequest carries only
+        a limit price, StopLossRequest a stop price -- so "gtc legs behind a
+        day entry" is not expressible, and the whole bracket goes gtc. An
+        explicit choice from the caller always wins.
+        """
+        if self.time_in_force is None:
+            self.time_in_force = "gtc" if self.has_protective_exit else "day"
+        return self
+
+    @model_validator(mode="after")
     def check_shape(self) -> "OrderTicket":
         if (self.qty is None) == (self.risk is None):
             raise ValueError("Provide exactly one of qty or risk.")
@@ -69,6 +93,21 @@ class OrderTicket(BaseModel):
         if self.order_type == "market" and self.limit_price is not None:
             raise ValueError("A market order cannot carry a limit_price.")
         return self
+
+    @property
+    def has_protective_exit(self) -> bool:
+        """Whether this ticket places something that closes the position by
+        itself.
+
+        Risk sizing counts even with no explicit stop_loss_price: resolve_ticket
+        adopts the sizing stop as the stop-loss leg, so a ticket sized from a
+        stop always ends up placing one.
+        """
+        return (
+            self.take_profit_price is not None
+            or self.stop_loss_price is not None
+            or self.risk is not None
+        )
 
     @property
     def order_class(self) -> str:

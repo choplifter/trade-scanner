@@ -196,6 +196,11 @@ export interface ResolvedOrder {
   symbol: string;
   side: string;
   order_type: string;
+  /** What the order will actually be sent as. Derived server-side when the
+   * ticket does not pin it: a ticket carrying protective legs defaults to
+   * gtc, because a day order's legs expire at the close while the position
+   * they protect does not. */
+  time_in_force: string;
   order_class: string;
   qty: number;
   entry_reference: number;

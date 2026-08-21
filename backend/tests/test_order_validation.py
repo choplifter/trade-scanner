@@ -194,3 +194,66 @@ def test_the_ceiling_message_says_what_to_change():
     with pytest.raises(OrderRejected) as exc:
         _resolve(OrderTicket(symbol="AAPL", side="buy", qty=1_000), max_notional=500.0)
     assert "widen" in exc.value.message and "risk %" in exc.value.message
+
+
+# --- how long the order lives --------------------------------------------
+#
+# The case these exist for: four positions were found held overnight with
+# every take-profit `expired` and every stop-loss `canceled` at the previous
+# close. The entries were day orders, and Alpaca applies one time_in_force to
+# a whole bracket -- so the protection died with the session while the
+# position it protected did not.
+
+
+def _ticket(**kwargs):
+    return OrderTicket(symbol="AAA", side="buy", **kwargs)
+
+
+def test_a_bare_ticket_is_a_day_order():
+    """Nothing to outlive the session, so nothing to keep working."""
+    assert _ticket(qty=10).time_in_force == "day"
+
+
+def test_a_take_profit_makes_it_good_till_cancelled():
+    assert _ticket(qty=10, take_profit_price=12.0).time_in_force == "gtc"
+
+
+def test_a_stop_loss_makes_it_good_till_cancelled():
+    assert _ticket(qty=10, stop_loss_price=8.0).time_in_force == "gtc"
+
+
+def test_risk_sizing_counts_as_protection_even_with_no_explicit_stop():
+    """The subtle one. A risk-sized ticket names no stop_loss_price, but
+    resolve_ticket adopts the sizing stop as the stop-loss leg -- so it does
+    place protection, and that protection has to survive the close."""
+    ticket = _ticket(risk=RiskSizing(stop_price=8.0, risk_pct_of_equity=1.0))
+
+    assert ticket.has_protective_exit
+    assert ticket.time_in_force == "gtc"
+    assert _resolve(ticket).stop_loss_price == 8.0
+
+
+@pytest.mark.parametrize("chosen", ["day", "gtc"])
+def test_an_explicit_choice_always_wins(chosen):
+    """The default is a default, not a policy -- someone who deliberately
+    wants a day bracket gets one."""
+    ticket = _ticket(qty=10, take_profit_price=12.0, stop_loss_price=8.0, time_in_force=chosen)
+
+    assert ticket.time_in_force == chosen
+
+
+def test_the_choice_survives_into_the_resolved_order():
+    """What the ticket is submitted as, and what the client echoes back on
+    confirm -- submitting without it is how a bracket silently becomes a day
+    order nobody chose."""
+    resolved = _resolve(_ticket(qty=10, take_profit_price=12.0))
+
+    assert resolved.time_in_force == "gtc"
+    assert resolved.order_class == "oto"
+
+
+def test_only_the_two_values_a_bracket_accepts_are_allowed():
+    """Alpaca takes day or gtc on a bracket and nothing else, and every
+    ticket here can become one."""
+    with pytest.raises(ValidationError):
+        _ticket(qty=10, time_in_force="ioc")
