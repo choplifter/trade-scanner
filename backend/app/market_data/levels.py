@@ -80,7 +80,7 @@ _MIN_EXCURSION_FRACTION = 0.10
 # chart. Measured top/3rd/6th counts at 3.5: MARA 11/9/9 intraday, 11/10/10
 # daily, 6/6/5 weekly; AAPL 10/8/8, 6/6/5, 6/6/4.
 #
-# Narrowed from 3.5 to 2.5 for resolution, not from a measurement. At 3.5 the
+# Narrowed from 3.5 for resolution, not from a measurement. At 3.5 the
 # band on an $8-range stock is 0.29, so two levels 0.20 apart merge and the
 # line is drawn between them, at a price neither of them is. This is a choice
 # about how fine the answer should be and it is worth being plain that it is
@@ -89,7 +89,14 @@ _MIN_EXCURSION_FRACTION = 0.10
 # single symbol, not evidence for 2.5 -- it is set here because a level a
 # trader can point to is worth more than a tidier chart, and the ranking
 # change below is what actually fixed the problem.
-_RANGE_FRACTION_PCT = 2.5
+#
+# 2.0 rather than 2.5 at the user's request, after 2.5 could not resolve a
+# level they could point to on ALOY. It lives here, as the shared default,
+# rather than only in the indicator: the strategies aim at these levels and
+# the chart draws them, and the entire reason the arithmetic was moved out of
+# the indicator was so those two could not disagree. A dial that changed only
+# the drawing would have quietly reintroduced exactly that.
+_RANGE_FRACTION_PCT = 2.0
 
 # Floor for the band, as a percentage of price, for a halted or barely-traded
 # name whose bars are all but identical -- its span is nearly zero, and so
