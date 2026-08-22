@@ -16,6 +16,7 @@ import pytest
 from app.market_data import opening_range as orange
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT, STOP_ON_CLOSE
 from app.services.market_clock import trading_hours_for
+from app.strategies import breakout
 from app.strategies import opening_range_breakout as rule
 from app.strategies.context import StrategyContext
 
@@ -185,7 +186,7 @@ def test_the_break_is_read_on_the_close_not_the_wick():
 
 
 def test_a_close_barely_past_the_level_is_not_a_break():
-    just_over = _bar(5, 10.4, 10.55, 10.35, 10.5 + 10.5 * rule.BREAK_BUFFER_PCT / 2)
+    just_over = _bar(5, 10.4, 10.55, 10.35, 10.5 + 10.5 * breakout.BREAK_BUFFER_PCT / 2)
 
     assert rule.evaluate(_ctx([_opening_bar(), just_over])) is None
 
@@ -194,7 +195,7 @@ def test_the_setup_is_managed_the_way_the_method_says():
     signal = rule.evaluate(_ctx([_opening_bar(), _break_long()]))
 
     assert signal.stop_trigger == STOP_ON_CLOSE
-    assert signal.scale_out == rule.SCALE_OUT
+    assert signal.scale_out == breakout.SCALE_OUT
 
 
 # --- what stops it firing -------------------------------------------------
@@ -213,7 +214,7 @@ def test_nothing_fires_before_the_range_is_finished():
 
 
 def test_a_break_long_after_the_open_is_not_an_opening_range_break():
-    late = _break_long(minutes=rule.OPENING_MINUTES + rule.BREAKOUT_WINDOW_MINUTES + 10)
+    late = _break_long(minutes=rule.OPENING_MINUTES + breakout.BREAKOUT_WINDOW_MINUTES + 10)
 
     assert rule.evaluate(_ctx([_opening_bar(), late])) is None
 
