@@ -63,7 +63,7 @@ def intraday_chart_lookback_start_utc(
     return start_et.astimezone(timezone.utc)
 
 
-# Native Alpaca resolution the momentum alarm computes its 15m%/VWAP/
+# Native Alpaca resolution the momentum alarm computes its momentum/VWAP/
 # shape-and-color confirmation from -- see app.scanners.momentum_cache and
 # app.scanners.momentum_backtest. Was 1-minute bars; a single 1-minute
 # print is noisy, and 5-minute is the smallest size that still reads as a

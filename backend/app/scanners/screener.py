@@ -18,7 +18,7 @@ Dash app.
 
 Deliberately v1: only fields computed for the *whole* universe on every
 poll are screenable. Market cap, short interest, country, recent headline
-and 15-minute momentum are attached only to symbols already in a ranked
+and momentum are attached only to symbols already in a ranked
 view (see engine._attach_fundamentals/_attach_news/_attach_momentum),
 because fetching them for all ~2000 universe symbols costs far more API
 calls than the ranked ~150 do. Screening on a field that is None for 93%

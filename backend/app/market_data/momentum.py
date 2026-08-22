@@ -15,7 +15,13 @@ from datetime import timedelta
 
 from app.services.market_clock import ET, trading_hours_for
 
-MOMENTUM_WINDOW = timedelta(minutes=15)
+MOMENTUM_WINDOW = timedelta(minutes=30)
+
+# The same thing in whole minutes, for payloads and labels. Derived rather
+# than written out, so a client can never disagree with the window the
+# numbers were actually computed over -- which is exactly what the old
+# hardcoded "15m %" column header did the moment this changed.
+MOMENTUM_WINDOW_MINUTES = int(MOMENTUM_WINDOW.total_seconds() // 60)
 
 
 def is_regular_session_bar(bar) -> bool:

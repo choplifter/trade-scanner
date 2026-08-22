@@ -72,6 +72,10 @@ export interface ScreenResponse {
    * may have been submitted with. Column headers label themselves from
    * this. */
   window_minutes: number;
+  /** Trailing window behind row.momentum_pct, in minutes. Global rather than
+   * per-screen, but sent alongside so the column labels itself instead of
+   * hardcoding a number that goes stale when the window changes. */
+  momentum_window_minutes: number;
   rows: ScannerRow[];
   /** { field_name: { symbol: value } } for derived fields only. */
   derived: Record<string, Record<string, number | null>>;

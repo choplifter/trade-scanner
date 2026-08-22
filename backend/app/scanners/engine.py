@@ -672,7 +672,7 @@ class ScannerEngine:
                 row.recent_headline = self.news_cache.get(row.symbol)
 
     async def _attach_momentum(self, views: dict[str, list[ScannerRow]]) -> None:
-        """Fill in each row's trailing-15-minute pct change for whatever's
+        """Fill in each row's trailing-window pct change for whatever's
         actually ranked right now -- see
         app.scanners.momentum_cache.MomentumCache for why this is scoped to
         the ranked views (and refreshed on its own slow cadence) instead of
@@ -685,7 +685,7 @@ class ScannerEngine:
         window = timedelta(minutes=self.settings.scanner_volume_surge_window_minutes)
         for rows in views.values():
             for row in rows:
-                row.pct_change_last_15m = self.momentum_cache.get(row.symbol)
+                row.momentum_pct = self.momentum_cache.get(row.symbol)
                 # How much of the real tape our feed saw today -- a health
                 # figure for volume levels, not for VWAP. See
                 # FundamentalsCache.tape_coverage_pct. Correct here only
@@ -695,7 +695,7 @@ class ScannerEngine:
                     row.symbol, row.volume_today
                 )
                 row.is_momentum_alert = formulas.is_momentum_alert(
-                    row.pct_change_last_15m,
+                    row.momentum_pct,
                     self.momentum_cache.is_shaved_top(row.symbol),
                     self.momentum_cache.is_green(row.symbol),
                     self.momentum_cache.is_above_vwap(row.symbol),

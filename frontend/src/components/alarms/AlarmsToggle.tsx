@@ -23,7 +23,7 @@ export function AlarmsToggle({ enabled, onToggle, activeCount, onClickCount }: A
         className="alarms-toggle"
         aria-pressed={enabled}
         onClick={() => onToggle(!enabled)}
-        title="Alarm on a fast, wick-less move -- a large 15-minute price change with almost no pullback candle"
+        title="Alarm on a fast, wick-less move -- a large price change over the momentum window with almost no pullback candle"
       >
         Alarms {enabled ? "On" : "Off"}
       </button>

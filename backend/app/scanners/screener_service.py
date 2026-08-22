@@ -11,6 +11,7 @@ rather than each assembling derived values for itself and drifting.
 from datetime import timedelta
 
 from app.market_data import volume_surge
+from app.market_data.momentum import MOMENTUM_WINDOW_MINUTES
 from app.scanners import formulas, screener
 from app.scanners.engine import _has_headline, _tradable
 
@@ -114,6 +115,7 @@ def run_live_screen(engine, settings, screen: screener.Screen):
         # was submitted with: the client labels its column from this, and
         # "RVol (null m)" is not a header.
         "window_minutes": minutes,
+        "momentum_window_minutes": MOMENTUM_WINDOW_MINUTES,
         "is_latest_session": engine.is_latest_session_fallback,
         "total_matched": result.total_matched,
         "tradable_size": len(rows),

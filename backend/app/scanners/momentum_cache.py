@@ -1,4 +1,4 @@
-"""Per-symbol trailing-15-minute momentum cache for the live scanner
+"""Per-symbol trailing-window momentum cache for the live scanner
 tables.
 
 Mirrors app.market_data.news_cache.NewsCache: cache per symbol, refresh
@@ -43,9 +43,9 @@ class MomentumCache:
     def __init__(self, settings: Settings, clients: AlpacaClients):
         self.settings = settings
         self.clients = clients
-        self._pct_change_15m: dict[str, float | None] = {}
+        self._momentum_pct: dict[str, float | None] = {}
         # All three computed from the same 5-minute bar fetch as
-        # pct_change_15m above (see app.market_data.bars.
+        # momentum_pct above (see app.market_data.bars.
         # MOMENTUM_BAR_TIMEFRAME), no extra API call -- see
         # formulas.is_momentum_alert (long side only: a fast upward move
         # confirmed by a shaved-top candle that's also green, trading
@@ -65,7 +65,7 @@ class MomentumCache:
         self._fetched_at: dict[str, float] = {}
 
     def get(self, symbol: str) -> float | None:
-        return self._pct_change_15m.get(symbol)
+        return self._momentum_pct.get(symbol)
 
     def is_shaved_top(self, symbol: str) -> bool:
         return self._is_shaved_top.get(symbol, False)
@@ -120,7 +120,7 @@ class MomentumCache:
             # Only a regular-session bar may report momentum, matching the
             # backtest exactly (see momentum.is_regular_session_bar).
             # Outside 09:30-16:00 ET there is no meaningful "momentum right
-            # now": a trailing 15-minute window would span the market close
+            # now": a trailing momentum window would span the market close
             # and compare a thin after-hours print against the last
             # regular-session price. The window itself may still reach back
             # into the same day's premarket, which is what keeps the
@@ -133,7 +133,7 @@ class MomentumCache:
             # forever, which also stops the alarm firing on one.
             latest_bar = bars[-1] if bars and is_regular_session_bar(bars[-1]) else None
             session_bars = [b for b in bars if same_trading_day(b, latest_bar)] if latest_bar else []
-            self._pct_change_15m[symbol] = pct_change_over_window(session_bars, MOMENTUM_WINDOW)
+            self._momentum_pct[symbol] = pct_change_over_window(session_bars, MOMENTUM_WINDOW)
             if latest_bar is not None:
                 self._is_shaved_top[symbol] = is_shaved_top(
                     latest_bar.open, latest_bar.high, latest_bar.low, latest_bar.close

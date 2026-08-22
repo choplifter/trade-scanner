@@ -36,6 +36,7 @@ from app.ai.trade_idea_tracker import TrackedIdea
 from app.ai.trade_ideas import TradeIdea, generate_trade_ideas
 from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
+from app.market_data.momentum import MOMENTUM_WINDOW_MINUTES
 from app.dash_app.theme import (
     ACCENT,
     DELTA_DOWN,
@@ -72,7 +73,7 @@ _TABLE_COLUMNS = [
     {"name": "Company", "id": "company_name"},
     {"name": "Last", "id": "last"},
     {"name": "Chg %", "id": "chg"},
-    {"name": "15m %", "id": "mom15"},
+    {"name": f"{MOMENTUM_WINDOW_MINUTES}m %", "id": "momentum"},
     {"name": "$ Vol", "id": "vol"},
     {"name": "RVol", "id": "rvol"},
     {"name": "Float", "id": "float_shares"},
@@ -92,8 +93,8 @@ def _format_pct(value: float) -> str:
     return f"{sign}{value:.2f}%"
 
 
-# "—" for pct_change_last_15m -- None until the momentum cache has fetched
-# it, or when there isn't yet 15 minutes of bars to compare against (see
+# "—" for momentum_pct -- None until the momentum cache has fetched
+# it, or when there isn't yet a full window of bars to compare against (see
 # app.scanners.momentum_cache.MomentumCache), same "—" convention as the
 # fundamentals fields below.
 def _format_pct_or_dash(value: float | None) -> str:
@@ -152,7 +153,7 @@ _COLUMN_SORT_KEYS = {
     "symbol": lambda r: r.symbol,
     "last": lambda r: r.last_price,
     "chg": lambda r: r.pct_change,
-    "mom15": lambda r: r.pct_change_last_15m,
+    "momentum": lambda r: r.momentum_pct,
     "vol": lambda r: r.dollar_volume_today,
     "rvol": lambda r: r.rvol,
     "float_shares": lambda r: r.float_shares,
@@ -207,7 +208,7 @@ def _table_rows(rows) -> list[dict]:
             "company_name": _format_string(r.company_name),
             "last": _format_price(r.last_price),
             "chg": _format_pct(r.pct_change),
-            "mom15": _format_pct_or_dash(r.pct_change_last_15m),
+            "momentum": _format_pct_or_dash(r.momentum_pct),
             "vol": _format_market_cap(r.dollar_volume_today),
             "rvol": _format_rvol(r.rvol),
             "float_shares": _format_shares(r.float_shares),
@@ -216,7 +217,7 @@ def _table_rows(rows) -> list[dict]:
             "exchange": _format_string(r.exchange),
             "country": _format_string(r.country),
             "pct_change_num": r.pct_change,
-            "mom15_num": r.pct_change_last_15m,
+            "momentum_num": r.momentum_pct,
         }
         for r in rows
     ]
@@ -241,7 +242,7 @@ def _tooltip_data(rows) -> list[dict]:
             )
         if r.is_momentum_alert:
             bits.append(
-                "Fast, wick-less move -- a large 15-minute price change with almost no "
+                "Fast, wick-less move -- a large price change over the momentum window with almost no "
                 "pullback candle"
             )
         return " · ".join(bits)
@@ -451,11 +452,11 @@ def layout(**_kwargs):
                                             "color": DELTA_DOWN,
                                         },
                                         {
-                                            "if": {"filter_query": "{mom15_num} >= 0", "column_id": "mom15"},
+                                            "if": {"filter_query": "{momentum_num} >= 0", "column_id": "momentum"},
                                             "color": DELTA_UP,
                                         },
                                         {
-                                            "if": {"filter_query": "{mom15_num} < 0", "column_id": "mom15"},
+                                            "if": {"filter_query": "{momentum_num} < 0", "column_id": "momentum"},
                                             "color": DELTA_DOWN,
                                         },
                                         {

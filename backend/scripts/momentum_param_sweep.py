@@ -1,4 +1,4 @@
-"""Parameter sweep for the momentum backtest's long side: which 15m%
+"""Parameter sweep for the momentum backtest's long side: which momentum
 threshold and forward-return horizon combination looks best against
 history? Fetches 5-minute bars ONCE (cached, see app.scanners.bar_cache)
 then cheaply re-simulates app.scanners.momentum_backtest.
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--lookback-days", type=int, default=30, help="Calendar days of 5-minute-bar history to replay (default: 30)")
     parser.add_argument(
-        "--thresholds", default="1,2,3,5,7,10", help="Comma-separated 15m%% thresholds to test (default: 1,2,3,5,7,10)"
+        "--thresholds", default="1,2,3,5,7,10", help="Comma-separated momentum thresholds to test (default: 1,2,3,5,7,10)"
     )
     parser.add_argument(
         "--horizons",

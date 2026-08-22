@@ -214,14 +214,14 @@ def rank_score(
 
 
 def is_momentum_alert(
-    pct_change_last_15m: float | None,
+    momentum_pct: float | None,
     is_shaved_top: bool,
     is_green: bool,
     is_above_vwap: bool,
     threshold: float,
 ) -> bool:
     """A fast, still-confirming *upward* move, long setups only: the
-    trailing-15-minute price change is at least `threshold`, and the most
+    trailing-price change over the momentum window is at least `threshold`, and the most
     recent 1-minute candle confirms it three ways -- closed at/near its
     high (shaved top, see app.market_data.candle_shape.is_shaved_top),
     closed green (close > open, not just a long lower wick that happens to
@@ -249,9 +249,9 @@ def is_momentum_alert(
     does not, on the evidence, distort the volume-weighted *average
     price*. That's why nothing here needed re-calibrating for SIP.
     """
-    if pct_change_last_15m is None:
+    if momentum_pct is None:
         return False
-    if pct_change_last_15m <= 0 or pct_change_last_15m < threshold:
+    if momentum_pct <= 0 or momentum_pct < threshold:
         return False
     return is_shaved_top and is_green and is_above_vwap
 

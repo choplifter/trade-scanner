@@ -21,7 +21,7 @@ export function AlarmsOverlay({ open, alarms, onClose, onSelectSymbol }: AlarmsO
           </button>
         </div>
         <p className="alarms-panel-subtitle">
-          Fast, wick-less moves -- a large 15-minute price change with almost no pullback candle.
+          Fast, wick-less moves -- a large price change over the momentum window with almost no pullback candle.
         </p>
         <ul className="alarms-list">
           {alarms.map(({ row, firstSeenAt }) => (
@@ -35,8 +35,8 @@ export function AlarmsOverlay({ open, alarms, onClose, onSelectSymbol }: AlarmsO
             >
               <span className="alarms-symbol">{row.symbol}</span>
               <span className="alarms-price">{formatPrice(row.last_price)}</span>
-              <span className={(row.pct_change_last_15m ?? 0) >= 0 ? "delta-up" : "delta-down"}>
-                {row.pct_change_last_15m === null ? "—" : formatPct(row.pct_change_last_15m)} / 15m
+              <span className={(row.momentum_pct ?? 0) >= 0 ? "delta-up" : "delta-down"}>
+                {row.momentum_pct === null ? "—" : formatPct(row.momentum_pct)} / 15m
               </span>
               <span className="alarms-time">
                 {new Date(firstSeenAt).toLocaleTimeString(undefined, {

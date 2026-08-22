@@ -15,6 +15,8 @@ export interface ScannerFeedState {
    * views always run on the server's global setting; the column labels
    * itself from this rather than assuming 60. */
   windowMinutes: number;
+  /** The trailing window row.momentum_pct was computed over, in minutes. */
+  momentumWindowMinutes: number;
 }
 
 /**
@@ -31,6 +33,7 @@ export function useScannerFeed(scanner: string | null): ScannerFeedState {
   const [loading, setLoading] = useState(true);
   const [isLatestSession, setIsLatestSession] = useState(false);
   const [windowMinutes, setWindowMinutes] = useState(0);
+  const [momentumWindowMinutes, setMomentumWindowMinutes] = useState(0);
 
   useEffect(() => {
     if (scanner === null) return;
@@ -44,6 +47,7 @@ export function useScannerFeed(scanner: string | null): ScannerFeedState {
         setSession(res.session);
         setIsLatestSession(res.is_latest_session);
         setWindowMinutes(res.window_minutes);
+        setMomentumWindowMinutes(res.momentum_window_minutes);
         setLoading(false);
       })
       .catch(() => {
@@ -55,6 +59,7 @@ export function useScannerFeed(scanner: string | null): ScannerFeedState {
       setSession(msg.session);
       setIsLatestSession(msg.is_latest_session);
       setWindowMinutes(msg.window_minutes);
+      setMomentumWindowMinutes(msg.momentum_window_minutes);
       setLoading(false);
     });
 
@@ -64,5 +69,5 @@ export function useScannerFeed(scanner: string | null): ScannerFeedState {
     };
   }, [scanner]);
 
-  return { rows, session, loading, isLatestSession, windowMinutes };
+  return { rows, session, loading, isLatestSession, windowMinutes, momentumWindowMinutes };
 }

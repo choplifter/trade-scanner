@@ -44,15 +44,15 @@ class ScannerRow(BaseModel):
     # Most recent news headline, if any, refreshed on a slow cadence for
     # whatever's currently ranked -- see app.market_data.news_cache.NewsCache.
     recent_headline: str | None = None
-    # % price change over just the trailing 15 minutes, refreshed on a slow
+    # % price change over just the momentum window, refreshed on a slow
     # cadence for whatever's currently ranked -- see
     # app.scanners.momentum_cache.MomentumCache. Distinct from pct_change
     # (since prior close): a symbol can have a huge pct_change from earlier
     # in the session while this reads ~0 because it's since gone flat, or
     # vice versa for a fresh late-session breakout. None until fetched, or
-    # when there isn't yet 15 minutes of bars to compare against.
-    pct_change_last_15m: float | None = None
-    # True when pct_change_last_15m is at least settings.alarm_momentum_pct_threshold
+    # when there isn't yet a full window of bars to compare against.
+    momentum_pct: float | None = None
+    # True when momentum_pct is at least settings.alarm_momentum_pct_threshold
     # *and* the latest 1-minute candle confirms it (shaved top, green, and
     # trading above session VWAP) -- long setups only, see
     # app.scanners.formulas.is_momentum_alert. Drives the frontend's

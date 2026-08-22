@@ -23,14 +23,14 @@ export interface ScannerRow {
   sector: string | null;
   company_name: string | null;
   recent_headline: string | null;
-  /** % price change over just the trailing 15 minutes -- distinct from
+  /** % price change over just the momentum window -- distinct from
    * pct_change (since prior close): a symbol can carry a huge pct_change
    * from earlier in the session while this reads ~0 because it's since
    * gone flat, or vice versa for a fresh late-session breakout. Null
-   * until fetched, or when there isn't yet 15 minutes of bars to compare
+   * until fetched, or when there isn't yet a full window of bars to compare
    * against. */
-  pct_change_last_15m: number | null;
-  /** True when pct_change_last_15m exceeds the alarm threshold in
+  momentum_pct: number | null;
+  /** True when momentum_pct exceeds the alarm threshold in
    * magnitude *and* the latest 1-minute candle is a marubozu (almost no
    * wick) -- see backend app.scanners.formulas.is_momentum_alert. Drives
    * the momentum-alarm overlay (see hooks/useAlarms), off by default. */
@@ -72,6 +72,10 @@ export interface ScannerUpdateMessage {
   /** Trailing window behind row.rvol_1h, in minutes -- so the column can
    * label itself instead of hardcoding "1h". */
   window_minutes: number;
+  /** Trailing window behind row.momentum_pct, in minutes. Global rather than
+   * per-screen, but sent alongside so the column labels itself instead of
+   * hardcoding a number that goes stale when the window changes. */
+  momentum_window_minutes: number;
   rows: ScannerRow[];
 }
 

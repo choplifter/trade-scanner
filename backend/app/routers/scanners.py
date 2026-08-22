@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request
 
+from app.market_data.momentum import MOMENTUM_WINDOW_MINUTES
 from app.scanners.benchmark_tracker import compute_performance
 
 router = APIRouter(prefix="/api/scanners", tags=["scanners"])
@@ -58,5 +59,6 @@ async def get_scanner(name: str, request: Request) -> dict:
         "session": engine.session,
         "is_latest_session": engine.is_latest_session_fallback,
         "window_minutes": engine.settings.scanner_volume_surge_window_minutes,
+        "momentum_window_minutes": MOMENTUM_WINDOW_MINUTES,
         "rows": [r.model_dump(mode="json") for r in rows],
     }

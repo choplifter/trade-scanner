@@ -1,6 +1,6 @@
 """5-minute-bar historical backtest for the live momentum alarm: does
 requiring the shaved-top/green/above-VWAP confirmation actually improve
-on the 15m% threshold alone? Replays historical 5-minute bars through the
+on the momentum threshold alone? Replays historical 5-minute bars through the
 *actual* production functions (see app.scanners.momentum_backtest) -- not
 a reimplementation of the live alarm's logic, the literal same
 formulas.is_momentum_alert call. Long side only, matching the live alarm
@@ -80,11 +80,11 @@ def _print_report(report: dict) -> None:
     min_n = report["min_sample_size"]
     comparison = report["comparison"]
 
-    print(f"Threshold only (15m% >= {report['threshold']}%, no confirmation check):")
+    print(f"Threshold only (momentum >= {report['threshold']}%, no confirmation check):")
     print(_fmt_bucket("threshold only", comparison["threshold_only"], min_n))
     print()
 
-    print(f"Full alert (15m% >= {report['threshold']}% AND shaved top AND green AND above VWAP):")
+    print(f"Full alert (momentum >= {report['threshold']}% AND shaved top AND green AND above VWAP):")
     print(_fmt_bucket("full alert", comparison["full_alert"], min_n))
 
 
@@ -121,7 +121,7 @@ if __name__ == "__main__":
         "--threshold",
         type=float,
         default=None,
-        help="15m%% momentum threshold to test, overriding ALARM_MOMENTUM_PCT_THRESHOLD "
+        help="momentum threshold to test, overriding ALARM_MOMENTUM_PCT_THRESHOLD "
         "for just this run (default: whatever Settings.alarm_momentum_pct_threshold resolves to, 5.0 unless overridden in .env)",
     )
     parser.add_argument(

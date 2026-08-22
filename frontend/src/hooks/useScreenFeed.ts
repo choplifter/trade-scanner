@@ -17,6 +17,8 @@ export interface ScreenFeedState {
   /** The trailing window the server resolved for this screen, in minutes.
    * Labels the RVol (window) column and the filter bar's placeholder. */
   windowMinutes: number;
+  /** The trailing window row.momentum_pct was computed over, in minutes. */
+  momentumWindowMinutes: number;
   loading: boolean;
 }
 
@@ -29,6 +31,7 @@ const EMPTY: ScreenFeedState = {
   tradableSize: 0,
   universeSize: 0,
   windowMinutes: 0,
+  momentumWindowMinutes: 0,
   loading: true,
 };
 
@@ -66,6 +69,7 @@ export function useScreenFeed(screen: Screen | null): ScreenFeedState {
         tradableSize: msg.tradable_size,
         universeSize: msg.universe_size,
         windowMinutes: msg.window_minutes,
+        momentumWindowMinutes: msg.momentum_window_minutes,
         loading: false,
       });
     });

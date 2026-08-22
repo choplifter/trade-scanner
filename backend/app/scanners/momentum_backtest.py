@@ -4,10 +4,10 @@ historical bars at app.market_data.bars.MOMENTUM_BAR_TIMEFRAME resolution
 through the *actual* production functions (pct_change_over_window,
 is_shaved_top, SessionVwapState, is_momentum_alert itself, not
 reimplementations) to check whether requiring the shaved-top/green/
-above-VWAP confirmation actually improves on the 15m% threshold alone, by
-comparing two conditions side by side: "15m% crossed the threshold" vs.
-"15m% crossed the threshold AND the candle confirms it." The confirmation
-checks are only ever evaluated *after* the 15m% threshold is already
+above-VWAP confirmation actually improves on the momentum threshold alone, by
+comparing two conditions side by side: "momentum crossed the threshold" vs.
+"momentum crossed the threshold AND the candle confirms it." The confirmation
+checks are only ever evaluated *after* the momentum threshold is already
 reached -- never on their own -- both because that's the actual question
 being asked (is confirmation useful once momentum's already there, not
 whether it predicts anything by itself) and because it means skipping
@@ -23,7 +23,7 @@ them, slower to fetch and walk for the same calendar lookback.
 Long side only, by design -- matches the live alarm itself, which no
 longer evaluates downward moves at all (a green-candle-and-above-VWAP
 confirmation is fundamentally long-only, see formulas.is_momentum_alert's
-docstring). Only pct_change_last_15m > 0 bars are ever considered.
+docstring). Only momentum_pct > 0 bars are ever considered.
 
 Unlike the daily-bar backtest (app.scanners.backtest), there's no cross-
 sectional ranking question here (no engine._rank_gainers/_rank_losers
@@ -49,10 +49,17 @@ from app.scanners import bucket_analysis, formulas
 from app.scanners.bar_cache import DEFAULT_CACHE_DIR, get_cached_5m_bars_multi
 
 # How many trailing bars to hand pct_change_over_window at each step --
-# comfortably more than the 15-minute window it looks for (3 bars at
-# MOMENTUM_BAR_MINUTES=5), without re-slicing the full history-so-far on
-# every single bar (which would be O(n^2) over a multi-week walk).
-_TRAILING_WINDOW_BARS = 6
+# deliberately twice the window it looks for, without re-slicing the full
+# history-so-far on every single bar (which would be O(n^2) over a multi-week
+# walk).
+#
+# Derived rather than written out, and the slack is not decoration: the
+# reference is "the closest bar at or before t minus the window", so a slice
+# exactly one window long silently yields no reference at all whenever a bar
+# is missing -- and the pick is skipped rather than reported. Written as a
+# literal 6 this was double the 15-minute window and exactly the 30-minute
+# one, i.e. it stopped having any slack the moment the window changed.
+_TRAILING_WINDOW_BARS = 2 * -(-int(MOMENTUM_WINDOW.total_seconds() // 60) // MOMENTUM_BAR_MINUTES)
 
 
 def simulate_momentum_alerts(
@@ -61,11 +68,11 @@ def simulate_momentum_alerts(
     horizon_minutes: int = 15,
 ) -> list[dict]:
     """Pure, network-free. Walks each symbol's 5-minute bars in order,
-    computing the same pct_change_last_15m / is_shaved_top / is_green /
+    computing the same momentum_pct / is_shaved_top / is_green /
     is_above_vwap inputs the live MomentumCache computes, then evaluates
-    two conditions at each bar: "threshold_only" (just the 15m% magnitude
+    two conditions at each bar: "threshold_only" (just the momentum magnitude
     check) and "full_alert" (formulas.is_momentum_alert itself -- the
-    actual live check, not an approximation of it). A downward 15m% move
+    actual live check, not an approximation of it). A downward move
     never satisfies threshold_only here -- long side only, see module
     docstring.
 
@@ -122,20 +129,20 @@ def simulate_momentum_alerts(
                 full_alert_active = False
                 continue
 
-            # Window restricted to this same trading day, so a trailing 15
-            # minutes never reaches back across a market close into the
+            # Window restricted to this same trading day, so the trailing
+            # window never reaches back across a market close into the
             # previous session. Same-day premarket stays in, which is what
             # keeps the opening range measurable (see same_trading_day).
             window = [b for b in bars[max(0, i - _TRAILING_WINDOW_BARS) : i + 1] if same_trading_day(b, bar)]
-            pct_15m = pct_change_over_window(window, MOMENTUM_WINDOW)
+            momentum_pct = pct_change_over_window(window, MOMENTUM_WINDOW)
 
             # Long side only: a downward move (or no move at all) never
             # counts as momentum here, regardless of magnitude. Requiring
-            # pct_15m > 0 explicitly (not just >= threshold) keeps this
+            # momentum_pct > 0 explicitly (not just >= threshold) keeps this
             # correct even in the pathological case of a zero/negative
             # threshold, where ">= threshold" alone wouldn't guarantee an
             # upward move.
-            threshold_only = pct_15m is not None and pct_15m > 0 and pct_15m >= threshold
+            threshold_only = momentum_pct is not None and momentum_pct > 0 and momentum_pct >= threshold
             # Confirmation is only computed once momentum's actually been
             # reached -- is_momentum_alert would short-circuit on the same
             # threshold check anyway, so this produces identical results
@@ -148,7 +155,7 @@ def simulate_momentum_alerts(
                 shaved_top = is_shaved_top(bar.open, bar.high, bar.low, bar.close)
                 is_green = bar.close > bar.open
                 is_above_vwap = vwap is not None and bar.close > vwap
-                full_alert = formulas.is_momentum_alert(pct_15m, shaved_top, is_green, is_above_vwap, threshold)
+                full_alert = formulas.is_momentum_alert(momentum_pct, shaved_top, is_green, is_above_vwap, threshold)
 
             if (threshold_only and not threshold_only_active) or (full_alert and not full_alert_active):
                 entry_price = bar.close

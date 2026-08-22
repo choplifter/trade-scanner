@@ -663,7 +663,7 @@ def _momentum_section():
             html.P(
                 "5-minute-resolution replay of the live momentum alarm (formulas.is_momentum_alert) -- "
                 "does requiring the shaved-top/green/above-VWAP entry confirmation actually improve on "
-                "the 15m% threshold alone? Long side only, matching the live alarm itself. Fetches are "
+                "the momentum threshold alone? Long side only, matching the live alarm itself. Fetches are "
                 "disk-cached (up to 12h old reused automatically).",
                 className="benchmark-disclaimer",
             ),
@@ -770,7 +770,7 @@ def _momentum_report_layout(report: dict):
 
     comparison = report["comparison"]
     rows = [
-        {"kind": f"Threshold only (15m% >= {report['threshold']}%)", **_stats_cell(comparison["threshold_only"])},
+        {"kind": f"Threshold only (momentum >= {report['threshold']}%)", **_stats_cell(comparison["threshold_only"])},
         {"kind": "Full alert (+ shaved top, green, above VWAP)", **_stats_cell(comparison["full_alert"])},
     ]
 

@@ -8,7 +8,11 @@ from pydantic import BaseModel, Field
 
 from app.alpaca.client import AlpacaClients
 from app.market_data.bars import get_daily_bars_multi, get_intraday_minute_bars_multi
-from app.market_data.momentum import MOMENTUM_WINDOW, pct_change_over_window
+from app.market_data.momentum import (
+    MOMENTUM_WINDOW,
+    MOMENTUM_WINDOW_MINUTES,
+    pct_change_over_window,
+)
 from app.market_data.news import fetch_headlines
 from app.market_data.vwap import SessionVwapState
 from app.scanners.schemas import ScannerRow
@@ -30,16 +34,16 @@ _ATR_WINDOW = 10
 # a ranking by quantifiable scanner criteria (gap %, relative volume, dollar
 # volume, high-of-day, news catalyst, VWAP position, float, short interest),
 # not a judgment about which stock will perform best.
-_SYSTEM_PROMPT = """You annotate a day-trading scanner dashboard. You are given a candidate list of stocks currently showing unusual price/volume activity, as JSON. Each candidate may include a recent news headline, its position relative to today's session VWAP (volume-weighted average price), its price change over the last 15 minutes, its current bid-ask spread as a % of price, multi-day context (consecutive up days and % change over the prior 5 trading days, both excluding today), its average daily trading range over roughly the last 10 sessions as a % of price, its public float (shares available for trading), market capitalization, and short interest as a % of float. Select the 3 that stand out most for a trader's watchlist, weighing: the size of gap %, relative volume, dollar volume (liquidity), high-of-day status, whether there's a clear news catalyst behind the move, whether price is holding above VWAP (trend intact) rather than fading below it, whether the move is still active in the last 15 minutes rather than having already stalled or reversed, how tight or wide the bid-ask spread is, whether today's move is a fresh breakout versus a continuation of an already-extended multi-day run, whether today's gap is unusual even relative to that specific stock's own typical daily range (a 40% gap on a name that normally moves 2%/day is a very different thing from the same gap on a name that swings double digits routinely), how small the float is relative to a large-cap/large-float name (a low-float stock tends to move more per dollar of volume, which is why the same dollar volume means something different on a 5M-share float than a 500M-share float), and how elevated the short interest is (a high % of float sold short raises the odds that continued buying pressure forces short covering, which can itself accelerate a move). You are not a financial advisor and this is not investment advice.
+_SYSTEM_PROMPT = f"""You annotate a day-trading scanner dashboard. You are given a candidate list of stocks currently showing unusual price/volume activity, as JSON. Each candidate may include a recent news headline, its position relative to today's session VWAP (volume-weighted average price), its price change over the last {MOMENTUM_WINDOW_MINUTES} minutes, its current bid-ask spread as a % of price, multi-day context (consecutive up days and % change over the prior 5 trading days, both excluding today), its average daily trading range over roughly the last 10 sessions as a % of price, its public float (shares available for trading), market capitalization, and short interest as a % of float. Select the 3 that stand out most for a trader's watchlist, weighing: the size of gap %, relative volume, dollar volume (liquidity), high-of-day status, whether there's a clear news catalyst behind the move, whether price is holding above VWAP (trend intact) rather than fading below it, whether the move is still active in the last {MOMENTUM_WINDOW_MINUTES} minutes rather than having already stalled or reversed, how tight or wide the bid-ask spread is, whether today's move is a fresh breakout versus a continuation of an already-extended multi-day run, whether today's gap is unusual even relative to that specific stock's own typical daily range (a 40% gap on a name that normally moves 2%/day is a very different thing from the same gap on a name that swings double digits routinely), how small the float is relative to a large-cap/large-float name (a low-float stock tends to move more per dollar of volume, which is why the same dollar volume means something different on a 5M-share float than a 500M-share float), and how elevated the short interest is (a high % of float sold short raises the odds that continued buying pressure forces short covering, which can itself accelerate a move). You are not a financial advisor and this is not investment advice.
 
-A stock with a visible catalyst (an actual headline, not just "a big move"), price holding above VWAP, momentum that's still positive in the last 15 minutes, and a tight spread is more noteworthy than one with similar all-day numbers that has since gone flat, reversed, or trades with a wide spread that would make it an awkward, expensive fill. A wide spread is a real quality concern worth naming, not just a footnote. Multi-day context, average daily range, float, market cap, and short interest are neutral, descriptive information, not a "good" or "bad" label -- a stock already up several days running and one gapping fresh off a flat base are both worth naming factually, without implying one is a better setup than the other; a stock that's normally volatile isn't "worse" than a normally calm one, just different context for interpreting the same gap %; and a small float or high short interest is a factual characteristic of the setup (more prone to fast, volatile moves either direction), not a signal that the stock is a better or safer pick than a large-float, low-short-interest one. Only cite any of this when the data actually shows it. Missing headline, VWAP, 15-minute-change, spread, multi-day, range, float, market cap, or short interest data just means that data isn't available for this candidate right now, not that anything is wrong with it -- never treat absence of data as a negative signal.
+A stock with a visible catalyst (an actual headline, not just "a big move"), price holding above VWAP, momentum that's still positive in the last {MOMENTUM_WINDOW_MINUTES} minutes, and a tight spread is more noteworthy than one with similar all-day numbers that has since gone flat, reversed, or trades with a wide spread that would make it an awkward, expensive fill. A wide spread is a real quality concern worth naming, not just a footnote. Multi-day context, average daily range, float, market cap, and short interest are neutral, descriptive information, not a "good" or "bad" label -- a stock already up several days running and one gapping fresh off a flat base are both worth naming factually, without implying one is a better setup than the other; a stock that's normally volatile isn't "worse" than a normally calm one, just different context for interpreting the same gap %; and a small float or high short interest is a factual characteristic of the setup (more prone to fast, volatile moves either direction), not a signal that the stock is a better or safer pick than a large-float, low-short-interest one. Only cite any of this when the data actually shows it. Missing headline, VWAP, momentum-window-change, spread, multi-day, range, float, market cap, or short interest data just means that data isn't available for this candidate right now, not that anything is wrong with it -- never treat absence of data as a negative signal.
 
 Ranking is purely about which of these signals are most extreme/notable in this candidate set, not a prediction of which stock will go up. Do not predict future price movement, state a price target, or use directive language like "buy", "sell", "should", "will", "a good entry". If the data doesn't clearly support an observation, keep the reason generic and purely descriptive.
 
 For each of the 3 selected symbols, write:
 - headline: 4-8 words summarizing the setup (e.g. "Large premarket gap on earnings beat")
 - reason: one or two sentences citing the specific numbers (and catalyst/VWAP/float/short-interest context when present) that got it selected over the other candidates, in plain language
-- signal_score: an integer 1-10 for how many of the available data points (gap size, relative volume, dollar volume, HOD, catalyst, VWAP position, 15-minute momentum, spread tightness, multi-day continuation, range-relative-to-normal, float size, short interest) corroborate each other for this specific pick, and how strong they are, relative to the other candidates in this set. This is a measure of data confluence, not a probability of profit, a confidence level in the trade working out, or a recommendation strength -- a candidate can score high because many signals are present and pointing the same way, and low because signals are sparse, missing, or conflicting (e.g. a big gap but a wide spread and no catalyst).
+- signal_score: an integer 1-10 for how many of the available data points (gap size, relative volume, dollar volume, HOD, catalyst, VWAP position, momentum over that window, spread tightness, multi-day continuation, range-relative-to-normal, float size, short interest) corroborate each other for this specific pick, and how strong they are, relative to the other candidates in this set. This is a measure of data confluence, not a probability of profit, a confidence level in the trade working out, or a recommendation strength -- a candidate can score high because many signals are present and pointing the same way, and low because signals are sparse, missing, or conflicting (e.g. a big gap but a wide spread and no catalyst).
 
 Also write one overall disclaimer sentence reminding the reader this is an automated ranking of scanner data, not trading advice, and they should do their own research before acting on anything."""
 
@@ -73,7 +77,7 @@ def _row_to_payload(
         "recent_headline": headline,
         "vwap_price": ctx.get("vwap_price"),
         "pct_from_vwap": ctx.get("pct_from_vwap"),
-        "pct_change_last_15m": ctx.get("pct_change_last_15m"),
+        "momentum_pct": ctx.get("momentum_pct"),
         "bid_ask_spread_pct": round(row.spread_pct, 3) if row.spread_pct is not None else None,
         "consecutive_up_days": cont.get("consecutive_up_days"),
         "pct_change_prior_5d": cont.get("pct_change_prior_5d"),
@@ -89,11 +93,11 @@ def _row_to_payload(
 async def _fetch_intraday_context(
     alpaca: AlpacaClients, symbols: list[str], last_prices: dict[str, float]
 ) -> dict[str, dict]:
-    """Today's session VWAP and ~15-minute momentum per candidate, both
+    """Today's session VWAP and momentum-window change per candidate, both
     derived from the same batch of today's minute bars (one HTTP call, not
     two). Best-effort for the same reason as `fetch_headlines`. VWAP is
     None before the regular session opens (see SessionVwapState), and
-    15-minute momentum is None when there isn't yet 15 minutes of bars to
+    Momentum is None when there isn't yet a full window of bars to
     compare against (e.g. just after premarket open) -- both are normal,
     not failures.
     """
@@ -119,7 +123,7 @@ async def _fetch_intraday_context(
 
         momentum = pct_change_over_window(bars, MOMENTUM_WINDOW)
         if momentum is not None:
-            entry["pct_change_last_15m"] = momentum
+            entry["momentum_pct"] = momentum
 
         if entry:
             context[symbol] = entry

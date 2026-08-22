@@ -142,7 +142,7 @@ def trailing_windows(bars: list, window: timedelta = DEFAULT_WINDOW):
 
     Returns (None, None) when there's no session bar to anchor on -- outside
     the session there is no "right now" to measure, the same stance
-    MomentumCache takes for the 15-minute momentum figure.
+    MomentumCache takes for the momentum figure.
     """
     # require_prior: a surge ratio needs a *complete* previous window, so it
     # only becomes measurable two windows into the session, not one.

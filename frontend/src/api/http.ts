@@ -61,6 +61,10 @@ export interface ScannerResponse {
   session: string;
   is_latest_session: boolean;
   window_minutes: number;
+  /** The trailing window row.momentum_pct was computed over. Global, unlike
+   * window_minutes above, but sent so the column can label itself instead of
+   * hardcoding a number that goes stale the moment the window changes. */
+  momentum_window_minutes: number;
   rows: ScannerRow[];
 }
 

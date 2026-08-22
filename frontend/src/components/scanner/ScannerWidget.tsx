@@ -197,6 +197,9 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
             onSelectSymbol={onSelectSymbol}
             derived={screenFeed.derived}
             windowMinutes={frozenActive ? frozenFeed.windowMinutes : screenFeed.windowMinutes}
+            momentumWindowMinutes={
+              frozenActive ? frozenFeed.momentumWindowMinutes : screenFeed.momentumWindowMinutes
+            }
           />
         ) : (
           <ScannerHeatmap rows={rows} selectedSymbol={selectedSymbol} onSelectSymbol={onSelectSymbol} />

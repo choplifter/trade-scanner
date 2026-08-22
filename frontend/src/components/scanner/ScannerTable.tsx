@@ -28,7 +28,7 @@ type SortKey =
   | "company_name"
   | "last"
   | "chg"
-  | "mom15"
+  | "momentum"
   | "vol"
   | "rvol"
   | "rvol_1h"
@@ -51,7 +51,7 @@ const SORT_ACCESSORS: Record<SortKey, (row: ScannerRow) => SortValue> = {
   company_name: (r) => r.company_name,
   last: (r) => r.last_price,
   chg: (r) => r.pct_change,
-  mom15: (r) => r.pct_change_last_15m,
+  momentum: (r) => r.momentum_pct,
   vol: (r) => r.dollar_volume_today,
   rvol: (r) => r.rvol,
   rvol_1h: (r) => r.rvol_1h,
@@ -66,13 +66,19 @@ const SORT_ACCESSORS: Record<SortKey, (row: ScannerRow) => SortValue> = {
 /** The window column is the one label that isn't fixed: it reports whatever
  * trailing window the screen asked for (Screen.window_minutes), so calling it
  * "1h" was a lie the moment that became configurable. */
-function columns(windowMinutes: number): { id: SortKey; label: string }[] {
+function columns(
+  windowMinutes: number,
+  momentumWindowMinutes: number,
+): { id: SortKey; label: string }[] {
   return [
     { id: "symbol", label: "Symbol" },
     { id: "company_name", label: "Company" },
     { id: "last", label: "Last" },
     { id: "chg", label: "Chg %" },
-    { id: "mom15", label: "15m %" },
+    {
+      id: "momentum",
+      label: momentumWindowMinutes ? `${momentumWindowMinutes}m %` : "Mom %",
+    },
     { id: "vol", label: "$ Vol" },
     { id: "rvol", label: "RVol" },
     { id: "rvol_1h", label: windowMinutes ? `RVol ${windowMinutes}m` : "RVol (win)" },
@@ -122,6 +128,7 @@ interface ScannerTableProps {
    * global setting row.rvol_1h was built with. */
   derived?: Record<string, Record<string, number | null>>;
   windowMinutes?: number;
+  momentumWindowMinutes?: number;
 }
 
 export function ScannerTable({
@@ -130,9 +137,13 @@ export function ScannerTable({
   onSelectSymbol,
   derived,
   windowMinutes = 0,
+  momentumWindowMinutes = 0,
 }: ScannerTableProps) {
   const [sort, setSort] = useState<SortState | null>(null);
-  const COLUMNS = useMemo(() => columns(windowMinutes), [windowMinutes]);
+  const COLUMNS = useMemo(
+    () => columns(windowMinutes, momentumWindowMinutes),
+    [windowMinutes, momentumWindowMinutes],
+  );
   /** The screen's own windowed value where there is one, the row's global
    * one otherwise -- so the number always matches the header above it. */
   const windowedRvol = (row: ScannerRow) =>
@@ -213,7 +224,7 @@ export function ScannerTable({
               {row.is_momentum_alert && (
                 <span
                   className="badge-momentum-alert"
-                  title="Fast bullish move -- a large 15-minute gain confirmed by a green, wick-less candle trading above VWAP"
+                  title="Fast bullish move -- a large gain over the momentum window confirmed by a green, wick-less candle trading above VWAP"
                 >
                   ⚡ MOMENTUM
                 </span>
@@ -233,15 +244,15 @@ export function ScannerTable({
             </td>
             <td
               className={
-                row.pct_change_last_15m === null
+                row.momentum_pct === null
                   ? undefined
-                  : row.pct_change_last_15m >= 0
+                  : row.momentum_pct >= 0
                     ? "delta-up"
                     : "delta-down"
               }
-              title="Price change over just the trailing 15 minutes -- distinct from Chg %, which is since prior close"
+              title="Price change over just the momentum window -- distinct from Chg %, which is since prior close"
             >
-              {cell(row.pct_change_last_15m, formatPct)}
+              {cell(row.momentum_pct, formatPct)}
             </td>
             <td>{formatDollarVolume(row.dollar_volume_today)}</td>
             <td>{formatRvol(row.rvol)}</td>

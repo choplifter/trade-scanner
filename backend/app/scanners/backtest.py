@@ -9,7 +9,7 @@ Also checks each entry day's own candle shape via is_shaved_top (see
 app.market_data.candle_shape) -- did the pick close at/near that day's
 high, regardless of how it got there? Wick-shape analysis works on any
 OHLC bar, daily included, so this doesn't need minute data the way the
-momentum alarm's 15m % check does.
+momentum alarm's momentum check does.
 
 "most_active" is replayed here too, but it is not a like-for-like replay
 the way gainers/losers are. One reason, not the two once listed here:

@@ -144,11 +144,11 @@ class Settings(BaseSettings):
     # endpoint on every 5-10s tick for the same ~150 ranked symbols.
     scanner_news_refresh_interval: float = 900.0
 
-    # How often a symbol's trailing-15-minute momentum (pct_change_last_15m)
+    # How often a symbol's trailing-window momentum (momentum_pct)
     # is refreshed while it stays in a ranked scanner view -- see
     # app.scanners.momentum_cache.MomentumCache. Much tighter than the news
     # refresh above: the whole point of this field is to catch a symbol
-    # accelerating *right now*, so refreshing only every 15 minutes (one
+    # accelerating *right now*, so refreshing only once per window (one
     # sample per window) would defeat the purpose. Still well above the
     # 5-10s poll interval so scanning doesn't fetch minute bars for ~150
     # symbols on every tick.
@@ -163,15 +163,34 @@ class Settings(BaseSettings):
     # within the one session those bars cover.
     scanner_volume_surge_window_minutes: int = 60
 
-    # Absolute-value threshold for "suspicious" 15-minute momentum used by
-    # the momentum alarm (see app.scanners.formulas.is_momentum_alert) -- a
-    # fixed % rather than normalized against each symbol's own typical daily
-    # range. Simpler to ship first and revisit once there's real trigger
-    # data to check the false-positive rate against, same spirit as
-    # formulas.rvol's own time-of-day-normalization TODO and how the
-    # catalyst/fade-risk multipliers were tuned from scanner_history.sqlite3
-    # rather than guessed at upfront.
-    alarm_momentum_pct_threshold: float = 5.0
+    # Absolute-value threshold for "suspicious" momentum over
+    # momentum.MOMENTUM_WINDOW, used by the alarm (see
+    # app.scanners.formulas.is_momentum_alert) -- a fixed % rather than
+    # normalized against each symbol's own typical daily range.
+    #
+    # This was shipped at 5.0 as a placeholder, explicitly to be revisited
+    # "once there's real trigger data to check the false-positive rate
+    # against". That data now exists. Swept over 80 symbols and 30 days at a
+    # 30-minute forward horizon (scripts.momentum_param_sweep), full-alert
+    # results by threshold:
+    #
+    #     3.0%  n=176  43.2% win  +0.14% avg
+    #     4.0%  n= 97  45.4% win  +0.35% avg
+    #     5.0%  n= 59  52.5% win  +0.64% avg
+    #     6.0%  n= 33  54.5% win  +1.07% avg   <- best clearing n>=30
+    #     7.0%  n= 25                          -- under the sample floor
+    #
+    # Monotonic: a higher bar keeps fewer, better alerts. 6.0 is the highest
+    # setting that still clears bucket_analysis.MIN_SAMPLE_SIZE, and n=33 is
+    # only just over it -- good enough to prefer over 5.0, not enough to read
+    # the +1.07% as precise.
+    #
+    # Widening MOMENTUM_WINDOW from 15 to 30 minutes is what forced the
+    # revisit: measured on the same bars, an unchanged threshold fires about
+    # three times as often over the longer window (5.0% went from 20 full
+    # alerts to 58), because price has twice as long to travel the same
+    # distance. Raising the bar keeps the alarm about as selective as it was.
+    alarm_momentum_pct_threshold: float = 6.0
 
     # How often the red/yellow/green market-conditions readout (VIX,
     # today's high-impact global economic events, scanner breadth) is
