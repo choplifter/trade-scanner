@@ -8,6 +8,7 @@ method whose threshold is three. The band width and the departure rule are
 what fix that, so both are pinned here.
 """
 
+from itertools import pairwise
 from types import SimpleNamespace
 
 import numpy as np
@@ -364,7 +365,7 @@ def _walk(points, per_step=10):
     between two points fits inside the excursion window.
     """
     highs, lows = [], []
-    for start, end in zip(points, points[1:]):
+    for start, end in pairwise(points):
         for i in range(per_step):
             price = start + (end - start) * i / per_step
             highs.append(price + 0.02)
