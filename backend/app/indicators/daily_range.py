@@ -14,9 +14,9 @@ cover ten sessions (see bars._INTRADAY_SESSION_LOOKBACK), so no extra Alpaca
 call is needed for one day back.
 """
 
-import pandas as pd
+from datetime import datetime
 
-from app.indicators.context import prior_completed_period
+from app.market_data import session_marks
 from app.services.market_clock import ET, trading_hours_for
 
 NAME = "Daily Range"
@@ -32,41 +32,58 @@ MAX_TIMEFRAME = "1Day"
 _EMPTY = {"High": None, "Low": None}
 
 
+class _Bar:
+    """The three fields session_marks reads, off a chart frame row."""
+
+    __slots__ = ("high", "low", "timestamp")
+
+    def __init__(self, timestamp, high, low):
+        self.timestamp = timestamp
+        self.high = high
+        self.low = low
+
+
 def compute(ctx) -> dict:
+    """Yesterday's regular-session high and low.
+
+    The measurement lives in app.market_data.session_marks so a strategy can
+    aim at the same number this draws. "Yesterday" is relative to a session
+    date: today while today is still running, which reproduces what
+    prior_completed_period did here before -- and once today has closed, its
+    own range becomes the prior session on the next trading date, exactly as
+    the calendar rolls.
+    """
     df = ctx.minute_bars
     if df.empty:
         return _EMPTY
 
-    stamps = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert(ET)
-
-    closes: list[pd.Timestamp] = []
-    highs: list[float] = []
-    lows: list[float] = []
-    for day in sorted({stamp.date() for stamp in stamps}):
-        hours = trading_hours_for(day)
-        if hours is None:  # weekend or holiday -- no regular session to measure
-            continue
-        market_open, market_close = hours
-        session = df[(stamps >= market_open) & (stamps <= market_close)]
-        if session.empty:
-            continue
-        # Keyed by session *close* rather than open, so the shared
-        # "has this period elapsed" test below is a direct comparison
-        # against now and needs no period_end arithmetic of its own.
-        closes.append(pd.Timestamp(market_close))
-        highs.append(float(session["high"].max()))
-        lows.append(float(session["low"].min()))
-
-    if not closes:
+    bars = [_Bar(row.timestamp, row.high, row.low) for row in df.itertuples()]
+    # Deliberately the wall clock, unlike premarket_range next door: this
+    # indicator's contract is "the most recently *completed* session", so
+    # after Friday's close it shows Friday. See prior_completed_period, whose
+    # docstring records why skipping the last row unconditionally is wrong,
+    # and test_picks_the_most_recently_completed_session, which pins it.
+    #
+    # Worth knowing that this makes it disagree with the level a strategy
+    # aims at: session_marks.prior_session_range answers "the day before the
+    # session being traded", which on a Saturday is Thursday, not Friday.
+    # Two different questions, both correct.
+    today = datetime.now(ET).date()
+    high, low = session_marks.prior_session_range(bars, today)
+    if high is None:
+        # Nothing before today in the window. Today itself may nonetheless
+        # have completed -- the market is closed and its session is over --
+        # in which case it is the most recent finished day and the one the
+        # chart should mark.
+        hours = trading_hours_for(today)
+        if hours is not None and datetime.now(ET) >= hours[1]:
+            session = [
+                b for b in bars if hours[0] <= b.timestamp.astimezone(ET) <= hours[1]
+            ]
+            if session:
+                return {
+                    "High": max(b.high for b in session),
+                    "Low": min(b.low for b in session),
+                }
         return _EMPTY
-
-    daily = pd.DataFrame({"timestamp": closes, "high": highs, "low": lows})
-    # Same semantics as the weekly/monthly ranges: the most recent period
-    # that has actually finished. Today is therefore excluded while its
-    # session is still running, and included once it has closed -- which is
-    # the behaviour prior_completed_period exists to get right, rather than
-    # unconditionally skipping the last row.
-    bar = prior_completed_period(daily, lambda ts: ts)
-    if bar is None:
-        return _EMPTY
-    return {"High": float(bar["high"]), "Low": float(bar["low"])}
+    return {"High": high, "Low": low}

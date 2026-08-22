@@ -15,13 +15,28 @@ import pytest
 
 from app.indicators import market_structure as ms
 from app.indicators.context import build_context
+from app.market_data import levels
+
+
+def _band(df):
+    """levels.touch_band over a chart frame.
+
+    The ported function takes plain arrays -- that independence from pandas
+    is what lets the scanner and the backtest call it -- so the frame is
+    unpacked here instead of at every call site.
+    """
+    return levels.touch_band(
+        df["high"].to_numpy(dtype=float),
+        df["low"].to_numpy(dtype=float),
+        df["close"].to_numpy(dtype=float),
+    )
 
 
 def _count(pairs, level, tolerance=1.0):
     """pairs: (high, low) per bar."""
     highs = np.array([h for h, _ in pairs], dtype=float)
     lows = np.array([l for _, l in pairs], dtype=float)
-    return ms._count_kisses(highs, lows, level, tolerance)
+    return levels.count_visits(highs, lows, level, tolerance)
 
 
 # --- what counts as a kiss ----------------------------------------------
@@ -46,14 +61,14 @@ def test_price_must_clear_the_departure_band_to_re_arm():
     """The fix for the 106-kiss result. Hovering just outside the touch band
     is still 'at' the level -- only a real departure makes the next touch a
     new visit."""
-    just_outside = 100 + 1.0 * ms._DEPARTURE_MULTIPLE  # inside the departure band
+    just_outside = 100 + 1.0 * levels._DEPARTURE_MULTIPLE  # inside the departure band
     bars = [(100, 100), (just_outside, just_outside)] * 10
 
     assert _count(bars, level=100) == 1
 
 
 def test_clearing_the_departure_band_does_re_arm():
-    clear = 100 + 1.0 * ms._DEPARTURE_MULTIPLE + 1.0
+    clear = 100 + 1.0 * levels._DEPARTURE_MULTIPLE + 1.0
     bars = [(100, 100), (clear, clear), (100, 100), (clear, clear)]
 
     assert _count(bars, level=100) == 2
@@ -100,15 +115,15 @@ def test_the_band_tracks_the_span_on_screen():
     narrow = _anchored(_bars([(105.0, 95.0)] * 200))
     wide = _anchored(_bars([(150.0, 50.0)] * 200))
 
-    assert ms._tolerance(wide.hourly_bars) == pytest.approx(
-        ms._tolerance(narrow.hourly_bars) * 10
+    assert _band(wide.hourly_bars) == pytest.approx(
+        _band(narrow.hourly_bars) * 10
     )
 
 
 def test_the_band_is_the_configured_fraction_of_the_span():
     ctx = _anchored(_bars([(120.0, 100.0)] * 200))
 
-    assert ms._tolerance(ctx.hourly_bars) == pytest.approx(20.0 * ms._RANGE_FRACTION_PCT / 100)
+    assert _band(ctx.hourly_bars) == pytest.approx(20.0 * levels._RANGE_FRACTION_PCT / 100)
 
 
 def test_the_band_has_a_floor_for_a_barely_moving_symbol():
@@ -116,7 +131,7 @@ def test_the_band_has_a_floor_for_a_barely_moving_symbol():
     nothing at all."""
     frozen = _anchored(_bars([(100.0, 100.0)] * 200))
 
-    assert ms._tolerance(frozen.hourly_bars) == pytest.approx(100.0 * ms._MIN_TOLERANCE_PCT / 100)
+    assert _band(frozen.hourly_bars) == pytest.approx(100.0 * levels._MIN_TOLERANCE_PCT / 100)
 
 
 # --- the indicator ------------------------------------------------------
@@ -189,11 +204,11 @@ def test_the_same_bars_give_the_same_labels():
 def test_drawn_levels_are_kept_apart():
     ctx = _zigzag(cycles=6, dwell=11)
     result = ms.compute(ctx)
-    tolerance = ms._tolerance(ctx.hourly_bars)
+    tolerance = _band(ctx.hourly_bars)
     prices = sorted(result.values())
 
     for lower, upper in zip(prices, prices[1:]):
-        assert upper - lower > tolerance * ms._SEPARATION_MULTIPLE
+        assert upper - lower > tolerance * levels._SEPARATION_MULTIPLE
 
 
 # --- which bars it reads ------------------------------------------------
@@ -254,14 +269,14 @@ def test_two_peaks_with_a_trough_between_them_are_separate_levels():
     drew a single line 0.40 above where price had been turning."""
     highs, lows = _arrays(_visits(11.00, 6, 20.0) + _visits(11.40, 6, 20.0))
 
-    assert ms._is_separated(highs, lows, 11.00, 11.40, tolerance=0.05)
+    assert levels.is_separated(highs, lows, 11.00, 11.40, band=0.05)
 
 
 def test_one_broad_shelf_is_not_split_in_two():
     """Price grinding across a whole band is one level, however wide."""
     highs, lows = _arrays(_visits(11.20, 8, 20.0))
 
-    assert not ms._is_separated(highs, lows, 11.15, 11.25, tolerance=0.30)
+    assert not levels.is_separated(highs, lows, 11.15, 11.25, band=0.30)
 
 
 def test_levels_closer_than_one_band_are_never_both_drawn():
@@ -269,11 +284,11 @@ def test_levels_closer_than_one_band_are_never_both_drawn():
     together than the band they are measured with overlap on screen."""
     ctx = _anchored(_zigzag_pairs(cycles=6, low=100.0, high=140.0, dwell=11))
     result = ms.compute(ctx)
-    tolerance = ms._tolerance(ctx.hourly_bars)
+    tolerance = _band(ctx.hourly_bars)
     prices = sorted(result.values())
 
     for lower, upper in zip(prices, prices[1:]):
-        assert upper - lower > tolerance * ms._MIN_SEPARATION_MULTIPLE
+        assert upper - lower > tolerance * levels._MIN_SEPARATION_MULTIPLE
 
 
 # --- where the line lands -----------------------------------------------
@@ -292,10 +307,10 @@ def test_the_scan_moves_the_line_towards_the_busier_price():
     highs, lows = _arrays(_visits(100.0, 6, 130.0) + _visits(100.6, 3, 130.0))
     nominal, tolerance = 100.45, 0.25
 
-    best = ms._best_in_zone(highs, lows, nominal, tolerance)
+    best = levels.best_in_zone(highs, lows, nominal, tolerance)
 
     assert best < nominal, "should slide towards the six-visit price, not the three"
-    assert ms._count_kisses(highs, lows, best, tolerance) > ms._count_kisses(
+    assert levels.count_visits(highs, lows, best, tolerance) > levels.count_visits(
         highs, lows, nominal, tolerance
     )
 
@@ -303,7 +318,7 @@ def test_the_scan_moves_the_line_towards_the_busier_price():
 def test_the_scan_stays_inside_its_own_band():
     highs, lows = _arrays(_visits(100.0, 6, 130.0))
 
-    best = ms._best_in_zone(highs, lows, level=105.0, tolerance=0.5)
+    best = levels.best_in_zone(highs, lows, level=105.0, band=0.5)
 
     assert 104.5 <= best <= 105.5
 
@@ -319,7 +334,7 @@ def test_counting_matches_a_plain_sequential_walk():
     highs = 100 + rng.normal(0, 2, 400).cumsum() / 10
     lows = highs - rng.uniform(0.05, 0.4, 400)
     tolerance = 0.3
-    departure = tolerance * ms._DEPARTURE_MULTIPLE
+    departure = tolerance * levels._DEPARTURE_MULTIPLE
 
     for level in (99.0, 100.0, 101.0, 102.5):
         expected, armed = 0, True
@@ -330,4 +345,4 @@ def test_counting_matches_a_plain_sequential_walk():
                     armed = False
             elif low > level + departure or high < level - departure:
                 armed = True
-        assert ms._count_kisses(highs, lows, level, tolerance) == expected, level
+        assert levels.count_visits(highs, lows, level, tolerance) == expected, level
