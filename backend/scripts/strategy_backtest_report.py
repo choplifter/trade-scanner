@@ -29,6 +29,7 @@ from pathlib import Path
 from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import build_universe
 from app.core.config import get_settings
+from app.scanners import universes
 from app.scanners.bar_cache import DEFAULT_CACHE_DIR
 from app.scanners.strategy_backtest import run_strategy_backtest
 from app.strategies.loader import load_strategies
@@ -40,7 +41,7 @@ def _print_report(report: dict) -> None:
         f"days back, costs {report['cost_bps']}bp per side"
     )
     print(
-        f"Universe: {report['symbol_count']} symbols requested, "
+        f"Universe: {report['universe']} -- {report['symbol_count']} symbols requested, "
         f"{report['symbols_with_bars']} returned bar data"
     )
     print(f"Signals (rising edge, one per event): {report['sample_size']}\n")
@@ -107,8 +108,11 @@ async def _main(args: argparse.Namespace) -> None:
         symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     else:
         universe = await build_universe(clients, settings)
-        ranked = sorted(universe.values(), key=lambda u: u.avg_dollar_vol_20d, reverse=True)
-        symbols = [u.symbol for u in ranked[: args.max_symbols]]
+        symbols = await universes.select(
+            clients, universe, args.universe, args.max_symbols, args.lookback_days
+        )
+        if not symbols:
+            raise SystemExit(f"No symbols matched the {args.universe!r} universe.")
 
     report = await run_strategy_backtest(
         clients,
@@ -120,6 +124,7 @@ async def _main(args: argparse.Namespace) -> None:
         force_refresh=args.force_refresh_cache,
         max_age_hours=args.cache_max_age_hours,
     )
+    report["universe"] = args.symbols and "explicit list" or args.universe
     _print_report(report)
 
 
@@ -142,6 +147,18 @@ if __name__ == "__main__":
         type=int,
         default=100,
         help="Top-N of the live universe by dollar volume, ignored if --symbols is given (default: 100)",
+    )
+    parser.add_argument(
+        "--universe",
+        default=universes.LIQUID,
+        choices=universes.CHOICES,
+        help=(
+            "Which symbols to run over, ignored if --symbols is given. "
+            "'liquid' is the most-traded names in the configured price band; "
+            "'gappers' is names that repeatedly open away from their prior "
+            "close, selected from history *before* the test window so the "
+            "choice cannot flatter the result (default: liquid)"
+        ),
     )
     parser.add_argument("--symbols", default=None, help="Comma-separated symbol override, e.g. AAPL,TSLA,NVDA")
     parser.add_argument(
