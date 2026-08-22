@@ -51,6 +51,7 @@ def test_every_indicator_is_offered_on_the_minute_chart():
     assert _names_at("1Min") == {
         "VWAP",
         "EMA",
+        "Opening Range",
         "Premarket Range",
         "Daily Range",
         "Weekly Range",
@@ -118,6 +119,13 @@ def test_market_structure_is_drawn_up_to_its_anchor():
     assert "Market Structure" not in _names_at("4Hour")
     assert "Market Structure" not in _names_at("1Day")
     assert "Market Structure" not in _names_at("1Month")
+
+
+def test_the_opening_range_is_minute_charts_only():
+    """Five minutes of one session -- one hourly candle contains it whole,
+    so it is noise on every chart above the minute-bucketed ones."""
+    assert "Opening Range" in _names_at("1Min")
+    assert "Opening Range" not in _names_at("1Hour")
 
 
 def test_the_premarket_range_drops_above_the_daily_chart():
