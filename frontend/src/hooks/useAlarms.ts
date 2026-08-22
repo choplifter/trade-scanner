@@ -21,6 +21,10 @@ export interface AlarmsState {
   overlayOpen: boolean;
   openOverlay: () => void;
   closeOverlay: () => void;
+  /** The window row.momentum_pct was computed over, straight from the feed
+   * that produced the rows -- so the overlay can never label a figure with a
+   * window it was not measured over. 0 until the first message lands. */
+  momentumWindowMinutes: number;
 }
 
 function loadEnabled(): boolean {
@@ -45,6 +49,7 @@ export function useAlarms(): AlarmsState {
   const [enabled, setEnabledState] = useState(loadEnabled);
   const [alarms, setAlarms] = useState<AlarmEntry[]>([]);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [momentumWindowMinutes, setMomentumWindowMinutes] = useState(0);
   // Latest flagged rows per view, so a symbol dropping out of (or no
   // longer flagged in) whichever view last reported it correctly clears --
   // three views can each independently flag/unflag the same symbol.
@@ -76,6 +81,8 @@ export function useAlarms(): AlarmsState {
 
     const unsubscribes = VIEWS.map((view) =>
       scannerSocket.subscribe(view, (msg) => {
+        setMomentumWindowMinutes(msg.momentum_window_minutes);
+
         const flagged = new Map<string, ScannerRow>();
         for (const row of msg.rows) {
           if (row.is_momentum_alert) flagged.set(row.symbol, row);
@@ -117,5 +124,6 @@ export function useAlarms(): AlarmsState {
     overlayOpen,
     openOverlay: () => setOverlayOpen(true),
     closeOverlay: () => setOverlayOpen(false),
+    momentumWindowMinutes,
   };
 }

@@ -138,6 +138,7 @@ export default function App() {
         alarms={alarms.alarms}
         onClose={alarms.closeOverlay}
         onSelectSymbol={setSelectedSymbol}
+        momentumWindowMinutes={alarms.momentumWindowMinutes}
       />
       <main className="dashboard-main">
         {dashboardLayout.mode === "grid" ? (

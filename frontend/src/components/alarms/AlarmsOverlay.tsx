@@ -6,9 +6,21 @@ interface AlarmsOverlayProps {
   alarms: AlarmEntry[];
   onClose: () => void;
   onSelectSymbol: (symbol: string) => void;
+  /** Minutes behind row.momentum_pct, from the feed that produced the rows.
+   * Read rather than hardcoded: this said "15m" long after the window moved
+   * to 30, labelling every figure with a window it was not measured over.
+   * 0 before the first message, where the unit is dropped instead of
+   * guessed. */
+  momentumWindowMinutes: number;
 }
 
-export function AlarmsOverlay({ open, alarms, onClose, onSelectSymbol }: AlarmsOverlayProps) {
+export function AlarmsOverlay({
+  open,
+  alarms,
+  onClose,
+  onSelectSymbol,
+  momentumWindowMinutes,
+}: AlarmsOverlayProps) {
   if (!open || alarms.length === 0) return null;
 
   return (
@@ -36,7 +48,8 @@ export function AlarmsOverlay({ open, alarms, onClose, onSelectSymbol }: AlarmsO
               <span className="alarms-symbol">{row.symbol}</span>
               <span className="alarms-price">{formatPrice(row.last_price)}</span>
               <span className={(row.momentum_pct ?? 0) >= 0 ? "delta-up" : "delta-down"}>
-                {row.momentum_pct === null ? "—" : formatPct(row.momentum_pct)} / 15m
+                {row.momentum_pct === null ? "—" : formatPct(row.momentum_pct)}
+                {momentumWindowMinutes ? ` / ${momentumWindowMinutes}m` : ""}
               </span>
               <span className="alarms-time">
                 {new Date(firstSeenAt).toLocaleTimeString(undefined, {

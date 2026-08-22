@@ -145,7 +145,7 @@ backend on port 8000, so both must be running.
   TradingView format), a ðŸ“° flag when there's a recent news headline
   (hover for the headline; refreshed every 15 min for whatever's currently
   ranked, not fetched per poll tick), company name, last price, gap %,
-  **15m %** (trailing-15-minute price change, refreshed every 2 min --
+  **30m %** (trailing-30-minute price change, refreshed every 2 min --
   distinct from gap %, which is since prior close, so a symbol that already
   ran earlier and has since gone flat reads differently from one still
   actively moving right now), volume, RVOL, **RVol 1h**, and (when
@@ -221,7 +221,7 @@ outside the regular session.
 
 **Coverage caveat.** `float_shares` is universe-wide (one bulk FMP file), and
 everything else in the table above is computed for every symbol on every poll.
-Market cap, short interest, country, company name, recent headline and 15m %
+Market cap, short interest, country, company name, recent headline and 30m %
 are **not** filterable: they're only fetched for symbols already in a ranked
 view or a live screen result (~150 of ~2000), so filtering on them would
 silently return nothing for most of the universe. They still *display* on
@@ -297,8 +297,8 @@ is nearer the second number.
 Survivorship bias applies throughout: today's universe is replayed against
 past dates.
 - **Momentum alarm** (React app only, off by default, long setups only):
-  a dashboard-wide alert for a fast, still-confirming *upward* move -- 15m
-  % at least a threshold (5% default, `ALARM_MOMENTUM_PCT_THRESHOLD`)
+  a dashboard-wide alert for a fast, still-confirming *upward* move -- 30m
+  % at least a threshold (6% default, `ALARM_MOMENTUM_PCT_THRESHOLD`)
   *and* the latest 5-minute candle confirms it three ways: closed at/near
   its high (shaved top, near-zero upper wick, `app/market_data/candle_shape.py`),
   closed green (close > open), and price trading above the session VWAP
@@ -306,8 +306,8 @@ past dates.
   "buyers are still in control." Long side only on purpose: a green-candle-
   and-above-VWAP requirement doesn't have a sign-flipped short-side
   equivalent, so downward moves aren't alerted at all. Only regular-session
-  (09:30-16:00 ET) candles can trigger, and the trailing 15-minute window
-  never crosses a day boundary -- without both guards a "15-minute move"
+  (09:30-16:00 ET) candles can trigger, and the trailing 30-minute window
+  never crosses a day boundary -- without both guards a "30-minute move"
   is really a session-boundary artifact: a thin after-hours print measured
   against the last regular-session close, or an overnight gap measured
   against the previous day. Same-day premarket *is* allowed as the
@@ -334,9 +334,32 @@ past dates.
   (`backend/app/indicators/`): drop a new file in that directory exposing a
   `compute(ctx)` function and it shows up on the chart on the next
   request, no backend restart needed.
+- **Strategy scripts** (`backend/app/strategies/`): the same drop-in idea as
+  the indicators above, but for trade setups rather than chart lines. A file
+  exposes `NAME`, an optional `ENABLED` flag and an `evaluate(ctx)` that
+  returns a `Signal` (entry, stop, target) or `None`, and it is picked up by
+  both the live scanner and the backtest — one definition, so a rule cannot
+  be measured one way and traded another. Stops and targets are *places*
+  (under the opening range, under VWAP, under the flag low), and the R
+  multiple the backtest reports is the same distance
+  `trading/sizing.py::shares_for_risk` sizes a live position from.
+  `ENABLED = False` parks a rule without deleting the file.
+
+  Two deliberate differences from the indicator loader. Strategies are loaded
+  once per run rather than re-executed per evaluation — a 120-symbol, 30-day
+  backtest is ~200k evaluations, and a report has to describe one version of
+  a rule anyway. And a file that fails to load is *reported*, not just
+  logged: a missing chart line is visible, whereas a strategy that never
+  loaded looks exactly like one that found no setups.
+
+  Backtest a single rule with
+  `python -m scripts.strategy_backtest_report --strategy <name> [--cost-bps 10]`,
+  which reports expectancy in R alongside the percentage stats every other
+  backtest here uses.
+
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks the 3 most
   notable current setups from gap %, RVOL, dollar volume, HOD status, news
-  catalyst, VWAP position, 15-minute momentum, spread, multi-day context,
+  catalyst, VWAP position, 30-minute momentum, spread, multi-day context,
   float, and short interest â€” framed as descriptive scanner annotation, not
   investment advice. A past-picks performance table tracks how prior AI
   picks have actually moved since they were generated.
@@ -378,7 +401,7 @@ past dates.
   minute data). The backtest is daily-bar-only: no catalyst backtesting
   (needs historical news, unbuilt), no float (FMP's bulk file is *today's*
   float, so applying it to past dates is look-ahead bias), no minute-
-  resolution signals (time-of-day RVOL, the momentum alarm itself -- 15m %
+  resolution signals (time-of-day RVOL, the momentum alarm itself -- 30m %
   is inherently a minute-resolution concept), and it applies today's
   universe membership across the whole lookback window (survivorship bias)
   -- all stated up front in its own report output.
@@ -520,20 +543,26 @@ past dates.
   page-reload-driven callbacks the same way; the Dash Backtest page does
   cover the underlying alert condition's historical win rate, see below).
   Both scanner tables do show the underlying âš¡ MOMENTUM badge regardless.
-  The 5% threshold and 5% shaved-top wick tolerance are unvalidated
-  starting heuristics -- worth checking against `scanner_history.sqlite3`
-  (same way the catalyst/fade-risk multipliers were validated and
-  re-validated) once enough real triggers have accumulated. A 180-day
+  The 6% threshold is calibrated, the 5% shaved-top wick tolerance is
+  not. Widening the window from 15 to 30 minutes made an unchanged
+  threshold fire about three times as often (5.0% went from 20 full alerts
+  to 58), which forced a sweep over 80 symbols and 30 days: 5.0% gave n=59
+  at 52.5% win / +0.64% avg, 6.0% gave n=33 at 54.5% / +1.07%, and 7.0%
+  fell under the n>=30 floor. 6.0 is the highest setting still clearing
+  that floor -- enough to prefer over 5.0, not enough to read the +1.07%
+  as precise (see `alarm_momentum_pct_threshold` in `app/core/config.py`
+  for the full table). The wick tolerance remains an unvalidated starting
+  heuristic. A 180-day
   daily-bar backtest of `is_shaved_top`
-  *on its own* (no 15m % gate, since that needs minute data -- see below)
+  *on its own* (no 30m % gate, since that needs minute data -- see below)
   found no meaningful standalone edge at a 1-day horizon for either
   gainers or losers, despite large samples -- doesn't confirm or refute
-  the *combined* 15m %-and-shape signal the live alarm actually checks,
+  the *combined* 30m %-and-shape signal the live alarm actually checks,
   just that shape alone isn't doing much work by itself.
 - **Backtest harness**: daily-bar resolution only -- can validate the gap%/
   RVOL-based parts of the ranking formula against months of history, plus
   `is_shaved_top` on its own, but not the catalyst boost (needs historical
-  news, unbuilt) or the momentum alarm as a whole (15m % needs historical
+  news, unbuilt) or the momentum alarm as a whole (30m % needs historical
   minute bars, unbuilt). A 180-day run found ~0 RVOL>15x events at daily
   resolution even across ~240 symbols -- that specific threshold is
   fundamentally an intraday phenomenon daily bars smooth away, so this
