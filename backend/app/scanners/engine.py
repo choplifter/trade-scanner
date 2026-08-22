@@ -23,6 +23,7 @@ from app.market_data import news_cache as news_cache_mod
 from app.market_data.fmp_news import fetch_fmp_headlines
 from app.market_data.news_cache import NewsCache
 from app.market_data import volume_surge
+from app.market_data.momentum import MOMENTUM_WINDOW_MINUTES
 from app.market_data.volume_profile import VolumeProfileCache
 from app.scanners import formulas, screener
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
@@ -671,6 +672,46 @@ class ScannerEngine:
             for row in rows:
                 row.recent_headline = self.news_cache.get(row.symbol)
 
+    def scanner_update_payload(
+        self,
+        scanner: str,
+        rows: list[ScannerRow],
+        is_latest_session: bool | None = None,
+    ) -> dict:
+        """The one place a scanner_update message is shaped.
+
+        Two callers push this message -- ws.scanner_ws on subscribe and
+        run_loop on every poll tick -- and they had drifted: the subscribe
+        reply carried window_minutes and momentum_window_minutes, the
+        broadcast did not. Since the client replaces its whole state from each
+        message, the column headers rendered "30m %" and "60m" for one moment
+        and fell back to their generic labels on the very next tick.
+        TypeScript could not catch it: the socket payload is untyped JSON cast
+        at the boundary.
+
+        run_loop passes is_latest_session explicitly because it reads the flag
+        once per tick, so every view in that tick agrees rather than
+        re-reading a property that could flip midway through the loop.
+        """
+        return {
+            "type": "scanner_update",
+            "scanner": scanner,
+            "session": self.session,
+            "is_latest_session": (
+                self.is_latest_session_fallback if is_latest_session is None else is_latest_session
+            ),
+            # The window row.rvol_1h was computed with. Fixed views always run
+            # on the global setting -- only a custom screen can override it --
+            # but the client labels its column from this either way rather
+            # than assuming 60.
+            "window_minutes": self.settings.scanner_volume_surge_window_minutes,
+            # The window row.momentum_pct was computed with. Global, unlike
+            # the one above -- sent all the same so the client never has to
+            # hardcode a number that goes stale when the window changes.
+            "momentum_window_minutes": MOMENTUM_WINDOW_MINUTES,
+            "rows": [r.model_dump(mode="json") for r in rows],
+        }
+
     async def _attach_momentum(self, views: dict[str, list[ScannerRow]]) -> None:
         """Fill in each row's trailing-window pct change for whatever's
         actually ranked right now -- see
@@ -1104,13 +1145,7 @@ class ScannerEngine:
             for name, rows in views.items():
                 await self.manager.broadcast(
                     f"scanner:{name}",
-                    {
-                        "type": "scanner_update",
-                        "scanner": name,
-                        "session": self.session,
-                        "is_latest_session": is_fallback,
-                        "rows": [r.model_dump(mode="json") for r in rows],
-                    },
+                    self.scanner_update_payload(name, rows, is_latest_session=is_fallback),
                 )
 
             await asyncio.sleep(interval)

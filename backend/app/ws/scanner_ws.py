@@ -3,7 +3,6 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from app.market_data.momentum import MOMENTUM_WINDOW_MINUTES
 from app.scanners import screener
 from app.scanners.screener_service import screen_live_rows
 
@@ -69,25 +68,10 @@ async def scanners_ws(websocket: WebSocket) -> None:
             if msg_type == "subscribe":
                 await manager.subscribe(topic, websocket)
                 rows = engine.snapshot_view(scanner)
-                await websocket.send_json(
-                    {
-                        "type": "scanner_update",
-                        "scanner": scanner,
-                        "session": engine.session,
-                        "is_latest_session": engine.is_latest_session_fallback,
-                        # The window row.rvol_1h was computed with. Fixed
-                        # views always run on the global setting -- only a
-                        # custom screen can override it -- but the client
-                        # labels its column from this either way rather than
-                        # assuming 60.
-                        "window_minutes": engine.settings.scanner_volume_surge_window_minutes,
-                        # The window row.momentum_pct was computed with.
-                        # Global, unlike the one above -- sent all the same so
-                        # the client never has to hardcode it.
-                        "momentum_window_minutes": MOMENTUM_WINDOW_MINUTES,
-                        "rows": [r.model_dump(mode="json") for r in rows],
-                    }
-                )
+                # Shaped by the engine, not here, so this reply and the
+                # run_loop broadcast cannot disagree about what a
+                # scanner_update contains -- they already had.
+                await websocket.send_json(engine.scanner_update_payload(scanner, rows))
             elif msg_type == "unsubscribe":
                 await manager.unsubscribe(topic, websocket)
     except WebSocketDisconnect:
