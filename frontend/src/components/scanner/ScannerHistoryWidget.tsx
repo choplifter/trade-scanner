@@ -228,16 +228,24 @@ export function ScannerHistoryWidget({ selectedSymbol, onSelectSymbol }: Scanner
               onSelectSymbol={onSelectSymbol}
             />
 
-            <BucketTable title="Fade risk — by gap size" rows={data.gap_buckets} />
-            <BucketTable title="Fade risk — by entry RVOL" rows={data.rvol_buckets} />
+            <BucketTable
+              title="Fade risk — by gap size"
+              rows={data.gap_buckets.filter((b) => b.horizon === horizon)}
+            />
+            <BucketTable
+              title="Fade risk — by entry RVOL"
+              rows={data.rvol_buckets.filter((b) => b.horizon === horizon)}
+            />
 
             <p className="ai-ideas-disclaimer">
               Persisted to SQLite, so this survives backend restarts -- covers every scanner match
               from the last 7 trading days. Leaderboards are always ranked by the most recent
               price check for each match, regardless of the horizon selected above. Fade-risk
               tables check whether bigger gaps / higher RVOL predict worse subsequent performance
-              ("gap and crap") -- read the small-sample buckets skeptically until more days build
-              up.
+              ("gap and crap") and now follow that selector too -- on "Latest" they mix holding
+              periods, minutes for a fresh match and days for an old one, so a bucket can look
+              strong there and flat at a fixed horizon. Read the small-sample buckets skeptically
+              until more days build up.
             </p>
           </>
         )}

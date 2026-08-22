@@ -426,13 +426,39 @@ class ScannerHistoryStore:
         ]
         leaderboard_worst = sorted(latest_picks, key=lambda p: p["alpha_vs_benchmark"])[:_LEADERBOARD_SIZE]
 
-        latest_with_return = [p for p in picks_by_horizon["latest"] if p["pct_change_since_entry"] is not None]
-        gap_buckets = bucket_analysis.bucket_breakdown(
-            latest_with_return, lambda p: abs(p["entry_pct_change"]), bucket_analysis.GAP_BUCKETS
-        )
-        rvol_buckets = bucket_analysis.bucket_breakdown(
-            latest_with_return, lambda p: p["entry_rvol"], bucket_analysis.RVOL_BUCKETS
-        )
+        # Buckets are built per horizon, the same way the summary above is,
+        # and tagged with it so a client can show the horizon its selector is
+        # actually on. They used to be computed once from "latest" while the
+        # UI's horizon selector drove only the summary -- so the two tables
+        # sat side by side answering different questions, and only the
+        # leaderboards' use of "latest" was disclosed.
+        #
+        # "latest" is the checkpoint whose holding period is uncontrolled: it
+        # is minutes for something flagged an hour ago and days for something
+        # flagged last week, which is why a bucket could look strong there and
+        # flat at a fixed horizon.
+        #
+        # Unconfirmed checkpoints are excluded here exactly as they are from
+        # the summary. Leaving them in counts "the price never moved because
+        # nothing traded" as a loss, and that is not a small effect -- see the
+        # price_unconfirmed comment above, where it dragged 30-minute win
+        # rates from ~51% to ~28%. Harmless-looking on "latest", where almost
+        # everything has ticked by now; severe the moment these are read at a
+        # short horizon.
+        gap_buckets: list[dict] = []
+        rvol_buckets: list[dict] = []
+        for horizon_name, picks in picks_by_horizon.items():
+            with_return = [
+                p
+                for p in picks
+                if not p["price_unconfirmed"] and p["pct_change_since_entry"] is not None
+            ]
+            for rows, key_fn, buckets in (
+                (gap_buckets, lambda p: abs(p["entry_pct_change"]), bucket_analysis.GAP_BUCKETS),
+                (rvol_buckets, lambda p: p["entry_rvol"], bucket_analysis.RVOL_BUCKETS),
+            ):
+                for row in bucket_analysis.bucket_breakdown(with_return, key_fn, buckets):
+                    rows.append({**row, "horizon": horizon_name})
 
         return {
             "summary": summary,

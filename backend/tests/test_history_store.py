@@ -173,8 +173,12 @@ def test_compute_performance_drops_non_trading_day_appearances(tmp_path):
     # The RVOL/gap buckets draw from the same filtered picks. (Leaderboards
     # aren't checked here -- they require alpha_vs_benchmark, and these rows are
     # seeded without a benchmark price, so they'd be empty either way.)
-    assert sum(b["sample_size"] for b in report["rvol_buckets"]) == 1
-    assert sum(b["sample_size"] for b in report["gap_buckets"]) == 1
+    # Buckets are emitted per horizon now, so the same pick appears once per
+    # horizon -- count within one rather than across all of them.
+    latest_buckets = [b for b in report["rvol_buckets"] if b["horizon"] == "latest"]
+    assert sum(b["sample_size"] for b in latest_buckets) == 1
+    latest_gaps = [b for b in report["gap_buckets"] if b["horizon"] == "latest"]
+    assert sum(b["sample_size"] for b in latest_gaps) == 1
 
 
 def test_compute_ranking_drift_counts_a_holiday_as_a_non_trading_day(tmp_path):
@@ -263,3 +267,73 @@ def test_unconfirmed_prices_are_excluded_from_win_rates(tmp_path):
     assert row["measured_size"] == 1
     # The one confirmed move was up. Counting FLAT as a loss would say 50%.
     assert row["win_rate"] == 100.0
+
+
+# --- the fade-risk buckets ------------------------------------------------
+
+
+def _buckets(report, key="rvol_buckets", horizon="latest"):
+    return [b for b in report[key] if b["horizon"] == horizon]
+
+
+def test_every_bucket_row_names_its_horizon(tmp_path):
+    """The contract both front ends rely on: they filter these rows by the
+    horizon their selector is on. Buckets used to be computed once from
+    "latest" while that selector drove only the summary, so the two tables
+    sat side by side answering different questions.
+
+    A horizon with no confirmed checkpoint yields no rows at all, which is
+    why this checks the shape rather than demanding all four appear.
+    """
+    store = _store(tmp_path)
+    _seed(store, "AAA", entry_rvol=1.0, headline=None, entry_price=10.0, latest_price=11.0)
+
+    report = asyncio.run(store.compute_performance(days=30))
+
+    known = {"30m", "60m", "session_close", "latest"}
+    for key in ("rvol_buckets", "gap_buckets"):
+        assert report[key], key
+        assert all(b["horizon"] in known for b in report[key]), key
+    assert any(b["horizon"] == "latest" for b in report["rvol_buckets"])
+
+
+def test_an_unconfirmed_checkpoint_is_not_counted_as_a_loss(tmp_path):
+    """The bug this guards. A price equal to the entry means nothing traded,
+    not that the trade went nowhere -- the summary has always excluded those,
+    the buckets did not. Counting them dragged 30-minute win rates from ~51%
+    to ~28% elsewhere in this file's history, and the buckets inherited
+    exactly that bias the moment they were read at a short horizon.
+    """
+    store = _store(tmp_path)
+    # Price never moved off the entry: an absence of information.
+    _seed(store, "FLAT", entry_rvol=1.0, headline=None, entry_price=10.0, latest_price=10.0)
+
+    report = asyncio.run(store.compute_performance(days=30))
+
+    assert sum(b["sample_size"] for b in _buckets(report)) == 0, (
+        "an unconfirmed checkpoint must be dropped, not scored as a loss"
+    )
+
+
+def test_a_confirmed_move_still_reaches_the_buckets(tmp_path):
+    """The other half -- the exclusion above must not swallow real outcomes."""
+    store = _store(tmp_path)
+    _seed(store, "UP", entry_rvol=1.0, headline=None, entry_price=10.0, latest_price=11.0)
+
+    rows = _buckets(asyncio.run(store.compute_performance(days=30)))
+
+    assert sum(b["sample_size"] for b in rows) == 1
+    assert [b["win_rate"] for b in rows if b["sample_size"]] == [100.0]
+
+
+def test_buckets_split_by_entry_rvol(tmp_path):
+    """The whole point of the table: does a higher entry RVOL predict a worse
+    outcome."""
+    store = _store(tmp_path)
+    _seed(store, "CALM", entry_rvol=1.0, headline=None, entry_price=10.0, latest_price=11.0)
+    _seed(store, "WILD", entry_rvol=20.0, headline=None, entry_price=10.0, latest_price=9.0)
+
+    rows = {b["bucket"]: b for b in _buckets(asyncio.run(store.compute_performance(days=30))) if b["sample_size"]}
+
+    assert rows["<2x"]["win_rate"] == 100.0
+    assert rows[">15x"]["win_rate"] == 0.0

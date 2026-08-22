@@ -26,6 +26,11 @@ export interface ScannerHistoryPick {
 }
 
 export interface ScannerHistoryBucketRow {
+  /** Which checkpoint this row was measured at. Buckets are emitted per
+   * horizon so the table can follow the same selector the summary does --
+   * they used to be fixed to "latest" while the selector drove only the
+   * summary, so the two answered different questions side by side. */
+  horizon: ScannerHistoryHorizon;
   view: string;
   bucket: string;
   sample_size: number;

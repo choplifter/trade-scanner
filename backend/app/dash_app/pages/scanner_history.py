@@ -298,7 +298,7 @@ def layout(**_kwargs):
             dash_table.DataTable(
                 id="history-gap-bucket-table",
                 columns=_BUCKET_COLUMNS,
-                data=_bucket_rows(history["gap_buckets"]),
+                data=_bucket_rows(_for_horizon(history["gap_buckets"], None)),
                 sort_action="custom",
                 sort_mode="single",
                 style_data_conditional=_delta_conditional("avg_return", "avg_return_num"),
@@ -308,7 +308,7 @@ def layout(**_kwargs):
             dash_table.DataTable(
                 id="history-rvol-bucket-table",
                 columns=_BUCKET_COLUMNS,
-                data=_bucket_rows(history["rvol_buckets"]),
+                data=_bucket_rows(_for_horizon(history["rvol_buckets"], None)),
                 sort_action="custom",
                 sort_mode="single",
                 style_data_conditional=_delta_conditional("avg_return", "avg_return_num"),
@@ -357,21 +357,34 @@ def update_worst_table(history, sort_by):
     return _sorted_rows(rows, sort_by, _PICK_SORT_KEYS)
 
 
+def _for_horizon(rows: list[dict], horizon: str | None) -> list[dict]:
+    """Buckets arrive per horizon; show the one the selector is on.
+
+    They used to be fixed to "latest" while the selector drove only the
+    summary above, so the tables sat side by side answering different
+    questions -- and "latest" is the one checkpoint whose holding period is
+    uncontrolled, minutes for a fresh match and days for an old one.
+    """
+    return [r for r in rows if r.get("horizon") == (horizon or "latest")]
+
+
 @callback(
     Output("history-gap-bucket-table", "data"),
     Input("history-data", "data"),
+    Input("history-horizon", "value"),
     Input("history-gap-bucket-table", "sort_by"),
 )
-def update_gap_bucket_table(history, sort_by):
-    rows = _bucket_rows(history["gap_buckets"])
+def update_gap_bucket_table(history, horizon, sort_by):
+    rows = _bucket_rows(_for_horizon(history["gap_buckets"], horizon))
     return _sorted_rows(rows, sort_by, _BUCKET_SORT_KEYS)
 
 
 @callback(
     Output("history-rvol-bucket-table", "data"),
     Input("history-data", "data"),
+    Input("history-horizon", "value"),
     Input("history-rvol-bucket-table", "sort_by"),
 )
-def update_rvol_bucket_table(history, sort_by):
-    rows = _bucket_rows(history["rvol_buckets"])
+def update_rvol_bucket_table(history, horizon, sort_by):
+    rows = _bucket_rows(_for_horizon(history["rvol_buckets"], horizon))
     return _sorted_rows(rows, sort_by, _BUCKET_SORT_KEYS)
