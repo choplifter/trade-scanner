@@ -53,6 +53,18 @@ MIN_KISSES = levels.MIN_VISITS
 # lines are competing for the same space.
 MAX_LEVELS = levels.MAX_LEVELS
 
+# How far apart two prices have to be before they are separate levels, as a
+# percentage of the visible span. **This is the dial worth turning**, and it
+# is here rather than in market_data.levels because this file is a drop-in --
+# edit it and the next chart request picks it up, no restart.
+#
+# Lower draws finer structure and more of it; higher merges nearby prices into
+# one line. There is no correct value and the measurements say so: at 2.5 SLS
+# reproduces three of four levels a reader named and ALOY none of its one; at
+# 2.0 ALOY reproduces its one and SLS falls to one of four. Two symbols, two
+# answers, so this is a matter of taste about how fine a chart should read.
+BAND_PCT_OF_RANGE = 2.5
+
 # The tuning that decides *where* a level is -- pivot window, band width,
 # departure and separation rules -- lives in app.market_data.levels, along
 # with the measurements behind each number. It is not restated here: a
@@ -129,6 +141,7 @@ def compute(ctx) -> dict:
         df["close"].to_numpy(dtype=float),
         min_visits=MIN_KISSES,
         max_levels=MAX_LEVELS,
+        range_fraction_pct=BAND_PCT_OF_RANGE,
     )
 
     result: dict[str, float] = {}

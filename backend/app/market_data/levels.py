@@ -128,11 +128,26 @@ _SCAN_STEPS_PER_BAND = 8
 MIN_BARS = 60
 
 
-def touch_band(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> float:
-    """Half-width of the band that counts as "at this level"."""
+def touch_band(
+    highs: np.ndarray,
+    lows: np.ndarray,
+    closes: np.ndarray,
+    range_fraction_pct: float = _RANGE_FRACTION_PCT,
+) -> float:
+    """Half-width of the band that counts as "at this level".
+
+    Overridable because there is no right value and the measurements say so.
+    Two levels a reader names as separate can be 0.20 apart on one symbol and
+    0.25 on another with a very different span, and the settings those imply
+    disagree: at 2.5 SLS reproduces three of four named levels and ALOY none;
+    at 2.0 ALOY reproduces its one and SLS drops to one of four. Chasing both
+    with a single constant is curve-fitting to whichever symbol was mentioned
+    last, so the dial belongs to the caller -- see the indicator file, which
+    is where someone can turn it without touching shared code.
+    """
     span = float(highs.max() - lows.min())
     floor = float(np.median(closes)) * _MIN_TOLERANCE_PCT / 100.0
-    return max(span * _RANGE_FRACTION_PCT / 100.0, floor)
+    return max(span * range_fraction_pct / 100.0, floor)
 
 
 def pivot_prices(highs: np.ndarray, lows: np.ndarray) -> np.ndarray:
@@ -240,19 +255,39 @@ def count_visits(highs: np.ndarray, lows: np.ndarray, level: float, band: float)
     return int((events[0] == 1) + np.count_nonzero((events[1:] == 1) & (events[:-1] == -1)))
 
 
-def best_in_zone(highs: np.ndarray, lows: np.ndarray, level: float, band: float) -> float:
-    """The price inside one band that the most separate visits actually hit.
+def best_in_zone(
+    highs: np.ndarray,
+    lows: np.ndarray,
+    level: float,
+    band: float,
+    turns: list[tuple[float, float]] | None = None,
+) -> float:
+    """The price inside one band where the most was rejected.
 
-    A cluster's median says where its pivots sit; it does not say where price
-    kept turning. Ties break towards the cluster's own centre rather than
-    towards an edge.
+    A cluster's median says where its turns sit on average; it does not say
+    which price inside the zone did the work. Ties break towards the
+    cluster's own centre rather than towards an edge.
+
+    Scored by rejection when `turns` is supplied, and this is the same
+    correction as the ranking above rather than a separate one: placing the
+    line at the busiest price pulls it off the prices that actually turned.
+    Measured on ALOY, turns at 11.91/12.06/12.30 produced a line at 12.43 --
+    above every one of them -- because that is where price had spent the most
+    time. Without `turns` it falls back to visits, which is only used by
+    callers that have no rejection data to hand.
     """
     step = band / _SCAN_STEPS_PER_BAND
     candidates = np.arange(level - band, level + band + step, step)
-    scored = [
-        (count_visits(highs, lows, price, band), -abs(price - level), price)
-        for price in candidates
-    ]
+    if turns is None:
+        scored = [
+            (count_visits(highs, lows, price, band), -abs(price - level), price)
+            for price in candidates
+        ]
+    else:
+        scored = [
+            (rejection_strength(turns, price, band), -abs(price - level), price)
+            for price in candidates
+        ]
     return float(max(scored)[2])
 
 
@@ -280,6 +315,7 @@ def find_levels(
     closes: np.ndarray,
     min_visits: int = MIN_VISITS,
     max_levels: int = MAX_LEVELS,
+    range_fraction_pct: float = _RANGE_FRACTION_PCT,
 ) -> list[tuple[float, int]]:
     """(price, visits) for each surviving level, strongest first.
 
@@ -294,7 +330,7 @@ def find_levels(
     if highs.size < MIN_BARS:
         return []
 
-    band = touch_band(highs, lows, closes)
+    band = touch_band(highs, lows, closes, range_fraction_pct)
     if band <= 0:
         return []
 
@@ -307,7 +343,7 @@ def find_levels(
     # inside that zone which the most separate visits actually hit, rather
     # than to wherever its pivots happened to average out.
     refined = {
-        round(best_in_zone(highs, lows, level, band), 4)
+        round(best_in_zone(highs, lows, level, band, turns), 4)
         for level in cluster(np.array([p for p, _ in turns], dtype=float), band)
     }
     scored = [
