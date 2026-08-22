@@ -155,7 +155,7 @@ export interface IndicatorStyle {
 
 export interface IndicatorResult {
   name: string;
-  kind: "level" | "series" | "marker";
+  kind: "level" | "series" | "marker" | "error";
   /** What each sub-series carries depends on `kind`: a price for "level", a
    * point list for "series", a marker list for "marker". The union is
    * narrowed at the render site by checking `kind` first. */
@@ -165,6 +165,10 @@ export interface IndicatorResult {
   >;
   colors: Record<string, string>;
   style?: IndicatorStyle;
+  /** Set when the file could not be loaded or computed. Carried instead of
+   * dropping the entry: an indicator that vanishes draws nothing, which on a
+   * chart looks exactly like one that found nothing. */
+  error?: string;
 }
 
 /** `kind` decides which shape a sub-series carries, but TypeScript cannot

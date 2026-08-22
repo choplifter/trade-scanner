@@ -14,6 +14,7 @@ import pytest
 
 from app.indicators import daily_range, market_structure, weekly_range
 from app.indicators.context import TIMEFRAME_ORDER, build_context, timeframe_rank
+from app.indicators import loader
 from app.indicators.loader import DASH_PATTERNS, run_indicators
 
 
@@ -199,3 +200,61 @@ def test_declared_widths_are_drawable():
     for result in _results_at():
         width = result["style"].get("width")
         assert width is None or width in (1, 2, 3, 4), f"{result['name']}: {width!r}"
+
+
+# --- a broken indicator has to be visible --------------------------------
+
+
+def test_a_failing_indicator_is_reported_rather_than_dropped(tmp_path, monkeypatch):
+    """The failure this closes. An indicator that raises used to be skipped,
+    and a skipped indicator draws nothing -- which on a chart is
+    indistinguishable from one that found nothing, so a broken file reads as
+    a quiet market.
+
+    Observed for real: indicator files are re-executed per request while the
+    modules they import are not, so editing a shared module leaves the two out
+    of step until a restart. market_structure called a signature that did not
+    exist yet, raised, and vanished from the chart with no sign of why.
+    """
+    (tmp_path / "broken_thing.py").write_text(
+        'NAME = "Broken"\nKIND = "level"\n\n\ndef compute(ctx):\n    raise ValueError("boom")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(loader, "_DIR", tmp_path)
+
+    results = run_indicators(build_context("TEST", [], [], []))
+
+    assert len(results) == 1
+    assert results[0]["kind"] == loader.KIND_ERROR
+    assert "ValueError" in results[0]["error"]
+    assert "boom" in results[0]["error"]
+    assert results[0]["series"] == {}
+
+
+def test_a_file_that_cannot_even_be_imported_is_reported(tmp_path, monkeypatch):
+    """It has no NAME to report itself by, so the filename has to do."""
+    (tmp_path / "syntax_trouble.py").write_text("this is not python\n", encoding="utf-8")
+    monkeypatch.setattr(loader, "_DIR", tmp_path)
+
+    results = run_indicators(build_context("TEST", [], [], []))
+
+    assert len(results) == 1
+    assert results[0]["name"] == "Syntax Trouble"
+    assert results[0]["kind"] == loader.KIND_ERROR
+
+
+def test_one_broken_file_does_not_cost_the_working_ones(tmp_path, monkeypatch):
+    (tmp_path / "broken.py").write_text(
+        'NAME = "Broken"\nKIND = "level"\n\n\ndef compute(ctx):\n    raise ValueError("boom")\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "fine.py").write_text(
+        'NAME = "Fine"\nKIND = "level"\n\n\ndef compute(ctx):\n    return {"High": 1.0}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(loader, "_DIR", tmp_path)
+
+    results = {r["name"]: r for r in run_indicators(build_context("TEST", [], [], []))}
+
+    assert results["Fine"]["series"] == {"High": 1.0}
+    assert results["Broken"]["kind"] == loader.KIND_ERROR

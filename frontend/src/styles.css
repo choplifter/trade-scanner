@@ -851,6 +851,15 @@ body {
   opacity: 1;
 }
 
+/* A file that could not be loaded. Loud on purpose: the failure it replaces
+   was invisible, and an indicator drawing nothing reads as a quiet market
+   rather than as a broken file. */
+.indicator-legend.failed {
+  color: #d1242f;
+  opacity: 1;
+  cursor: help;
+}
+
 .indicator-swatch {
   width: 10px;
   height: 2px;

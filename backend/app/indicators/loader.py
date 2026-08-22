@@ -63,6 +63,17 @@ _EXCLUDED = {"__init__.py", "context.py", "loader.py"}
 DASH_PATTERNS = ("solid", "dotted", "dashed", "large-dashed", "sparse-dotted")
 
 
+# The kind an entry carries when its file could not be loaded or computed.
+# It has no series, so nothing draws it -- the client shows it in the legend
+# instead, which is the whole point.
+KIND_ERROR = "error"
+
+
+def module_name(path: Path) -> str:
+    """A readable name for a file that may have failed before defining NAME."""
+    return path.stem.replace("_", " ").title()
+
+
 def _load_module(path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(f"_indicator_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
@@ -89,8 +100,27 @@ def run_indicators(ctx: IndicatorContext) -> list[dict]:
                 "colors": getattr(module, "COLORS", {}),
                 "style": getattr(module, "STYLE", {}),
             }
-        except Exception:
-            logger.exception("Indicator %s failed to load/compute -- skipping", path.name)
+        except Exception as exc:
+            logger.exception("Indicator %s failed to load/compute", path.name)
+            # Reported, not dropped. A skipped indicator draws nothing, which
+            # on a chart is indistinguishable from an indicator that found
+            # nothing -- so a broken file looks like a quiet market.
+            #
+            # Observed exactly that way: these files are re-executed per
+            # request while the modules they import are not, so editing a
+            # shared module leaves the two out of step until a restart. The
+            # indicator called a function signature that did not exist yet,
+            # raised, and simply vanished from the chart with no sign of why.
+            results.append(
+                {
+                    "name": module_name(path),
+                    "kind": KIND_ERROR,
+                    "series": {},
+                    "colors": {},
+                    "style": {},
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
             continue
         results.append(result)
     return results

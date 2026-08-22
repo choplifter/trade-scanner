@@ -270,16 +270,26 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
               <button
                 key={indicator.name}
                 type="button"
-                className="indicator-legend"
-                aria-pressed={!hiddenIndicators.has(indicator.name)}
-                onClick={() => toggleIndicator(indicator.name)}
-                title={`Show or hide ${indicator.name}`}
+                className={
+                  indicator.error ? "indicator-legend failed" : "indicator-legend"
+                }
+                aria-pressed={indicator.error ? true : !hiddenIndicators.has(indicator.name)}
+                onClick={() => !indicator.error && toggleIndicator(indicator.name)}
+                title={
+                  indicator.error
+                    ? `${indicator.name} failed: ${indicator.error}`
+                    : `Show or hide ${indicator.name}`
+                }
               >
                 <span
                   className="indicator-swatch"
-                  style={{ background: Object.values(indicator.colors ?? {})[0] ?? "#888" }}
+                  style={{
+                    background: indicator.error
+                      ? "#d1242f"
+                      : Object.values(indicator.colors ?? {})[0] ?? "#888",
+                  }}
                 />
-                {indicator.name}
+                {indicator.error ? `${indicator.name} ✕` : indicator.name}
               </button>
             ))}
         </div>
