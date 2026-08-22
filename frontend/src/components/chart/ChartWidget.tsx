@@ -18,6 +18,23 @@ interface ChartWidgetProps {
 
 const DEFAULT_TIMEFRAME_KEY = "5m";
 
+// Which indicators the reader has switched off, by name. Persisted because
+// "show me only the strategy" is a way of working, not a property of the
+// symbol on screen -- it should survive a reload and a symbol change the way
+// the timeframe and chart type already do.
+const HIDDEN_INDICATORS_KEY = "chart:hiddenIndicators";
+
+function loadHidden(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_INDICATORS_KEY);
+    return new Set<string>(raw ? JSON.parse(raw) : []);
+  } catch {
+    // Private browsing, storage disabled, or a value from an older shape --
+    // none of which is worth failing a chart over.
+    return new Set<string>();
+  }
+}
+
 const CHART_TYPES: { key: ChartType; label: string; title: string }[] = [
   { key: "candles", label: "Candles", title: "Open/high/low/close candles" },
   {
@@ -41,6 +58,24 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   // Off by default -- these are reference lines, not something every chart
   // view needs cluttered onto it.
   const [showIndicators, setShowIndicators] = useState(false);
+  // Stored as the *hidden* set rather than the visible one so a newly added
+  // indicator shows up by default instead of being invisible until someone
+  // discovers a toggle for it.
+  const [hiddenIndicators, setHiddenIndicators] = useState<Set<string>>(loadHidden);
+
+  function toggleIndicator(name: string) {
+    setHiddenIndicators((current) => {
+      const next = new Set(current);
+      if (!next.delete(name)) next.add(name);
+      try {
+        localStorage.setItem(HIDDEN_INDICATORS_KEY, JSON.stringify([...next]));
+      } catch {
+        // The toggle still works for this session; it just will not be
+        // remembered next time.
+      }
+      return next;
+    });
+  }
   const option =
     TIMEFRAME_OPTIONS.find((o) => o.key === timeframeKey) ??
     TIMEFRAME_OPTIONS.find((o) => o.key === DEFAULT_TIMEFRAME_KEY)!;
@@ -169,10 +204,27 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             className="timeframe-button"
             aria-pressed={showIndicators}
             onClick={() => setShowIndicators((v) => !v)}
-            title="Toggle premarket/weekly/monthly range lines"
+            title="Toggle the indicator lines. Individual ones can be switched off next to this."
           >
             Levels
           </button>
+          {showIndicators &&
+            displayed.indicators.map((indicator) => (
+              <button
+                key={indicator.name}
+                type="button"
+                className="indicator-legend"
+                aria-pressed={!hiddenIndicators.has(indicator.name)}
+                onClick={() => toggleIndicator(indicator.name)}
+                title={`Show or hide ${indicator.name}`}
+              >
+                <span
+                  className="indicator-swatch"
+                  style={{ background: Object.values(indicator.colors ?? {})[0] ?? "#888" }}
+                />
+                {indicator.name}
+              </button>
+            ))}
         </div>
       </div>
       <div className="widget-body">
@@ -194,7 +246,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             bars={displayed.bars}
             chartType={chartType}
             vwap={displayed.vwap}
-            indicators={displayed.indicators}
+            indicators={displayed.indicators.filter((i) => !hiddenIndicators.has(i.name))}
             showIndicators={showIndicators}
             // Only honour the focus while it still refers to the symbol on
             // screen; a stale one would drag the chart to an unrelated time
