@@ -1,3 +1,29 @@
+/** One point in time on the price series, as opposed to a price level that
+ * spans the whole chart. A horizontal line answers "at what price"; this
+ * answers "at which bar", which is the question an entry actually poses. */
+export interface IndicatorMarker {
+  /** Bar time, seconds since the epoch. */
+  time: number;
+  position: "aboveBar" | "belowBar" | "inBar";
+  shape: "arrowUp" | "arrowDown" | "circle" | "square";
+  text: string;
+}
+
+export interface StrategySignal {
+  strategy: string;
+  /** "long" or "short" -- unlike the momentum alarm, these rules work from
+   * either side of a level. */
+  side: string;
+  entry_price: number;
+  stop_price: number;
+  target_price: number;
+  reason: string;
+  /** When the setup fired. This marks the last setup of the session, not one
+   * firing this instant -- a strict now-flag would fall between the
+   * scanner's refreshes more often than not. */
+  fired_at: string;
+}
+
 export interface ScannerRow {
   symbol: string;
   exchange: string;
@@ -35,6 +61,14 @@ export interface ScannerRow {
    * wick) -- see backend app.scanners.formulas.is_momentum_alert. Drives
    * the momentum-alarm overlay (see hooks/useAlarms), off by default. */
   is_momentum_alert: boolean;
+  /** Strategy scripts firing on this row's latest bar -- see backend
+   * app/strategies/. Empty for almost every row. A list rather than one flag
+   * per strategy, so adding a script does not change this contract.
+   *
+   * The backend computes these from the scanner's cached 5-minute bars,
+   * whose level sources are narrower than the chart's -- so treat a marker
+   * as "look at this", and the chart as the authority on the prices. */
+  strategy_signals: StrategySignal[];
   /** Volume *rate* fields, unlike rvol which is cumulative since the open
    * and only ever climbs. volume_surge is the trailing hour over the one
    * before it -- honest as a description but misleading as a filter, since
@@ -121,10 +155,31 @@ export interface IndicatorStyle {
 
 export interface IndicatorResult {
   name: string;
-  kind: "level" | "series";
-  series: Record<string, number | null | { t: string; value: number | null }[]>;
+  kind: "level" | "series" | "marker";
+  /** What each sub-series carries depends on `kind`: a price for "level", a
+   * point list for "series", a marker list for "marker". The union is
+   * narrowed at the render site by checking `kind` first. */
+  series: Record<
+    string,
+    number | null | { t: string; value: number | null }[] | IndicatorMarker[]
+  >;
   colors: Record<string, string>;
   style?: IndicatorStyle;
+}
+
+/** `kind` decides which shape a sub-series carries, but TypeScript cannot
+ * narrow a Record's values from a sibling field -- so the check has to look at
+ * the value. Guards rather than casts: a cast would keep compiling if the
+ * backend ever changed the payload shape, which is exactly the change that
+ * should stop compiling. */
+export function isPointSeries(
+  value: unknown,
+): value is { t: string; value: number | null }[] {
+  return Array.isArray(value) && (value.length === 0 || "t" in value[0]);
+}
+
+export function isMarkerSeries(value: unknown): value is IndicatorMarker[] {
+  return Array.isArray(value) && (value.length === 0 || "time" in value[0]);
 }
 
 export interface SymbolBarsResponse {

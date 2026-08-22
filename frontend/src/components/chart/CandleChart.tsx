@@ -12,6 +12,7 @@ import {
   type IPriceLine,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
+  type SeriesMarker,
   type LineData,
   type IRange,
   type Time,
@@ -19,6 +20,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 
+import { isMarkerSeries, isPointSeries } from "../../types/alpaca";
 import type { Bar, IndicatorResult, IndicatorStyle } from "../../types/alpaca";
 import { crosshairTimeFormatter, tickMarkFormatter } from "../../utils/chartTime";
 
@@ -452,20 +454,51 @@ export function CandleChart({
     if (!markersRef.current) {
       markersRef.current = createSeriesMarkers(priceSeries, []);
     }
+    // One call owns the whole set, so the backtest pick and any "marker"-kind
+    // indicator have to be assembled together here rather than each calling
+    // setMarkers and wiping the other out.
+    //
+    // Markers are what a *moment* needs. A price line answers "at what
+    // price" and spans the chart; an entry also has to answer "at which bar",
+    // and a horizontal line through the entry price cannot say that -- it
+    // crosses the chart at every time the price was ever touched.
+    const markers: SeriesMarker<Time>[] = [];
+
     const markerTime = focusTime == null ? null : nearestBarTime(bars, focusTime);
-    markersRef.current.setMarkers(
-      markerTime == null
-        ? []
-        : [
-            {
-              time: markerTime,
-              position: "aboveBar",
-              color: PICK_MARKER_COLOR,
-              shape: "arrowDown",
-              text: "Pick",
-            },
-          ],
-    );
+    if (markerTime != null) {
+      markers.push({
+        time: markerTime,
+        position: "aboveBar",
+        color: PICK_MARKER_COLOR,
+        shape: "arrowDown",
+        text: "Pick",
+      });
+    }
+
+    if (showIndicators) {
+      indicators.forEach((indicator) => {
+        if (indicator.kind !== "marker") return;
+        Object.entries(indicator.series).forEach(([subName, value]) => {
+          if (!isMarkerSeries(value)) return;
+          const color = indicator.colors[subName] ?? "#898781";
+          value.forEach((marker) => {
+            markers.push({
+              time: marker.time as Time,
+              position: marker.position,
+              shape: marker.shape,
+              color,
+              text: marker.text,
+            });
+          });
+        });
+      });
+    }
+
+    // Sorted because the library requires markers in time order and rejects
+    // the set otherwise -- the pick and the indicators arrive independently,
+    // so nothing else guarantees it.
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    markersRef.current.setMarkers(markers);
 
     if (focusTime == null || bars.length === 0) return;
 
@@ -480,7 +513,7 @@ export function CandleChart({
       from: Math.max(first, target - FOCUS_PADDING_SECONDS) as UTCTimestamp,
       to: Math.min(last, target + FOCUS_PADDING_SECONDS) as UTCTimestamp,
     });
-  }, [focusTime, bars, chartType]);
+  }, [focusTime, bars, chartType, indicators, showIndicators]);
 
   // Separate from the bars/vwap effect above: indicators only change when
   // the symbol changes or the toggle flips, not on every live tick, and
@@ -529,7 +562,7 @@ export function CandleChart({
               title,
             });
             priceLinesRef.current.push(line);
-          } else if (indicator.kind === "series" && Array.isArray(value)) {
+          } else if (indicator.kind === "series" && isPointSeries(value)) {
             const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
             const series = chart.addSeries(LineSeries, {
               color,

@@ -23,14 +23,17 @@ from app.market_data import news_cache as news_cache_mod
 from app.market_data.fmp_news import fetch_fmp_headlines
 from app.market_data.news_cache import NewsCache
 from app.market_data import volume_surge
+from app.market_data import session_marks
 from app.market_data.momentum import MOMENTUM_WINDOW_MINUTES
 from app.market_data.volume_profile import VolumeProfileCache
 from app.scanners import formulas, screener
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.history_store import NewAppearance, ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
+from app.strategies import runner as strategy_runner
+from app.strategies.loader import load_strategies
 from app.scanners.latest_session import compute_latest_session_rows
-from app.scanners.schemas import ScannerRow
+from app.scanners.schemas import ScannerRow, StrategySignalRow
 from app.scanners.sector_attribution import SECTOR_ETFS
 from app.services.market_clock import ET, current_session, trading_hours_for
 from app.ws.connection_manager import ConnectionManager
@@ -44,6 +47,19 @@ _SECTOR_ETF_INTERVAL = 60.0
 
 _SNAPSHOT_BATCH_SIZE = 300
 _TOP_N = 50
+
+
+def _last_per_strategy(firings: list) -> list:
+    """The most recent firing of each strategy, in name order.
+
+    Per strategy rather than one overall, so two rules setting up on the same
+    symbol both show -- and only the latest of each, because a rule that
+    qualified on nine consecutive bars set up once.
+    """
+    latest: dict[str, tuple] = {}
+    for index, signal in firings:
+        latest[signal.strategy] = (index, signal)
+    return [latest[name] for name in sorted(latest)]
 
 
 def _has_headline(row: ScannerRow, news_cache: NewsCache | None) -> bool:
@@ -672,6 +688,80 @@ class ScannerEngine:
             for row in rows:
                 row.recent_headline = self.news_cache.get(row.symbol)
 
+    async def _attach_strategies(self, views: dict[str, list[ScannerRow]]) -> None:
+        """Run the strategy scripts over whatever is ranked right now.
+
+        Reads the 5-minute bars MomentumCache already holds, so this costs no
+        extra fetch -- and is therefore scoped to the ranked views like
+        momentum_pct, for the same reason.
+
+        **The levels differ from the chart's, deliberately and visibly.** A
+        strategy aims at the nearest level; the chart merges multi-day hourly
+        structure with the day's own marks, while this has only the cached
+        5-minute window and so uses the marks alone (premarket range,
+        prior-session range). Adding structure levels can only put a level
+        *nearer*, so a row flagged here can turn out, on the chart, to have a
+        nearer target and a worse ratio. The marker is an invitation to look;
+        the chart is the authority on the numbers.
+
+        Loaded once per tick rather than held, which is what keeps a strategy
+        file editable without a restart (see app.strategies.loader). One
+        strategy raising must not stall the poll loop, so errors are
+        swallowed here -- the backtest does the opposite.
+        """
+        symbols = {r.symbol for rows in views.values() for r in rows}
+        if not symbols:
+            return
+
+        strategies, errors = load_strategies()
+        for err in errors:
+            logger.warning("Strategy %s failed to load: %s", err.filename, err.error)
+        if not strategies:
+            for rows in views.values():
+                for row in rows:
+                    row.strategy_signals = []
+            return
+
+        for rows in views.values():
+            for row in rows:
+                bars = self.momentum_cache.bars(row.symbol)
+                if not bars:
+                    # Set explicitly rather than left alone, so a symbol whose
+                    # bars have gone away clears instead of showing a marker
+                    # from a previous tick forever.
+                    row.strategy_signals = []
+                    continue
+
+                session_date = bars[-1].timestamp.astimezone(ET).date()
+                levels = tuple(sorted(session_marks.marks_for_session(bars, session_date)))
+                firings = strategy_runner.walk_latest_session(
+                    row.symbol, bars, strategies, levels, swallow_errors=True
+                )
+                # The last setup of the session, not one firing on this exact
+                # bar. Two reasons, and the second is decisive:
+                #
+                # It matches what the chart draws, so the table and the chart
+                # cannot disagree about whether a symbol set up today. And a
+                # strict now-flag would mostly be invisible anyway -- bars are
+                # five minutes wide and this cache refreshes every
+                # scanner_momentum_refresh_interval seconds, so a firing that
+                # lasted one bar would usually fall between two refreshes.
+                #
+                # fired_at carries the age so a reader can judge it rather
+                # than assume the setup is live.
+                row.strategy_signals = [
+                    StrategySignalRow(
+                        strategy=signal.strategy,
+                        side=signal.side,
+                        entry_price=signal.entry_price,
+                        stop_price=signal.stop_price,
+                        target_price=signal.target_price,
+                        reason=signal.reason,
+                        fired_at=bars[index].timestamp,
+                    )
+                    for index, signal in _last_per_strategy(firings)
+                ]
+
     def scanner_update_payload(
         self,
         scanner: str,
@@ -1125,6 +1215,9 @@ class ScannerEngine:
                     self.settings.scanner_min_dollar_volume,
                 )
             await self._attach_momentum(momentum_scope)
+            # After momentum: both read the same MomentumCache, and this
+            # needs the bars that refresh just populated.
+            await self._attach_strategies(views)
 
             screen_results = self._evaluate_screens()
             enriched = dict(views)

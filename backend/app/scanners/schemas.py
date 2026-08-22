@@ -3,6 +3,26 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class StrategySignalRow(BaseModel):
+    """One strategy firing on one symbol, with the three prices that make it
+    a trade -- enough to pre-fill an order ticket without a second request.
+
+    Both sides: unlike is_momentum_alert, a rule reading a level for
+    rejection works from either side of it (see app.strategies.context).
+    """
+
+    strategy: str
+    side: str
+    entry_price: float
+    stop_price: float
+    target_price: float
+    reason: str
+    # When the setup fired, so a reader can tell a fresh one from one that
+    # resolved hours ago. Carried rather than implied: this marks the last
+    # setup of the session, not one firing this instant.
+    fired_at: datetime
+
+
 class ScannerRow(BaseModel):
     symbol: str
     exchange: str = ""
@@ -58,6 +78,15 @@ class ScannerRow(BaseModel):
     # app.scanners.formulas.is_momentum_alert. Drives the frontend's
     # momentum-alarm overlay (off by default).
     is_momentum_alert: bool = False
+    # Whatever strategy scripts fired on this row's latest bar -- see
+    # app.strategies.loader. A list rather than one boolean per strategy so
+    # adding a script does not change this schema or the websocket contract,
+    # and empty for the overwhelming majority of rows.
+    #
+    # Ranked views only, like momentum_pct above: the strategies read the
+    # 5-minute bars MomentumCache already holds, so this costs no extra
+    # fetch, but it is only computable for symbols that cache covers.
+    strategy_signals: list[StrategySignalRow] = []
     # Volume *rate* rather than running total -- see
     # app.market_data.volume_surge. rvol (above) is cumulative since the open
     # and only ever climbs, so it can't distinguish a stock that ran at 09:45

@@ -229,6 +229,17 @@ export function ScannerTable({
                   ⚡ MOMENTUM
                 </span>
               )}
+              {(row.strategy_signals ?? []).map((signal) => (
+                <span
+                  key={signal.strategy}
+                  className={
+                    signal.side === "short" ? "badge-strategy short" : "badge-strategy"
+                  }
+                  title={`${signal.strategy} (${signal.side}) at ${new Date(signal.fired_at).toLocaleTimeString()} -- ${signal.reason}. Entry ${signal.entry_price}, stop ${signal.stop_price}, target ${signal.target_price}. This is the session's last setup, not necessarily one firing right now. Open the chart to check it: the scanner sees fewer level sources than the chart does.`}
+                >
+                  {signal.side === "short" ? "SHORT" : "LONG"} {signal.strategy}
+                </span>
+              ))}
               {row.recent_headline && (
                 <span className="badge-news" title={row.recent_headline}>
                   📰

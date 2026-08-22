@@ -1,3 +1,4 @@
+import { isPointSeries } from "../types/alpaca";
 import type { Bar, IndicatorResult } from "../types/alpaca";
 
 export interface TimeframeOption {
@@ -67,7 +68,7 @@ export function aggregateBars(
   indicators.forEach((indicator, i) => {
     if (indicator.kind !== "series") return;
     Object.entries(indicator.series).forEach(([subName, points]) => {
-      if (Array.isArray(points)) {
+      if (isPointSeries(points)) {
         slots.push({ key: `${i}:${subName}`, points, out: [] });
       }
     });

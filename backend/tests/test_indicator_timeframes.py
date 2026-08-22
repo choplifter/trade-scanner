@@ -55,6 +55,8 @@ def test_every_indicator_is_offered_on_the_minute_chart():
         "Weekly Range",
         "Monthly Range",
         "Market Structure",
+        "Strategy Signal",
+        "Strategy Entry",
     }
 
 
@@ -80,6 +82,22 @@ def test_the_daily_range_survives_up_to_the_daily_chart():
     assert "Daily Range" in _names_at("1Day")
     assert "Daily Range" not in _names_at("1Week")
     assert "Daily Range" not in _names_at("1Month")
+
+
+def test_the_entry_marker_shares_the_signal_ceiling():
+    """They describe one trade, so one appearing without the other would be a
+    stop and a target with no entry, or an arrow with nothing to aim at."""
+    for timeframe in ("1Min", "1Hour", "1Day", "1Week"):
+        names = _names_at(timeframe)
+        assert ("Strategy Entry" in names) == ("Strategy Signal" in names), timeframe
+
+
+def test_the_strategy_signal_stops_at_the_hourly_chart():
+    """It draws three prices from one intraday setup. Above the hourly chart
+    those would be pinned to the right-hand edge of a multi-year view, which
+    is the failure market_structure already had once."""
+    assert "Strategy Signal" in _names_at("1Hour")
+    assert "Strategy Signal" not in _names_at("1Day")
 
 
 def test_the_weekly_range_survives_up_to_the_weekly_chart():
