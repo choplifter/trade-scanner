@@ -346,3 +346,105 @@ def test_counting_matches_a_plain_sequential_walk():
             elif low > level + departure or high < level - departure:
                 armed = True
         assert levels.count_visits(highs, lows, level, tolerance) == expected, level
+
+
+# --- ranked by what a level rejected, not by how long price sat there ------
+#
+# The change these pin: scoring by visits ranks a consolidation first, because
+# that is where price spent the most time by definition. Measured on SLS, the
+# top three levels were 12.40/13.03/13.35 -- all inside one range-bound
+# stretch -- while the prices a reader could point to sat at 15.x and 13.1
+# with fewer visits each and a real move rejected at every one.
+
+
+def _walk(points, per_step=10):
+    """Bars tracing a path through `points`, oldest first.
+
+    Ten bars a leg so a short path still clears MIN_BARS, and so a full move
+    between two points fits inside the excursion window.
+    """
+    highs, lows = [], []
+    for start, end in zip(points, points[1:]):
+        for i in range(per_step):
+            price = start + (end - start) * i / per_step
+            highs.append(price + 0.02)
+            lows.append(price - 0.02)
+    return np.array(highs, dtype=float), np.array(lows, dtype=float)
+
+
+def test_a_shelf_price_never_leaves_is_not_a_level():
+    """The whole point of the change, and the case a visit count gets wrong.
+
+    Price is thrown back from 13.00 twice, then spends the rest of the window
+    oscillating in a tight band around 11.50. The shelf is *touched* far more
+    often than the wall; nothing ever moves away from it. Scoring by visits
+    ranks it first, which is how a consolidation came to outrank the prices a
+    reader could point to on SLS.
+
+    The chop sits at the end deliberately: put it before a large move and it
+    stops being chop -- the last low before a rally really did launch one,
+    and the score should say so.
+    """
+    walls = [10.0, 13.0, 10.0, 13.0, 10.0, 11.5]
+    chop = [11.5, 11.6, 11.4] * 8
+    highs, lows = _walk(walls + chop)
+    closes = (highs + lows) / 2
+
+    found = levels.find_levels(highs, lows, closes, min_visits=2, max_levels=4)
+    prices = [price for price, _ in found]
+
+    assert prices, "no levels found at all"
+    assert any(abs(p - 13.0) < 0.3 for p in prices), f"the wall is missing: {prices}"
+    assert not any(abs(p - 11.5) < 0.3 for p in prices), f"the shelf was drawn: {prices}"
+
+
+def test_a_turn_that_led_nowhere_is_not_a_rejection():
+    """A local extreme followed by a wobble is noise that happens to be a
+    local extreme, and there are far more of those than there are levels."""
+    span = 10.0
+    highs = np.array([10.0, 10.02, 10.0] * 30, dtype=float)
+    lows = highs - 0.01
+
+    assert levels.rejections(highs, lows, span) == []
+
+
+def test_a_rejection_is_scored_by_how_far_price_travelled():
+    highs, lows = _walk([10.0, 13.0, 10.0, 13.0, 10.0])
+    span = float(highs.max() - lows.min())
+
+    turns = levels.rejections(highs, lows, span)
+
+    assert turns, "no rejections found"
+    assert all(excursion > 0 for _, excursion in turns)
+    assert max(excursion for _, excursion in turns) > span * levels._MIN_EXCURSION_FRACTION
+
+
+def test_strength_sums_only_the_turns_at_this_level():
+    turns = [(10.0, 1.0), (10.05, 2.0), (13.0, 5.0)]
+
+    assert levels.rejection_strength(turns, 10.0, band=0.1) == pytest.approx(3.0)
+    assert levels.rejection_strength(turns, 13.0, band=0.1) == pytest.approx(5.0)
+    assert levels.rejection_strength(turns, 11.5, band=0.1) == 0.0
+
+
+def test_a_symbol_with_no_rejections_has_no_levels():
+    """Not a crash and not a fallback to the busiest prices: if nothing was
+    ever turned away, there is no support to draw."""
+    highs = np.array([10.0 + i * 0.001 for i in range(200)], dtype=float)
+    lows = highs - 0.005
+    closes = (highs + lows) / 2
+
+    assert levels.find_levels(highs, lows, closes) == []
+
+
+def test_the_visit_count_is_still_what_labels_a_level():
+    """Selection and label answer different questions and both are worth
+    having: the chart says how often a level was tested, while which levels
+    get drawn is decided by what they rejected."""
+    highs, lows = _walk([10.0, 13.0, 10.0, 13.0, 10.0, 13.0, 10.0])
+    closes = (highs + lows) / 2
+
+    found = levels.find_levels(highs, lows, closes, min_visits=2, max_levels=3)
+
+    assert found
+    assert all(isinstance(visits, int) and visits >= 2 for _, visits in found)

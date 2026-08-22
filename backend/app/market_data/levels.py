@@ -33,13 +33,38 @@ import pandas as pd
 # points, three is the first count that says price is respecting the level.
 MIN_VISITS = 3
 
-# How many levels to keep at most. Past roughly half a dozen a reader cannot
-# tell which one is worth acting on.
-MAX_LEVELS = 6
+# How many levels to keep at most. Raised from 6: with the ranking now by
+# rejection strength the extra lines are the next-strongest walls rather than
+# the next-busiest shelves, which is what a reader asked for when they could
+# point to four levels inside a two-dollar stretch and the chart drew one.
+MAX_LEVELS = 8
 
-# A bar is a local extreme over this many bars either side. On the hourly
-# anchor that is a turn which held for roughly three sessions either way.
-_PIVOT_WINDOW = 10
+# A bar is a local extreme over this many bars either side. Three hourly bars
+# is a turn that held for most of a session on each side.
+#
+# Was 10 -- roughly three sessions either way -- which only admitted the very
+# largest turns. Measured on SLS, two levels a reader could point to on the
+# chart (15.20 and 14.16) had *no* qualifying pivot at all at that setting,
+# and five at this one. A level that reversed price for an afternoon is still
+# a level; requiring it to hold for a week finds only the extremes of the
+# whole range.
+_PIVOT_WINDOW = 3
+
+# How far past a turn to look when measuring what that turn was worth, as a
+# multiple of the pivot window. The excursion is the distance price travelled
+# away before coming back.
+_EXCURSION_WINDOW_MULTIPLE = 4
+
+# The smallest excursion that counts as a rejection, as a fraction of the
+# visible span. Below it, a turn is chop rather than a level being defended.
+#
+# This is what separates a support from a shelf. Scoring by how often price
+# *visited* a price ranks the consolidation zone first -- it is where price
+# spent the most time, by definition -- while the prices a trader marks are
+# where price was turned away. Measured on SLS: visits put 12.40/13.03/13.35
+# at the top, all inside one range-bound afternoon, while the levels that had
+# actually rejected moves sat at 15.x and 13.1 with fewer visits each.
+_MIN_EXCURSION_FRACTION = 0.10
 
 # How wide the touch band is, as a percentage of the price span in view.
 #
@@ -52,9 +77,19 @@ _PIVOT_WINDOW = 10
 # result was empty (MARA daily 2/2/2, AAPL weekly 1/1/1).
 #
 # A fraction of the visible span is the one unit that means the same on every
-# chart. Measured top/3rd/6th counts: MARA 11/9/9 intraday, 11/10/10 daily,
-# 6/6/5 weekly; AAPL 10/8/8, 6/6/5, 6/6/4.
-_RANGE_FRACTION_PCT = 3.5
+# chart. Measured top/3rd/6th counts at 3.5: MARA 11/9/9 intraday, 11/10/10
+# daily, 6/6/5 weekly; AAPL 10/8/8, 6/6/5, 6/6/4.
+#
+# Narrowed from 3.5 to 2.5 for resolution, not from a measurement. At 3.5 the
+# band on an $8-range stock is 0.29, so two levels 0.20 apart merge and the
+# line is drawn between them, at a price neither of them is. This is a choice
+# about how fine the answer should be and it is worth being plain that it is
+# one: on the symbol that prompted it, 2.5 happens to reproduce all four
+# levels a reader named while 2.0 reproduces one. That is a knife edge on a
+# single symbol, not evidence for 2.5 -- it is set here because a level a
+# trader can point to is worth more than a tidier chart, and the ranking
+# change below is what actually fixed the problem.
+_RANGE_FRACTION_PCT = 2.5
 
 # Floor for the band, as a percentage of price, for a halted or barely-traded
 # name whose bars are all but identical -- its span is nearly zero, and so
@@ -119,6 +154,40 @@ def pivot_prices(highs: np.ndarray, lows: np.ndarray) -> np.ndarray:
 
     prices = pd.concat([pivot_highs, pivot_lows]).to_numpy(dtype=float)
     return prices[np.isfinite(prices) & (prices > 0)]
+
+
+def rejections(highs: np.ndarray, lows: np.ndarray, span: float) -> list[tuple[float, float]]:
+    """(price, excursion) for every turn worth calling a rejection.
+
+    A pivot says price turned; the excursion says whether the turn mattered.
+    A high that gave way to a 6% drop is a level being defended; one followed
+    by a 0.3% wobble is noise that happens to be a local extreme, and there
+    are far more of the second kind -- which is why counting pivots alone
+    still ranks a quiet range above a wall price kept bouncing off.
+    """
+    window = _PIVOT_WINDOW
+    reach = window * _EXCURSION_WINDOW_MULTIPLE
+    floor = span * _MIN_EXCURSION_FRACTION
+    found: list[tuple[float, float]] = []
+
+    for i in range(window, len(highs) - window):
+        if highs[i] >= highs[i - window : i + window + 1].max():
+            after = lows[i + 1 : i + 1 + reach]
+            if after.size and highs[i] - after.min() >= floor:
+                found.append((float(highs[i]), float(highs[i] - after.min())))
+        if lows[i] <= lows[i - window : i + window + 1].min():
+            after = highs[i + 1 : i + 1 + reach]
+            if after.size and after.max() - lows[i] >= floor:
+                found.append((float(lows[i]), float(after.max() - lows[i])))
+
+    return found
+
+
+def rejection_strength(
+    turns: list[tuple[float, float]], level: float, band: float
+) -> float:
+    """Total excursion rejected at this price. The score a level is ranked by."""
+    return sum(excursion for price, excursion in turns if abs(price - level) <= band)
 
 
 def cluster(prices: np.ndarray, band: float) -> list[float]:
@@ -229,22 +298,39 @@ def find_levels(
     if band <= 0:
         return []
 
+    span = float(highs.max() - lows.min())
+    turns = rejections(highs, lows, span)
+    if not turns:
+        return []
+
     # Each cluster nominates a zone; the scan then moves the line to the price
     # inside that zone which the most separate visits actually hit, rather
     # than to wherever its pivots happened to average out.
     refined = {
         round(best_in_zone(highs, lows, level, band), 4)
-        for level in cluster(pivot_prices(highs, lows), band)
+        for level in cluster(np.array([p for p, _ in turns], dtype=float), band)
     }
-    scored = [(level, count_visits(highs, lows, level, band)) for level in refined]
-    qualifying = [(level, visits) for level, visits in scored if visits >= min_visits]
+    scored = [
+        (level, count_visits(highs, lows, level, band), rejection_strength(turns, level, band))
+        for level in refined
+    ]
+    # Ranked by what the level rejected, filtered by how often it was tested.
+    # Two different questions, and using the second for both is what put a
+    # quiet consolidation ahead of the prices that actually turned moves --
+    # visits measure where price *was*, strength measures what it was stopped
+    # from doing.
+    qualifying = [
+        (level, visits, strength)
+        for level, visits, strength in scored
+        if visits >= min_visits and strength > 0
+    ]
 
-    # Most-visited first, and on a tie the higher price, purely so the order
-    # is deterministic -- two runs over the same bars must not reorder.
-    qualifying.sort(key=lambda item: (-item[1], -item[0]))
+    # Strongest first, and on a tie the higher price, purely so the order is
+    # deterministic -- two runs over the same bars must not reorder.
+    qualifying.sort(key=lambda item: (-item[2], -item[0]))
 
     kept: list[tuple[float, int]] = []
-    for level, visits in qualifying:
+    for level, visits, _strength in qualifying:
         gaps = [(other, abs(level - other)) for other, _ in kept]
         if any(gap <= band * _MIN_SEPARATION_MULTIPLE for _, gap in gaps):
             continue
