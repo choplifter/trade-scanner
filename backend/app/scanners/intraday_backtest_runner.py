@@ -35,6 +35,7 @@ from app.scanners.intraday_backtest import (
     replication_factor,
     simulate_intraday_screen,
 )
+from app.scanners.exit_rules import Exit, ExitRule, expectancy
 from app.scanners.rvol_backtest import trailing_avg_daily_volume
 
 logger = logging.getLogger(__name__)
@@ -52,9 +53,14 @@ async def run_intraday_backtest(
     force_refresh: bool = False,
     fundamentals: dict | None = None,
     catalysts: dict | None = None,
+    exit_rule: ExitRule | None = None,
 ) -> dict:
-    """Replay `screen` at 5-minute resolution, holding each pick to its
-    session close.
+    """Replay `screen` at 5-minute resolution.
+
+    Without an `exit_rule`, each pick is held to its session close. With one,
+    each becomes a trade with a stop and a target, and the report gains an
+    `expectancy` block measured in R -- which is the only figure here that
+    answers "would this have made money" rather than "did price drift up".
 
     lookback_days defaults far shorter than the daily backtest's 180: a
     session of 5-minute bars is ~78 rows per symbol per day, so the fetch and
@@ -101,6 +107,7 @@ async def run_intraday_backtest(
         benchmark_to_close(benchmark_intraday),
         fundamentals,
         catalysts,
+        exit_rule,
     )
 
     return {
@@ -121,6 +128,28 @@ async def run_intraday_backtest(
         # independent evidence -- this is what makes that visible instead of
         # leaving a big n to be read at face value.
         "replication": replication_factor(picks),
+        # Present only when a rule was supplied -- an empty block would read
+        # as "measured, and it was nothing".
+        "expectancy": (
+            expectancy(
+                [
+                    Exit(price=0.0, reason=p["exit_reason"], r_multiple=p["r_multiple"])
+                    for p in picks
+                    if p.get("r_multiple") is not None
+                ]
+            )
+            if exit_rule is not None
+            else None
+        ),
+        "exit_rule": (
+            {
+                "stop_pct": exit_rule.stop_pct,
+                "reward_ratio": exit_rule.reward_ratio,
+                "cost_bps": exit_rule.cost_bps,
+            }
+            if exit_rule is not None
+            else None
+        ),
         "gap_buckets": bucket_analysis.bucket_breakdown(
             picks, lambda p: abs(p["entry_pct_change"]), bucket_analysis.GAP_BUCKETS, views=_VIEWS
         ),

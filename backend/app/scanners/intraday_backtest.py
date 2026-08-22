@@ -38,6 +38,7 @@ from app.market_data.candle_shape import is_shaved_top
 from app.market_data.momentum import is_regular_session_bar
 from app.market_data.volume_profile import fraction_at
 from app.scanners import formulas, screener
+from app.scanners.exit_rules import ExitRule, simulate_exit
 from app.scanners.engine import _tradable
 from app.services.market_clock import ET
 
@@ -110,8 +111,16 @@ def build_rows_by_timestamp(
     prev_close_by_symbol_date: dict[str, dict[date, float]],
     curve: list,
     window: timedelta,
-) -> tuple[dict[datetime, list[_IntradayRow]], dict[tuple[str, date], float]]:
-    """({bar_timestamp: [row, ...]}, {(symbol, date): that session's close}).
+) -> tuple[
+    dict[datetime, list[_IntradayRow]],
+    dict[tuple[str, date], float],
+    dict[tuple[str, date], list],
+]:
+    """({bar_timestamp: [row, ...]}, {(symbol, date): close}, {(symbol, date): bars}).
+
+    The bars come back too so an exit rule can walk forward from an entry
+    without re-grouping the history it just walked -- and, more importantly,
+    so it can only ever see bars from the same session.
 
     Walks each symbol's session once and carries running totals forward, with
     prefix sums for the trailing windows -- recomputing a 12-bar sum at every
@@ -120,6 +129,7 @@ def build_rows_by_timestamp(
     """
     rows_by_ts: dict[datetime, list[_IntradayRow]] = defaultdict(list)
     exit_price: dict[tuple[str, date], float] = {}
+    session_bars: dict[tuple[str, date], list] = {}
     bars_per_window = _window_bars(window)
 
     for symbol, bars in bars_by_symbol.items():
@@ -133,6 +143,7 @@ def build_rows_by_timestamp(
                 continue
 
             exit_price[(symbol, trading_date)] = day_bars[-1].close
+            session_bars[(symbol, trading_date)] = day_bars
 
             # prefix[i] = volume of bars[0:i], so any window sum is a
             # subtraction rather than a re-scan.
@@ -203,7 +214,7 @@ def build_rows_by_timestamp(
                     )
                 )
 
-    return rows_by_ts, exit_price
+    return rows_by_ts, exit_price, session_bars
 
 
 def benchmark_to_close(benchmark_bars: list) -> dict[datetime, float]:
@@ -239,16 +250,24 @@ def simulate_intraday_screen(
     benchmark_to_close_by_ts: dict[datetime, float] | None = None,
     fundamentals: dict | None = None,
     catalysts: dict[str, dict[date, str]] | None = None,
+    exit_rule: ExitRule | None = None,
 ) -> list[dict]:
-    """One pick per (symbol, bar) the screen matches, held to that session's
-    close.
+    """One pick per (symbol, bar) the screen matches.
 
-    Held to the close rather than a fixed forward window because that's the
-    question the screen is asking -- "is this worth being in now" -- and it
-    keeps every pick's exit on the same side of the closing auction instead
-    of scoring a 15:55 entry against an after-hours print.
+    Without an `exit_rule`, a pick is held to that session's close -- the
+    question the screen asks is "is this worth being in now", and closing
+    with the session keeps every exit on the same side of the closing auction
+    instead of scoring a 15:55 entry against an after-hours print.
+
+    With one, the pick becomes a *trade*: the bars after entry are walked
+    until the stop or the target is hit, and the outcome is reported in R
+    alongside the raw percentage. That distinction matters more than it
+    looks. Holding to the close measures whether price drifted up afterwards;
+    a signal whose average drift is positive can still lose once the path
+    there runs through a stop, and one whose drift is flat can pay if losses
+    are cut shorter than wins. See app.scanners.exit_rules.
     """
-    rows_by_ts, exit_price = build_rows_by_timestamp(
+    rows_by_ts, exit_price, session_bars = build_rows_by_timestamp(
         bars_by_symbol, avg_vol_by_symbol_date, prev_close_by_symbol_date, curve, window
     )
 
@@ -285,7 +304,21 @@ def simulate_intraday_screen(
             close = exit_price.get((row.symbol, trading_date))
             if close is None or row.last_price <= 0:
                 continue
-            pct_since_entry = (close - row.last_price) / row.last_price * 100
+
+            exit_reason = None
+            r_multiple = None
+            exit_pct = (close - row.last_price) / row.last_price * 100
+            if exit_rule is not None:
+                # Strictly *after* the entry bar: entry is that bar's close,
+                # so its own high and low are already behind us and using
+                # them would let a trade exit before it was opened.
+                day_bars = session_bars.get((row.symbol, trading_date)) or []
+                forward = [b for b in day_bars if b.timestamp > timestamp]
+                result = simulate_exit(row.last_price, forward, exit_rule)
+                exit_reason = result.reason
+                r_multiple = result.r_multiple
+                exit_pct = (result.price - row.last_price) / row.last_price * 100
+            pct_since_entry = exit_pct
             # Keyed on the entry *bar*, so the benchmark spans exactly the
             # same minutes the pick does.
             benchmark_pct = (
@@ -294,6 +327,8 @@ def simulate_intraday_screen(
             picks.append(
                 {
                     "symbol": row.symbol,
+                    "exit_reason": exit_reason,
+                    "r_multiple": r_multiple,
                     "trading_date": trading_date.isoformat(),
                     "timestamp": timestamp.astimezone(ET).isoformat(),
                     "view": "screen",

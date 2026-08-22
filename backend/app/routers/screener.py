@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.scanners import backtest, screener
+from app.scanners.exit_rules import ExitRule
 from app.scanners.intraday_backtest_runner import run_intraday_backtest
 from app.scanners.news_history import catalyst_days, fetch_symbol_news
 from app.scanners.screener_service import screen_live_rows
@@ -71,6 +72,18 @@ class BacktestRequest(BaseModel):
     # Measured both ways, the sign flips: -3.0pp entering at the close and
     # holding overnight, +1.7pp entering intraday and holding to the close.
     with_catalysts: bool = False
+    # Opt-in exit rule, intraday only. Left unset, each pick is held to its
+    # session close, which is what every backtest here did before this
+    # existed -- so an old request replays exactly as it used to.
+    #
+    # Set, each pick becomes a trade: stop_pct below entry, target
+    # reward_ratio times that above it, and the report gains an expectancy
+    # block in R. cost_bps stands in for spread and commission and is charged
+    # both ways; it is an assumption rather than a measurement, since
+    # historical quotes are not fetched anywhere in this app.
+    stop_pct: float | None = None
+    reward_ratio: float = 2.0
+    cost_bps: float = 0.0
 
 
 @router.post("/backtest")
@@ -164,6 +177,15 @@ async def backtest_screen(body: BacktestRequest, request: Request) -> dict:
                 lookback_days=min(body.lookback_days, 45),
                 fundamentals=fundamentals,
                 catalysts=catalysts,
+                exit_rule=(
+                    ExitRule(
+                        stop_pct=body.stop_pct,
+                        reward_ratio=body.reward_ratio,
+                        cost_bps=body.cost_bps,
+                    )
+                    if body.stop_pct
+                    else None
+                ),
             ),
         }
 

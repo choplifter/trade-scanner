@@ -116,7 +116,7 @@ def test_previous_closes_uses_the_prior_session():
 
 def test_rows_carry_session_to_date_values_not_the_finished_day():
     bars = _session([10.0, 11.0, 12.0])
-    rows_by_ts, exits = build_rows_by_timestamp(
+    rows_by_ts, exits, _ = build_rows_by_timestamp(
         {"AAA": bars}, {"AAA": {_DAY: 1_000_000.0}}, {"AAA": {_DAY: 10.0}}, _FLAT_CURVE, _WINDOW
     )
 
@@ -132,7 +132,7 @@ def test_rows_carry_session_to_date_values_not_the_finished_day():
 
 def test_gap_is_measured_against_the_previous_close():
     bars = _session([11.0])
-    rows_by_ts, _ = build_rows_by_timestamp(
+    rows_by_ts, _, _ = build_rows_by_timestamp(
         {"AAA": bars}, {"AAA": {_DAY: 1_000_000.0}}, {"AAA": {_DAY: 10.0}}, _FLAT_CURVE, _WINDOW
     )
     row = next(iter(rows_by_ts.values()))[0]
@@ -151,7 +151,7 @@ def test_volume_fields_warm_up_the_same_way_the_live_field_does():
     # Matching volume_surge._anchor exactly, or the backtest would validate
     # a signal the live scanner never emits.
     bars = _session([10.0] * 25)
-    rows_by_ts, _ = build_rows_by_timestamp(
+    rows_by_ts, _, _ = build_rows_by_timestamp(
         {"AAA": bars}, {"AAA": {_DAY: 1_000_000.0}}, {"AAA": {_DAY: 9.0}}, _FLAT_CURVE, _WINDOW
     )
     ordered = [rows_by_ts[ts][0] for ts in sorted(rows_by_ts)]
@@ -164,7 +164,7 @@ def test_volume_fields_warm_up_the_same_way_the_live_field_does():
 
 def test_volume_fields_are_long_only():
     red = _session([10.0] * 25, green=False)
-    rows_by_ts, _ = build_rows_by_timestamp(
+    rows_by_ts, _, _ = build_rows_by_timestamp(
         {"AAA": red}, {"AAA": {_DAY: 1_000_000.0}}, {"AAA": {_DAY: 11.0}}, _FLAT_CURVE, _WINDOW
     )
     ordered = [rows_by_ts[ts][0] for ts in sorted(rows_by_ts)]
