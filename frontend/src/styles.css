@@ -935,6 +935,23 @@ a.symbol-news-headline {
   height: 100%;
 }
 
+/* Hiding the crosshair does not change the pointer the charting library
+   draws over its canvas, so the cursor has to be set alongside it -- otherwise
+   "pointer" removes the lines and leaves a crosshair cursor behind. The
+   descendant selector is needed because the library owns the canvas and sets
+   its own cursor there. */
+.chart-container.cursor-pointer,
+.chart-container.cursor-pointer canvas {
+  cursor: default;
+}
+
+.chart-container.cursor-crosshair,
+.chart-container.cursor-crosshair canvas,
+.chart-container.cursor-magnet,
+.chart-container.cursor-magnet canvas {
+  cursor: crosshair;
+}
+
 .generate-button {
   font-size: 12px;
   font-weight: 600;

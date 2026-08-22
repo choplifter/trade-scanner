@@ -6,7 +6,7 @@ import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
 import { CandleChart } from "./CandleChart";
-import type { ChartType } from "./CandleChart";
+import type { ChartType, CursorMode } from "./CandleChart";
 import { SymbolInfoPanel } from "./SymbolInfoPanel";
 
 interface ChartWidgetProps {
@@ -32,6 +32,36 @@ function loadHidden(): Set<string> {
     // Private browsing, storage disabled, or a value from an older shape --
     // none of which is worth failing a chart over.
     return new Set<string>();
+  }
+}
+
+const CURSOR_KEY = "chart:cursorMode";
+
+const CURSOR_MODES: { key: CursorMode; label: string; title: string }[] = [
+  {
+    key: "pointer",
+    label: "Pointer",
+    title: "No crosshair -- an ordinary arrow, for when the lines are in the way",
+  },
+  {
+    key: "crosshair",
+    label: "Crosshair",
+    title: "Crosshair follows the mouse freely",
+  },
+  {
+    key: "magnet",
+    label: "Magnet",
+    title:
+      "Crosshair snaps to the nearest open/high/low/close -- the one that reads an exact price off a candle instead of guessing at a few pixels per cent",
+  },
+];
+
+function loadCursorMode(): CursorMode {
+  try {
+    const saved = localStorage.getItem(CURSOR_KEY);
+    return CURSOR_MODES.some((m) => m.key === saved) ? (saved as CursorMode) : "magnet";
+  } catch {
+    return "magnet";
   }
 }
 
@@ -91,6 +121,19 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   // Kept across symbol and timeframe changes: how someone wants price drawn
   // is a preference, not a property of what they are looking at.
   const [chartType, setChartType] = useState<ChartType>("candles");
+  // Magnet by default: the chart's main job here is checking whether a
+  // strategy's line sits on the level it claims, and that needs an exact
+  // read rather than a free-floating one.
+  const [cursorMode, setCursorModeState] = useState<CursorMode>(loadCursorMode);
+
+  function setCursorMode(mode: CursorMode) {
+    setCursorModeState(mode);
+    try {
+      localStorage.setItem(CURSOR_KEY, mode);
+    } catch {
+      // Works for this session, just not remembered next time.
+    }
+  }
   const intraday = useChartFeed(symbol);
   const historical = useHistoricalBars(
     symbol,
@@ -184,6 +227,20 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
               </button>
             ))}
           </div>
+          <div className="chart-type-toggle">
+            {CURSOR_MODES.map((mode) => (
+              <button
+                key={mode.key}
+                type="button"
+                className="timeframe-button"
+                aria-pressed={cursorMode === mode.key}
+                onClick={() => setCursorMode(mode.key)}
+                title={mode.title}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
           {option.kind === "intraday" && (
             <button
               type="button"
@@ -248,6 +305,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             vwap={displayed.vwap}
             indicators={displayed.indicators.filter((i) => !hiddenIndicators.has(i.name))}
             showIndicators={showIndicators}
+            cursorMode={cursorMode}
             // Only honour the focus while it still refers to the symbol on
             // screen; a stale one would drag the chart to an unrelated time
             // after the user clicks a different row.

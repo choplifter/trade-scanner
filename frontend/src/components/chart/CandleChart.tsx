@@ -3,6 +3,7 @@ import {
   CandlestickSeries,
   createChart,
   createSeriesMarkers,
+  CrosshairMode,
   HistogramSeries,
   LineSeries,
   LineStyle,
@@ -29,12 +30,31 @@ import { crosshairTimeFormatter, tickMarkFormatter } from "../../utils/chartTime
  * which on a thin premarket tape is mostly noise. */
 export type ChartType = "candles" | "line";
 
+/** What the mouse does over the chart.
+ *
+ * "pointer" hides the crosshair entirely -- an ordinary arrow, for when the
+ * lines are in the way. "crosshair" follows the mouse freely. "magnet" snaps
+ * the horizontal line to the nearest of the bar's open/high/low/close, which
+ * is the one that answers "is this level actually where that wick ended" --
+ * reading a price off a free crosshair is guesswork at a few pixels per cent.
+ *
+ * Not an indicator, and could not be: an indicator is a backend file that
+ * returns numbers to draw. This is a property of the chart, not of the data. */
+export type CursorMode = "pointer" | "crosshair" | "magnet";
+
+const CROSSHAIR_MODES: Record<CursorMode, CrosshairMode> = {
+  pointer: CrosshairMode.Hidden,
+  crosshair: CrosshairMode.Normal,
+  magnet: CrosshairMode.MagnetOHLC,
+};
+
 interface CandleChartProps {
   bars: Bar[];
   chartType: ChartType;
   vwap: (number | null)[];
   indicators: IndicatorResult[];
   showIndicators: boolean;
+  cursorMode: CursorMode;
   /** Unix seconds to scroll into view — a backtest pick's entry time. Null
    * leaves the chart wherever the user left it. */
   focusTime?: number | null;
@@ -191,6 +211,7 @@ export function CandleChart({
   vwap,
   indicators,
   showIndicators,
+  cursorMode,
   focusTime,
 }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -595,5 +616,14 @@ export function CandleChart({
     // swap disposes them along with it.
   }, [indicators, showIndicators, chartType]);
 
-  return <div ref={containerRef} className="chart-container" />;
+  // Its own effect, so switching the cursor does not tear the chart down and
+  // lose the zoom -- the same reason the series swap has one.
+  useEffect(() => {
+    chartRef.current?.applyOptions({ crosshair: { mode: CROSSHAIR_MODES[cursorMode] } });
+  }, [cursorMode]);
+
+  // The class drives the CSS cursor. Hiding the crosshair does not change the
+  // pointer the library draws, so the two have to be set together or
+  // "pointer" would hide the lines and still show a crosshair cursor.
+  return <div ref={containerRef} className={`chart-container cursor-${cursorMode}`} />;
 }
