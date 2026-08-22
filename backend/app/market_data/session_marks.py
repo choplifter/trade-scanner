@@ -1,5 +1,5 @@
 """Intraday reference prices: today's premarket range, and the prior
-session's high and low.
+session's high, low and close.
 
 The other kind of level. app.market_data.levels finds structure the hard way
 -- pivots, clustering, counting separate returns -- and answers "where has
@@ -64,8 +64,8 @@ def premarket_range(bars: list, session_date) -> tuple[float | None, float | Non
     return max(b.high for b in session), min(b.low for b in session)
 
 
-def prior_session_range(bars: list, session_date) -> tuple[float | None, float | None]:
-    """PDH/PDL: the previous trading day's *regular-session* high and low.
+def _prior_session(bars: list, session_date) -> list:
+    """The most recent prior trading day's regular-session bars, or [].
 
     Extended-hours prints are excluded on purpose, matching the chart
     indicator: they are thin enough that one stray tick sets a "high" no
@@ -88,8 +88,33 @@ def prior_session_range(bars: list, session_date) -> tuple[float | None, float |
             if _et_date(bar) == day and market_open <= bar.timestamp.astimezone(ET) <= market_close
         ]
         if session:
-            return max(b.high for b in session), min(b.low for b in session)
-    return None, None
+            return session
+    return []
+
+
+def prior_session_range(bars: list, session_date) -> tuple[float | None, float | None]:
+    """PDH/PDL: the previous trading day's *regular-session* high and low."""
+    session = _prior_session(bars, session_date)
+    if not session:
+        return None, None
+    return max(b.high for b in session), min(b.low for b in session)
+
+
+def prior_session_close(bars: list, session_date) -> float | None:
+    """Yesterday's regular-session close -- a different kind of level from
+    the range bounds: where price was *accepted* at the end of the day, not
+    where it reached. Aziz names it alongside the intraday levels as a
+    target in its own right, which is why it is a mark here and not just a
+    field on some chart.
+
+    Read off the latest bar by timestamp rather than the last of the list,
+    so an unsorted bar series cannot quietly report a mid-afternoon print
+    as the close.
+    """
+    session = _prior_session(bars, session_date)
+    if not session:
+        return None
+    return max(session, key=lambda b: b.timestamp).close
 
 
 def marks_for_session(bars: list, session_date) -> list[float]:
@@ -99,5 +124,9 @@ def marks_for_session(bars: list, session_date) -> list[float]:
     not trade premarket has no premarket range, and a zero would read as a
     level at zero and pull a target down to it.
     """
-    marks = [*premarket_range(bars, session_date), *prior_session_range(bars, session_date)]
+    marks = [
+        *premarket_range(bars, session_date),
+        *prior_session_range(bars, session_date),
+        prior_session_close(bars, session_date),
+    ]
     return [price for price in marks if price is not None and price > 0]

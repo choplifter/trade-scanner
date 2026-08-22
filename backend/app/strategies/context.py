@@ -71,6 +71,17 @@ class StrategyContext:
     # visit floor, simply has none. A rule that targets a level must treat
     # that as "no trade", not as "target zero".
     levels: tuple = ()
+    # The average daily true range over recent completed sessions, from
+    # app.market_data.atr, computed by the walk that owns the bar history --
+    # a strategy sees session_bars only and cannot reach the prior days an
+    # ATR needs, which is the same reason levels arrive precomputed.
+    #
+    # None means *unknowable*, not zero: the live scanner's cache holds one
+    # prior session, a fresh listing holds none. A rule using this as a veto
+    # decides for itself what None means and documents the choice -- see the
+    # opening-range rule, which lets an uncomputable veto decline rather
+    # than silently unlisting the setup everywhere ATR is out of reach.
+    daily_atr: float | None = None
 
     @property
     def vwap(self) -> float | None:
@@ -164,6 +175,7 @@ def build_context(
     vwaps: list,
     premarket_vwap: float | None = None,
     levels: tuple = (),
+    daily_atr: float | None = None,
 ) -> StrategyContext | None:
     """Assemble the view of the market at bars[index], or None if nothing may
     trigger there.
@@ -206,4 +218,5 @@ def build_context(
         session_vwaps=vwaps[start : index + 1],
         premarket_vwap=premarket_vwap,
         levels=tuple(sorted(levels)),
+        daily_atr=daily_atr,
     )

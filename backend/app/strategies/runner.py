@@ -22,6 +22,7 @@ days are also what the prior-session and premarket marks are read from.
 
 import logging
 
+from app.market_data.atr import daily_atr
 from app.market_data.vwap import SessionVwapState
 from app.services.market_clock import ET
 from app.strategies.context import Signal, build_context
@@ -48,6 +49,12 @@ def walk_latest_session(
         return []
 
     latest_day = bars[-1].timestamp.astimezone(ET).date()
+    # Once for the whole walk: only the latest session may trigger, and its
+    # ATR is read from the earlier sessions, which are complete. None where
+    # the caller's window is too short to hold enough of them (the live
+    # scanner's one-session cache) -- the strategies document what a rule
+    # does with that.
+    atr = daily_atr(bars, latest_day)
     found: list[tuple[int, Signal]] = []
 
     vwaps: list = []
@@ -67,7 +74,7 @@ def walk_latest_session(
         if bar.timestamp.astimezone(ET).date() != latest_day:
             continue
 
-        ctx = build_context(symbol, bars[: i + 1], i, vwaps, vwap_state.premarket_anchored_vwap, levels)
+        ctx = build_context(symbol, bars[: i + 1], i, vwaps, vwap_state.premarket_anchored_vwap, levels, atr)
         if ctx is None:
             continue
 

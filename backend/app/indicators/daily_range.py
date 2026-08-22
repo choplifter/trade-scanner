@@ -1,4 +1,5 @@
-"""Prior completed trading day's regular-session high/low -- PDH/PDL.
+"""Prior completed trading day's regular-session high/low/close -- PDH/PDL
+and yesterday's close.
 
 The day-scale sibling of the weekly and monthly ranges, and the level most
 day-trading setups are stated against: a break of yesterday's high, or a
@@ -21,7 +22,12 @@ from app.services.market_clock import ET, trading_hours_for
 
 NAME = "Daily Range"
 KIND = "level"
-COLORS = {"High": "#2f9c8f", "Low": "#2f9c8f"}
+# Close in a lighter shade of the same teal, matching the weekly range's
+# convention: same period, different kind of level -- where price was
+# accepted at the end of the day, not where it reached. Drawn here because
+# the strategies may target it (session_marks.prior_session_close), and a
+# target line landing on nothing would not be checkable by eye.
+COLORS = {"High": "#2f9c8f", "Low": "#2f9c8f", "Close": "#6fbfb5"}
 # How these lines are drawn. Width in pixels, dash one of solid / dotted /
 # dashed / large-dashed / sparse-dotted. Omit either key for the default.
 STYLE = {"width": 1, "dash": "dashed"}
@@ -29,22 +35,23 @@ STYLE = {"width": 1, "dash": "dashed"}
 # these lines describe something the chart cannot show being crossed.
 MAX_TIMEFRAME = "1Day"
 
-_EMPTY = {"High": None, "Low": None}
+_EMPTY = {"High": None, "Low": None, "Close": None}
 
 
 class _Bar:
-    """The three fields session_marks reads, off a chart frame row."""
+    """The fields session_marks reads, off a chart frame row."""
 
-    __slots__ = ("high", "low", "timestamp")
+    __slots__ = ("close", "high", "low", "timestamp")
 
-    def __init__(self, timestamp, high, low):
+    def __init__(self, timestamp, high, low, close):
         self.timestamp = timestamp
         self.high = high
         self.low = low
+        self.close = close
 
 
 def compute(ctx) -> dict:
-    """Yesterday's regular-session high and low.
+    """Yesterday's regular-session high, low and close.
 
     The measurement lives in app.market_data.session_marks so a strategy can
     aim at the same number this draws. "Yesterday" is relative to a session
@@ -57,7 +64,7 @@ def compute(ctx) -> dict:
     if df.empty:
         return _EMPTY
 
-    bars = [_Bar(row.timestamp, row.high, row.low) for row in df.itertuples()]
+    bars = [_Bar(row.timestamp, row.high, row.low, row.close) for row in df.itertuples()]
     # Deliberately the wall clock, unlike premarket_range next door: this
     # indicator's contract is "the most recently *completed* session", so
     # after Friday's close it shows Friday. See prior_completed_period, whose
@@ -84,6 +91,11 @@ def compute(ctx) -> dict:
                 return {
                     "High": max(b.high for b in session),
                     "Low": min(b.low for b in session),
+                    "Close": max(session, key=lambda b: b.timestamp).close,
                 }
         return _EMPTY
-    return {"High": high, "Low": low}
+    return {
+        "High": high,
+        "Low": low,
+        "Close": session_marks.prior_session_close(bars, today),
+    }

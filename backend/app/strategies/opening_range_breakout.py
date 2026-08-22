@@ -31,6 +31,21 @@ NAME = "Opening Range Breakout"
 # relying on; opening_range takes the length in minutes.
 OPENING_MINUTES = orange.OPENING_MINUTES
 
+# Aziz's precondition on the box itself: the opening range must be "deutlich
+# geringer" -- well below -- the stock's daily ATR, read off his scanner's
+# ATR column. A range that already covers most of the day's typical travel
+# has spent the move the breakout is supposed to catch. He gives no number;
+# this fraction is a construction, chosen so "half the usual day inside five
+# minutes" is where the rule stops believing there is room left.
+#
+# Measured at 2bp over a pinned 100-symbol liquid universe and 40 days
+# (through 2026-08-21): at 0.5 the veto removes 14 of 394 signals and moves
+# expectancy +0.002R; tightened to 0.33 it removes the better trades too
+# (-0.109R on 243, against -0.075R on 282 at 0.5). Barely binding on liquid
+# names is the expected shape -- their five-minute box is a small fraction
+# of ATR -- and the veto exists for the gapper whose box is not.
+MAX_RANGE_ATR_FRACTION = 0.5
+
 # The break test, the stop, the target and the management all live in
 # strategies.breakout, shared with the premarket-range rule. Two files that
 # looked alike would drift, and comparing them is the reason both exist.
@@ -46,6 +61,22 @@ def evaluate(ctx):
         return None
 
     high, low = orange.opening_range(ctx.session_bars, session_date, OPENING_MINUTES)
+
+    # The veto declines when the ATR is unknowable (ctx.daily_atr is None:
+    # the live scanner's one-session cache, a fresh listing) rather than
+    # refusing the trade. Deliberate, and the same asymmetry the scanner
+    # already runs under for levels: a marker that over-flags invites a look
+    # at the chart, where the ATR *is* computable and this veto binds --
+    # while a veto that cannot be computed refusing everything would unlist
+    # the setup exactly where nobody can see why.
+    if (
+        ctx.daily_atr is not None
+        and high is not None
+        and low is not None
+        and high - low >= ctx.daily_atr * MAX_RANGE_ATR_FRACTION
+    ):
+        return None
+
     return breakout.signal_for(
         ctx,
         NAME,

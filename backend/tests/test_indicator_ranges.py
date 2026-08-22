@@ -62,14 +62,14 @@ def _ctx_with_sessions(levels):
 
 
 def test_no_bars_yields_no_levels():
-    assert daily_range.compute(build_context("TEST", [], [], [])) == {"High": None, "Low": None}
+    assert daily_range.compute(build_context("TEST", [], [], [])) == {"High": None, "Low": None, "Close": None}
 
 
 def test_picks_the_most_recently_completed_session():
     older, latest = _closed_sessions(2)
     ctx = _ctx_with_sessions({older: (10.0, 9.0), latest: (20.0, 19.0)})
 
-    assert daily_range.compute(ctx) == {"High": 20.0, "Low": 19.0}
+    assert daily_range.compute(ctx) == {"High": 20.0, "Low": 19.0, "Close": 19.0}
 
 
 def test_a_session_still_in_progress_is_excluded():
@@ -80,7 +80,7 @@ def test_a_session_still_in_progress_is_excluded():
     ctx = _ctx_with_sessions({latest: (20.0, 19.0), upcoming: (99.0, 1.0)})
 
     # The in-progress session's wild levels must not win.
-    assert daily_range.compute(ctx) == {"High": 20.0, "Low": 19.0}
+    assert daily_range.compute(ctx) == {"High": 20.0, "Low": 19.0, "Close": 19.0}
 
 
 def test_extended_hours_prints_are_excluded():
@@ -95,7 +95,11 @@ def test_extended_hours_prints_are_excluded():
         _bar(market_close + timedelta(hours=1), 0.5, 0.1),      # afterhours air pocket
     ]
 
-    assert daily_range.compute(build_context("TEST", bars, [], [])) == {"High": 20.0, "Low": 19.0}
+    assert daily_range.compute(build_context("TEST", bars, [], [])) == {
+        "High": 20.0,
+        "Low": 19.0,
+        "Close": 19.0,
+    }
 
 
 def test_the_high_and_low_span_the_whole_session():
@@ -107,7 +111,13 @@ def test_the_high_and_low_span_the_whole_session():
         _bar(market_open + timedelta(hours=4), 18.0, 17.0),
     ]
 
-    assert daily_range.compute(build_context("TEST", bars, [], [])) == {"High": 22.0, "Low": 13.0}
+    assert daily_range.compute(build_context("TEST", bars, [], [])) == {
+        "High": 22.0,
+        "Low": 13.0,
+        # The last bar's close, not the session's low -- where the day was
+        # accepted, reported alongside where it reached.
+        "Close": 17.0,
+    }
 
 
 def test_bars_on_a_non_trading_day_are_ignored():
@@ -120,7 +130,11 @@ def test_bars_on_a_non_trading_day_are_ignored():
 
     bars = [_bar(market_open + timedelta(minutes=1), 20.0, 19.0), _bar(saturday, 77.0, 66.0)]
 
-    assert daily_range.compute(build_context("TEST", bars, [], [])) == {"High": 20.0, "Low": 19.0}
+    assert daily_range.compute(build_context("TEST", bars, [], [])) == {
+        "High": 20.0,
+        "Low": 19.0,
+        "Close": 19.0,
+    }
 
 
 # --- weekly range, including the close ----------------------------------

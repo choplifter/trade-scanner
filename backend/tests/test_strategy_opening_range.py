@@ -49,7 +49,7 @@ def _opening_bar(high=10.5, low=10.0):
 # end of the range: risking the full 0.50 range from an 11.00 entry needs a
 # level at 13.00 or better. Sized deliberately, because a level that is merely
 # *ahead* is not enough -- which is the trade-off this rule exists to test.
-def _ctx(bars, levels=(7.0, 14.0)):
+def _ctx(bars, levels=(7.0, 14.0), daily_atr=None):
     return StrategyContext(
         symbol="AAA",
         bar=bars[-1],
@@ -57,6 +57,7 @@ def _ctx(bars, levels=(7.0, 14.0)):
         session_vwaps=[10.0] * len(bars),
         premarket_vwap=None,
         levels=levels,
+        daily_atr=daily_atr,
     )
 
 
@@ -229,6 +230,31 @@ def test_a_level_too_close_to_be_worth_the_range_is_skipped():
 
 def test_no_level_ahead_means_no_trade():
     assert rule.evaluate(_ctx([_opening_bar(), _break_long()], levels=(7.0,))) is None
+
+
+def test_a_range_near_the_daily_atr_is_vetoed():
+    """Aziz's precondition: the box must sit well below the day's typical
+    travel, or the move the breakout is meant to catch has already been
+    spent inside it. The range here is 0.5 against an ATR of 0.8, over the
+    fraction, so the break is refused."""
+    atr = (10.5 - 10.0) / rule.MAX_RANGE_ATR_FRACTION * 0.8
+
+    assert rule.evaluate(_ctx([_opening_bar(), _break_long()], daily_atr=atr)) is None
+
+
+def test_a_range_well_inside_the_atr_passes_the_veto():
+    atr = (10.5 - 10.0) / rule.MAX_RANGE_ATR_FRACTION * 2
+
+    assert rule.evaluate(_ctx([_opening_bar(), _break_long()], daily_atr=atr)) is not None
+
+
+def test_an_unknowable_atr_declines_to_veto():
+    """None is 'cannot judge', not zero: the live scanner's window holds one
+    session and cannot compute an ATR, and a veto firing there on ignorance
+    would unlist the setup exactly where nobody can see why. The chart, whose
+    window can compute it, is the authority -- the same asymmetry the scanner
+    already runs under for structure levels."""
+    assert rule.evaluate(_ctx([_opening_bar(), _break_long()], daily_atr=None)) is not None
 
 
 def test_a_flat_opening_bar_is_not_a_range():

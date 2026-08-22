@@ -32,6 +32,7 @@ target or the close puts it.
 from pathlib import Path
 
 from app.alpaca.client import AlpacaClients
+from app.market_data import atr as market_atr
 from app.market_data import levels as market_levels
 from app.market_data import session_marks
 from app.market_data.momentum import is_regular_session_bar, same_trading_day
@@ -105,6 +106,10 @@ def simulate_strategy(
         # vectorised passes, and a level is marked from completed structure --
         # one that appeared at 11:40 was not there to be traded at 09:45.
         levels: tuple = ()
+        # ATR shares the once-per-day cadence and the bars[:i] cutoff with
+        # levels: both are read from completed structure, and both must be
+        # what was knowable at this session's open.
+        day_atr: float | None = None
         levels_day = None
         active = False
         # The session the streak belongs to. Resetting only on a bar that
@@ -150,11 +155,12 @@ def simulate_strategy(
                         }
                     )
                 )
+                day_atr = market_atr.daily_atr(bars[:i], bar_day)
 
             # Only the bars walked so far exist yet, which is also the guard
             # that stops a strategy seeing the future through this list.
             ctx = build_context(
-                symbol, bars[: i + 1], i, vwaps, vwap_state.premarket_anchored_vwap, levels
+                symbol, bars[: i + 1], i, vwaps, vwap_state.premarket_anchored_vwap, levels, day_atr
             )
             if ctx is None:
                 # Outside the regular session: nothing may trigger, and the
