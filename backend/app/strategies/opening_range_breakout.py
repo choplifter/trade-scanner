@@ -71,33 +71,43 @@ def _signal_for(ctx, side: str, high: float, low: float) -> Signal | None:
     sign = 1 if side == SIDE_LONG else -1
     bar = ctx.bar
     level = high if side == SIDE_LONG else low
+    opposite = low if side == SIDE_LONG else high
 
     # A close beyond the level, by more than the buffer.
     if sign * (bar.close - level) <= level * BREAK_BUFFER_PCT:
         return None
 
     entry = bar.close
-    # The broken boundary itself, not the far end of the range. With a close
-    # trigger this says something exact: price closed back inside the opening
-    # range, so the break failed. The far end is the textbook placement and
-    # was tried first -- it risks the whole range, which measured a median
-    # 1.51% of price against a median distance to the next level of 0.39R.
-    # Three signals cleared 2:1 out of 401 breaks. Moving the stop here took
-    # the risk to 0.43% and 89 of them cleared it.
+    # The far end of the range -- the textbook placement, and the only one of
+    # the three measured that is not negative on the universe this app
+    # actually shows.
     #
-    # Tighter placements exist and were measured too (the breakout bar's own
-    # low: 0.24% risk, 121 clearing 2:1) and were not taken. That is the VWAP
-    # rule's problem again -- at 0.24% risk a 10bp round trip costs 0.83R, so
-    # the result would be a statement about the spread rather than the setup.
-    stop = level
+    # It was moved to the broken boundary first, on a measurement over five
+    # liquid large caps where the far end left 3 of 401 breaks clearing the
+    # 2:1 floor. That was the wrong sample. Re-measured over 50 scanner
+    # gainers and 20 days, at 2bp per side:
+    #
+    #     broken boundary   n=672   -0.455R   avg loss -3.20R
+    #     half the range    n=350   -0.222R   avg loss -1.33R
+    #     far end           n=172   +0.020R   avg loss -1.08R
+    #
+    # The average loss is the whole story. A stop near the entry gets closed
+    # straight through on a name that moves 40% in a session, so a nominal 1R
+    # of risk costs three; only the wide stop keeps a loss near the 1R it
+    # claims. The narrow stop wins on large caps for the same reason it loses
+    # here -- a five-minute bar rarely covers three stop widths there and
+    # routinely does on a gapper.
+    #
+    # So the right placement depends on the universe, and this app's universe
+    # is gappers.
+    stop = opposite
     risk = sign * (entry - stop)
     if risk <= 0:
-        # Unreachable while the stop is the opposite end: a close above the
-        # high is above the low by construction. Kept because the placement
-        # above is a documented choice, and a stop just past the broken level
-        # would make this case real -- ExitRule would otherwise refuse the
-        # trade a layer later, where the error names the backtest instead of
-        # the rule.
+        # Unreachable while the stop is the far end: a close above the high is
+        # above the low by construction. Kept because the placement is a
+        # documented choice and the narrower ones measured above would make
+        # this case real -- ExitRule would otherwise refuse the trade a layer
+        # later, where the error names the backtest instead of the rule.
         return None
 
     target = _next_level(ctx.levels, entry, sign)

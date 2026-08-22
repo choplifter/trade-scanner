@@ -152,21 +152,22 @@ def test_a_close_below_the_range_is_a_short_break():
     assert signal.stop_price > signal.entry_price
 
 
-def test_the_stop_is_the_boundary_that_was_broken():
-    """Not the far end of the range. With a close trigger this reads exactly:
-    price closed back inside the opening range, so the break failed. The far
-    end was measured first and risked the whole range -- 1.51% of price
-    against a median 0.39R to the next level, which left 3 of 401 breaks
-    tradeable."""
+def test_the_stop_is_the_far_end_of_the_range():
+    """Wide on purpose, and measured rather than assumed. A stop at the
+    boundary that was broken sits near the entry and gets closed straight
+    through on a gapper: over 50 scanner names its average loss was -3.20R
+    against a nominal 1R, and the rule lost -0.455R. At the far end the
+    average loss is -1.08R and the rule is flat. See the placement comment in
+    the strategy for the full table."""
     signal = rule.evaluate(_ctx([_opening_bar(), _break_long()]))
 
-    assert signal.stop_price == pytest.approx(10.5)
+    assert signal.stop_price == pytest.approx(10.0)
 
 
-def test_a_short_stops_at_the_range_low_it_broke():
+def test_a_short_stops_at_the_range_high():
     signal = rule.evaluate(_ctx([_opening_bar(), _break_short()]))
 
-    assert signal.stop_price == pytest.approx(10.0)
+    assert signal.stop_price == pytest.approx(10.5)
 
 
 def test_the_target_is_the_next_level():
@@ -246,7 +247,7 @@ def test_a_bar_that_covers_the_whole_range_is_read_by_its_close():
 
     assert signal.side == SIDE_SHORT
     assert signal.entry_price == pytest.approx(9.5)
-    assert signal.stop_price == pytest.approx(10.0)
+    assert signal.stop_price == pytest.approx(10.5)
 
 
 # --- the contract ---------------------------------------------------------
