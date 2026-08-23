@@ -71,6 +71,25 @@ MAX_RANGE_ATR_FRACTION = 0.5
 # looked alike would drift, and comparing them is the reason both exist.
 
 
+def range_vetoed_by_atr(ctx, high: float | None, low: float | None) -> bool:
+    """Aziz's precondition on the box, shared with the VWAP-crossing rule.
+
+    Declines when the ATR is unknowable (ctx.daily_atr is None: the live
+    scanner's one-session cache, a fresh listing) rather than refusing the
+    trade. Deliberate, and the same asymmetry the scanner already runs
+    under for levels: a marker that over-flags invites a look at the chart,
+    where the ATR *is* computable and this veto binds -- while a veto that
+    cannot be computed refusing everything would unlist the setup exactly
+    where nobody can see why.
+    """
+    return (
+        ctx.daily_atr is not None
+        and high is not None
+        and low is not None
+        and high - low >= ctx.daily_atr * MAX_RANGE_ATR_FRACTION
+    )
+
+
 def signal_with_stop(ctx, name: str, stop_placement: str):
     """The ORB setup -- completed range, ATR veto, window -- with the stop
     placement a caller chooses. The setup lives once, here, so this rule
@@ -87,20 +106,7 @@ def signal_with_stop(ctx, name: str, stop_placement: str):
         return None
 
     high, low = orange.opening_range(ctx.session_bars, session_date, minutes)
-
-    # The veto declines when the ATR is unknowable (ctx.daily_atr is None:
-    # the live scanner's one-session cache, a fresh listing) rather than
-    # refusing the trade. Deliberate, and the same asymmetry the scanner
-    # already runs under for levels: a marker that over-flags invites a look
-    # at the chart, where the ATR *is* computable and this veto binds --
-    # while a veto that cannot be computed refusing everything would unlist
-    # the setup exactly where nobody can see why.
-    if (
-        ctx.daily_atr is not None
-        and high is not None
-        and low is not None
-        and high - low >= ctx.daily_atr * MAX_RANGE_ATR_FRACTION
-    ):
+    if range_vetoed_by_atr(ctx, high, low):
         return None
 
     return breakout.signal_for(

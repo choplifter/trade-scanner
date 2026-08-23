@@ -89,6 +89,28 @@ def minutes_since_open(ctx, session_date) -> float | None:
     return (ctx.bar.timestamp - hours[0]).total_seconds() / 60.0
 
 
+def resolve_target(ctx, entry: float, sign: int, risk: float) -> tuple[float, str] | None:
+    """The target a break-family trade aims at, with its reason-string label
+    -- or None when the setup has no acceptable one.
+
+    The next level ahead when there is one far enough away (the 2:1 floor);
+    the measured-move construction when nothing is mapped ahead and the
+    switch allows it; a refusal when a level is ahead but too near -- a
+    known wall in the path stays a wall, fallback or not (see
+    MEASURED_MOVE_R). Shared by signal_for and the VWAP-crossing rule so
+    "what may be aimed at" is one decision, not a family of copies.
+    """
+    target = next_level(ctx.levels, entry, sign)
+    if target is None:
+        if not switches.measured_move_target_enabled():
+            return None
+        target = entry + sign * risk * MEASURED_MOVE_R
+        return target, f"measured-move target {target:.2f} (no level ahead)"
+    if sign * (target - entry) < risk * MIN_TARGET_R:
+        return None
+    return target, f"target level {target:.2f}"
+
+
 def signal_for(
     ctx,
     name: str,
@@ -148,18 +170,10 @@ def signal_for(
             # instead of the rule.
             return None
 
-        target = next_level(ctx.levels, entry, sign)
-        if target is None:
-            if not switches.measured_move_target_enabled():
-                return None
-            target = entry + sign * risk * MEASURED_MOVE_R
-            target_label = f"measured-move target {target:.2f} (no level ahead)"
-        elif sign * (target - entry) < risk * MIN_TARGET_R:
-            # A level ahead but too near stays a refusal even with the
-            # fallback on -- see MEASURED_MOVE_R.
+        resolved = resolve_target(ctx, entry, sign, risk)
+        if resolved is None:
             return None
-        else:
-            target_label = f"target level {target:.2f}"
+        target, target_label = resolved
 
         return Signal(
             strategy=name,

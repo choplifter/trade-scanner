@@ -1,97 +1,113 @@
-"""VWAP Open Range Break: the opening-range breakout whose break candle
-takes out the *premarket-anchored* VWAP along with the boundary.
+"""VWAP Open Range Break: the session VWAP itself crosses out of the
+opening range -- the *line* breaks the box, not a candle.
 
-The premarket anchor is the second version of this rule, and it is what
-measurement forced. As first built, the line was the session VWAP -- and
-side by side with the plain ORB (2bp, pinned 100-symbol list, 40 days
-through 2026-08-21, measured-move fallback and VWAP-side gate on) the
-qualification bound exactly once in 1,313 trades:
+The user's rule, reached on the third build, and the two wrong builds are
+part of this file's record because both were measured. As first built the
+signal was a price candle breaking the box while VWAP rode along -- and
+the session VWAP, born at the bell inside the box, rode along on every
+break, so the rule differed from the plain ORB by one trade in 1,313.
+Re-anchored at the premarket VWAP the line was honest but the pinned
+liquid universe gaps too little for it to stray: 23 binding trades in
+1,313. (2bp, pinned 100-symbol list, 40 days through 2026-08-21,
+measured-move fallback and VWAP-side gate on, both anchors within a few
+hundredths of an R of the ORB itself.) The user then corrected the
+reading: the VWAP was never meant to *accompany* a break -- it was meant
+to BE the break.
 
-                     n    expectancy   win     % avg/trade
-    ORB, 5m boxes  1313     -0.149    40.4%      -0.03
-    session VWAP   1312     -0.149    40.4%      -0.02
-    ORB, 15m        857     -0.105    42.6%      -0.20
-    session VWAP    857     -0.105    42.6%      -0.20
+That rule is this file now, and it is a different animal from the ORB.
+The session VWAP starts inside the box by construction (it is the
+volume-weighted mean of the prints that drew the box), and it is heavy:
+one spike candle barely moves it. It leaves the box only when the session
+has persistently, volume-weightedly traded beyond the range -- so the
+crossing is a trend statement no single candle can fake, and it
+necessarily happens later than the candle break the ORB trades.
 
-Structural, not a bug: the session VWAP is anchored at the opening bell,
-so during the breakout window it has barely had time to leave the opening
-range -- the line is almost always inside the box, and a close that
-clears the box clears the line for free. For the qualification to mean
-anything the line has to be one that can sit far from the box, and
-ctx.premarket_vwap is that line: anchored at the premarket open, it has
-been accumulating for hours by the bell, and on a gapper it can sit far
-above or below wherever the auction put the range. See
-app.market_data.vwap for the two anchors and the case that forced
-carrying both.
+The signal fires on the crossing bar: the session VWAP beyond the
+boundary by the range rules' shared buffer, having not been beyond it on
+the previous bar. Long above the high, short below the low. Entry is the
+crossing bar's close, the stop is the far end of the range (the measured
+ORB placement), the target comes from the shared resolve_target (next
+level, 2:1 floor, measured-move fallback), inside the same
+window-after-completion and behind the same ATR veto as the ORB family --
+shared so the rules stay genuinely comparable.
 
-The rule, restated for this line: on top of the whole ORB definition,
-the premarket VWAP must lie between the far end of the range and the
-break close -- the box (or the break candle) contains the line, so the
-close that breaks the range is also the close that reclaims (long) or
-loses (short) the premarket VWAP. The line already left far behind the
-boundary means the range break broke nothing about it, and the setup is
-the plain ORB's, not this one's.
-
-No premarket trading means no premarket VWAP (None), and that declines
-the trade rather than the veto: the line being broken is this rule's
-whole subject, so without it the setup does not exist. The plain ORB
-still covers the break itself.
-
-Everything else -- the switchable 5/15-minute range, the ATR veto, the
-close-beyond-the-buffer break, the window, the far-end stop, the 2:1
-floor, the half-off-and-trail management -- is opening_range_breakout.
-signal_with_stop, shared so this cannot drift into trading a different
-definition of the same break.
-
-Measured on this anchor, same window and configuration as the table
-above:
-
-                     n    expectancy   win     % avg/trade
-    ORB, 5m boxes  1313     -0.149    40.4%      -0.03
-    premarket, 5m  1290     -0.142    40.6%      -0.02
-    ORB, 15m        857     -0.105    42.6%      -0.20
-    premarket, 15m  853     -0.106    42.4%      -0.21
-
-The anchor is honest now but the universe defuses it: on the pinned
-*liquid* list overnight gaps are small, so the premarket VWAP usually
-ends near the open -- inside or beside the box anyway. The qualification
-binds 23 times in 1,313 at 5m (and those 23 were net losers, hence the
-slightly better expectancy), 4 in 857 at 15m. The case this rule was
-drawn for -- a line stranded far from the box -- is a gapper phenomenon,
-and on the gapper universe it is unmeasured.
+Not yet measured in this form. When it is, the numbers belong here.
 """
 
-from app.scanners.exit_rules import SIDE_LONG
+from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT
 from app.services.market_clock import ET
 from app.market_data import opening_range as orange
 from app.strategies import breakout, switches
 from app.strategies import opening_range_breakout as orb
+from app.strategies.context import Signal
 
 NAME = "VWAP Open Range Break"
 
 
-def evaluate(ctx):
-    signal = orb.signal_with_stop(ctx, NAME, breakout.STOP_FAR_END)
-    if signal is None:
-        return None
-
-    vwap = ctx.premarket_vwap
-    if vwap is None:
-        return None
-
+def evaluate(ctx) -> Signal | None:
     session_date = ctx.bar.timestamp.astimezone(ET).date()
-    high, low = orange.opening_range(
-        ctx.session_bars, session_date, switches.opening_range_minutes()
-    )
-    if high is None or low is None:
+    minutes = switches.opening_range_minutes()
+
+    if not orange.is_complete(ctx.bar, session_date, minutes):
+        return None
+    elapsed = breakout.minutes_since_open(ctx, session_date)
+    if elapsed is None or elapsed > minutes + breakout.BREAKOUT_WINDOW_MINUTES:
         return None
 
-    # The line must be no further back than the far end of the box, and the
-    # break close must have cleared it: premarket VWAP in [low, close] for a
-    # long, [close, high] for a short.
-    behind = low if signal.side == SIDE_LONG else high
-    if signal.sign * (vwap - behind) < 0:
+    high, low = orange.opening_range(ctx.session_bars, session_date, minutes)
+    if high is None or low is None or high <= low:
         return None
-    if signal.sign * (ctx.bar.close - vwap) <= 0:
+    if orb.range_vetoed_by_atr(ctx, high, low):
         return None
-    return signal
+
+    vwap = ctx.vwap
+    # The line one bar earlier, to make the crossing an event rather than a
+    # state: a rule firing on every bar the line spends outside the box
+    # would hand the chart a drifting entry and the backtest a smeared one.
+    prev = ctx.session_vwaps[-2] if len(ctx.session_vwaps) >= 2 else None
+    if vwap is None or prev is None:
+        return None
+
+    # Mutually exclusive: the line cannot cross the high and the low on the
+    # same bar upward and downward at once.
+    for side, sign, level, opposite in (
+        (SIDE_LONG, 1, high, low),
+        (SIDE_SHORT, -1, low, high),
+    ):
+        # Beyond by the shared buffer now, not beyond it before. The same
+        # buffer on both reads, so a line hovering at the boundary is one
+        # crossing, not a flicker of them.
+        beyond = sign * (vwap - level) > level * breakout.BREAK_BUFFER_PCT
+        was_beyond = sign * (prev - level) > level * breakout.BREAK_BUFFER_PCT
+        if not beyond or was_beyond:
+            continue
+
+        entry = ctx.bar.close
+        stop = opposite
+        risk = sign * (entry - stop)
+        if risk <= 0:
+            # Real here, unlike the candle break: the crossing bar's close
+            # can sit anywhere, including back beyond the far end of the
+            # range on a violent reversal. Nothing to size against.
+            return None
+
+        resolved = breakout.resolve_target(ctx, entry, sign, risk)
+        if resolved is None:
+            return None
+        target, target_label = resolved
+
+        return Signal(
+            strategy=NAME,
+            entry_price=entry,
+            stop_price=stop,
+            target_price=target,
+            reason=(
+                f"{minutes}m opening range {low:.2f}-{high:.2f}, session VWAP "
+                f"crossed {'above the high' if side == SIDE_LONG else 'below the low'} "
+                f"at {vwap:.2f}, {target_label}"
+            ),
+            side=side,
+            stop_trigger=breakout.STOP_TRIGGER,
+            scale_out=breakout.SCALE_OUT,
+        )
+    return None
