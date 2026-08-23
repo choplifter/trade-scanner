@@ -218,7 +218,6 @@ export function ScannerTable({
                 value={tradingViewSymbol(row.symbol, row.exchange)}
                 title={`Copy "${tradingViewSymbol(row.symbol, row.exchange)}" to clipboard (for TradingView search)`}
               />
-              {row.exchange && <span className="exchange-tag">{row.exchange}</span>}
               {row.is_hod && <span className="badge-hod">HOD</span>}
               {row.is_stale && (
                 <span

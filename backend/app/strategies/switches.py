@@ -72,7 +72,14 @@ def _read() -> dict:
 
 
 def _write(data: dict) -> None:
-    _PATH.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Write-then-rename rather than write_text, which truncates in place: the
+    # running app and a backtest process read this file concurrently, and one
+    # of them was observed catching it empty mid-write (JSONDecodeError at
+    # char 0, falling back to defaults). os.replace is atomic on the same
+    # volume, so a reader now sees the old content or the new, never neither.
+    tmp = _PATH.with_name(_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(_PATH)
 
 
 def switched_off() -> set[str]:
