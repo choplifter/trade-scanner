@@ -252,6 +252,14 @@ export function CandleChart({
   // visible bars -> different price labels -> a wider/narrower price scale),
   // which fires subscribeSizeChange again. This swallows that echo.
   const applyingRangeRef = useRef(false);
+  // The container width the resize handler last acted on. The same
+  // labels-resize-the-axis mechanism fires on the user's own horizontal
+  // scroll (new visible bars -> new price labels -> the axis gains or loses
+  // a few pixels), and without this check the handler read that as a pane
+  // resize and stomped the scrolled-to viewport back to the default
+  // right-anchored window -- the "zoom snaps while panning" bug. A real
+  // pane resize changes the *container's* width; axis jitter does not.
+  const lastContainerWidthRef = useRef(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -332,7 +340,15 @@ export function CandleChart({
       if (applyingRangeRef.current) return;
       const container = containerRef.current;
       if (!container) return;
-      const range = visibleLogicalRange(container.clientWidth || 1, barCountRef.current);
+      // Only a real pane resize -- splitter drag, window resize -- changes
+      // the container's width. The time scale also reports size changes
+      // when the price axis re-labels itself during a horizontal scroll;
+      // acting on those reset the user's viewport mid-pan (see
+      // lastContainerWidthRef above).
+      const width = container.clientWidth || 1;
+      if (width === lastContainerWidthRef.current) return;
+      lastContainerWidthRef.current = width;
+      const range = visibleLogicalRange(width, barCountRef.current);
       if (!range) return;
       applyingRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange(range);
@@ -341,6 +357,7 @@ export function CandleChart({
         applyingRangeRef.current = false;
       });
     };
+    lastContainerWidthRef.current = container.clientWidth || 1;
     chart.timeScale().subscribeSizeChange(handleSizeChange);
 
     return () => {
