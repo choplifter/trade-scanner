@@ -24,6 +24,7 @@ import {
 import { isMarkerSeries, isPointSeries } from "../../types/alpaca";
 import type { Bar, IndicatorResult, IndicatorStyle } from "../../types/alpaca";
 import { crosshairTimeFormatter, tickMarkFormatter } from "../../utils/chartTime";
+import { SESSION_FILLS, sessionBandData, sessionBandOptions } from "./sessionBands";
 
 /** Candles carry open/high/low; a line carries only the close. Both read the
  * same bars -- the line is for seeing the shape of a move without the wicks,
@@ -58,6 +59,10 @@ interface CandleChartProps {
   /** Unix seconds to scroll into view — a backtest pick's entry time. Null
    * leaves the chart wherever the user left it. */
   focusTime?: number | null;
+  /** Tint premarket/after-hours bars TradingView-style. Off on daily and
+   * coarser charts, where one bar spans whole sessions and the tint would
+   * describe nothing. */
+  shadeSessions?: boolean;
 }
 
 /** How much history/future to show either side of a focused pick. Wide
@@ -213,6 +218,7 @@ export function CandleChart({
   showIndicators,
   cursorMode,
   focusTime,
+  shadeSessions = false,
 }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -227,6 +233,8 @@ export function CandleChart({
   const pendingRangeRef = useRef<IRange<Time> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // The premarket/after-hours background washes -- see sessionBands.ts.
+  const sessionBandsRef = useRef<{ pre: ISeriesApi<"Histogram">; post: ISeriesApi<"Histogram"> } | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
   // The markers primitive, kept so the pick pin is updated in place rather
@@ -278,6 +286,17 @@ export function CandleChart({
       autoSize: true,
     });
 
+    // First series in, so every price-bearing series added later -- volume,
+    // VWAP, the candles from their own effect -- draws over the washes.
+    const sessionBands = {
+      pre: chart.addSeries(HistogramSeries, sessionBandOptions(SESSION_FILLS.pre)),
+      post: chart.addSeries(HistogramSeries, sessionBandOptions(SESSION_FILLS.post)),
+    };
+    // Zero margins on the bands' own overlay scale: with the fixed 0..1
+    // range from their options, value 1 is the pane's top edge and the fill
+    // reaches the bottom -- a full-height wash rather than a half-pane one.
+    sessionBands.pre.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
+
     // The price series itself is created by its own effect below, so
     // switching between candles and a line swaps one series instead of
     // tearing down the chart (which would lose the user's zoom on every
@@ -300,6 +319,7 @@ export function CandleChart({
     chartRef.current = chart;
     volumeSeriesRef.current = volumeSeries;
     vwapSeriesRef.current = vwapSeries;
+    sessionBandsRef.current = sessionBands;
 
     // autoSize above already has lightweight-charts observing the container,
     // so hook its own size event rather than adding a second ResizeObserver
@@ -335,6 +355,8 @@ export function CandleChart({
       // would call setMarkers on a dead primitive after a remount.
       markersRef.current = null;
       vwapSeriesRef.current = null;
+      // Disposed by chart.remove() along with every other series.
+      sessionBandsRef.current = null;
       // chart.remove() above already disposed every series/price-line that
       // was attached to it, including whatever the indicators effect added
       // -- without this, those refs would still point at now-disposed
@@ -423,6 +445,12 @@ export function CandleChart({
       ),
     );
 
+    // An empty list on daily+ charts draws nothing rather than tinting bars
+    // that each span whole sessions.
+    const bandTimes = shadeSessions ? bars.map((bar) => toUnixSeconds(bar.t)) : [];
+    sessionBandsRef.current?.pre.setData(sessionBandData(bandTimes, "pre"));
+    sessionBandsRef.current?.post.setData(sessionBandData(bandTimes, "post"));
+
     barCountRef.current = bars.length;
 
     const pendingRange = pendingRangeRef.current;
@@ -457,7 +485,7 @@ export function CandleChart({
     // chartType is one because the swap above leaves a brand-new, empty
     // series behind -- without it, toggling would blank the price until the
     // next tick.
-  }, [bars, vwap, focusTime, showIndicators, chartType]);
+  }, [bars, vwap, focusTime, showIndicators, chartType, shadeSessions]);
 
   // Scroll a clicked backtest pick into view and pin it with an arrow. Runs
   // after the data effect above, so the bars it needs are already on the

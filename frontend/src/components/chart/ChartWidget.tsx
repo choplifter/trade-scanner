@@ -316,6 +316,9 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             indicators={displayed.indicators.filter((i) => !hiddenIndicators.has(i.name))}
             showIndicators={showIndicators}
             cursorMode={cursorMode}
+            // Session tinting only where a bar sits inside one session --
+            // on daily and coarser charts the distinction does not exist.
+            shadeSessions={option.kind === "intraday"}
             // Only honour the focus while it still refers to the symbol on
             // screen; a stale one would drag the chart to an unrelated time
             // after the user clicks a different row.
