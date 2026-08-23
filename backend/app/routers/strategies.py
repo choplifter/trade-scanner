@@ -34,6 +34,8 @@ def _listing() -> dict:
         ],
         "errors": [{"filename": e.filename, "error": e.error} for e in errors],
         "measured_move_target": switches.measured_move_target_enabled(),
+        "opening_range_minutes": switches.opening_range_minutes(),
+        "opening_range_choices": list(switches.OPENING_RANGE_CHOICES),
     }
 
 
@@ -42,7 +44,22 @@ async def list_strategies() -> dict:
     return _listing()
 
 
+class OpeningRangeRequest(BaseModel):
+    minutes: int
+
+
 # Registered before /{stem} so "settings" is never read as a strategy name.
+@router.post("/settings/opening-range")
+async def switch_opening_range(body: OpeningRangeRequest) -> dict:
+    """The opening range length every ORB-family rule and the chart's box
+    read: 5 (Aziz's definition, the default) or 15."""
+    try:
+        switches.set_opening_range_minutes(body.minutes)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _listing()
+
+
 @router.post("/settings/measured-move")
 async def switch_measured_move(body: SwitchRequest) -> dict:
     """The break rules' measured-move fallback: with no level ahead of an

@@ -73,6 +73,27 @@ def test_the_measured_move_setting_toggles_and_persists(client):
     assert body["strategies"][0]["enabled"] is True
 
 
+def test_the_listing_carries_the_opening_range_setting(client):
+    body = client.get("/api/strategies").json()
+
+    assert body["opening_range_minutes"] == 5
+    assert body["opening_range_choices"] == [5, 15]
+
+
+def test_the_opening_range_toggles_and_persists(client):
+    body = client.post("/api/strategies/settings/opening-range", json={"minutes": 15}).json()
+
+    assert body["opening_range_minutes"] == 15
+    assert client.get("/api/strategies").json()["opening_range_minutes"] == 15
+
+
+def test_an_unlisted_opening_range_is_a_422(client):
+    res = client.post("/api/strategies/settings/opening-range", json={"minutes": 7})
+
+    assert res.status_code == 422
+    assert client.get("/api/strategies").json()["opening_range_minutes"] == 5
+
+
 def test_an_unknown_stem_is_a_404_not_an_orphan_entry(client):
     """Persisting a key no file owns would silently park the next strategy
     that happens to take that name."""

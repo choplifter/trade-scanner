@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
+from app.market_data import opening_range as orange
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT
 from app.services.market_clock import trading_hours_for
 from app.strategies import breakout, orb_retest as rule
@@ -149,7 +150,7 @@ def test_a_wick_that_stays_away_from_the_boundary_is_not_a_retest():
 
 
 def test_the_window_closes_on_the_retest():
-    late = rule.OPENING_MINUTES + breakout.BREAKOUT_WINDOW_MINUTES + 10
+    late = orange.OPENING_MINUTES + breakout.BREAKOUT_WINDOW_MINUTES + 10
     bars = _setup_long()
     bars[-1] = _retest_long(late)
 

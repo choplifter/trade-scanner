@@ -29,13 +29,15 @@ boundary should be.
 
 from app.market_data import opening_range as orange
 from app.services.market_clock import ET
-from app.strategies import breakout, retest
+from app.strategies import breakout, retest, switches
 from app.strategies.context import Signal
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT
 
 NAME = "ORB Retest"
 
-OPENING_MINUTES = orange.OPENING_MINUTES
+# The range length comes from switches.opening_range_minutes at evaluate
+# time, same as the breakout -- see opening_range_breakout on why it is not
+# a module constant.
 
 # What a break of the boundary is: the breakout rule's own definition,
 # shared on purpose -- see the module docstring.
@@ -46,7 +48,7 @@ TEST_BAND_PCT = retest.TEST_BAND_PCT
 SCALE_OUT = retest.SCALE_OUT
 
 
-def _signal_for(ctx, side: str, boundary: float) -> Signal | None:
+def _signal_for(ctx, side: str, boundary: float, minutes: int) -> Signal | None:
     # The boundary is handed to every session bar, forming window included,
     # rather than withheld until the range is complete. Not a leak: a window
     # bar's close cannot exceed the range high it is itself part of, so no
@@ -62,20 +64,21 @@ def _signal_for(ctx, side: str, boundary: float) -> Signal | None:
         side,
         lines,
         break_buffer_pct=BREAK_BUFFER_PCT,
-        line_label=f"{OPENING_MINUTES}m opening-range {'high' if side == SIDE_LONG else 'low'}",
+        line_label=f"{minutes}m opening-range {'high' if side == SIDE_LONG else 'low'}",
     )
 
 
 def evaluate(ctx) -> Signal | None:
     session_date = ctx.bar.timestamp.astimezone(ET).date()
-    if not orange.is_complete(ctx.bar, session_date, OPENING_MINUTES):
+    minutes = switches.opening_range_minutes()
+    if not orange.is_complete(ctx.bar, session_date, minutes):
         return None
 
     elapsed = breakout.minutes_since_open(ctx, session_date)
-    if elapsed is None or elapsed > OPENING_MINUTES + breakout.BREAKOUT_WINDOW_MINUTES:
+    if elapsed is None or elapsed > minutes + breakout.BREAKOUT_WINDOW_MINUTES:
         return None
 
-    high, low = orange.opening_range(ctx.session_bars, session_date, OPENING_MINUTES)
+    high, low = orange.opening_range(ctx.session_bars, session_date, minutes)
     if high is None or low is None or high <= low:
         # high == low is a range that did not move: every close breaks it,
         # which measures nothing -- same refusal as the breakout.
@@ -84,4 +87,4 @@ def evaluate(ctx) -> Signal | None:
     # A long retests the broken high, a short the broken low. Mutually
     # exclusive on any one bar: the retest close must sit beyond its own
     # boundary, and a close cannot be above the high and below the low.
-    return _signal_for(ctx, SIDE_LONG, high) or _signal_for(ctx, SIDE_SHORT, low)
+    return _signal_for(ctx, SIDE_LONG, high, minutes) or _signal_for(ctx, SIDE_SHORT, low, minutes)

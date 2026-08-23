@@ -215,7 +215,7 @@ def test_nothing_fires_before_the_range_is_finished():
 
 
 def test_a_break_long_after_the_open_is_not_an_opening_range_break():
-    late = _break_long(minutes=rule.OPENING_MINUTES + breakout.BREAKOUT_WINDOW_MINUTES + 10)
+    late = _break_long(minutes=orange.OPENING_MINUTES + breakout.BREAKOUT_WINDOW_MINUTES + 10)
 
     assert rule.evaluate(_ctx([_opening_bar(), late])) is None
 
@@ -282,6 +282,62 @@ def test_a_bar_that_covers_the_whole_range_is_read_by_its_close():
     assert signal.side == SIDE_SHORT
     assert signal.entry_price == pytest.approx(9.5)
     assert signal.stop_price == pytest.approx(10.5)
+
+
+# --- the switchable range length ------------------------------------------
+
+
+def test_at_fifteen_minutes_a_five_minute_break_is_still_inside_the_range():
+    """The look-ahead guard follows the switch: at 09:40 a 15-minute range
+    is still forming, and what looks like a break of the 5m high is a bar
+    comparing itself against a box it is part of."""
+    from app.strategies import switches
+
+    switches.set_opening_range_minutes(15)
+
+    assert rule.evaluate(_ctx([_opening_bar(), _break_long(minutes=5)])) is None
+
+
+def test_at_fifteen_minutes_the_range_is_fifteen_minutes_wide():
+    """Bars at 09:35 and 09:40 stretch the box; the break must clear *that*
+    high, and the stop sits at the 15-minute low."""
+    from app.strategies import switches
+
+    switches.set_opening_range_minutes(15)
+    bars = [
+        _opening_bar(),                      # 10.0 - 10.5
+        _bar(5, 10.3, 10.8, 10.25, 10.7),    # stretches the high to 10.8
+        _bar(10, 10.7, 10.9, 9.8, 10.6),     # and the low to 9.8
+        _bar(15, 10.6, 11.6, 10.55, 11.5),   # the break, after completion
+    ]
+
+    signal = rule.evaluate(_ctx(bars, levels=(7.0, 16.0)))
+
+    assert signal is not None
+    assert signal.stop_price == pytest.approx(9.8)
+    assert "15m opening range" in signal.reason
+
+
+def test_the_switch_defaults_to_azizs_five():
+    from app.strategies import switches
+
+    assert switches.opening_range_minutes() == orange.OPENING_MINUTES == 5
+
+
+def test_an_unlisted_minute_count_is_refused():
+    """Two measured choices, not a free parameter to overfit."""
+    from app.strategies import switches
+
+    with pytest.raises(ValueError):
+        switches.set_opening_range_minutes(7)
+
+
+def test_a_corrupt_stored_value_falls_back_to_five():
+    from app.strategies import switches
+
+    switches._PATH.write_text('{"_opening_range_minutes": 45}', encoding="utf-8")
+
+    assert switches.opening_range_minutes() == 5
 
 
 # --- the contract ---------------------------------------------------------

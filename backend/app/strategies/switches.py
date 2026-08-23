@@ -92,6 +92,32 @@ def set_switched(stem: str, enabled: bool) -> None:
     _write(data)
 
 
+OPENING_RANGE_KEY = "_opening_range_minutes"
+# Five is Aziz's definition and this app's default; fifteen is the common
+# alternative for names whose first minutes are too thin to make a box worth
+# trading (the SDOT shape: 1,685 shares in the first five minutes). A choice
+# of two rather than a free integer: every listed value is one that has been
+# (or is about to be) measured, and an arbitrary minute count would be a
+# parameter to overfit.
+OPENING_RANGE_CHOICES = (5, 15)
+
+
+def opening_range_minutes() -> int:
+    """How long the opening range is, in minutes -- read by every ORB-family
+    rule at evaluate time and by the chart's Opening Range box, so the box
+    drawn is always the box traded."""
+    value = _read().get(OPENING_RANGE_KEY, OPENING_RANGE_CHOICES[0])
+    return value if value in OPENING_RANGE_CHOICES else OPENING_RANGE_CHOICES[0]
+
+
+def set_opening_range_minutes(minutes: int) -> None:
+    if minutes not in OPENING_RANGE_CHOICES:
+        raise ValueError(f"opening range must be one of {OPENING_RANGE_CHOICES}, not {minutes!r}")
+    data = _read()
+    data[OPENING_RANGE_KEY] = minutes
+    _write(data)
+
+
 def measured_move_target_enabled() -> bool:
     """Whether the break rules may fall back to a constructed 2R target when
     no level lies ahead of the entry. See breakout.signal_for for what that

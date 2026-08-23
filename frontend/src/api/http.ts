@@ -118,6 +118,10 @@ export interface StrategiesResponse {
    * entry, aim at a constructed 2R target instead of declining the trade.
    * One shared setting -- four rules read it. */
   measured_move_target: boolean;
+  /** The opening range length every ORB-family rule and the chart's box
+   * read. The valid values come along so the UI never hardcodes them. */
+  opening_range_minutes: number;
+  opening_range_choices: number[];
 }
 
 export function getStrategies(): Promise<StrategiesResponse> {
@@ -132,6 +136,10 @@ export function setStrategyEnabled(stem: string, enabled: boolean): Promise<Stra
 
 export function setMeasuredMoveTarget(enabled: boolean): Promise<StrategiesResponse> {
   return postJson<StrategiesResponse>("/strategies/settings/measured-move", { enabled });
+}
+
+export function setOpeningRangeMinutes(minutes: number): Promise<StrategiesResponse> {
+  return postJson<StrategiesResponse>("/strategies/settings/opening-range", { minutes });
 }
 
 export function postTradeIdeas(): Promise<TradeIdeasResponse> {

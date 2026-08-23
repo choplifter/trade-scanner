@@ -14,6 +14,7 @@ them.
 
 from app.market_data import opening_range as orange
 from app.market_data import session_marks
+from app.strategies import switches
 
 NAME = "Opening Range"
 KIND = "level"
@@ -58,5 +59,7 @@ def compute(ctx) -> dict:
     session_date = session_marks.latest_session_date(bars)
     if session_date is None:
         return _EMPTY
-    high, low = orange.opening_range(bars, session_date)
+    # The switch, not the module default: the box drawn must be the box the
+    # ORB rules trade, or the chart stops being the way to check them.
+    high, low = orange.opening_range(bars, session_date, switches.opening_range_minutes())
     return {"High": high, "Low": low}

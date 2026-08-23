@@ -23,14 +23,18 @@ of R. If this loses money too, it will not be because of the spread.
 
 from app.market_data import opening_range as orange
 from app.services.market_clock import ET
-from app.strategies import breakout
+from app.strategies import breakout, switches
 
 NAME = "Opening Range Breakout"
 
-# Five minutes, given by the user. At the resolution everything intraday here
-# runs at that is exactly one bar -- a coincidence worth knowing rather than
-# relying on; opening_range takes the length in minutes.
-OPENING_MINUTES = orange.OPENING_MINUTES
+# The range length is a runtime switch now (switches.opening_range_minutes:
+# 5, Aziz's definition and the default, or 15 for names whose first minutes
+# are too thin to make a box). Read at *evaluate* time rather than held as a
+# module constant, and the reason is subtle: the loader re-executes this
+# file fresh on every load, but orb_break and vwap_open_range_break import
+# it as an ordinary module, which sys.modules caches once per process. A
+# constant read at import would let the fresh copy and the cached copy
+# disagree about the length of the same box.
 
 # Aziz's precondition on the box itself: the opening range must be "deutlich
 # geringer" -- well below -- the stock's daily ATR, read off his scanner's
@@ -59,14 +63,15 @@ def signal_with_stop(ctx, name: str, stop_placement: str):
     different definitions of the same break.
     """
     session_date = ctx.bar.timestamp.astimezone(ET).date()
+    minutes = switches.opening_range_minutes()
 
     # The range has to be finished before it can be broken. Without this the
     # rule would compare a bar against a range that bar is still inside, and
     # every opening bar would trivially break its own high.
-    if not orange.is_complete(ctx.bar, session_date, OPENING_MINUTES):
+    if not orange.is_complete(ctx.bar, session_date, minutes):
         return None
 
-    high, low = orange.opening_range(ctx.session_bars, session_date, OPENING_MINUTES)
+    high, low = orange.opening_range(ctx.session_bars, session_date, minutes)
 
     # The veto declines when the ATR is unknowable (ctx.daily_atr is None:
     # the live scanner's one-session cache, a fresh listing) rather than
@@ -88,8 +93,8 @@ def signal_with_stop(ctx, name: str, stop_placement: str):
         name,
         high,
         low,
-        range_label=f"{OPENING_MINUTES}m opening range",
-        ready_after_minutes=OPENING_MINUTES,
+        range_label=f"{minutes}m opening range",
+        ready_after_minutes=minutes,
         stop_placement=stop_placement,
     )
 

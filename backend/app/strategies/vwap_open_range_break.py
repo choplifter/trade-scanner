@@ -30,7 +30,7 @@ the plain ORB in the same window.
 from app.scanners.exit_rules import SIDE_LONG
 from app.services.market_clock import ET
 from app.market_data import opening_range as orange
-from app.strategies import breakout
+from app.strategies import breakout, switches
 from app.strategies import opening_range_breakout as orb
 
 NAME = "VWAP Open Range Break"
@@ -50,7 +50,9 @@ def evaluate(ctx):
         return None
 
     session_date = ctx.bar.timestamp.astimezone(ET).date()
-    high, low = orange.opening_range(ctx.session_bars, session_date, orb.OPENING_MINUTES)
+    high, low = orange.opening_range(
+        ctx.session_bars, session_date, switches.opening_range_minutes()
+    )
     if high is None or low is None:
         return None
 

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   getStrategies,
   setMeasuredMoveTarget,
+  setOpeningRangeMinutes,
   setStrategyEnabled,
   type StrategiesResponse,
   type StrategySwitch,
@@ -22,6 +23,8 @@ export function StrategySwitchPanel() {
   const [strategies, setStrategies] = useState<StrategySwitch[]>([]);
   const [loadErrors, setLoadErrors] = useState<StrategiesResponse["errors"]>([]);
   const [measuredMove, setMeasuredMove] = useState<boolean | null>(null);
+  const [openingRange, setOpeningRange] = useState<number | null>(null);
+  const [openingRangeChoices, setOpeningRangeChoices] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   // The key being saved (a stem, or "measured-move"), so a slow request
   // disables just that checkbox instead of letting a second click race the
@@ -32,6 +35,8 @@ export function StrategySwitchPanel() {
     setStrategies(res.strategies);
     setLoadErrors(res.errors);
     setMeasuredMove(res.measured_move_target);
+    setOpeningRange(res.opening_range_minutes);
+    setOpeningRangeChoices(res.opening_range_choices);
   };
 
   useEffect(() => {
@@ -55,6 +60,18 @@ export function StrategySwitchPanel() {
       .then(apply)
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to switch strategy");
+      })
+      .finally(() => setPending(null));
+  };
+
+  const chooseOpeningRange = (minutes: number) => {
+    if (minutes === openingRange) return;
+    setPending("opening-range");
+    setError(null);
+    setOpeningRangeMinutes(minutes)
+      .then(apply)
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to switch opening range");
       })
       .finally(() => setPending(null));
   };
@@ -84,6 +101,26 @@ export function StrategySwitchPanel() {
           {strategy.name}
         </label>
       ))}
+      {openingRange !== null && (
+        <span
+          className="strategy-switches-setting"
+          title="How long the opening range is. Every ORB-family rule and the chart's Opening Range box read this: 5 minutes is Aziz's definition; 15 gives thin names time to print a box worth trading."
+        >
+          Opening range:
+          {openingRangeChoices.map((minutes) => (
+            <button
+              key={minutes}
+              type="button"
+              className={openingRange === minutes ? "tab active" : "tab"}
+              aria-pressed={openingRange === minutes}
+              disabled={pending === "opening-range"}
+              onClick={() => chooseOpeningRange(minutes)}
+            >
+              {minutes}m
+            </button>
+          ))}
+        </span>
+      )}
       {measuredMove !== null && (
         <label
           className="strategy-switches-setting"
