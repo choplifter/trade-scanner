@@ -61,8 +61,26 @@ from app.strategies.context import Signal
 
 NAME = "VWAP Open Range Break"
 
+# Where the stop sits, named like breakout's placements. FAR_END is the
+# measured ORB default; AT_LINE anchors it to where the session VWAP stood
+# at entry -- a close back through the line refutes the crossing thesis
+# directly, and it shrinks 1R drastically for an entry that is late by
+# design. Note it is the line's value *at entry*, a fixed price: exit_rules
+# and the ticket speak fixed stops, not trailing lines.
+STOP_FAR_END = "far-end"
+STOP_AT_LINE = "at-line"
+
 
 def evaluate(ctx) -> Signal | None:
+    return signal_with_stop(ctx, NAME, STOP_FAR_END)
+
+
+def signal_with_stop(ctx, name: str, stop_placement: str) -> Signal | None:
+    """The crossing setup -- completed range, veto, window, the line leaving
+    the box -- with the stop placement a caller chooses. The setup lives
+    once, here, so this rule and the line-stop variant cannot drift into
+    trading two different definitions of the same crossing (the same
+    arrangement as opening_range_breakout and orb_break)."""
     session_date = ctx.bar.timestamp.astimezone(ET).date()
     minutes = switches.opening_range_minutes()
 
@@ -101,12 +119,13 @@ def evaluate(ctx) -> Signal | None:
             continue
 
         entry = ctx.bar.close
-        stop = opposite
+        stop = vwap if stop_placement == STOP_AT_LINE else opposite
         risk = sign * (entry - stop)
         if risk <= 0:
-            # Real here, unlike the candle break: the crossing bar's close
-            # can sit anywhere, including back beyond the far end of the
-            # range on a violent reversal. Nothing to size against.
+            # Real for both placements: the crossing bar's close can sit
+            # anywhere -- back beyond the far end on a violent reversal, or
+            # exactly on the line for the line stop. Nothing to size
+            # against.
             return None
 
         resolved = breakout.resolve_target(ctx, entry, sign, risk)
@@ -115,7 +134,7 @@ def evaluate(ctx) -> Signal | None:
         target, target_label = resolved
 
         return Signal(
-            strategy=NAME,
+            strategy=name,
             entry_price=entry,
             stop_price=stop,
             target_price=target,
