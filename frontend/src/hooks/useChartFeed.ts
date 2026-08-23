@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getSymbolBars } from "../api/http";
 import { chartSocket } from "../api/ws";
 import type { Bar, IndicatorResult } from "../types/alpaca";
+import { useStrategySettingsNonce } from "./useStrategySettingsNonce";
 
 export interface ChartFeedState {
   bars: Bar[];
@@ -37,6 +38,11 @@ const EMPTY_STATE: ChartFeedState = {
  */
 export function useChartFeed(symbol: string | null): ChartFeedState {
   const [state, setState] = useState<ChartFeedState>(EMPTY_STATE);
+  // Signal settings (opening-range length, strategy switches) shape the
+  // indicators the REST fetch returns; a change re-runs the whole effect.
+  // The brief ws re-subscribe that rides along is harmless -- the next tick
+  // repopulates it.
+  const settingsNonce = useStrategySettingsNonce();
 
   useEffect(() => {
     if (!symbol) {
@@ -93,7 +99,7 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
       cancelled = true;
       unsubscribe();
     };
-  }, [symbol]);
+  }, [symbol, settingsNonce]);
 
   return state;
 }

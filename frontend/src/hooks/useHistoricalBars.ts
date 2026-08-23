@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { getSymbolBars } from "../api/http";
 import type { Bar, IndicatorResult } from "../types/alpaca";
+import { useStrategySettingsNonce } from "./useStrategySettingsNonce";
 
 export interface HistoricalBarsState {
   bars: Bar[];
@@ -35,6 +36,8 @@ export function useHistoricalBars(
   alpacaTimeframe: string | null,
 ): HistoricalBarsState {
   const [state, setState] = useState<HistoricalBarsState>(EMPTY_STATE);
+  // Same contract as useChartFeed: signal settings shape the indicator set.
+  const settingsNonce = useStrategySettingsNonce();
 
   useEffect(() => {
     if (!symbol || !alpacaTimeframe) {
@@ -63,7 +66,7 @@ export function useHistoricalBars(
     return () => {
       cancelled = true;
     };
-  }, [symbol, alpacaTimeframe]);
+  }, [symbol, alpacaTimeframe, settingsNonce]);
 
   return state;
 }

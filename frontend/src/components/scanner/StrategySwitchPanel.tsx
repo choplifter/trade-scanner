@@ -8,6 +8,7 @@ import {
   type StrategiesResponse,
   type StrategySwitch,
 } from "../../api/http";
+import { announceStrategySettingsChange } from "../../hooks/useStrategySettingsNonce";
 
 /**
  * The on/off switch for each strategy signal. Server-side and persistent:
@@ -57,7 +58,11 @@ export function StrategySwitchPanel() {
     setPending(strategy.stem);
     setError(null);
     setStrategyEnabled(strategy.stem, !strategy.enabled)
-      .then(apply)
+      .then((res) => {
+        apply(res);
+        // The chart draws this strategy's stop/target lines -- tell it.
+        announceStrategySettingsChange();
+      })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to switch strategy");
       })
@@ -69,7 +74,11 @@ export function StrategySwitchPanel() {
     setPending("opening-range");
     setError(null);
     setOpeningRangeMinutes(minutes)
-      .then(apply)
+      .then((res) => {
+        apply(res);
+        // The chart's Opening Range box is drawn from this value -- tell it.
+        announceStrategySettingsChange();
+      })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to switch opening range");
       })
@@ -81,7 +90,11 @@ export function StrategySwitchPanel() {
     setPending("measured-move");
     setError(null);
     setMeasuredMoveTarget(!measuredMove)
-      .then(apply)
+      .then((res) => {
+        apply(res);
+        // Changes which signals exist, so the chart's lines follow too.
+        announceStrategySettingsChange();
+      })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to switch measured-move fallback");
       })
