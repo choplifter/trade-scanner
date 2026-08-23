@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -68,27 +69,61 @@ def pin_current() -> None:
     _pinned = _read()
 
 
-def _read() -> dict:
+# Windows file sharing is the reason for every retry below: python opens
+# files without FILE_SHARE_DELETE, so while any process has this file open
+# -- the engine's poll tick, a backtest, a virus scanner -- a concurrent
+# replace fails with PermissionError, and opens against a delete-pending
+# file fail the same way. The locks last milliseconds; a few short retries
+# outlast them. Observed live as a 500 on the settings POST and as the
+# panel flipping to defaults mid-session.
+_IO_RETRIES = 8
+_IO_RETRY_DELAY_SECONDS = 0.015
+
+
+def _read(strict: bool = False) -> dict:
     """The whole switch file, or {} when missing or unreadable.
 
-    Failing toward {} -- every default -- is deliberate: the default state
-    of every strategy is on, and a strategy silently off looks exactly like
-    a quiet market, which is the failure mode this package is shaped around
-    avoiding.
+    Failing toward {} -- every default -- is deliberate for *readers*: the
+    default state of every strategy is on, and a strategy silently off
+    looks exactly like a quiet market. Writers pass strict=True and get
+    the exception instead: a setter that reads defaults and writes them
+    back with one change wipes every other switch the user has set, which
+    is worse than the request failing.
     """
     if _pinned is not None:
         return dict(_pinned)
-    try:
-        data = json.loads(_PATH.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, json.JSONDecodeError):
-        logger.exception("Could not read %s -- using defaults", _PATH)
-        return {}
-    if not isinstance(data, dict):
-        logger.warning("%s is not a JSON object -- using defaults", _PATH)
-        return {}
-    return data
+    for attempt in range(_IO_RETRIES):
+        try:
+            raw = _PATH.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {}
+        except PermissionError:
+            if attempt + 1 < _IO_RETRIES:
+                time.sleep(_IO_RETRY_DELAY_SECONDS)
+                continue
+            if strict:
+                raise
+            logger.warning("Could not read %s (still locked) -- using defaults", _PATH)
+            return {}
+        except OSError as exc:
+            if strict:
+                raise
+            logger.warning("Could not read %s (%s) -- using defaults", _PATH, exc)
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            if strict:
+                raise
+            logger.warning("%s is not valid JSON (%s) -- using defaults", _PATH, exc)
+            return {}
+        if not isinstance(data, dict):
+            if strict:
+                raise ValueError(f"{_PATH} is not a JSON object")
+            logger.warning("%s is not a JSON object -- using defaults", _PATH)
+            return {}
+        return data
+    return {}
 
 
 def _write(data: dict) -> None:
@@ -97,9 +132,23 @@ def _write(data: dict) -> None:
     # of them was observed catching it empty mid-write (JSONDecodeError at
     # char 0, falling back to defaults). os.replace is atomic on the same
     # volume, so a reader now sees the old content or the new, never neither.
+    #
+    # The replace is retried because of the Windows sharing rules described
+    # at _IO_RETRIES; the last resort is the plain truncating write --
+    # re-accepting the tiny empty-read race for one write beats returning a
+    # 500 for a toggle.
+    payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
     tmp = _PATH.with_name(_PATH.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(_PATH)
+    tmp.write_text(payload, encoding="utf-8")
+    for attempt in range(_IO_RETRIES):
+        try:
+            tmp.replace(_PATH)
+            return
+        except PermissionError:
+            if attempt + 1 < _IO_RETRIES:
+                time.sleep(_IO_RETRY_DELAY_SECONDS)
+    logger.warning("Replace of %s still locked after retries -- writing in place", _PATH)
+    _PATH.write_text(payload, encoding="utf-8")
 
 
 def switched_off() -> set[str]:
@@ -110,8 +159,11 @@ def switched_off() -> set[str]:
 
 
 def set_switched(stem: str, enabled: bool) -> None:
-    """Flip one strategy's switch and persist it, leaving settings intact."""
-    data = _read()
+    """Flip one strategy's switch and persist it, leaving settings intact.
+
+    Reads strictly: writing defaults-plus-one-change over a file that was
+    merely locked for a moment would wipe every other switch."""
+    data = _read(strict=True)
     if enabled:
         data.pop(stem, None)
     else:
@@ -140,7 +192,7 @@ def opening_range_minutes() -> int:
 def set_opening_range_minutes(minutes: int) -> None:
     if minutes not in OPENING_RANGE_CHOICES:
         raise ValueError(f"opening range must be one of {OPENING_RANGE_CHOICES}, not {minutes!r}")
-    data = _read()
+    data = _read(strict=True)
     data[OPENING_RANGE_KEY] = minutes
     _write(data)
 
@@ -153,6 +205,6 @@ def measured_move_target_enabled() -> bool:
 
 
 def set_measured_move_target(enabled: bool) -> None:
-    data = _read()
+    data = _read(strict=True)
     data[MEASURED_MOVE_KEY] = bool(enabled)
     _write(data)
