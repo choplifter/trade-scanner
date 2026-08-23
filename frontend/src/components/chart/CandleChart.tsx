@@ -260,6 +260,10 @@ export function CandleChart({
   // right-anchored window -- the "zoom snaps while panning" bug. A real
   // pane resize changes the *container's* width; axis jitter does not.
   const lastContainerWidthRef = useRef(0);
+  // First bar's time as of the last data effect run -- how an append (live
+  // tick) is told apart from a replacement (symbol/timeframe change). See
+  // the data effect for what each means for viewport ownership.
+  const firstBarTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -468,7 +472,16 @@ export function CandleChart({
     sessionBandsRef.current?.pre.setData(sessionBandData(bandTimes, "pre"));
     sessionBandsRef.current?.post.setData(sessionBandData(bandTimes, "post"));
 
+    const previousBarCount = barCountRef.current;
     barCountRef.current = bars.length;
+
+    // Appended-to or replaced? A live tick appends (or updates the last
+    // bar) and leaves the first bar alone; a symbol or timeframe change
+    // replaces the whole array, and a logical index then means something
+    // new. The distinction decides who owns the viewport below.
+    const firstBarTime = bars[0] ? toUnixSeconds(bars[0].t) : null;
+    const dataReplaced = firstBarTime !== firstBarTimeRef.current;
+    firstBarTimeRef.current = firstBarTime;
 
     const pendingRange = pendingRangeRef.current;
     pendingRangeRef.current = null;
@@ -486,6 +499,18 @@ export function CandleChart({
         applyLabelClearance(chart, showIndicators);
       }
       return;
+    }
+
+    // On a pure append, someone scrolled back keeps their viewport: the
+    // existing bars keep their logical indices, so doing nothing is what
+    // holds the view still -- while re-applying the default range here
+    // yanked them back to the right edge on every live tick, the same
+    // stomp the resize handler had. Following the newest bar is only for
+    // viewers already at (or near) the right edge.
+    if (!dataReplaced && previousBarCount > 0) {
+      const current = chartRef.current?.timeScale().getVisibleLogicalRange();
+      const atRightEdge = !current || current.to >= previousBarCount - 1.5;
+      if (!atRightEdge) return;
     }
 
     const container = containerRef.current;
