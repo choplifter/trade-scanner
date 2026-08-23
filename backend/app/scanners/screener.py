@@ -99,6 +99,13 @@ FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("avg_vol_20d", "Avg Volume (20d)", NUMBER),
     FieldSpec("rvol", "Rel Volume", NUMBER),
     FieldSpec("dollar_volume_today", "Dollar Volume", CURRENCY),
+    # The stock's *typical* dollar liquidity -- avg_vol_20d x last price --
+    # as opposed to dollar_volume_today, which is what has traded so far
+    # today. The distinction is what makes an illiquidity filter usable in
+    # premarket: at 06:00 every symbol has a near-zero "today", while the
+    # 20-day figure already says which names are structurally thin. Derived
+    # because it is a product of two row fields, not a stored one.
+    FieldSpec("avg_dollar_volume_20d", "Avg $ Volume (20d)", CURRENCY, derived=True),
     FieldSpec("day_high", "Day High", CURRENCY),
     FieldSpec("day_low", "Day Low", CURRENCY),
     FieldSpec("spread_pct", "Spread %", PERCENT),
@@ -150,6 +157,14 @@ FIELDS: tuple[FieldSpec, ...] = (
     # what the fixed views ordered by. Derived because it needs the news
     # cache (catalyst boost) that only the engine holds.
     FieldSpec("rank_score", "Rank Score", NUMBER, derived=True),
+    # Whether the app knows a recent headline for the symbol -- the
+    # screenable form of the catalyst both Aziz and Cameron insist on.
+    # Honest limitation, inherited from NewsCache's scope: headlines are
+    # only fetched for symbols that appear in ranked views, so False means
+    # "no headline known here", not "no news exists". Good enough to
+    # *require* a catalyst (True is always real); not a way to prove the
+    # absence of one.
+    FieldSpec("has_news", "Has Headline", BOOLEAN, derived=True),
 )
 
 FIELDS_BY_NAME: dict[str, FieldSpec] = {f.name: f for f in FIELDS}
@@ -400,6 +415,54 @@ PRESETS: dict[str, dict] = {
             filters=[Filter(field="pct_change", op="between", value=3, value2=8),
                      Filter(field="dollar_volume_today", op="gt", value=2_000_000)],
             sort_by="dollar_volume_today",
+            descending=True,
+            limit=50,
+        ),
+    },
+    "aziz_stocks_in_play": {
+        "label": "Aziz: Stocks in Play",
+        "description": (
+            "Andrew Aziz's gapper scan, translated to this app's fields: gapped up 2%+ "
+            "overnight, trading at 2x+ normal volume, structurally liquid (avg $10M+/day "
+            "over 20 days -- his 500k-1M shares at this universe's prices), $10+, and with "
+            "a known headline. Aziz trades gap-downs too -- edit the gap filter to lt -2 "
+            "for the short side; a preset holds one direction because filters are ANDed. "
+            "The headline condition uses what the app knows (see Has Headline): requiring "
+            "one is reliable, its absence proves nothing."
+        ),
+        "screen": Screen(
+            filters=[
+                Filter(field="gap_pct", op="gt", value=2),
+                Filter(field="rvol", op="gt", value=2),
+                Filter(field="avg_dollar_volume_20d", op="gt", value=10_000_000),
+                Filter(field="last_price", op="gt", value=10),
+                Filter(field="has_news", op="is_true"),
+            ],
+            sort_by="rank_score",
+            descending=True,
+            limit=50,
+        ),
+    },
+    "cameron_momentum": {
+        "label": "Cameron: Momentum",
+        "description": (
+            "Ross Cameron's five pillars: $2-20, up 10%+ today, under 20M float, 5x+ "
+            "relative volume, with a known headline. Note the universe gate: with the "
+            "default UNIVERSE_MIN_PRICE of $5 only the $5-20 slice can ever appear here "
+            "-- his sub-$5 sweet spot needs that .env setting lowered, with the "
+            "penny-stock caveats documented on it. Deliberately stricter than Low Float "
+            "Runners, which is the same shape without the price band, the news "
+            "requirement, or his 10%/5x thresholds."
+        ),
+        "screen": Screen(
+            filters=[
+                Filter(field="last_price", op="between", value=2, value2=20),
+                Filter(field="pct_change", op="gt", value=10),
+                Filter(field="float_shares", op="lt", value=20_000_000),
+                Filter(field="rvol", op="gt", value=5),
+                Filter(field="has_news", op="is_true"),
+            ],
+            sort_by="pct_change",
             descending=True,
             limit=50,
         ),

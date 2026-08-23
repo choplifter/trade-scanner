@@ -69,6 +69,15 @@ def derived_values(engine, rows, window_minutes: int | None = None) -> dict[str,
         "volume_concentration": concentration,
         "is_green_candle": {r.symbol: momentum.is_green(r.symbol) for r in rows},
         "float_shares": {r.symbol: fundamentals.float_shares(r.symbol) for r in rows},
+        # avg_vol_20d x last price: the stock's typical dollar liquidity --
+        # see the FieldSpec for why this exists next to dollar_volume_today.
+        "avg_dollar_volume_20d": {
+            r.symbol: r.avg_vol_20d * r.last_price if r.avg_vol_20d and r.last_price else None
+            for r in rows
+        },
+        # The same headline lookup rank_score's catalyst boost uses, exposed
+        # as its own filterable fact. See the FieldSpec on what False means.
+        "has_news": {r.symbol: _has_headline(r, news_cache) for r in rows},
         "short_interest_pct": {
             r.symbol: fundamentals.short_interest_pct(r.symbol) for r in rows
         },

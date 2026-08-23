@@ -101,6 +101,36 @@ def test_float_comes_from_the_universe_wide_cache_not_the_row():
     assert derived["float_shares"]["AAA"] == 12_000_000.0
 
 
+def test_avg_dollar_volume_is_the_trailing_average_times_price():
+    """The illiquidity filter's field: typical liquidity, not today's --
+    usable at 06:00 when every symbol's "today" is still near zero."""
+    row = _row("AAA", price=10.0, rvol=2.0, volume=1_000_000.0)  # avg_vol_20d = 500k
+
+    derived = derived_values(_engine([row]), [row])
+
+    assert derived["avg_dollar_volume_20d"]["AAA"] == 5_000_000.0
+
+
+def test_avg_dollar_volume_is_none_when_the_average_is_unknown():
+    row = _row("AAA")
+    row.avg_vol_20d = 0.0
+
+    derived = derived_values(_engine([row]), [row])
+
+    assert derived["avg_dollar_volume_20d"]["AAA"] is None
+
+
+def test_has_news_reflects_the_headline_cache():
+    """True is always real; False only means no headline is *known* -- the
+    cache follows ranked symbols, see the FieldSpec."""
+    rows = [_row("AAA"), _row("BBB")]
+
+    derived = derived_values(_engine(rows, headlines={"AAA": "beats earnings"}), rows)
+
+    assert derived["has_news"]["AAA"] is True
+    assert derived["has_news"]["BBB"] is False
+
+
 def test_rank_score_applies_the_catalyst_boost_only_to_gainers():
     up, down = _row("UP", pct=10.0), _row("DOWN", pct=-10.0)
     engine = _engine([up, down], headlines={"UP": "Earnings beat", "DOWN": "Earnings miss"})
