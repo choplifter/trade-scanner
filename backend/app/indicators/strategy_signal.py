@@ -143,24 +143,42 @@ def levels_for(ctx: IndicatorContext, bars: list) -> tuple:
     return tuple(sorted({*structure, *marks}))
 
 
-def compute(ctx: IndicatorContext) -> dict:
+def shared_firings(ctx: IndicatorContext) -> tuple[list, list]:
+    """(five-minute bars, firings) for this request, computed once.
+
+    Memoized on the context object because two indicator files need the
+    same walk -- this one for the stop/target lines, strategy_entry for the
+    marker -- and the walk is the most expensive thing either does (bucket
+    the minute frame, re-load the strategies, scan hourly structure, walk a
+    session). Both files are re-executed per request while their imports
+    are cached, so a module-level cache would be two caches; the context is
+    the one object both copies share, and it lives exactly one request.
+    """
+    cached = getattr(ctx, "_strategy_walk", None)
+    if cached is not None:
+        return cached
+
     bars = five_minute_bars(ctx.minute_bars)
-    if not bars:
-        return {}
+    firings: list = []
+    if bars:
+        strategies, _ = load_strategies()
+        if strategies:
+            # One walk, shared with the live scanner (see
+            # app.strategies.runner), so the chart and the table cannot
+            # disagree about how a strategy is run. Errors are swallowed
+            # here and not there: a chart must not go blank because a file
+            # is mid-edit.
+            firings = runner.walk_latest_session(
+                ctx.symbol, bars, strategies, levels_for(ctx, bars), swallow_errors=True
+            )
 
-    strategies, _ = load_strategies()
-    if not strategies:
-        return {}
+    result = (bars, firings)
+    ctx._strategy_walk = result  # type: ignore[attr-defined]
+    return result
 
-    levels = levels_for(ctx, bars)
 
-    # One walk, shared with the live scanner (see app.strategies.runner), so
-    # the chart and the table cannot disagree about how a strategy is run.
-    # Errors are swallowed here and not there: a chart must not go blank
-    # because a file is mid-edit.
-    firings = runner.walk_latest_session(
-        ctx.symbol, bars, strategies, levels, swallow_errors=True
-    )
+def compute(ctx: IndicatorContext) -> dict:
+    _, firings = shared_firings(ctx)
     latest = runner.latest_signal(firings)
 
     if latest is None:

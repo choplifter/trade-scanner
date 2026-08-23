@@ -83,7 +83,12 @@ async def _compute_indicators(
         else get_historical_bars(clients, symbol, "1Hour"),
     )
     ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars, timeframe, anchor_bars)
-    return run_indicators(ctx)
+    # Off the event loop: run_indicators is over a second of pure CPU (the
+    # strategy walk, the level scan, pandas resampling), and this endpoint
+    # shares its loop with the scanner engine's poll tick -- run inline it
+    # both stalls every concurrent request and queues behind none of its
+    # own awaits.
+    return await asyncio.to_thread(run_indicators, ctx)
 
 
 @router.get("/search")

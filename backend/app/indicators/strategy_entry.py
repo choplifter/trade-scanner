@@ -17,13 +17,8 @@ app.strategies.runner), so all three agree about which bar a setup fired on.
 import logging
 
 from app.indicators.context import IndicatorContext
-from app.indicators.strategy_signal import (
-    five_minute_bars,
-    levels_for,
-    load_strategies,
-)
+from app.indicators.strategy_signal import shared_firings
 from app.scanners.exit_rules import SIDE_LONG
-from app.strategies import runner
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +36,9 @@ COLORS = {
 
 
 def compute(ctx: IndicatorContext) -> dict:
-    bars = five_minute_bars(ctx.minute_bars)
-    if not bars:
-        return {}
-
-    strategies, _ = load_strategies()
-    if not strategies:
-        return {}
-
-    firings = runner.walk_latest_session(
-        ctx.symbol, bars, strategies, levels_for(ctx, bars), swallow_errors=True
-    )
+    # The expensive part -- bucketing, loading, walking -- happens once per
+    # request and is shared with the stop/target lines: see shared_firings.
+    bars, firings = shared_firings(ctx)
     if not firings:
         return {}
 
