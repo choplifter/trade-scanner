@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 
 from alpaca.data.enums import Adjustment
@@ -99,6 +100,44 @@ async def get_intraday_minute_bars(clients: AlpacaClients, symbol: str, start: d
     return bar_set.data.get(symbol, [])
 
 
+# In-process TTL cache for get_historical_bars, keyed by (symbol,
+# timeframe). Every chart load fetches weekly+monthly+hourly bars for its
+# indicator anchors on top of the bars actually displayed, and those anchors
+# barely move intraday -- an hourly bar gains one candle per hour, a monthly
+# one per month. Re-fetching them per click was measured as roughly a third
+# of the /bars endpoint's latency (~0.5-1s of the 2-4s total).
+#
+# 180 seconds bounds the cost of the trade-off: on a chart *displaying* one
+# of these timeframes the newest candle can render up to three minutes
+# stale, which matches how those views are already fed (useHistoricalBars is
+# a one-shot fetch with no live ticks). Deliberately not the scripts' disk
+# cache (bar_cache): that persists multi-week fetches across runs; this
+# holds a few dozen small lists for the life of the process.
+_HISTORICAL_TTL_SECONDS = 180.0
+# Visited charts, not the universe: a bound so an automation clicking
+# through thousands of symbols cannot grow the dict without limit. Eviction
+# is oldest-entry-first, which for a TTL cache is also closest-to-expiry.
+_HISTORICAL_MAX_ENTRIES = 512
+_historical_cache: dict[tuple[str, str], tuple[float, list]] = {}
+
+
+def _historical_cache_get(symbol: str, timeframe_key: str) -> list | None:
+    entry = _historical_cache.get((symbol, timeframe_key))
+    if entry is None:
+        return None
+    fetched_at, bars = entry
+    if time.monotonic() - fetched_at > _HISTORICAL_TTL_SECONDS:
+        return None
+    return bars
+
+
+def _historical_cache_put(symbol: str, timeframe_key: str, bars: list) -> None:
+    if len(_historical_cache) >= _HISTORICAL_MAX_ENTRIES:
+        oldest = min(_historical_cache, key=lambda key: _historical_cache[key][0])
+        del _historical_cache[oldest]
+    _historical_cache[(symbol, timeframe_key)] = (time.monotonic(), bars)
+
+
 async def get_historical_bars(clients: AlpacaClients, symbol: str, timeframe_key: str) -> list:
     """Native-resolution historical bars for one of HISTORICAL_TIMEFRAMES'
     keys (1Hour/4Hour/1Day/1Week/1Month). No VWAP -- it's not a
@@ -119,6 +158,10 @@ async def get_historical_bars(clients: AlpacaClients, symbol: str, timeframe_key
     get_5m_bars_multi already use SPLIT for the same reason this one now
     does.
     """
+    cached = _historical_cache_get(symbol, timeframe_key)
+    if cached is not None:
+        return cached
+
     alpaca_timeframe, lookback = HISTORICAL_TIMEFRAMES[timeframe_key]
     request = StockBarsRequest(
         symbol_or_symbols=symbol,
@@ -128,7 +171,11 @@ async def get_historical_bars(clients: AlpacaClients, symbol: str, timeframe_key
         adjustment=Adjustment.SPLIT,
     )
     bar_set = await asyncio.to_thread(clients.data.get_stock_bars, request)
-    return bar_set.data.get(symbol, [])
+    bars = bar_set.data.get(symbol, [])
+    # The cached list is handed to every later caller as-is -- callers read
+    # bars, they do not own them.
+    _historical_cache_put(symbol, timeframe_key, bars)
+    return bars
 
 
 async def get_intraday_minute_bars_multi(
