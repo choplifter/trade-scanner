@@ -59,6 +59,10 @@ interface CandleChartProps {
   /** Unix seconds to scroll into view — a backtest pick's entry time. Null
    * leaves the chart wherever the user left it. */
   focusTime?: number | null;
+  /** Recent headlines to pin on the timeline, each at the bar nearest its
+   * publish time. Same items the info panel lists — the marker answers
+   * "when", the panel answers "what". */
+  news?: { time: number; headline: string }[];
   /** Tint premarket/after-hours bars TradingView-style. Off on daily and
    * coarser charts, where one bar spans whole sessions and the tint would
    * describe nothing. */
@@ -218,6 +222,7 @@ export function CandleChart({
   showIndicators,
   cursorMode,
   focusTime,
+  news = [],
   shadeSessions = false,
 }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -585,6 +590,33 @@ export function CandleChart({
       });
     }
 
+    // News pins: one 📰 per bar, at the bar nearest each headline's publish
+    // time. size 0 keeps the emoji as the whole glyph rather than stacking
+    // it on a drawn circle. Guarded against stories older than the loaded
+    // window -- nearestBarTime would otherwise pin them all to the first
+    // bar, which reads as "something happened here" about a moment the
+    // chart does not even show. Newer than the last bar (a headline after
+    // the close) clamps to the last bar, which is where its session
+    // context is.
+    if (bars.length > 0 && news.length > 0) {
+      const firstBarTime = toUnixSeconds(bars[0].t);
+      const pinned = new Set<number>();
+      news.forEach((item) => {
+        if (item.time < firstBarTime) return;
+        const time = nearestBarTime(bars, item.time);
+        if (time == null || pinned.has(time)) return;
+        pinned.add(time);
+        markers.push({
+          time,
+          position: "aboveBar",
+          shape: "circle",
+          size: 0,
+          color: "#898781",
+          text: "📰",
+        });
+      });
+    }
+
     // Sorted because the library requires markers in time order and rejects
     // the set otherwise -- the pick and the indicators arrive independently,
     // so nothing else guarantees it.
@@ -604,7 +636,7 @@ export function CandleChart({
       from: Math.max(first, target - FOCUS_PADDING_SECONDS) as UTCTimestamp,
       to: Math.min(last, target + FOCUS_PADDING_SECONDS) as UTCTimestamp,
     });
-  }, [focusTime, bars, chartType, indicators, showIndicators]);
+  }, [focusTime, bars, chartType, indicators, showIndicators, news]);
 
   // Separate from the bars/vwap effect above: indicators only change when
   // the symbol changes or the toggle flips, not on every live tick, and

@@ -1,7 +1,11 @@
-import { useSymbolInfo } from "../../hooks/useSymbolInfo";
+import type { SymbolInfoState } from "../../hooks/useSymbolInfo";
 
 interface SymbolInfoPanelProps {
   symbol: string | null;
+  /** Fetched by ChartWidget rather than here: the chart needs the same
+   * news (as timeline markers), and two callers of the hook would mean
+   * two fetches of the same payload. */
+  state: SymbolInfoState;
 }
 
 /** Relative age of a story. The panel is headed "Recent News" but the FMP
@@ -17,8 +21,8 @@ function newsAge(publishedAt: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-export function SymbolInfoPanel({ symbol }: SymbolInfoPanelProps) {
-  const { info, loading, error } = useSymbolInfo(symbol);
+export function SymbolInfoPanel({ symbol, state }: SymbolInfoPanelProps) {
+  const { info, loading, error } = state;
 
   if (!symbol) return null;
   if (error) return null; // ChartWidget's own error state already covers this symbol

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import type { ChartFocus } from "../../types/screener";
 import { useHistoricalBars } from "../../hooks/useHistoricalBars";
+import { useSymbolInfo } from "../../hooks/useSymbolInfo";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
 import { CandleChart } from "./CandleChart";
@@ -138,6 +139,20 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   const historical = useHistoricalBars(
     symbol,
     option.kind === "historical" ? (option.alpacaTimeframe ?? null) : null,
+  );
+  // Fetched here rather than inside SymbolInfoPanel: the chart marks the
+  // same news on its timeline, and two hook callers would double-fetch.
+  const symbolInfo = useSymbolInfo(symbol);
+
+  const newsMarkers = useMemo(
+    () =>
+      (symbolInfo.info?.news ?? [])
+        .map((item) => ({
+          time: Math.floor(Date.parse(item.published_at) / 1000),
+          headline: item.headline,
+        }))
+        .filter((item) => Number.isFinite(item.time)),
+    [symbolInfo.info],
   );
 
   const displayed = useMemo(() => {
@@ -323,10 +338,14 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             // screen; a stale one would drag the chart to an unrelated time
             // after the user clicks a different row.
             focusTime={focus && focus.symbol === symbol ? focus.time : null}
+            // News markers only where a bar is finer than a session: the
+            // list covers the last few days, so on daily+ charts every
+            // story would pile onto the newest one or two candles.
+            news={option.kind === "intraday" ? newsMarkers : []}
           />
         )}
       </div>
-      {symbol && <SymbolInfoPanel symbol={symbol} />}
+      {symbol && <SymbolInfoPanel symbol={symbol} state={symbolInfo} />}
     </div>
   );
 }
