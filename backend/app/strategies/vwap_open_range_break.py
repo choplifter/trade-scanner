@@ -31,7 +31,25 @@ level, 2:1 floor, measured-move fallback), inside the same
 window-after-completion and behind the same ATR veto as the ORB family --
 shared so the rules stay genuinely comparable.
 
-Not yet measured in this form. When it is, the numbers belong here.
+Measured in this form (same window and configuration as above), next to
+the ORB it descends from:
+
+                     n    expectancy   win     % avg/trade   exits at close
+    ORB, 5m boxes  1313     -0.149    40.4%      -0.03            67%
+    crossing, 5m    389     -0.097    41.6%      -0.24            78%
+    ORB, 15m        857     -0.105    42.6%      -0.20            79%
+    crossing, 15m   189     -0.063    47.6%      -0.39            83%
+
+Finally a different population: the line-crossing fires a third as often
+as the candle break and carries the least negative expectancy of the
+whole range family, with the 15-minute box the closest thing to flat any
+of these rules has measured under the current configuration. The raw
+percentage column is worse, and the mechanism is visible in the exit mix:
+the crossing enters late by design, so risk (entry to the far end) is
+wide, R is a large unit -- and most positions simply run out of session
+(83% close-exits at 15m, avg win 0.55R against a 2:1 target). The rule's
+edge question is now whether a later, confirmed entry with little session
+left can ever pay for itself -- not whether it differs from the ORB.
 """
 
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT
