@@ -1,4 +1,5 @@
-"""VWAP Open Range Break: the ORB whose break candle takes out VWAP too.
+"""VWAP Open Range Break: the ORB whose break candle takes out the
+premarket-anchored VWAP too.
 
 The whole ORB definition -- range, veto, window, stop, floor -- is shared
 with opening_range_breakout and tested there; what these cases pin is the
@@ -6,6 +7,14 @@ one thing this rule adds, where the line may sit relative to the box and
 the break close. The boundary cases matter most: a line left behind the
 range is the plain ORB's trade, not this one's, and a line the close never
 cleared is no VWAP break at all.
+
+The line is ctx.premarket_vwap, deliberately not the session VWAP: the
+session line is anchored at the bell and measurably never leaves the box
+during the window (one binding trade in 1,313 -- see the strategy's
+docstring), while the premarket anchor has been accumulating for hours
+and can genuinely sit anywhere. The _ctx helper feeds the tested value
+through premarket_vwap and leaves the session series as a bystander, so
+these cases would catch the rule silently reading the wrong line.
 """
 
 from dataclasses import dataclass
@@ -54,8 +63,11 @@ def _ctx(bars, vwap, levels=(7.0, 14.0)):
         symbol="AAA",
         bar=bars[-1],
         session_bars=bars,
-        session_vwaps=[vwap] * len(bars),
-        premarket_vwap=None,
+        # The session series is a bystander here: the rule must read the
+        # premarket anchor. 10.2 keeps every break on the right side of the
+        # global VWAP-side gate without ever satisfying the tested cases.
+        session_vwaps=[10.2] * len(bars),
+        premarket_vwap=vwap,
         levels=levels,
     )
 
@@ -117,9 +129,10 @@ def test_a_close_exactly_on_the_line_is_not_a_break_of_it():
 
 
 def test_an_unknowable_line_refuses_the_trade():
-    """Opposite of the ATR veto's asymmetry, on purpose: the line being
-    broken is this rule's whole subject, so without it the setup does not
-    exist. The plain ORB still covers the break itself."""
+    """A symbol with no premarket prints has no premarket VWAP. Opposite of
+    the ATR veto's asymmetry, on purpose: the line being broken is this
+    rule's whole subject, so without it the setup does not exist. The plain
+    ORB still covers the break itself."""
     assert rule.evaluate(_ctx([_opening_bar(), _break_long()], vwap=None)) is None
 
 
