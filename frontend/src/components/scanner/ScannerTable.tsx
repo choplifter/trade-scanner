@@ -23,6 +23,29 @@ function stringCell(value: string | null): string {
   return value ? value : "—";
 }
 
+/** "Opening Range Breakout" → "ORB", "VWAP Open Range Break" → "VWAP-ORB",
+ * "ORB Retest" → "ORB-R": acronym words survive whole, runs of plain words
+ * collapse to their initials. Derived rather than kept as a lookup table so
+ * a newly dropped-in strategy file gets a sensible badge without touching
+ * the frontend; the tooltip still carries the full name. */
+function compactStrategyLabel(name: string): string {
+  const groups: string[] = [];
+  let initials = "";
+  for (const word of name.trim().split(/\s+/)) {
+    if (word.length > 1 && word === word.toUpperCase()) {
+      if (initials) {
+        groups.push(initials);
+        initials = "";
+      }
+      groups.push(word);
+    } else {
+      initials += word.charAt(0).toUpperCase();
+    }
+  }
+  if (initials) groups.push(initials);
+  return groups.join("-");
+}
+
 type SortKey =
   | "symbol"
   | "company_name"
@@ -237,7 +260,10 @@ export function ScannerTable({
                   }
                   title={`${signal.strategy} (${signal.side}) at ${new Date(signal.fired_at).toLocaleTimeString()} -- ${signal.reason}. Entry ${signal.entry_price}, stop ${signal.stop_price}, target ${signal.target_price}. This is the session's last setup, not necessarily one firing right now. Open the chart to check it: the scanner sees fewer level sources than the chart does.`}
                 >
-                  {signal.side === "short" ? "SHORT" : "LONG"} {signal.strategy}
+                  {/* The arrow repeats what the colour says, on purpose: with
+                      the LONG/SHORT word gone, colour alone would be the only
+                      side marker, unreadable to a colour-blind eye. */}
+                  {signal.side === "short" ? "▼" : "▲"} {compactStrategyLabel(signal.strategy)}
                 </span>
               ))}
               {row.recent_headline && (
