@@ -5,7 +5,10 @@ interface ResizablePanelsProps {
   storageKey: string;
   /** Fractions per child, should sum to ~1. Read once on mount as the fallback. */
   defaultSizes: number[];
-  minSizePx?: number;
+  /** One floor for every panel, or one per child -- a row whose panels have
+   * genuinely different content (a data table vs a narrow order ticket)
+   * shouldn't share the widest panel's minimum. */
+  minSizePx?: number | number[];
   children: React.ReactNode[];
 }
 
@@ -58,17 +61,22 @@ export function ResizablePanels({
       if (!drag) return;
       const pos = direction === "row" ? e.clientX : e.clientY;
       const delta = (pos - drag.startPos) / drag.containerSize;
-      const minFrac = drag.containerSize > 0 ? minSizePx / drag.containerSize : 0;
+      const minPxFor = (i: number) =>
+        Array.isArray(minSizePx) ? (minSizePx[i] ?? 120) : minSizePx;
+      const minFracFor = (i: number) =>
+        drag.containerSize > 0 ? minPxFor(i) / drag.containerSize : 0;
+      const minFracA = minFracFor(drag.index);
+      const minFracB = minFracFor(drag.index + 1);
 
       let a = drag.startSizes[drag.index] + delta;
       let b = drag.startSizes[drag.index + 1] - delta;
-      if (a < minFrac) {
-        b -= minFrac - a;
-        a = minFrac;
+      if (a < minFracA) {
+        b -= minFracA - a;
+        a = minFracA;
       }
-      if (b < minFrac) {
-        a -= minFrac - b;
-        b = minFrac;
+      if (b < minFracB) {
+        a -= minFracB - b;
+        b = minFracB;
       }
 
       setSizes((prev) => {

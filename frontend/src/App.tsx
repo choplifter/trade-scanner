@@ -158,7 +158,10 @@ export default function App() {
               direction="row"
               storageKey="layout:top-row"
               defaultSizes={[0.32, 0.44, 0.24]}
-              minSizePx={220}
+              // The trading panel's floor is its own: the order ticket is a
+              // narrow form and can give the scanner far more room than a
+              // table- or chart-width minimum would allow.
+              minSizePx={[220, 220, 150]}
             >
               {widgets.scanner}
               {widgets.chart}

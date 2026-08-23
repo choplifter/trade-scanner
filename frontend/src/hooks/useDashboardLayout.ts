@@ -47,7 +47,9 @@ export const GRID_MARGIN = 8;
 export const DEFAULT_LAYOUT: Layout = [
   { i: "scanner", x: 0, y: 0, w: 4, h: 8, minW: 3, minH: 3 },
   { i: "chart", x: 4, y: 0, w: 5, h: 8, minW: 3, minH: 4 },
-  { i: "trading", x: 9, y: 0, w: 3, h: 8, minW: 3, minH: 5 },
+  // minW 2, not 3: the order ticket is a narrow form, and its floor is what
+  // caps how wide the scanner and chart can go in the top row.
+  { i: "trading", x: 9, y: 0, w: 3, h: 8, minW: 2, minH: 5 },
   { i: "ideas", x: 0, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
   { i: "benchmark", x: 4, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
   { i: "history", x: 8, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
@@ -91,13 +93,26 @@ function isValidLayout(value: unknown): value is Layout {
   return seen.size === WIDGET_IDS.length;
 }
 
+/** Positions belong to the user; constraints belong to the code. A stored
+ * layout carries whatever minW/minH were current when it was saved (grid
+ * onLayoutChange persists full items), so without this a loosened floor
+ * would never reach anyone with a saved layout -- their old clamp rides
+ * along in localStorage forever. */
+function withCodeOwnedConstraints(layout: Layout): Layout {
+  const defaults = new Map(DEFAULT_LAYOUT.map((item) => [item.i, item]));
+  return layout.map((item) => {
+    const base = defaults.get(item.i);
+    return base ? { ...item, minW: base.minW, minH: base.minH } : item;
+  });
+}
+
 function loadLayout(): Layout {
   try {
     const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
     if (!raw) return DEFAULT_LAYOUT;
     const parsed = JSON.parse(raw) as Partial<StoredLayout>;
     if (parsed?.version === LAYOUT_VERSION && isValidLayout(parsed.layout)) {
-      return parsed.layout;
+      return withCodeOwnedConstraints(parsed.layout);
     }
   } catch {
     // Corrupt/foreign/stale localStorage value -- fall back to defaults
