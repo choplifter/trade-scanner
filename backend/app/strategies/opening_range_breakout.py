@@ -5,6 +5,21 @@ the break of that range in whichever direction it goes. Hold to the target or
 to a level, taking roughly half off on the approach and moving the stop to
 break-even.
 
+The range length is switchable (5 or 15 minutes -- see switches). Measured
+at 2bp over the pinned 100-symbol list and 40 days (through 2026-08-21),
+with the measured-move fallback and the VWAP-side gate on, i.e. today's
+live configuration -- so these figures are NOT comparable to the older
+tables in this file's history, which predate both:
+
+                 n    expectancy   win     % avg/trade
+    5 minutes  1313     -0.149    40.4%      -0.03
+    15 minutes  857     -0.105    42.6%      -0.20
+
+The two columns disagree and both are right, the recurring shape of this
+app's measurements: the 15-minute box fires a third less often and is
+better per unit of risk, but each R is wider, and in raw price the
+5-minute rule is the one that is nearly flat. Neither is positive.
+
 This rule is here partly *because* it is nearly free of interpretation. VWAP
 Respect (a rule since removed; its measured history is in git) needed six
 constructed thresholds to say what "respect" and "confirmation" meant, so a

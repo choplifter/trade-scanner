@@ -22,9 +22,29 @@ signal_with_stop, shared so this cannot drift into trading a different
 definition of the same break. The far-end stop is the measured ORB
 default (see the table in orb_break for what the wick stop cost).
 
-Not yet measured. When it is, the number belongs here -- run
-scripts.strategy_backtest_report --strategy vwap_open_range_break against
-the plain ORB in the same window.
+Measured, and the measurement says the qualification does not exist in
+practice. At 2bp over the pinned 100-symbol list and 40 days (through
+2026-08-21, measured-move fallback and VWAP-side gate on), side by side
+with the plain ORB in the same window:
+
+                     n    expectancy   win     % avg/trade
+    ORB, 5m boxes  1313     -0.149    40.4%      -0.03
+    this, 5m       1312     -0.149    40.4%      -0.02
+    ORB, 15m        857     -0.105    42.6%      -0.20
+    this, 15m       857     -0.105    42.6%      -0.20
+
+One trade in 1,313 differs. The reason is structural, not a bug: the
+session VWAP is anchored at the opening bell, so during the breakout
+window it has barely had time to leave the opening range -- the line is
+almost always inside the box, and a close that clears the box clears the
+line for free. The "double break" this rule was built to catch is the
+normal case, not a filter.
+
+Kept as the measured record of that finding. For the qualification to
+mean something, the line would have to be one that can actually sit far
+from the box -- ctx.premarket_vwap, anchored hours before the bell, is
+the natural candidate on gappers -- but that is a different rule and a
+user's call, not an edit to slip into this one.
 """
 
 from app.scanners.exit_rules import SIDE_LONG
