@@ -17,8 +17,9 @@ import textwrap
 import pytest
 
 from app.strategies import loader as loader_mod
+from app.strategies import switches
 from app.strategies.context import Signal, StrategyContext
-from app.strategies.loader import available_names, load_strategies
+from app.strategies.loader import available_names, inventory, load_strategies
 
 
 @pytest.fixture
@@ -156,6 +157,82 @@ def test_enabled_defaults_to_true(strategy_dir):
     strategies, _ = load_strategies()
 
     assert len(strategies) == 1
+
+
+# --- the runtime switch --------------------------------------------------
+
+
+def test_a_switched_off_strategy_stops_loading(strategy_dir):
+    _write(strategy_dir, "rule.py", _GOOD)
+    switches.set_switched("rule", False)
+
+    strategies, errors = load_strategies()
+
+    assert strategies == []
+    assert errors == []
+
+
+def test_a_switch_defaults_to_on(strategy_dir):
+    """A freshly dropped-in file must start live -- the drop-in-and-it-works
+    behaviour the loader exists for."""
+    _write(strategy_dir, "rule.py", _GOOD)
+
+    assert len(load_strategies()[0]) == 1
+
+
+def test_switching_back_on_restores_the_strategy(strategy_dir):
+    _write(strategy_dir, "rule.py", _GOOD)
+    switches.set_switched("rule", False)
+    switches.set_switched("rule", True)
+
+    assert [s.name for s in load_strategies()[0]] == ["Test Rule"]
+
+
+def test_only_bypasses_the_switch(strategy_dir):
+    """Asking for a rule by name is a stronger statement than a saved toggle
+    -- it is how a parked rule still gets backtested before being turned
+    back on."""
+    _write(strategy_dir, "rule.py", _GOOD)
+    switches.set_switched("rule", False)
+
+    strategies, _ = load_strategies(only="rule")
+
+    assert [s.name for s in strategies] == ["Test Rule"]
+
+
+def test_a_corrupt_switch_file_means_everything_on(strategy_dir):
+    """Failing toward on: a strategy silently off looks exactly like a quiet
+    market."""
+    _write(strategy_dir, "rule.py", _GOOD)
+    switches._PATH.write_text("not json{", encoding="utf-8")
+
+    assert len(load_strategies()[0]) == 1
+
+
+def test_the_inventory_lists_switched_off_strategies(strategy_dir):
+    """A panel that hides whatever is off can never turn it back on."""
+    _write(strategy_dir, "on_rule.py", _GOOD.replace("Test Rule", "On"))
+    _write(strategy_dir, "off_rule.py", _GOOD.replace("Test Rule", "Off"))
+    switches.set_switched("off_rule", False)
+
+    states, errors = inventory()
+
+    assert errors == []
+    assert [(s.name, s.stem, s.enabled) for s in states] == [
+        ("Off", "off_rule", False),
+        ("On", "on_rule", True),
+    ]
+
+
+def test_the_inventory_still_hides_parked_files(strategy_dir):
+    """ENABLED = False is the file's own statement that it is out of service,
+    not a runtime toggle -- the panel must not offer to flip it."""
+    _write(strategy_dir, "parked.py", "ENABLED = False\n" + textwrap.dedent(_GOOD))
+
+    states, errors = inventory()
+
+    assert states == []
+    assert errors == []
 
 
 # --- selecting one ------------------------------------------------------

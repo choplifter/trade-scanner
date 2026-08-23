@@ -8,6 +8,7 @@ import { ScannerFilterBar } from "../screener/ScannerFilterBar";
 import { ScreenBacktestPanel } from "../screener/ScreenBacktestPanel";
 import { ScannerHeatmap } from "./ScannerHeatmap";
 import { ScannerTable } from "./ScannerTable";
+import { StrategySwitchPanel } from "./StrategySwitchPanel";
 
 interface ScannerWidgetProps {
   selectedSymbol: string | null;
@@ -49,6 +50,7 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
   const [viewMode, setViewMode] = useState<(typeof VIEW_MODES)[number]["key"]>("table");
   const [showFilters, setShowFilters] = useState(false);
   const [showBacktest, setShowBacktest] = useState(false);
+  const [showSignals, setShowSignals] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -139,6 +141,13 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
               Backtest
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setShowSignals((v) => !v)}
+            title="Switch strategy signals on or off — server-side, so it changes the scanner's markers, the chart's signal lines, and backtest runs"
+          >
+            Signals
+          </button>
           {VIEW_MODES.map((mode) => (
             <button
               key={mode.key}
@@ -154,6 +163,8 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
       </div>
 
       {error && <p className="widget-error">{error}</p>}
+
+      {showSignals && <StrategySwitchPanel />}
 
       {showFilters && !frozenActive && (
         <ScannerFilterBar

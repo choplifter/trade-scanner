@@ -1322,6 +1322,34 @@ a.symbol-news-headline {
   white-space: nowrap;
 }
 
+/* Strategy signal switches: the same wrapping checkbox list as the column
+   picker above, and for the same reason -- in place above the table, no
+   popover, no focus trapping. */
+.strategy-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.strategy-switches label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.strategy-switches-note {
+  color: var(--text-muted);
+}
+
+.strategy-switches-error {
+  color: var(--status-critical);
+}
+
 .screener-summary {
   padding: 4px 12px;
   margin: 0;

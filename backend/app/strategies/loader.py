@@ -29,6 +29,15 @@ Each strategy file exposes:
         deleting the file, the equivalent of detaching an expert advisor
     def evaluate(ctx: StrategyContext) -> Signal | None
 
+Two things sit between a file and its callers, both on LoadedStrategy /
+load_strategies rather than in any one walk:
+
+  * every signal passes the VWAP-side gate (context.gate_by_vwap_side): a
+    long only above the session VWAP, a short only below;
+  * each strategy has a runtime switch (see switches), flipped from the
+    dashboard and persisted, distinct from ENABLED: parked is a statement in
+    the file, switched off is a saved toggle the UI can undo.
+
 Unlike the indicator loader, a file that fails to load is *reported*, not
 just logged. A missing indicator line is visible on the chart; a missing
 signal looks exactly like a quiet market. load_strategies returns the
@@ -50,7 +59,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
-from app.strategies.context import Signal, StrategyContext
+from app.strategies import switches
+from app.strategies.context import Signal, StrategyContext, gate_by_vwap_side
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +70,15 @@ _DIR = Path(__file__).parent
 # be reported, so "has no NAME" cannot be the test for "is not a strategy".
 # The cost is that a new helper added here is a load error until it is listed
 # -- which is noisy in exactly the right direction, and is how it was caught.
-_EXCLUDED = {"__init__.py", "breakout.py", "context.py", "loader.py", "retest.py", "runner.py"}
+_EXCLUDED = {
+    "__init__.py",
+    "breakout.py",
+    "context.py",
+    "loader.py",
+    "retest.py",
+    "runner.py",
+    "switches.py",
+}
 
 
 @dataclass(frozen=True)
@@ -77,7 +95,14 @@ class LoadedStrategy:
     _evaluate: object
 
     def evaluate(self, ctx: StrategyContext) -> Signal | None:
-        return self._evaluate(ctx)  # type: ignore[operator]
+        # Every signal, from every rule, passes the VWAP-side gate here: a
+        # long only above the line, a short only below (the user's rule).
+        # Applied at this choke point rather than inside runner and the
+        # backtest walk separately, because those are two call sites and two
+        # copies of a rule are the state that rots -- the chart, the scanner
+        # and the backtest all evaluate through this object, so none of them
+        # can see a signal the others would have gated.
+        return gate_by_vwap_side(ctx, self._evaluate(ctx))  # type: ignore[operator]
 
 
 @dataclass(frozen=True)
@@ -122,9 +147,16 @@ def load_strategies(
     one rule at a time. A name that matches nothing yields an empty list --
     the caller reports that, since "no such strategy" and "no signals" are
     very different answers and must not look alike.
+
+    Strategies switched off from the dashboard (see switches) are skipped the
+    way ENABLED = False files are -- except when `only` names one explicitly:
+    asking for a rule by name is a stronger statement than a saved toggle,
+    and it is how a parked rule still gets backtested before being turned
+    back on.
     """
     strategies: list[LoadedStrategy] = []
     errors: list[LoadError] = []
+    offs = switches.switched_off()
 
     for path in sorted(_DIR.glob("*.py")):
         if path.name in _EXCLUDED:
@@ -139,7 +171,11 @@ def load_strategies(
             errors.append(LoadError(filename=path.name, error=f"{type(exc).__name__}: {exc}"))
             continue
 
-        if only is not None and only not in (strategy.name, path.stem):
+        if only is not None:
+            if only in (strategy.name, path.stem):
+                strategies.append(strategy)
+            continue
+        if path.stem in offs:
             continue
         strategies.append(strategy)
 
@@ -150,3 +186,50 @@ def available_names() -> list[str]:
     """Strategy names, for a CLI's error message or a UI's dropdown."""
     strategies, _ = load_strategies()
     return [s.name for s in strategies]
+
+
+@dataclass(frozen=True)
+class StrategySwitchState:
+    """One row of the switch panel: a strategy that exists, and whether it is
+    currently producing signals. `stem` is the key the toggle endpoint and
+    load_strategies' `only` both speak."""
+
+    name: str
+    filename: str
+    stem: str
+    enabled: bool
+
+
+def inventory() -> tuple[list[StrategySwitchState], list[LoadError]]:
+    """Every strategy on disk with its switch state -- what the toggle UI
+    lists.
+
+    Unlike load_strategies, switched-off strategies are included: a panel
+    that hides whatever is off can never turn it back on. ENABLED = False
+    files stay invisible even here -- parking a file is the file's own
+    statement that it is out of service, not a runtime toggle.
+    """
+    states: list[StrategySwitchState] = []
+    errors: list[LoadError] = []
+    offs = switches.switched_off()
+
+    for path in sorted(_DIR.glob("*.py")):
+        if path.name in _EXCLUDED:
+            continue
+        try:
+            module = _load_module(path)
+            if not getattr(module, "ENABLED", True):
+                continue
+            strategy = _validate(module, path.name)
+        except Exception as exc:
+            errors.append(LoadError(filename=path.name, error=f"{type(exc).__name__}: {exc}"))
+            continue
+        states.append(
+            StrategySwitchState(
+                name=strategy.name,
+                filename=path.name,
+                stem=path.stem,
+                enabled=path.stem not in offs,
+            )
+        )
+    return states, errors

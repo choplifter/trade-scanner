@@ -101,6 +101,31 @@ export function getMarketConditions(): Promise<MarketConditionsResponse> {
   return getJson<MarketConditionsResponse>("/meta/market-conditions");
 }
 
+export interface StrategySwitch {
+  name: string;
+  filename: string;
+  /** Filename minus .py -- the key the toggle endpoint speaks. */
+  stem: string;
+  enabled: boolean;
+}
+
+export interface StrategiesResponse {
+  strategies: StrategySwitch[];
+  /** Files that failed to load. Shown, not hidden: a strategy that failed
+   * to load looks exactly like a quiet market. */
+  errors: { filename: string; error: string }[];
+}
+
+export function getStrategies(): Promise<StrategiesResponse> {
+  return getJson<StrategiesResponse>("/strategies");
+}
+
+/** Flip one strategy's switch. Returns the refreshed listing, so the caller
+ * can render the server's view instead of an optimistic one. */
+export function setStrategyEnabled(stem: string, enabled: boolean): Promise<StrategiesResponse> {
+  return postJson<StrategiesResponse>(`/strategies/${encodeURIComponent(stem)}`, { enabled });
+}
+
 export function postTradeIdeas(): Promise<TradeIdeasResponse> {
   return postJson<TradeIdeasResponse>("/trade-ideas");
 }

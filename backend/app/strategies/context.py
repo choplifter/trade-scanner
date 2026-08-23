@@ -191,6 +191,32 @@ class Signal:
         return self.sign * (self.target_price - self.entry_price) / self.risk_per_share
 
 
+def gate_by_vwap_side(ctx: StrategyContext, signal: Signal | None) -> Signal | None:
+    """The user's standing rule over every strategy: a signal may only be
+    long with price above the session VWAP, and only short below it.
+
+    Applied to whatever evaluate() returned rather than written into each
+    rule, so a rule added later cannot forget it. "Price" is the signal
+    bar's close -- the same print every rule here enters on -- and a close
+    exactly on the line is neither above nor below, so it gates both sides.
+
+    An unknowable line (vwap None) lets the signal stand, the same
+    asymmetry the ATR veto documents in opening_range_breakout: a gate that
+    cannot be computed refusing everything would unlist every setup exactly
+    where nobody can see why. In practice the line exists wherever a signal
+    can fire -- only a regular-session bar may trigger, and by then the
+    session accumulator has a value.
+    """
+    if signal is None:
+        return None
+    vwap = ctx.vwap
+    if vwap is None:
+        return signal
+    if signal.sign * (ctx.bar.close - vwap) <= 0:
+        return None
+    return signal
+
+
 def build_context(
     symbol: str,
     bars: list,
