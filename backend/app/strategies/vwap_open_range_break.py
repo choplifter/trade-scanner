@@ -41,8 +41,24 @@ Everything else -- the switchable 5/15-minute range, the ATR veto, the
 close-beyond-the-buffer break, the window, the far-end stop, the 2:1
 floor, the half-off-and-trail management -- is opening_range_breakout.
 signal_with_stop, shared so this cannot drift into trading a different
-definition of the same break. Not yet measured on this anchor; when it
-is, the numbers belong here next to the session-VWAP table above.
+definition of the same break.
+
+Measured on this anchor, same window and configuration as the table
+above:
+
+                     n    expectancy   win     % avg/trade
+    ORB, 5m boxes  1313     -0.149    40.4%      -0.03
+    premarket, 5m  1290     -0.142    40.6%      -0.02
+    ORB, 15m        857     -0.105    42.6%      -0.20
+    premarket, 15m  853     -0.106    42.4%      -0.21
+
+The anchor is honest now but the universe defuses it: on the pinned
+*liquid* list overnight gaps are small, so the premarket VWAP usually
+ends near the open -- inside or beside the box anyway. The qualification
+binds 23 times in 1,313 at 5m (and those 23 were net losers, hence the
+slightly better expectancy), 4 in 857 at 15m. The case this rule was
+drawn for -- a line stranded far from the box -- is a gapper phenomenon,
+and on the gapper universe it is unmeasured.
 """
 
 from app.scanners.exit_rules import SIDE_LONG
