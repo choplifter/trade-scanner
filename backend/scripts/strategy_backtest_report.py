@@ -32,6 +32,7 @@ from app.core.config import get_settings
 from app.scanners import universes
 from app.scanners.bar_cache import DEFAULT_CACHE_DIR
 from app.scanners.strategy_backtest import run_strategy_backtest
+from app.strategies import switches
 from app.strategies.loader import load_strategies
 
 
@@ -84,7 +85,11 @@ def _print_report(report: dict) -> None:
 async def _main(args: argparse.Namespace) -> None:
     # Loaded once, here, and held for the whole walk -- a report has to
     # describe one version of a rule, not whichever version was on disk as
-    # the walk passed each bar.
+    # the walk passed each bar. The switch state is frozen for the same
+    # reason: rules read settings like the opening-range length per
+    # evaluation, and a toggle clicked in the dashboard mid-run would
+    # otherwise change the rule mid-walk.
+    switches.pin_current()
     strategies, errors = load_strategies(only=args.strategy)
 
     # Reported before anything else runs. A file that failed to load produces

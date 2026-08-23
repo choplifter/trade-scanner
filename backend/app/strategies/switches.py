@@ -50,6 +50,24 @@ _PATH = Path("strategy_switches.json")
 MEASURED_MOVE_KEY = "_measured_move_target"
 
 
+# A process-local freeze of the switch state, set by pin_current(). None in
+# the live app, which must see a toggle on its next poll tick.
+_pinned: dict | None = None
+
+
+def pin_current() -> None:
+    """Freeze the switch state for the rest of this process.
+
+    For backtests, which read some switches per *evaluation*: a report has
+    to describe one version of a rule (see loader), and without this a
+    toggle clicked in the dashboard mid-run changes the rule mid-walk --
+    observed as a 15-minute-range run finishing with the 5-minute
+    population after a click in the Signals panel.
+    """
+    global _pinned
+    _pinned = _read()
+
+
 def _read() -> dict:
     """The whole switch file, or {} when missing or unreadable.
 
@@ -58,6 +76,8 @@ def _read() -> dict:
     a quiet market, which is the failure mode this package is shaped around
     avoiding.
     """
+    if _pinned is not None:
+        return dict(_pinned)
     try:
         data = json.loads(_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:

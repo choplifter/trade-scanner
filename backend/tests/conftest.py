@@ -16,3 +16,6 @@ from app.strategies import switches
 @pytest.fixture(autouse=True)
 def _isolated_strategy_switches(tmp_path, monkeypatch):
     monkeypatch.setattr(switches, "_PATH", tmp_path / "strategy_switches.json")
+    # A pin is process-global; without this, one test pinning would freeze
+    # the switch state for every test after it.
+    monkeypatch.setattr(switches, "_pinned", None)

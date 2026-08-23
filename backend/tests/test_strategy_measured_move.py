@@ -117,3 +117,14 @@ def test_the_setting_key_is_not_a_strategy_switch():
     switches.set_measured_move_target(False)
 
     assert switches.switched_off() == set()
+
+
+def test_a_pinned_process_ignores_later_toggles():
+    """What keeps a backtest describing one version of a rule: after
+    pin_current, a dashboard click that rewrites the file changes nothing
+    for this process."""
+    switches.set_opening_range_minutes(15)
+    switches.pin_current()
+    switches._PATH.write_text('{"_opening_range_minutes": 5}', encoding="utf-8")
+
+    assert switches.opening_range_minutes() == 15
