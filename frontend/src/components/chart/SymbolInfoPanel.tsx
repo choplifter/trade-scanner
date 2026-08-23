@@ -35,10 +35,21 @@ export function SymbolInfoPanel({ symbol, state, highlightTimes }: SymbolInfoPan
   const highlighted = new Set(highlightTimes ?? []);
   const firstHighlightRef = useRef<HTMLDivElement | null>(null);
 
-  // On a new click (new array identity), bring the story into view --
-  // the panel sits below the chart and is usually scrolled elsewhere.
+  // On a new click (new array identity), bring the story into view -- the
+  // panel sits below the chart and is usually scrolled elsewhere. Scrolled
+  // by hand, vertically, on the panel alone: scrollIntoView walks *every*
+  // scrollable ancestor in both axes, and a news click was observed
+  // dragging the chart sideways on the way.
   useEffect(() => {
-    firstHighlightRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const el = firstHighlightRef.current;
+    if (!el) return;
+    const panel = el.closest(".symbol-info-panel") as HTMLElement | null;
+    if (!panel) return;
+    const delta = el.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    const height = el.getBoundingClientRect().height;
+    if (delta < 0 || delta + height > panel.clientHeight) {
+      panel.scrollTo({ top: panel.scrollTop + delta - 8, behavior: "smooth" });
+    }
   }, [highlightTimes]);
 
   if (!symbol) return null;
