@@ -1,4 +1,5 @@
-"""The runtime on/off switch for each strategy, persisted across restarts.
+"""The runtime on/off switches for strategy signals, persisted across
+restarts.
 
 ENABLED = False in a strategy file *parks* it: invisible everywhere, the
 equivalent of deleting the file without losing it. This is the other switch
@@ -6,15 +7,22 @@ equivalent of deleting the file without losing it. This is the other switch
 touching a file. A switched-off strategy still exists (the UI lists it, a
 backtest can still name it), it just stops producing signals.
 
-Stored as a JSON map of filename stem -> bool in the backend working
-directory, next to scanner_history.sqlite3. Only the switched-off entries
-matter: a strategy absent from the file is on, so a freshly dropped-in
-strategy file starts live -- the drop-in-and-it-works behaviour the loader
-exists for -- and deleting the JSON file turns everything back on.
+Stored as one JSON object in the backend working directory, next to
+scanner_history.sqlite3. Plain keys are strategy filename stems mapped to
+bools; only the switched-off entries matter, so a strategy absent from the
+file is on -- a freshly dropped-in strategy file starts live (the
+drop-in-and-it-works behaviour the loader exists for) and deleting the JSON
+file returns everything to defaults.
 
-Re-read on every load_strategies call rather than cached, the same cadence
-the strategy files themselves are re-executed at. The file is a few dozen
-bytes; correctness of "I just switched that off" beats a cache.
+Keys starting with "_" are reserved for shared signal settings rather than
+per-strategy switches -- currently the measured-move target fallback the
+break rules read (see strategies.breakout). Reserved by prefix so a future
+strategy file cannot collide with a setting by taking its name.
+
+Re-read on every load_strategies call / signal evaluation rather than
+cached, the same cadence the strategy files themselves are re-executed at.
+The file is a few dozen bytes; correctness of "I just switched that off"
+beats a cache.
 
 Keyed by filename stem, not display NAME: the stem is what load_strategies'
 `only` already accepts, and it survives a rule being renamed in place.
@@ -33,36 +41,65 @@ logger = logging.getLogger(__name__)
 # loader._DIR.
 _PATH = Path("strategy_switches.json")
 
+# When the break rules find no level ahead of an entry, aim at a constructed
+# measured-move target instead of declining the trade (see
+# breakout.signal_for). On by default: the user asked for it after watching
+# a textbook break go unmarked on a new-high day, which is exactly when no
+# level is ahead -- and unlike a strategy switch there is no "quiet market"
+# ambiguity in it being on.
+MEASURED_MOVE_KEY = "_measured_move_target"
 
-def switched_off() -> set[str]:
-    """The filename stems currently switched off. Missing file means none.
 
-    A corrupt file also means none -- everything on. Failing toward "on" is
-    deliberate: the default state of every strategy is on, and a strategy
-    silently off looks exactly like a quiet market, which is the failure
-    mode this package is shaped around avoiding.
+def _read() -> dict:
+    """The whole switch file, or {} when missing or unreadable.
+
+    Failing toward {} -- every default -- is deliberate: the default state
+    of every strategy is on, and a strategy silently off looks exactly like
+    a quiet market, which is the failure mode this package is shaped around
+    avoiding.
     """
     try:
         data = json.loads(_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return set()
+        return {}
     except (OSError, json.JSONDecodeError):
-        logger.exception("Could not read %s -- treating every strategy as on", _PATH)
-        return set()
+        logger.exception("Could not read %s -- using defaults", _PATH)
+        return {}
     if not isinstance(data, dict):
-        logger.warning("%s is not a JSON object -- treating every strategy as on", _PATH)
-        return set()
-    return {stem for stem, on in data.items() if not on}
+        logger.warning("%s is not a JSON object -- using defaults", _PATH)
+        return {}
+    return data
+
+
+def _write(data: dict) -> None:
+    _PATH.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def switched_off() -> set[str]:
+    """The filename stems currently switched off. Missing file means none."""
+    return {
+        stem for stem, on in _read().items() if not stem.startswith("_") and not on
+    }
 
 
 def set_switched(stem: str, enabled: bool) -> None:
-    """Flip one strategy's switch and persist it."""
-    offs = switched_off()
+    """Flip one strategy's switch and persist it, leaving settings intact."""
+    data = _read()
     if enabled:
-        offs.discard(stem)
+        data.pop(stem, None)
     else:
-        offs.add(stem)
-    _PATH.write_text(
-        json.dumps({stem: False for stem in sorted(offs)}, indent=2) + "\n",
-        encoding="utf-8",
-    )
+        data[stem] = False
+    _write(data)
+
+
+def measured_move_target_enabled() -> bool:
+    """Whether the break rules may fall back to a constructed 2R target when
+    no level lies ahead of the entry. See breakout.signal_for for what that
+    changes and what it deliberately does not."""
+    return bool(_read().get(MEASURED_MOVE_KEY, True))
+
+
+def set_measured_move_target(enabled: bool) -> None:
+    data = _read()
+    data[MEASURED_MOVE_KEY] = bool(enabled)
+    _write(data)

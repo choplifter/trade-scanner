@@ -1346,6 +1346,14 @@ a.symbol-news-headline {
   color: var(--text-muted);
 }
 
+/* A shared signal setting, not a strategy: set off from the switch list by
+   a divider so it doesn't read as a seventh strategy. */
+.strategy-switches-setting {
+  border-left: 1px solid var(--border);
+  padding-left: 14px;
+  color: var(--text-muted);
+}
+
 .strategy-switches-error {
   color: var(--status-critical);
 }

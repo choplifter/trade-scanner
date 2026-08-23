@@ -17,6 +17,7 @@ own test asserts that every non-strategy file here is.
 
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT, STOP_ON_CLOSE
 from app.services.market_clock import ET, trading_hours_for
+from app.strategies import switches
 from app.strategies.context import Signal, next_level
 
 # --- constructed, shared by both rules, all still needing calibration -----
@@ -42,6 +43,25 @@ BREAKOUT_WINDOW_MINUTES = 60
 # nearer level disqualifies the setup rather than moving the target, because
 # a moved target sits at a price nothing about the stock chose.
 MIN_TARGET_R = 2.0
+
+# The measured-move fallback (switchable -- see switches): when *no* level
+# lies ahead of the entry, aim at entry + MEASURED_MOVE_R x risk instead of
+# declining. Asked for by the user after a textbook break on a new-high day
+# produced nothing -- the strongest breakouts have, by definition, no mapped
+# structure above them, so "no level ahead means no trade" unlisted exactly
+# the days the rule exists for.
+#
+# Risk-relative rather than the classic range-height projection, of
+# necessity: the projected range (high + (high - low)) always sits *below*
+# entry + risk for this rule's stops, so the classic form would fail the
+# 2:1 floor it has to clear. Set to the floor itself -- the least
+# constructed target that the rule's own arithmetic accepts.
+#
+# Deliberately only for "no level ahead", never for "a level is ahead but
+# too near": a known level in the path is a wall the trade would have to
+# trade through, and a constructed target beyond it would pretend the wall
+# is not there. Those setups stay refused.
+MEASURED_MOVE_R = MIN_TARGET_R
 
 # Half off at the target with the rest trailed to break-even -- described as
 # how Aziz handles a position rather than as specific to one setup.
@@ -130,9 +150,16 @@ def signal_for(
 
         target = next_level(ctx.levels, entry, sign)
         if target is None:
+            if not switches.measured_move_target_enabled():
+                return None
+            target = entry + sign * risk * MEASURED_MOVE_R
+            target_label = f"measured-move target {target:.2f} (no level ahead)"
+        elif sign * (target - entry) < risk * MIN_TARGET_R:
+            # A level ahead but too near stays a refusal even with the
+            # fallback on -- see MEASURED_MOVE_R.
             return None
-        if sign * (target - entry) < risk * MIN_TARGET_R:
-            return None
+        else:
+            target_label = f"target level {target:.2f}"
 
         return Signal(
             strategy=name,
@@ -141,7 +168,7 @@ def signal_for(
             target_price=target,
             reason=(
                 f"{range_label} {low:.2f}-{high:.2f}, {side} break closed at "
-                f"{entry:.2f}, target level {target:.2f}"
+                f"{entry:.2f}, {target_label}"
             ),
             side=side,
             stop_trigger=STOP_TRIGGER,

@@ -114,6 +114,10 @@ export interface StrategiesResponse {
   /** Files that failed to load. Shown, not hidden: a strategy that failed
    * to load looks exactly like a quiet market. */
   errors: { filename: string; error: string }[];
+  /** The break rules' measured-move fallback: with no level ahead of an
+   * entry, aim at a constructed 2R target instead of declining the trade.
+   * One shared setting -- four rules read it. */
+  measured_move_target: boolean;
 }
 
 export function getStrategies(): Promise<StrategiesResponse> {
@@ -124,6 +128,10 @@ export function getStrategies(): Promise<StrategiesResponse> {
  * can render the server's view instead of an optimistic one. */
 export function setStrategyEnabled(stem: string, enabled: boolean): Promise<StrategiesResponse> {
   return postJson<StrategiesResponse>(`/strategies/${encodeURIComponent(stem)}`, { enabled });
+}
+
+export function setMeasuredMoveTarget(enabled: boolean): Promise<StrategiesResponse> {
+  return postJson<StrategiesResponse>("/strategies/settings/measured-move", { enabled });
 }
 
 export function postTradeIdeas(): Promise<TradeIdeasResponse> {

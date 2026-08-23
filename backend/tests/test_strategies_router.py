@@ -60,6 +60,19 @@ def test_switching_back_on(client):
     assert body["strategies"][0]["enabled"] is True
 
 
+def test_the_listing_carries_the_measured_move_setting(client):
+    assert client.get("/api/strategies").json()["measured_move_target"] is True
+
+
+def test_the_measured_move_setting_toggles_and_persists(client):
+    body = client.post("/api/strategies/settings/measured-move", json={"enabled": False}).json()
+
+    assert body["measured_move_target"] is False
+    assert client.get("/api/strategies").json()["measured_move_target"] is False
+    # And the strategies were untouched by it.
+    assert body["strategies"][0]["enabled"] is True
+
+
 def test_an_unknown_stem_is_a_404_not_an_orphan_entry(client):
     """Persisting a key no file owns would silently park the next strategy
     that happens to take that name."""

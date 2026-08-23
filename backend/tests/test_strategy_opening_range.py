@@ -228,8 +228,15 @@ def test_a_level_too_close_to_be_worth_the_range_is_skipped():
     assert signal is None
 
 
-def test_no_level_ahead_means_no_trade():
-    assert rule.evaluate(_ctx([_opening_bar(), _break_long()], levels=(7.0,))) is None
+def test_no_level_ahead_falls_back_to_a_measured_move():
+    """Formerly "no level ahead means no trade", which unlisted exactly the
+    new-high days the rule exists for. The default is now a constructed 2R
+    target; the switch that restores the old refusal is pinned in
+    test_strategy_measured_move."""
+    signal = rule.evaluate(_ctx([_opening_bar(), _break_long()], levels=(7.0,)))
+
+    assert signal is not None
+    assert "measured-move" in signal.reason
 
 
 def test_a_range_near_the_daily_atr_is_vetoed():

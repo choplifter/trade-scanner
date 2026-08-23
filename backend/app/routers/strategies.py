@@ -33,11 +33,23 @@ def _listing() -> dict:
             for s in states
         ],
         "errors": [{"filename": e.filename, "error": e.error} for e in errors],
+        "measured_move_target": switches.measured_move_target_enabled(),
     }
 
 
 @router.get("")
 async def list_strategies() -> dict:
+    return _listing()
+
+
+# Registered before /{stem} so "settings" is never read as a strategy name.
+@router.post("/settings/measured-move")
+async def switch_measured_move(body: SwitchRequest) -> dict:
+    """The break rules' measured-move fallback: with no level ahead of an
+    entry, aim at a constructed 2R target instead of declining the trade.
+    One shared setting, not per strategy -- it is part of the shared break
+    definition in strategies.breakout, and four rules read it."""
+    switches.set_measured_move_target(body.enabled)
     return _listing()
 
 
