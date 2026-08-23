@@ -6,18 +6,19 @@ to a level, taking roughly half off on the approach and moving the stop to
 break-even.
 
 This rule is here partly *because* it is nearly free of interpretation. VWAP
-Respect needs six constructed thresholds to say what "respect" and
-"confirmation" mean, so a backtest of it measures the reconstruction as much
-as the method. An opening range is a fact: the first five minutes are the
-first five minutes, and a break of the high is a break of the high. What
-remains constructed is listed below and is far shorter.
+Respect (a rule since removed; its measured history is in git) needed six
+constructed thresholds to say what "respect" and "confirmation" meant, so a
+backtest of it measured the reconstruction as much as the method. An opening
+range is a fact: the first five minutes are the first five minutes, and a
+break of the high is a break of the high. What remains constructed is listed
+below and is far shorter.
 
-It also fails differently, which is the point of having both. VWAP Respect
-enters cents from its stop, so 1R is about 0.3% of price and execution cost
-eats it: measured, it needs under ~2.5bp per side to stay positive. This
-risks the whole opening range instead -- structurally wider, so the same
-cost is a much smaller fraction of R. If this loses money too, it will not
-be because of the spread.
+It also fails differently, which was the point of having both and still
+separates this from the VWAP retest: a rule entering cents from its stop has
+1R around 0.3% of price and execution cost eats it -- VWAP Respect needed
+under ~2.5bp per side to stay positive. This risks the whole opening range
+instead -- structurally wider, so the same cost is a much smaller fraction
+of R. If this loses money too, it will not be because of the spread.
 """
 
 from app.market_data import opening_range as orange
