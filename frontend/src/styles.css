@@ -1392,6 +1392,35 @@ a.symbol-news-headline {
   gap: 4px;
 }
 
+/* The scanner's tabs, view switch and panel toggles. Same pressed grammar
+   as .timeframe-button in the chart and trading panels -- selected row
+   background, accent text -- but as standalone rounded buttons rather than
+   a joined pill group, because this strip wraps. Covers both spellings of
+   "on": .active for the exclusive choices (preset, view mode) and
+   aria-pressed for the independent panel toggles (Filters, Backtest,
+   Signals). */
+.tab {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tab:hover {
+  background: var(--row-hover);
+}
+
+.tab.active,
+.tab[aria-pressed="true"] {
+  background: var(--row-selected);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .scanner-header-actions {
   display: flex;
   gap: 6px;

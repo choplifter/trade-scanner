@@ -127,14 +127,21 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
         </div>
         <div className="scanner-header-actions">
           {!frozenActive && (
-            <button type="button" onClick={() => setShowFilters((v) => !v)}>
-              {showFilters ? "Hide filters" : "Filters"}
+            <button
+              type="button"
+              className="tab"
+              aria-pressed={showFilters}
+              onClick={() => setShowFilters((v) => !v)}
+            >
+              Filters
               {screen.filters.length > 0 ? ` (${screen.filters.length})` : ""}
             </button>
           )}
           {!frozenActive && (
             <button
               type="button"
+              className="tab"
+              aria-pressed={showBacktest}
               onClick={() => setShowBacktest((v) => !v)}
               title="Replay this screen over history — daily bars, or every 5 minutes for the 1h volume-rate fields"
             >
@@ -143,6 +150,8 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
           )}
           <button
             type="button"
+            className="tab"
+            aria-pressed={showSignals}
             onClick={() => setShowSignals((v) => !v)}
             title="Switch strategy signals on or off — server-side, so it changes the scanner's markers, the chart's signal lines, and backtest runs"
           >
