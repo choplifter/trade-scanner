@@ -143,6 +143,11 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   // Fetched here rather than inside SymbolInfoPanel: the chart marks the
   // same news on its timeline, and two hook callers would double-fetch.
   const symbolInfo = useSymbolInfo(symbol);
+  // Publish times of the stories whose 📰 pin was clicked -- the panel
+  // scrolls to and highlights them. Cleared on symbol change so a stale
+  // highlight cannot mark a different stock's story.
+  const [highlightedNews, setHighlightedNews] = useState<number[] | null>(null);
+  useEffect(() => setHighlightedNews(null), [symbol]);
 
   const newsMarkers = useMemo(
     () =>
@@ -342,10 +347,13 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             // list covers the last few days, so on daily+ charts every
             // story would pile onto the newest one or two candles.
             news={option.kind === "intraday" ? newsMarkers : []}
+            onNewsClick={setHighlightedNews}
           />
         )}
       </div>
-      {symbol && <SymbolInfoPanel symbol={symbol} state={symbolInfo} />}
+      {symbol && (
+        <SymbolInfoPanel symbol={symbol} state={symbolInfo} highlightTimes={highlightedNews} />
+      )}
     </div>
   );
 }

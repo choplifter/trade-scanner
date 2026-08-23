@@ -1346,6 +1346,14 @@ a.symbol-news-headline {
   color: var(--text-muted);
 }
 
+/* A story whose 📰 chart pin was clicked. Row background rather than an
+   outline: the item wraps across lines and an outline hugs the ragged
+   text edge. */
+.symbol-news-item.highlighted {
+  background: var(--row-selected);
+  border-radius: 4px;
+}
+
 /* A shared signal setting, not a strategy: set off from the switch list by
    a divider so it doesn't read as a seventh strategy. */
 .strategy-switches-setting {

@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import type { SymbolInfoState } from "../../hooks/useSymbolInfo";
 
 interface SymbolInfoPanelProps {
@@ -6,6 +8,13 @@ interface SymbolInfoPanelProps {
    * news (as timeline markers), and two callers of the hook would mean
    * two fetches of the same payload. */
   state: SymbolInfoState;
+  /** Publish times (unix seconds) of stories whose chart pin was clicked
+   * -- those items are highlighted and the first is scrolled into view. */
+  highlightTimes?: number[] | null;
+}
+
+function publishTime(publishedAt: string): number {
+  return Math.floor(Date.parse(publishedAt) / 1000);
 }
 
 /** Relative age of a story. The panel is headed "Recent News" but the FMP
@@ -21,8 +30,16 @@ function newsAge(publishedAt: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-export function SymbolInfoPanel({ symbol, state }: SymbolInfoPanelProps) {
+export function SymbolInfoPanel({ symbol, state, highlightTimes }: SymbolInfoPanelProps) {
   const { info, loading, error } = state;
+  const highlighted = new Set(highlightTimes ?? []);
+  const firstHighlightRef = useRef<HTMLDivElement | null>(null);
+
+  // On a new click (new array identity), bring the story into view --
+  // the panel sits below the chart and is usually scrolled elsewhere.
+  useEffect(() => {
+    firstHighlightRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [highlightTimes]);
 
   if (!symbol) return null;
   if (error) return null; // ChartWidget's own error state already covers this symbol
@@ -51,8 +68,17 @@ export function SymbolInfoPanel({ symbol, state }: SymbolInfoPanelProps) {
       {info.news.length > 0 ? (
         <div className="symbol-news-list">
           <h3 className="symbol-news-title">Recent News</h3>
-          {info.news.map((item, i) => (
-            <div className="symbol-news-item" key={i}>
+          {info.news.map((item, i) => {
+            const isHighlighted = highlighted.has(publishTime(item.published_at));
+            const firstHighlightedIndex = info.news.findIndex((n) =>
+              highlighted.has(publishTime(n.published_at)),
+            );
+            return (
+            <div
+              className={isHighlighted ? "symbol-news-item highlighted" : "symbol-news-item"}
+              key={i}
+              ref={i === firstHighlightedIndex ? firstHighlightRef : undefined}
+            >
               {item.url ? (
                 <a href={item.url} target="_blank" rel="noreferrer" className="symbol-news-headline">
                   {item.headline}
@@ -65,7 +91,8 @@ export function SymbolInfoPanel({ symbol, state }: SymbolInfoPanelProps) {
                 — {item.source} · {newsAge(item.published_at)}
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : hasProfile ? (
         // Says so explicitly rather than rendering nothing. The news list is

@@ -63,6 +63,9 @@ interface CandleChartProps {
    * publish time. Same items the info panel lists — the marker answers
    * "when", the panel answers "what". */
   news?: { time: number; headline: string }[];
+  /** A bar carrying a 📰 pin was clicked. Receives the publish times of
+   * the stories pinned there — the id the info panel can find them by. */
+  onNewsClick?: (newsTimes: number[]) => void;
   /** Tint premarket/after-hours bars TradingView-style. Off on daily and
    * coarser charts, where one bar spans whole sessions and the tint would
    * describe nothing. */
@@ -223,6 +226,7 @@ export function CandleChart({
   cursorMode,
   focusTime,
   news = [],
+  onNewsClick,
   shadeSessions = false,
 }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -269,6 +273,13 @@ export function CandleChart({
   // tick) is told apart from a replacement (symbol/timeframe change). See
   // the data effect for what each means for viewport ownership.
   const firstBarTimeRef = useRef<number | null>(null);
+  // Bar time -> publish times of the stories pinned there. Written by the
+  // markers effect, read by the click handler -- which is subscribed once
+  // at mount and cannot close over per-render props, the same reason
+  // barCountRef exists.
+  const newsPinsRef = useRef<Map<number, number[]>>(new Map());
+  const onNewsClickRef = useRef(onNewsClick);
+  onNewsClickRef.current = onNewsClick;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -369,9 +380,21 @@ export function CandleChart({
     lastContainerWidthRef.current = container.clientWidth || 1;
     chart.timeScale().subscribeSizeChange(handleSizeChange);
 
+    // A click on a bar carrying a 📰 pin surfaces its stories (the info
+    // panel scrolls to and highlights them). Bar-level rather than
+    // glyph-level on purpose: the markers plugin has no hit-testing of its
+    // own, and the whole column is a far easier click target than an emoji.
+    const handleClick = (param: { time?: Time }) => {
+      if (param.time == null) return;
+      const hit = newsPinsRef.current.get(param.time as number);
+      if (hit && hit.length > 0) onNewsClickRef.current?.(hit);
+    };
+    chart.subscribeClick(handleClick);
+
     return () => {
       // Before remove(), which disposes the time scale -- reaching for
       // timeScale() afterwards throws.
+      chart.unsubscribeClick(handleClick);
       chart.timeScale().unsubscribeSizeChange(handleSizeChange);
       chart.remove();
       chartRef.current = null;
@@ -598,14 +621,21 @@ export function CandleChart({
     // chart does not even show. Newer than the last bar (a headline after
     // the close) clamps to the last bar, which is where its session
     // context is.
+    const pins = new Map<number, number[]>();
     if (bars.length > 0 && news.length > 0) {
       const firstBarTime = toUnixSeconds(bars[0].t);
-      const pinned = new Set<number>();
       news.forEach((item) => {
         if (item.time < firstBarTime) return;
         const time = nearestBarTime(bars, item.time);
-        if (time == null || pinned.has(time)) return;
-        pinned.add(time);
+        if (time == null) return;
+        const existing = pins.get(time);
+        if (existing) {
+          // Same bar, second story: no second glyph, but the click still
+          // has to surface both.
+          existing.push(item.time);
+          return;
+        }
+        pins.set(time as number, [item.time]);
         markers.push({
           time,
           position: "aboveBar",
@@ -616,6 +646,7 @@ export function CandleChart({
         });
       });
     }
+    newsPinsRef.current = pins;
 
     // Sorted because the library requires markers in time order and rejects
     // the set otherwise -- the pick and the indicators arrive independently,
