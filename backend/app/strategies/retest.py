@@ -46,6 +46,13 @@ TEST_BAND_PCT = 0.0015
 # A close through the line ends the trade -- the break failed after all --
 # and half comes off at the target with the rest trailed to break-even,
 # the house management.
+#
+# Close, not touch, and this one is measured, not grammar: the stop sits at
+# a wick the market printed minutes ago, so ordinary noise revisits it
+# constantly. On touch (2bp, pinned list, 40 days) the VWAP retest went
+# from -0.171R to -1.014R and the ORB retest from -0.428R to -1.009R, win
+# rates collapsing below 17% while the raw percentage stayed flat -- every
+# trade paid its stop to noise and the survivors could not carry it.
 STOP_TRIGGER = STOP_ON_CLOSE
 SCALE_OUT = 0.5
 

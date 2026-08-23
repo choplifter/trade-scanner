@@ -6,15 +6,15 @@ price comes back and tests the line -- the retest. That test is the entry,
 in the break's direction, on the reading that a line which was defended
 after being broken has changed sides.
 
-The complement of VWAP Respect next door: Respect enters when the line
-*held* repeatedly and never broke; this enters when it broke and the former
-ceiling is retested as a floor (or the reverse). The pattern itself --
-break, hold, return -- lives in strategies.retest, shared with the
-opening-range rule, so the two stay genuinely comparable; what is this
-file's own is the line (the running session VWAP) and what "deutlich"
-means against it.
+Once the complement of VWAP Respect, which entered where the line held
+repeatedly and never broke; that rule is removed (the user's call, after
+its numbers -- its history is in git), and this is the VWAP rule that
+remains. The pattern itself -- break, hold, return -- lives in
+strategies.retest, shared with the opening-range rule, so the two stay
+genuinely comparable; what is this file's own is the line (the running
+session VWAP) and what "deutlich" means against it.
 
-No opening window, unlike Respect: the description does not give one, and a
+No opening window: the description does not give one, and a
 line that breaks and is retested at 13:00 is the same shape as one at 10:00.
 The session boundary is the only clock -- the break must have happened in
 the session being traded, which falls out of session_vwaps being None
@@ -30,7 +30,7 @@ Measured at 2bp over the pinned 100-symbol liquid list and 40 days
 
 Roughly flat before cost (-0.03% per trade): the entry sat cents from its
 stop, 1R was a fraction of a percent, and 2bp per side ate it -- the
-failure shape vwap_respect documents. The user then asked for the stop at
+failure shape VWAP Respect documented. The user then asked for the stop at
 the retest bar's own wick, which is where it now sits. Re-measured in one
 window (through 2026-08-21), both placements:
 
@@ -45,8 +45,10 @@ so far that the 2:1 floor passes a third more setups (the floor is
 risk-relative, so a smaller stop changes the population, not just the
 exit), while the fixed 4bp round trip and the close-triggered stop's
 overshoot balloon when divided by a tiny denominator (avg loss -4.8R
-against a nominal 1). A calibration that wants this positive needs the
-cost per trade down or the stop trigger on touch, not another placement.
+against a nominal 1). The touch trigger was then measured too and is far
+worse (-1.014R, win 14.4% -- see retest.STOP_TRIGGER): a wick stop sits
+where noise just was, and on touch every trade pays it. What remains as a
+lever is the cost per trade, not the stop.
 """
 
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT
@@ -63,7 +65,8 @@ BREAK_BUFFER_PCT = 0.001
 # How far from VWAP the retest close may sit and still be this trade.
 # Entering near the line is part of the setup's definition -- a "retest"
 # whose body finished far away is a bar that merely wicked through the
-# neighbourhood. Mirrors vwap_respect's constant.
+# neighbourhood. Inherited from the removed VWAP Respect rule, which
+# encoded "as close as possible to VWAP" with this value.
 MAX_ENTRY_DISTANCE_PCT = 0.004
 
 # The hold count, the test band, the wick stop, the 2:1 floor and the
