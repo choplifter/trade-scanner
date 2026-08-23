@@ -94,8 +94,16 @@ def test_break_hold_and_retest_is_a_long():
     assert signal is not None
     assert signal.side == SIDE_LONG
     assert signal.entry_price == pytest.approx(100.2)
-    assert signal.stop_price < _VWAP
     assert signal.target_price == 101.0
+
+
+def test_the_stop_is_the_retest_bars_own_wick():
+    """Calibrated there by the user after the first measurement: a stop
+    measured off the line sat cents from the entry and cost ate the trade.
+    The wick is the print the market just defended."""
+    signal = rule.evaluate(_ctx(_setup_long()))
+
+    assert signal.stop_price == pytest.approx(_setup_long()[-1].low)
 
 
 def test_the_mirror_is_a_short():
@@ -110,7 +118,16 @@ def test_the_mirror_is_a_short():
 
     assert signal is not None
     assert signal.side == SIDE_SHORT
-    assert signal.stop_price > _VWAP
+    assert signal.stop_price == pytest.approx(bars[-1].high)
+
+
+def test_a_bar_closing_on_its_own_wick_has_nothing_to_size_against():
+    """close == low: the stop and the entry are the same print. Above the
+    line, inside the band -- everything else about the retest holds."""
+    bars = _setup_long()
+    bars[-1] = _bar(30, 100.1, 100.15, 100.05, 100.05)
+
+    assert rule.evaluate(_ctx(bars)) is None
 
 
 def test_the_setup_is_managed_the_way_the_method_says():

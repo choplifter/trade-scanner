@@ -51,7 +51,12 @@ MAX_RANGE_ATR_FRACTION = 0.5
 # looked alike would drift, and comparing them is the reason both exist.
 
 
-def evaluate(ctx):
+def signal_with_stop(ctx, name: str, stop_placement: str):
+    """The ORB setup -- completed range, ATR veto, window -- with the stop
+    placement a caller chooses. The setup lives once, here, so this rule
+    and the wick-stop variant (orb_break) cannot drift into trading two
+    different definitions of the same break.
+    """
     session_date = ctx.bar.timestamp.astimezone(ET).date()
 
     # The range has to be finished before it can be broken. Without this the
@@ -79,9 +84,14 @@ def evaluate(ctx):
 
     return breakout.signal_for(
         ctx,
-        NAME,
+        name,
         high,
         low,
         range_label=f"{OPENING_MINUTES}m opening range",
         ready_after_minutes=OPENING_MINUTES,
+        stop_placement=stop_placement,
     )
+
+
+def evaluate(ctx):
+    return signal_with_stop(ctx, NAME, breakout.STOP_FAR_END)

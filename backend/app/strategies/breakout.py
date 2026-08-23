@@ -47,6 +47,14 @@ MIN_TARGET_R = 2.0
 # how Aziz handles a position rather than as specific to one setup.
 SCALE_OUT = 0.5
 
+# Where the stop sits, named rather than booleaned so a call site reads as
+# the choice it is. FAR_END is the measured default (see the placement
+# comment below); BREAK_WICK anchors it to the break bar's own extreme --
+# the print the break rose from -- asked for by the user as the candle-
+# anchored counterpart of the retest rules' wick stop.
+STOP_FAR_END = "far-end"
+STOP_BREAK_WICK = "break-wick"
+
 
 def minutes_since_open(ctx, session_date) -> float | None:
     """How far past the opening bell this bar is, or None off a trading day.
@@ -69,6 +77,7 @@ def signal_for(
     range_label: str,
     window_minutes: float = BREAKOUT_WINDOW_MINUTES,
     ready_after_minutes: float = 0.0,
+    stop_placement: str = STOP_FAR_END,
 ) -> Signal | None:
     """A break of [low, high], or None.
 
@@ -99,18 +108,24 @@ def signal_for(
             continue
 
         entry = ctx.bar.close
-        # The far end of the range. Measured against the narrower placements
-        # on this app's universe: a stop near the entry is closed straight
-        # through on a name that moves 40% in a session, so a nominal 1R of
-        # risk costs three. See opening_range_breakout for the table.
-        stop = opposite
+        if stop_placement == STOP_BREAK_WICK:
+            # The break bar's own extreme: the print this break rose from.
+            stop = ctx.bar.low if side == SIDE_LONG else ctx.bar.high
+        else:
+            # The far end of the range. Measured against the narrower
+            # placements on this app's universe: a stop near the entry is
+            # closed straight through on a name that moves 40% in a session,
+            # so a nominal 1R of risk costs three. See opening_range_breakout
+            # for the table.
+            stop = opposite
         risk = sign * (entry - stop)
         if risk <= 0:
             # Unreachable while the stop is the far end -- a close above the
-            # high is above the low by construction. Kept because the
-            # placement is a documented choice, and ExitRule would otherwise
-            # refuse the trade a layer later, where the error names the
-            # backtest instead of the rule.
+            # high is above the low by construction -- but real for the wick
+            # stop, whose bar may close on its own extreme. Nothing to size
+            # against either way, and ExitRule would otherwise refuse the
+            # trade a layer later, where the error names the backtest
+            # instead of the rule.
             return None
 
         target = next_level(ctx.levels, entry, sign)

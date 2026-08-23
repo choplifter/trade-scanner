@@ -60,7 +60,7 @@ _DIR = Path(__file__).parent
 # be reported, so "has no NAME" cannot be the test for "is not a strategy".
 # The cost is that a new helper added here is a load error until it is listed
 # -- which is noisy in exactly the right direction, and is how it was caught.
-_EXCLUDED = {"__init__.py", "breakout.py", "context.py", "loader.py", "runner.py"}
+_EXCLUDED = {"__init__.py", "breakout.py", "context.py", "loader.py", "retest.py", "runner.py"}
 
 
 @dataclass(frozen=True)
