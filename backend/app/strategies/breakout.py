@@ -17,7 +17,7 @@ own test asserts that every non-strategy file here is.
 
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT, STOP_ON_CLOSE
 from app.services.market_clock import ET, trading_hours_for
-from app.strategies.context import Signal
+from app.strategies.context import Signal, next_level
 
 # --- constructed, shared by both rules, all still needing calibration -----
 # Shared rather than copied because they describe the same mechanic. A rule
@@ -46,14 +46,6 @@ MIN_TARGET_R = 2.0
 # Half off at the target with the rest trailed to break-even -- described as
 # how Aziz handles a position rather than as specific to one setup.
 SCALE_OUT = 0.5
-
-
-def _next_level(levels, entry: float, sign: int) -> float | None:
-    """The nearest level ahead of the entry, or None if there is none."""
-    ahead = [level for level in levels if sign * (level - entry) > 0]
-    if not ahead:
-        return None
-    return min(ahead, key=lambda level: sign * (level - entry))
 
 
 def minutes_since_open(ctx, session_date) -> float | None:
@@ -121,7 +113,7 @@ def signal_for(
             # backtest instead of the rule.
             return None
 
-        target = _next_level(ctx.levels, entry, sign)
+        target = next_level(ctx.levels, entry, sign)
         if target is None:
             return None
         if sign * (target - entry) < risk * MIN_TARGET_R:

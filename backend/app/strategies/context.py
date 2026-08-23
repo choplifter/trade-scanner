@@ -30,6 +30,29 @@ from app.market_data.momentum import is_regular_session_bar, same_trading_day
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT, STOP_ON_TOUCH
 
 
+def side_sign(side: str) -> int:
+    """+1 for a long, -1 for a short -- the factor that lets one comparison
+    serve both directions instead of every rule writing each twice."""
+    return 1 if side == SIDE_LONG else -1
+
+
+def next_level(levels, entry: float, sign: int) -> float | None:
+    """The nearest level ahead of the entry, or None if there is none.
+
+    "Ahead" is direction-relative: above for a long, below for a short.
+
+    Here rather than in each strategy because "the target is the next level"
+    is one decision several rules share, and it existed as two private
+    copies before the third rule wanting it forced the question. Copies that
+    look alike are the state that rots -- see strategies.breakout's docstring
+    for the fuller argument.
+    """
+    ahead = [level for level in levels if sign * (level - entry) > 0]
+    if not ahead:
+        return None
+    return min(ahead, key=lambda level: sign * (level - entry))
+
+
 @dataclass(frozen=True)
 class StrategyContext:
     """Everything a strategy is allowed to look at, at one bar.
@@ -144,7 +167,7 @@ class Signal:
 
     @property
     def sign(self) -> int:
-        return 1 if self.side == SIDE_LONG else -1
+        return side_sign(self.side)
 
     @property
     def risk_per_share(self) -> float:

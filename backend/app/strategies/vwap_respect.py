@@ -34,7 +34,7 @@ and it resets the count.
 """
 
 from app.scanners.exit_rules import SIDE_LONG, SIDE_SHORT, STOP_ON_CLOSE
-from app.strategies.context import Signal
+from app.strategies.context import Signal, next_level, side_sign
 
 NAME = "VWAP Respect"
 
@@ -86,10 +86,6 @@ STOP_BUFFER_PCT = 0.001
 MIN_TARGET_R = 2.0
 
 
-def _sign(side: str) -> int:
-    return 1 if side == SIDE_LONG else -1
-
-
 def _session_open_index(ctx) -> int | None:
     """The first bar the regular session had started for.
 
@@ -110,7 +106,7 @@ def _count_tests(bars, vwaps, side: str) -> int:
     The reset is the point: once price has closed on the other side, whatever
     respect came before describes a level that no longer holds.
     """
-    sign = _sign(side)
+    sign = side_sign(side)
     tests = 0
     for bar, vwap in zip(bars, vwaps):
         if vwap is None:
@@ -127,26 +123,13 @@ def _count_tests(bars, vwaps, side: str) -> int:
     return tests
 
 
-def _next_level(levels, entry: float, sign: int) -> float | None:
-    """The nearest level ahead of the entry, or None if there is none.
-
-    "Ahead" is direction-relative: above for a long, below for a short. Levels
-    arrive sorted ascending, so the search is the first one past the entry
-    from the right end for a long and from the left for a short.
-    """
-    ahead = [level for level in levels if sign * (level - entry) > 0]
-    if not ahead:
-        return None
-    return min(ahead, key=lambda level: sign * (level - entry))
-
-
 def _signal_for(ctx, side: str) -> Signal | None:
     vwap = ctx.vwap
     if vwap is None or vwap <= 0:
         return None
 
     bar = ctx.bar
-    sign = _sign(side)
+    sign = side_sign(side)
 
     # Confirmation: this bar closed on our side of the line, and closed in
     # our direction. Both, because a close on the right side of VWAP that is
@@ -174,7 +157,7 @@ def _signal_for(ctx, side: str) -> Signal | None:
         # it a layer later.
         return None
 
-    target = _next_level(ctx.levels, entry, sign)
+    target = next_level(ctx.levels, entry, sign)
     if target is None:
         # No structure ahead means no target, and the method has no other one
         # to fall back on. Skipped rather than given an invented number.
