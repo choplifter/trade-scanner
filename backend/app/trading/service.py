@@ -464,39 +464,67 @@ class OrderService:
         the position unprotected -- hence the stop_lost flag.
         """
         rearmed: list[dict] = []
-        stop_lost = False
+        # Whether the position *had* a stop to lose, and whether one made it
+        # back -- tracked off the requests rather than by inspecting the
+        # rearmed dumps, because the OCO form carries its stop as a leg of a
+        # limit order and would read as "no stop" from the outside.
+        stop_needed = any("stop" in str(e.get("order_type", "")).lower() for e in exits)
+        stop_armed = False
         for request in rearm_requests(exits, remaining_qty):
+            carries_stop = (
+                "Stop" in type(request).__name__
+                or getattr(request, "stop_loss", None) is not None
+            )
             try:
                 order = await asyncio.to_thread(self._clients.trading.submit_order, request)
                 rearmed.append(_plain(order))
+                if carries_stop:
+                    stop_armed = True
             except Exception:
                 logger.exception(
                     "Could not re-arm %s exit for %s after partial close",
                     type(request).__name__,
                     symbol,
                 )
-                if "Stop" in type(request).__name__:
-                    stop_lost = True
-        if not any("stop" in str(o.get("order_type", "")) for o in rearmed) and any(
-            "stop" in str(e.get("order_type", "")) for e in exits
-        ):
-            stop_lost = True
-        return rearmed, stop_lost
+        return rearmed, stop_needed and not stop_armed
 
     async def _working_orders_for(self, symbol: str) -> list[dict]:
         """The symbol's working orders as plain dicts -- captured *before*
         the cancel step so a partial close still knows what the exits looked
-        like when it is time to re-arm them."""
+        like when it is time to re-arm them.
+
+        Fetches ALL and filters by _WORKING_STATUSES instead of using
+        Alpaca's OPEN filter, for the same reason OrderService.orders does:
+        OPEN omits `held`, and `held` is where a filled bracket parks its
+        stop leg. The first live partial close walked straight into that --
+        the stop was invisible here, so cancelling the visible take-profit
+        parent killed the stop leg with it and nothing re-armed it: a
+        smaller position with no stop and stop_lost=False. Legs are
+        flattened in for the same reason: the stop of a bracket may only
+        exist nested under its parent, and a leg that is not captured is a
+        leg that cannot come back.
+        """
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
 
         try:
-            request = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+            request = GetOrdersRequest(
+                status=QueryOrderStatus.ALL, symbols=[symbol], limit=_ORDER_FETCH_LIMIT
+            )
             orders = await asyncio.to_thread(self._clients.trading.get_orders, request)
         except Exception:
             logger.exception("Could not list working orders for %s before closing", symbol)
             return []
-        return [o for o in (_plain(orders) or []) if isinstance(o, dict)]
+
+        flattened: list[dict] = []
+        for order in _plain(orders) or []:
+            if not isinstance(order, dict):
+                continue
+            flattened.append(order)
+            flattened.extend(leg for leg in (order.get("legs") or []) if isinstance(leg, dict))
+        return [
+            o for o in flattened if str(o.get("status", "")).lower() in _WORKING_STATUSES
+        ]
 
     async def _cancel_orders(self, symbol: str, orders: list[dict]) -> list[str]:
         """Cancel the given orders. Returns what was cancelled.
@@ -647,46 +675,71 @@ def rearm_requests(exits: list[dict], remaining_qty: float) -> list:
 
     Pure and separate from the submit loop for the same reason
     _build_request is: the mapping from a captured order to its replacement
-    is the part most likely to be wrong. One request per usable exit --
-    a stop (or stop_limit, degraded to a plain stop: its limit leg was
-    tuned to the old quantity's fill risk) and a take-profit limit. Orders
-    that are neither, and legs with no price, produce nothing rather than
-    a guess.
+    is the part most likely to be wrong.
+
+    When both a stop and a take-profit were captured, they come back as ONE
+    OCO order rather than two plain ones -- learned live, not designed:
+    Alpaca holds shares per sell order, so a re-armed stop for the
+    remainder plus a separate re-armed limit would try to hold the same
+    shares twice, and the second submit dies with "insufficient qty
+    available". Only linked OCO legs may share a hold, which is also how
+    the original bracket held them. A lone stop (or stop_limit, degraded
+    to a plain stop: its limit leg was tuned to the old quantity's fill
+    risk) or a lone limit comes back as itself. Exits with no price
+    produce nothing rather than a guess.
     """
-    from alpaca.trading.enums import OrderSide, TimeInForce
-    from alpaca.trading.requests import LimitOrderRequest, StopOrderRequest
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import (
+        LimitOrderRequest,
+        StopLossRequest,
+        StopOrderRequest,
+        TakeProfitRequest,
+    )
 
     if remaining_qty <= 0:
         return []
 
-    requests = []
+    stop_exit: dict | None = None
+    limit_exit: dict | None = None
     for exit_order in exits:
-        side_raw = str(exit_order.get("side", "")).lower()
-        if side_raw not in ("buy", "sell"):
+        if str(exit_order.get("side", "")).lower() not in ("buy", "sell"):
             continue
-        side = OrderSide.BUY if side_raw == "buy" else OrderSide.SELL
-        try:
-            tif = TimeInForce(str(exit_order.get("time_in_force", "gtc")).lower())
-        except ValueError:
-            tif = TimeInForce.GTC
         order_type = str(exit_order.get("order_type", "")).lower()
-        common = {
-            "symbol": str(exit_order.get("symbol", "")).upper(),
-            "qty": remaining_qty,
-            "side": side,
-            "time_in_force": tif,
-        }
-        if "stop" in order_type:
-            stop_price = _number(exit_order.get("stop_price"))
-            if stop_price is None:
-                continue
-            requests.append(StopOrderRequest(stop_price=stop_price, **common))
-        elif order_type == "limit":
-            limit_price = _number(exit_order.get("limit_price"))
-            if limit_price is None:
-                continue
-            requests.append(LimitOrderRequest(limit_price=limit_price, **common))
-    return requests
+        if "stop" in order_type and stop_exit is None and _number(exit_order.get("stop_price")) is not None:
+            stop_exit = exit_order
+        elif order_type == "limit" and limit_exit is None and _number(exit_order.get("limit_price")) is not None:
+            limit_exit = exit_order
+
+    anchor = stop_exit or limit_exit
+    if anchor is None:
+        return []
+
+    side = OrderSide.BUY if str(anchor.get("side", "")).lower() == "buy" else OrderSide.SELL
+    try:
+        tif = TimeInForce(str(anchor.get("time_in_force", "gtc")).lower())
+    except ValueError:
+        tif = TimeInForce.GTC
+    common = {
+        "symbol": str(anchor.get("symbol", "")).upper(),
+        "qty": remaining_qty,
+        "side": side,
+        "time_in_force": tif,
+    }
+
+    if stop_exit is not None and limit_exit is not None:
+        limit_price = _number(limit_exit.get("limit_price"))
+        return [
+            LimitOrderRequest(
+                limit_price=limit_price,
+                order_class=OrderClass.OCO,
+                take_profit=TakeProfitRequest(limit_price=limit_price),
+                stop_loss=StopLossRequest(stop_price=_number(stop_exit.get("stop_price"))),
+                **common,
+            )
+        ]
+    if stop_exit is not None:
+        return [StopOrderRequest(stop_price=_number(stop_exit.get("stop_price")), **common)]
+    return [LimitOrderRequest(limit_price=_number(limit_exit.get("limit_price")), **common)]
 
 
 def _build_request(resolved):

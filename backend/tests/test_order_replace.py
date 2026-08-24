@@ -116,13 +116,21 @@ def test_the_stop_comes_back_for_the_remaining_quantity():
     assert requests[0].stop_price == 9.5
 
 
-def test_a_take_profit_limit_comes_back_too():
+def test_stop_and_take_profit_come_back_as_one_oco():
+    """Two plain sell orders would double-hold the remaining shares --
+    Alpaca refused exactly that live ("insufficient qty available"). Linked
+    OCO legs are the one form that may share a hold."""
     exits = [_stop_order(), _stop_order(order_type="limit", limit_price="14.80", stop_price=None)]
 
     requests = rearm_requests(exits, remaining_qty=60)
 
-    assert [type(r).__name__ for r in requests] == ["StopOrderRequest", "LimitOrderRequest"]
-    assert requests[1].limit_price == 14.8
+    assert len(requests) == 1
+    request = requests[0]
+    assert type(request).__name__ == "LimitOrderRequest"
+    assert str(request.order_class.value) == "oco"
+    assert request.limit_price == 14.8
+    assert request.stop_loss.stop_price == 9.5
+    assert request.qty == 60
 
 
 def test_a_stop_limit_degrades_to_a_plain_stop():
@@ -155,6 +163,7 @@ class _StubTradingClient:
         self.closed: list[tuple] = []
 
     def get_orders(self, request):
+        self.last_get_orders_request = request
         return self._orders
 
     def get_order_by_id(self, order_id):
@@ -196,6 +205,56 @@ class _FakeAPIError(Exception):
 def _service(client):
     clients = type("C", (), {"trading": client, "feed": "iex"})()
     return OrderService(clients=clients, settings=_settings())
+
+
+def test_exit_capture_sees_a_held_stop_nested_as_a_leg():
+    """The trap the first live partial close walked into: Alpaca's OPEN
+    filter omits `held`, and a bracket's stop lives there, possibly nested
+    under its parent -- invisible to the capture, killed by the parent's
+    cancel, never re-armed. The capture must fetch ALL and flatten legs."""
+    parent = {
+        "id": "parent",
+        "symbol": "AAA",
+        "side": "sell",
+        "order_type": "limit",
+        "status": "new",
+        "limit_price": "19.80",
+        "time_in_force": "gtc",
+        "legs": [_stop_order(id="leg", status="held")],
+    }
+    client = _StubTradingClient(orders=[parent])
+    service = _service(client)
+
+    captured = asyncio.run(service._working_orders_for("AAA"))
+
+    assert {o["id"] for o in captured} >= {"parent", "leg"}
+    assert client.last_get_orders_request.status.value == "all"
+
+
+def test_partial_close_rearms_a_held_stop_leg():
+    """End to end through the stub: the held, nested stop must come back
+    for the remainder, and stop_lost must be false only because it did."""
+    parent = {
+        "id": "parent",
+        "symbol": "AAA",
+        "side": "sell",
+        "order_type": "limit",
+        "status": "new",
+        "limit_price": "19.80",
+        "time_in_force": "gtc",
+        "legs": [_stop_order(id="leg", status="held")],
+    }
+    client = _StubTradingClient(orders=[parent], position_qty="10")
+    service = _service(client)
+
+    result = asyncio.run(service.close_position("AAA", qty=4))
+
+    assert len(client.submitted) == 1
+    oco = client.submitted[0]
+    assert str(oco.order_class.value) == "oco"
+    assert oco.stop_loss.stop_price == 9.5
+    assert oco.qty == 6
+    assert result["stop_lost"] is False
 
 
 def test_partial_close_cancels_sells_and_rearms_in_that_order():
