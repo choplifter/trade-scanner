@@ -1346,6 +1346,19 @@ a.symbol-news-headline {
   color: var(--text-muted);
 }
 
+/* The per-position action cluster: three small buttons that must not wrap
+   the row taller. */
+.row-actions {
+  display: inline-flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.row-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* A story whose 📰 chart pin was clicked. Row background rather than an
    outline: the item wraps across lines and an outline hugs the ragged
    text edge. */

@@ -13,6 +13,7 @@ detail off a 422 -- see BacktestRefusedError in frontend/src/api/http.ts.
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from app.trading.errors import TradingError
 from app.trading.models import OrderTicket
@@ -166,6 +167,30 @@ async def submit_order(ticket: OrderTicket, request: Request) -> dict:
     return {"order": order}
 
 
+class ReplaceStopRequest(BaseModel):
+    """Body of the stop-move endpoint. The symbol rides along purely as a
+    cross-check: the client names the order it means AND the position it
+    thinks that order protects, and the service refuses if they disagree."""
+
+    symbol: str = Field(min_length=1)
+    stop_price: float
+
+
+@router.patch("/orders/{order_id}")
+async def replace_stop(order_id: str, body: ReplaceStopRequest, request: Request) -> dict:
+    """Move a working stop -- the edited SL cell and the break-even button."""
+    try:
+        order = await _service(request).replace_stop(order_id, body.symbol, body.stop_price)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Stop replace failed for %s", order_id)
+        raise HTTPException(status_code=502, detail="Failed to move the stop")
+    return {"order": order}
+
+
 @router.delete("/orders/{order_id}")
 async def cancel_order(order_id: str, request: Request) -> dict:
     try:
@@ -181,10 +206,23 @@ async def cancel_order(order_id: str, request: Request) -> dict:
 
 
 @router.delete("/positions/{symbol}")
-async def close_position(symbol: str, request: Request) -> dict:
-    """Flatten one position. There is deliberately no close-all endpoint."""
+async def close_position(
+    symbol: str,
+    request: Request,
+    qty: float | None = Query(
+        default=None,
+        gt=0,
+        description=(
+            "Shares to sell. Omitted flattens the whole position; given, the "
+            "position's working exits are re-armed for what remains -- see "
+            "OrderService.close_position."
+        ),
+    ),
+) -> dict:
+    """Flatten one position, or sell part of it. There is deliberately no
+    close-all endpoint."""
     try:
-        order = await _service(request).close_position(symbol)
+        order = await _service(request).close_position(symbol, qty)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:

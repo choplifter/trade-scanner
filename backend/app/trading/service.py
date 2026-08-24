@@ -320,8 +320,64 @@ class OrderService:
                 raise rejection from exc
             raise
 
-    async def close_position(self, symbol: str) -> dict:
-        """Flatten one position at market, cancelling what holds it first.
+    async def replace_stop(self, order_id: str, symbol: str, stop_price: float) -> dict:
+        """Move one working stop order to a new price -- the edited SL cell
+        and the break-even button, which is this with stop_price set to the
+        position's entry.
+
+        The client supplies the order id because the client is where the
+        stop<->position join already lives (exitsForPosition in the
+        frontend); this side only verifies the id names what the caller
+        thinks it names. The same plausibility check resolve_ticket applies
+        to a new stop applies here: for the sell-stop of a long, the price
+        must sit below the market, or Alpaca would trigger it instantly.
+        """
+        self._assert_can_trade()
+        symbol = symbol.upper()
+
+        try:
+            order = _plain(
+                await asyncio.to_thread(self._clients.trading.get_order_by_id, order_id)
+            )
+        except Exception as exc:
+            # Any 4xx here means the id names nothing on this account --
+            # Alpaca answers 404, which rejection_from_api_error deliberately
+            # does not map (see its docstring), so the status is read
+            # directly. Both spellings, because the SDK is inconsistent: its
+            # APIError carries status_code, but get_order_by_id was observed
+            # letting the raw requests.HTTPError through, whose status lives
+            # on .response. A 5xx or network failure still surfaces as a
+            # 502: "no such order" must not be claimable by an outage.
+            status = getattr(exc, "status_code", None)
+            if status is None:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500:
+                raise OrderRejected("No such order.", field="order_id") from exc
+            raise
+        _validate_stop_replacement(
+            order, symbol, stop_price, await self.reference_price(symbol)
+        )
+
+        from alpaca.trading.requests import ReplaceOrderRequest
+
+        try:
+            replaced = await asyncio.to_thread(
+                self._clients.trading.replace_order_by_id,
+                order_id,
+                ReplaceOrderRequest(stop_price=stop_price),
+            )
+        except Exception as exc:
+            rejection = rejection_from_api_error(exc)
+            if rejection is not None:
+                raise rejection from exc
+            raise
+
+        logger.info("Replaced stop %s on %s -> %.4f", order_id, symbol, stop_price)
+        return _plain(replaced)
+
+    async def close_position(self, symbol: str, qty: float | None = None) -> dict:
+        """Flatten one position at market -- or, with qty, sell part of it
+        and re-arm its exits for the remainder.
 
         Deliberately per-symbol: a close-everything button is exactly the one
         hit by accident.
@@ -332,31 +388,105 @@ class OrderService:
         "insufficient qty available for order (requested: 233, available: 0)",
         which reads like the position does not exist. Flattening has to mean
         flattening, so the resting orders go first.
+
+        A *partial* close inherits that constraint and adds the real
+        problem: after cancelling, the remaining shares are naked. So the
+        exits are captured -- price, type, side, time in force -- before
+        they are cancelled, and re-placed for the remaining quantity after
+        the sale. If re-arming the stop fails, the response says so loudly
+        (stop_lost) rather than leaving the reader to notice a missing row
+        in the orders table.
         """
         self._assert_can_trade()
         symbol = symbol.upper()
 
-        cancelled = await self._cancel_orders_for(symbol)
+        exits = await self._working_orders_for(symbol)
+        cancelled = await self._cancel_orders(symbol, exits)
+
+        remaining = 0.0
+        if qty is not None:
+            if qty <= 0:
+                raise OrderRejected("Quantity must be positive.", field="qty")
+            position_qty = await self._position_qty(symbol)
+            if position_qty is None:
+                raise OrderRejected(f"No open position in {symbol}.", field="symbol")
+            if qty >= position_qty:
+                # Selling everything is a full close, whatever the caller
+                # typed -- and a full close must not re-arm anything.
+                qty = None
+            else:
+                remaining = position_qty - qty
 
         try:
-            order = await asyncio.to_thread(self._clients.trading.close_position, symbol)
+            if qty is None:
+                order = await asyncio.to_thread(self._clients.trading.close_position, symbol)
+            else:
+                from alpaca.trading.requests import ClosePositionRequest
+
+                order = await asyncio.to_thread(
+                    self._clients.trading.close_position,
+                    symbol,
+                    ClosePositionRequest(qty=str(qty)),
+                )
         except Exception as exc:
             rejection = rejection_from_api_error(exc)
             if rejection is not None:
                 raise rejection from exc
             raise
+
         result = _plain(order)
-        if isinstance(result, dict):
-            result["cancelled_orders"] = cancelled
+        if not isinstance(result, dict):
+            result = {"order": result}
+        result["cancelled_orders"] = cancelled
+
+        if qty is not None and remaining > 0:
+            rearmed, stop_lost = await self._rearm_exits(symbol, exits, remaining)
+            result["rearmed_orders"] = rearmed
+            result["stop_lost"] = stop_lost
         return result
 
-    async def _cancel_orders_for(self, symbol: str) -> list[str]:
-        """Cancel every working order on one symbol. Returns what was cancelled.
+    async def _position_qty(self, symbol: str) -> float | None:
+        try:
+            position = await asyncio.to_thread(
+                self._clients.trading.get_open_position, symbol
+            )
+        except Exception:
+            return None
+        return _number(getattr(position, "qty", None))
 
-        Best-effort per order: one that has already filled or been cancelled
-        between listing and cancelling is not a failure worth aborting the
-        close for -- the close is the thing the user asked for.
+    async def _rearm_exits(
+        self, symbol: str, exits: list[dict], remaining_qty: float
+    ) -> tuple[list[dict], bool]:
+        """Re-place the captured exits for what is left of the position.
+
+        Best-effort per order, but never silent: the stop is the one that
+        matters, and a partial sale that quietly drops it leaves the rest of
+        the position unprotected -- hence the stop_lost flag.
         """
+        rearmed: list[dict] = []
+        stop_lost = False
+        for request in rearm_requests(exits, remaining_qty):
+            try:
+                order = await asyncio.to_thread(self._clients.trading.submit_order, request)
+                rearmed.append(_plain(order))
+            except Exception:
+                logger.exception(
+                    "Could not re-arm %s exit for %s after partial close",
+                    type(request).__name__,
+                    symbol,
+                )
+                if "Stop" in type(request).__name__:
+                    stop_lost = True
+        if not any("stop" in str(o.get("order_type", "")) for o in rearmed) and any(
+            "stop" in str(e.get("order_type", "")) for e in exits
+        ):
+            stop_lost = True
+        return rearmed, stop_lost
+
+    async def _working_orders_for(self, symbol: str) -> list[dict]:
+        """The symbol's working orders as plain dicts -- captured *before*
+        the cancel step so a partial close still knows what the exits looked
+        like when it is time to re-arm them."""
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
 
@@ -366,10 +496,18 @@ class OrderService:
         except Exception:
             logger.exception("Could not list working orders for %s before closing", symbol)
             return []
+        return [o for o in (_plain(orders) or []) if isinstance(o, dict)]
 
+    async def _cancel_orders(self, symbol: str, orders: list[dict]) -> list[str]:
+        """Cancel the given orders. Returns what was cancelled.
+
+        Best-effort per order: one that has already filled or been cancelled
+        between listing and cancelling is not a failure worth aborting the
+        close for -- the close is the thing the user asked for.
+        """
         cancelled: list[str] = []
-        for order in orders or []:
-            order_id = str(getattr(order, "id", "") or "")
+        for order in orders:
+            order_id = str(order.get("id", "") or "")
             if not order_id:
                 continue
             try:
@@ -457,6 +595,98 @@ def _number(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _validate_stop_replacement(
+    order: dict | None, symbol: str, stop_price: float, reference_price: float | None
+) -> None:
+    """Refuse a replace that would not do what the user thinks.
+
+    Pure, like _build_request, so every refusal is testable without a
+    client. The checks name the field so the UI can point at it: the id
+    must be a working stop on this symbol, and the new price must sit on
+    the triggerable side of the market -- a sell-stop above the last trade
+    fires the moment it lands, which is a market order wearing a stop's
+    clothes.
+    """
+    if not isinstance(order, dict) or not order:
+        raise OrderRejected("No such order.", field="order_id")
+    if str(order.get("symbol", "")).upper() != symbol:
+        raise OrderRejected(
+            f"Order belongs to {order.get('symbol')}, not {symbol}.", field="order_id"
+        )
+    if str(order.get("status", "")).lower() not in _WORKING_STATUSES:
+        raise OrderRejected(
+            f"Order is {order.get('status')} -- only a working order can be moved.",
+            field="order_id",
+        )
+    if "stop" not in str(order.get("order_type", "")).lower():
+        raise OrderRejected(
+            f"Order is a {order.get('order_type')} order, not a stop.", field="order_id"
+        )
+    if stop_price <= 0:
+        raise OrderRejected("Stop price must be positive.", field="stop_price")
+    if reference_price is not None:
+        side = str(order.get("side", "")).lower()
+        if side == "sell" and stop_price >= reference_price:
+            raise OrderRejected(
+                f"Stop {stop_price:.2f} must be below the current price "
+                f"{reference_price:.2f} -- above it, it would trigger instantly.",
+                field="stop_price",
+            )
+        if side == "buy" and stop_price <= reference_price:
+            raise OrderRejected(
+                f"Stop {stop_price:.2f} must be above the current price "
+                f"{reference_price:.2f} -- below it, it would trigger instantly.",
+                field="stop_price",
+            )
+
+
+def rearm_requests(exits: list[dict], remaining_qty: float) -> list:
+    """The orders that put a partial close's exits back, for what remains.
+
+    Pure and separate from the submit loop for the same reason
+    _build_request is: the mapping from a captured order to its replacement
+    is the part most likely to be wrong. One request per usable exit --
+    a stop (or stop_limit, degraded to a plain stop: its limit leg was
+    tuned to the old quantity's fill risk) and a take-profit limit. Orders
+    that are neither, and legs with no price, produce nothing rather than
+    a guess.
+    """
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    from alpaca.trading.requests import LimitOrderRequest, StopOrderRequest
+
+    if remaining_qty <= 0:
+        return []
+
+    requests = []
+    for exit_order in exits:
+        side_raw = str(exit_order.get("side", "")).lower()
+        if side_raw not in ("buy", "sell"):
+            continue
+        side = OrderSide.BUY if side_raw == "buy" else OrderSide.SELL
+        try:
+            tif = TimeInForce(str(exit_order.get("time_in_force", "gtc")).lower())
+        except ValueError:
+            tif = TimeInForce.GTC
+        order_type = str(exit_order.get("order_type", "")).lower()
+        common = {
+            "symbol": str(exit_order.get("symbol", "")).upper(),
+            "qty": remaining_qty,
+            "side": side,
+            "time_in_force": tif,
+        }
+        if "stop" in order_type:
+            stop_price = _number(exit_order.get("stop_price"))
+            if stop_price is None:
+                continue
+            requests.append(StopOrderRequest(stop_price=stop_price, **common))
+        elif order_type == "limit":
+            limit_price = _number(exit_order.get("limit_price"))
+            if limit_price is None:
+                continue
+            requests.append(LimitOrderRequest(limit_price=limit_price, **common))
+    return requests
 
 
 def _build_request(resolved):

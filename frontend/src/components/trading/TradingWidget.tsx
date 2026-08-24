@@ -77,6 +77,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
     afterAction,
     cancel,
     close,
+    moveStop,
   } = useTrading();
   const [tab, setTab] = useState<Tab>("ticket");
   const [ordersView, setOrdersView] = useState<OrdersView>("working");
@@ -91,13 +92,45 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // A partial close that could not re-arm the remainder's stop must stay
+  // visible after the modal is gone -- re-running the modal would sell
+  // again, so the warning lives on the panel instead.
+  const [stopLostWarning, setStopLostWarning] = useState<string | null>(null);
 
   const runPending = async () => {
     if (!pending) return;
+    // Input validation happens before busy: a typo should not round-trip.
+    if (pending.kind === "move-stop") {
+      const price = Number(pending.stopPrice);
+      if (!Number.isFinite(price) || price <= 0) {
+        setActionError("Enter a valid stop price.");
+        return;
+      }
+    }
+    if (pending.kind === "partial") {
+      const qty = Math.floor(Number(pending.qty));
+      if (!Number.isFinite(qty) || qty <= 0 || qty >= pending.positionQty) {
+        setActionError(`Enter a quantity between 1 and ${pending.positionQty - 1}.`);
+        return;
+      }
+    }
     setBusy(true);
     try {
-      if (pending.kind === "cancel") await cancel(pending.id);
-      else await close(pending.symbol);
+      if (pending.kind === "cancel") {
+        await cancel(pending.id);
+      } else if (pending.kind === "close") {
+        await close(pending.symbol);
+      } else if (pending.kind === "move-stop") {
+        await moveStop(pending.id, pending.symbol, Number(pending.stopPrice));
+      } else {
+        const result = await close(pending.symbol, Math.floor(Number(pending.qty)));
+        setStopLostWarning(
+          result.order.stop_lost
+            ? `${pending.symbol}: part sold, but the stop for the remainder could NOT be re-armed. ` +
+              "Check the Orders tab and place a new stop by hand."
+            : null,
+        );
+      }
       setPending(null);
       setActionError(null);
     } catch (err: unknown) {
@@ -162,13 +195,23 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             onSubmitted={afterAction}
           />
         ) : tab === "positions" ? (
-          <PositionsTable
-            positions={positions}
-            orders={orders}
-            selectedSymbol={selectedSymbol}
-            onSelectSymbol={onSelectSymbol}
-            onClosePosition={(symbol) => setPending({ kind: "close", symbol })}
-          />
+          <>
+            {stopLostWarning && (
+              <p className="order-rejection">
+                {stopLostWarning}{" "}
+                <button type="button" className="row-action" onClick={() => setStopLostWarning(null)}>
+                  Dismiss
+                </button>
+              </p>
+            )}
+            <PositionsTable
+              positions={positions}
+              orders={orders}
+              selectedSymbol={selectedSymbol}
+              onSelectSymbol={onSelectSymbol}
+              onAction={setPending}
+            />
+          </>
         ) : tab === "orders" ? (
           <OrdersPanel
             view={ordersView}
@@ -194,7 +237,17 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
 
       <Modal
         open={pending !== null}
-        title={pending?.kind === "cancel" ? "Cancel order" : "Close position"}
+        title={
+          pending?.kind === "cancel"
+            ? "Cancel order"
+            : pending?.kind === "move-stop"
+              ? pending.breakeven
+                ? "Stop to break-even"
+                : "Move stop"
+              : pending?.kind === "partial"
+                ? "Sell part"
+                : "Close position"
+        }
         onClose={() => {
           setPending(null);
           setActionError(null);
@@ -212,6 +265,66 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
                   without a protective stop.
                 </p>
               )}
+            </>
+          ) : pending?.kind === "move-stop" ? (
+            <>
+              <p className="order-confirm-line">
+                {pending.breakeven ? (
+                  <>
+                    Move the <strong>{pending.symbol}</strong> stop to the entry price?
+                  </>
+                ) : (
+                  <>
+                    Move the <strong>{pending.symbol}</strong> stop to:
+                  </>
+                )}
+              </p>
+              <label className="order-confirm-line">
+                Stop price{" "}
+                <input
+                  type="number"
+                  step="0.01"
+                  value={pending.stopPrice}
+                  onChange={(e) => setPending({ ...pending, stopPrice: e.target.value })}
+                />
+              </label>
+            </>
+          ) : pending?.kind === "partial" ? (
+            <>
+              <p className="order-confirm-line">
+                Sell part of <strong>{pending.symbol}</strong> ({pending.positionQty} held) at
+                market?
+              </p>
+              <label className="order-confirm-line">
+                Shares{" "}
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  max={pending.positionQty - 1}
+                  value={pending.qty}
+                  onChange={(e) => setPending({ ...pending, qty: e.target.value })}
+                />
+                {[25, 50].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    className="timeframe-button"
+                    onClick={() =>
+                      setPending({
+                        ...pending,
+                        qty: String(Math.max(1, Math.floor((pending.positionQty * pct) / 100))),
+                      })
+                    }
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </label>
+              <p className="order-confirm-line order-confirm-note">
+                The position&apos;s working exits are cancelled for the sale and re-armed for the
+                remaining shares at their old prices -- the stop stays a stop, just smaller.
+              </p>
             </>
           ) : (
             <>
@@ -246,7 +359,15 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
               disabled={busy}
               onClick={() => void runPending()}
             >
-              {busy ? "Working" : pending?.kind === "cancel" ? "Cancel order" : "Close position"}
+              {busy
+                ? "Working"
+                : pending?.kind === "cancel"
+                  ? "Cancel order"
+                  : pending?.kind === "move-stop"
+                    ? "Move stop"
+                    : pending?.kind === "partial"
+                      ? "Sell shares"
+                      : "Close position"}
             </button>
           </div>
         </div>
@@ -257,14 +378,18 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
 
 type PendingAction =
   | { kind: "cancel"; id: string; symbol: string }
-  | { kind: "close"; symbol: string };
+  | { kind: "close"; symbol: string }
+  /** Input fields live as strings on the action so the modal can bind them
+   * as controlled inputs; parsed and validated in runPending. */
+  | { kind: "move-stop"; id: string; symbol: string; stopPrice: string; breakeven: boolean }
+  | { kind: "partial"; symbol: string; qty: string; positionQty: number };
 
 function PositionsTable({
   positions,
   orders,
   selectedSymbol,
   onSelectSymbol,
-  onClosePosition,
+  onAction,
 }: {
   positions: Position[];
   /** The working orders, so each row can show its own exits. Alpaca keeps
@@ -273,7 +398,7 @@ function PositionsTable({
   orders: Order[];
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
-  onClosePosition: (symbol: string) => void;
+  onAction: (action: PendingAction) => void;
 }) {
   if (positions.length === 0) {
     return <div className="widget-empty">No open positions.</div>;
@@ -316,7 +441,7 @@ function PositionsTable({
               <td className={plpc.cls}>{plpc.text}</td>
               <td>{exits.takeProfit === null ? "—" : exits.takeProfit.toFixed(2)}</td>
               <td>
-                {exits.stopLoss === null ? (
+                {exits.stopLoss === null || exits.stopOrderId === null ? (
                   /* Called out rather than left as a bare em dash: a missing
                      take-profit only forgoes an exit price, a missing stop
                      means nothing closes this position on the way down. */
@@ -324,20 +449,82 @@ function PositionsTable({
                     NO STOP
                   </span>
                 ) : (
-                  exits.stopLoss.toFixed(2)
+                  /* The price is the edit control: clicking it opens the
+                     move-stop dialog prefilled with where the stop is now. */
+                  <button
+                    type="button"
+                    className="row-action"
+                    title="Move this stop to a new price"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAction({
+                        kind: "move-stop",
+                        id: exits.stopOrderId!,
+                        symbol: p.symbol,
+                        stopPrice: exits.stopLoss!.toFixed(2),
+                        breakeven: false,
+                      });
+                    }}
+                  >
+                    {exits.stopLoss.toFixed(2)}
+                  </button>
                 )}
               </td>
               <td>
-                <button
-                  type="button"
-                  className="row-action"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onClosePosition(p.symbol);
-                  }}
-                >
-                  Close
-                </button>
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="row-action"
+                    disabled={exits.stopOrderId === null}
+                    title={
+                      exits.stopOrderId === null
+                        ? "No stop to move -- place one first"
+                        : "Move the stop to the entry price"
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (exits.stopOrderId === null) return;
+                      onAction({
+                        kind: "move-stop",
+                        id: exits.stopOrderId,
+                        symbol: p.symbol,
+                        stopPrice: String(num(p.avg_entry_price) ?? ""),
+                        breakeven: true,
+                      });
+                    }}
+                  >
+                    BE
+                  </button>
+                  <button
+                    type="button"
+                    className="row-action"
+                    disabled={(num(p.qty) ?? 0) < 2}
+                    title="Sell part of the position; exits are re-armed for the rest"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const positionQty = Math.floor(Math.abs(num(p.qty) ?? 0));
+                      onAction({
+                        kind: "partial",
+                        symbol: p.symbol,
+                        // Half by default -- the SCALE_OUT the strategies run.
+                        qty: String(Math.max(1, Math.floor(positionQty / 2))),
+                        positionQty,
+                      });
+                    }}
+                  >
+                    Sell…
+                  </button>
+                  <button
+                    type="button"
+                    className="row-action"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAction({ kind: "close", symbol: p.symbol });
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
               </td>
             </tr>
           );

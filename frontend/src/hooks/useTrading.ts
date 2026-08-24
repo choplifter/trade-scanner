@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { cancelOrder, closePosition, getAccount, getOrders, getPositions } from "../api/http";
+import {
+  cancelOrder,
+  closePosition,
+  getAccount,
+  getOrders,
+  getPositions,
+  replaceStop,
+  type CloseResult,
+} from "../api/http";
 import type { Account, Order, Position } from "../types/trading";
 
 /** Positions and orders change when *you* act, not on every tick, so this
@@ -48,7 +56,10 @@ export interface TradingActions {
    * mutation so the tables do not lag the fill. */
   afterAction: () => void;
   cancel: (orderId: string) => Promise<void>;
-  close: (symbol: string) => Promise<void>;
+  /** With qty, sells part of the position and re-arms its exits for the
+   * remainder; the result is returned so the caller can surface stop_lost. */
+  close: (symbol: string, qty?: number) => Promise<CloseResult>;
+  moveStop: (orderId: string, symbol: string, stopPrice: number) => Promise<void>;
 }
 
 export function useTrading(): TradingState & TradingActions {
@@ -122,8 +133,13 @@ export function useTrading(): TradingState & TradingActions {
       await cancelOrder(orderId);
       afterAction();
     },
-    close: async (symbol: string) => {
-      await closePosition(symbol);
+    close: async (symbol: string, qty?: number) => {
+      const result = await closePosition(symbol, qty);
+      afterAction();
+      return result;
+    },
+    moveStop: async (orderId: string, symbol: string, stopPrice: number) => {
+      await replaceStop(orderId, symbol, stopPrice);
       afterAction();
     },
   };

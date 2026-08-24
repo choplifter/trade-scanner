@@ -284,10 +284,50 @@ async function deleteJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 422) {
+    const detail = (await res.json()) as { detail: TradingRejection };
+    throw new OrderRejectedError(detail.detail);
+  }
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res, `PATCH ${path} failed: ${res.status}`));
+  }
+  return (await res.json()) as T;
+}
+
 export function cancelOrder(orderId: string): Promise<{ cancelled: string }> {
   return deleteJson<{ cancelled: string }>(`/trading/orders/${encodeURIComponent(orderId)}`);
 }
 
-export function closePosition(symbol: string): Promise<{ order: Order }> {
-  return deleteJson<{ order: Order }>(`/trading/positions/${encodeURIComponent(symbol)}`);
+/** Move a working stop order to a new price. The symbol rides along as a
+ * cross-check -- the server refuses if the id and the symbol disagree. */
+export function replaceStop(
+  orderId: string,
+  symbol: string,
+  stopPrice: number,
+): Promise<{ order: Order }> {
+  return patchJson<{ order: Order }>(`/trading/orders/${encodeURIComponent(orderId)}`, {
+    symbol,
+    stop_price: stopPrice,
+  });
+}
+
+/** The close response, which for a partial close also reports what happened
+ * to the position's exits -- see OrderService.close_position on stop_lost. */
+export interface CloseResult {
+  order: Order & {
+    cancelled_orders?: string[];
+    rearmed_orders?: Order[];
+    stop_lost?: boolean;
+  };
+}
+
+export function closePosition(symbol: string, qty?: number): Promise<CloseResult> {
+  const suffix = qty != null ? `?qty=${encodeURIComponent(qty)}` : "";
+  return deleteJson<CloseResult>(`/trading/positions/${encodeURIComponent(symbol)}${suffix}`);
 }

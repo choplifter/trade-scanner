@@ -139,6 +139,10 @@ export function num(value: string | null | undefined): number | null {
 export interface PositionExits {
   takeProfit: number | null;
   stopLoss: number | null;
+  /** The stop order's own id -- what the move-stop endpoint takes. The
+   * client is where this join lives, so the client supplies the id and the
+   * server only cross-checks it (see OrderService.replace_stop). */
+  stopOrderId: string | null;
 }
 
 /** Orders flattened so a bracket parent's legs are matched too -- Alpaca may
@@ -166,6 +170,7 @@ export function exitsForPosition(position: Position, orders: Order[]): PositionE
   return {
     takeProfit: limit ? num(limit.limit_price) : null,
     stopLoss: stop ? num(stop.stop_price) : null,
+    stopOrderId: stop ? stop.id : null,
   };
 }
 
