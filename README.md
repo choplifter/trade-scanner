@@ -3,16 +3,22 @@
 A personal, locally-run "stocks in play" scanner + chart dashboard in the
 spirit of trade-ideas.com, bearbulltrader.com, and warriortrading.com: a live
 **screener** (table or treemap heatmap view) where you build your own filters
-over 22 fields and results stream in over a WebSocket, with gainers /
-premarket gainers / losers / most-active shipped as editable presets ranked by
-a catalyst-boost/fade-risk-aware scoring formula, a click-to-chart candlestick
-widget with a session-anchored VWAP
-overlay, EMA/premarket/weekly/monthly range indicators, and company
-info/news, a dashboard-wide momentum alarm, AI-generated trade-idea
+over ~30 fields and results stream in over a WebSocket, with gainers /
+premarket gainers / losers / most-active plus Aziz- and Cameron-style scans
+shipped as editable presets ranked by a catalyst-boost/fade-risk-aware
+scoring formula; a click-to-chart candlestick widget with a session-anchored
+VWAP overlay, EMA/premarket/weekly/monthly range indicators, news pinned on
+the timeline, and company info/news; a drop-in **strategy engine** (ORB
+family, VWAP rules) whose signals are switchable from the UI, drawn on the
+chart, badged in the scanner and measured by the same backtest that would
+trade them; a **paper-trading panel** (risk-sized tickets, brackets, and
+live position management: move the stop, break-even, partial sells with
+exit re-arm); a dashboard-wide momentum alarm, AI-generated trade-idea
 annotations, a scanner-wide benchmark against SPY, a persistent scanner
 match history with fade-risk analysis, one-click backtesting of whatever
 screen you're looking at, CLI tools for re-validating the ranking formula
-against live and historical data, and a Plotly Dash analytics app — powered by Alpaca Markets' real-time consolidated (SIP) data feed, with
+against live and historical data, and a Plotly Dash analytics app — powered
+by Alpaca Markets' real-time consolidated (SIP) data feed, with
 float/market cap/short interest/company info and gap-filling news layered
 in from Financial Modeling Prep and FINRA.
 
@@ -36,6 +42,12 @@ with fewer annotations/columns.
 - **`ANTHROPIC_API_KEY`** — powers the "AI Trade Ideas" widget (Claude picks
   and annotates the 3 most notable scanner setups). Get a key at
   https://console.anthropic.com → API Keys.
+- **`TRADING_ENABLED=true`** — arms the trading panel's *write* paths
+  (ticket, cancel, close, stop moves, partial sells). Ships off so merging
+  the feature changes nothing until you opt in, and even switched on the
+  service refuses a non-paper account — this build is paper-only by
+  construction. The read side (account, positions, orders, balance curve)
+  works regardless.
 - **`FMP_API_KEY`** — free key at https://site.financialmodelingprep.com.
   Fills in the **Float**, **Mkt Cap**, **Country**, and **Company** scanner
   columns (Alpaca doesn't expose any of these), plus company
@@ -150,9 +162,12 @@ backend on port 8000, so both must be running.
   ran earlier and has since gone flat reads differently from one still
   actively moving right now), volume, RVOL, **RVol 1h**, and (when
   `FMP_API_KEY` is set) float, market cap, short interest % of float,
-  exchange, and country. A **Table / Heatmap** toggle switches the same live
-  feed to a treemap view (tile size = dollar volume, color = gap %,
-  click-to-chart same as the table).
+  exchange, and country. Rows also carry **strategy signal badges**
+  (`▲ ORB`, `▼ VWAP-ORB`, …) for the session's last setup per enabled rule
+  — hover for entry/stop/target and the reason — plus SHORT OK when the
+  broker lists the name as shortable. A **Table / Heatmap** toggle switches
+  the same live feed to a treemap view (tile size = dollar volume, color =
+  gap %, click-to-chart same as the table).
 
 ### Filter parameters
 
@@ -172,19 +187,34 @@ adding a field there makes it appear in the UI with no frontend change.
 | `avg_vol_20d` | Avg Volume (20d) | number | `gt`, `gte`, `lt`, `lte`, `between` |
 | `rvol` | Rel Volume | number | `gt`, `gte`, `lt`, `lte`, `between` |
 | `dollar_volume_today` | Dollar Volume | currency | `gt`, `gte`, `lt`, `lte`, `between` |
+| `avg_dollar_volume_20d` | Avg $ Volume (20d) | currency | `gt`, `gte`, `lt`, `lte`, `between` |
 | `day_high` | Day High | currency | `gt`, `gte`, `lt`, `lte`, `between` |
 | `day_low` | Day Low | currency | `gt`, `gte`, `lt`, `lte`, `between` |
 | `spread_pct` | Spread % | percent | `gt`, `gte`, `lt`, `lte`, `between` |
 | `volume_1h` | Volume (1h) | number | `gt`, `gte`, `lt`, `lte`, `between` |
 | `volume_surge` | Volume Surge (vs prior 1h) | number | `gt`, `gte`, `lt`, `lte`, `between` |
 | `rvol_1h` | Rel Volume (1h) | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `rvol_window` | Rel Volume (window) | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `volume_concentration` | Volume Concentration | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `is_green_candle` | Green Candle | boolean | `is_true`, `is_false` |
 | `is_hod` | At High of Day | boolean | `is_true`, `is_false` |
 | `is_lod` | At Low of Day | boolean | `is_true`, `is_false` |
 | `is_fade_risk` | Fade Risk | boolean | `is_true`, `is_false` |
+| `shortable` | Shortable | boolean | `is_true`, `is_false` |
 | `is_stale` | Stale Price | boolean | `is_true`, `is_false` |
+| `tape_coverage_pct` | Tape Coverage % | percent | `gt`, `gte`, `lt`, `lte`, `between` |
 | `float_shares` | Float | number | `gt`, `gte`, `lt`, `lte`, `between` |
 | `short_interest_pct` | Short % of Float | percent | `gt`, `gte`, `lt`, `lte`, `between` |
 | `rank_score` | Rank Score | number | `gt`, `gte`, `lt`, `lte`, `between` |
+| `has_news` | Has Headline | boolean | `is_true`, `is_false` |
+
+**`avg_dollar_volume_20d` vs `dollar_volume_today`.** The former is the
+stock's *typical* liquidity (20-day average shares × price) and is the right
+illiquidity filter in premarket, when every symbol's "today" is still near
+zero. The latter is what has actually traded so far today. **`has_news`**:
+`true` is always real; `false` only means no headline is *known* — the cache
+follows ranked symbols, so requiring a catalyst works, proving the absence
+of one doesn't.
 
 **`gap_pct` is not `pct_change`.** The former is the *overnight* gap — today's
 open against yesterday's close — and stops changing once the session opens.
@@ -236,8 +266,18 @@ they populate for your screen's results rather than the whole universe.
 | Top Gainers | `pct_change > 0` | `rank_score` desc |
 | Top Losers | `pct_change < 0` | `rank_score` asc |
 | Most Active | none | `dollar_volume_today` desc |
-| Volume Accelerating | `rvol_1h > 2`, `pct_change > 0` | `rvol_1h` desc |
+| Volume Accelerating | `rvol_window > 2`, `pct_change > 0`, `is_green_candle` | `rvol_window` desc |
+| Moderate Movers (3–8%) | `pct_change between 3 and 8`, `dollar_volume_today > 2M` | `dollar_volume_today` desc |
+| Aziz: Stocks in Play | `gap_pct > 2`, `rvol > 2`, `avg_dollar_volume_20d > 10M`, `last_price > 10`, `has_news` | `rank_score` desc |
+| Cameron: Momentum | `last_price between 2 and 20`, `pct_change > 10`, `float_shares < 20M`, `rvol > 5`, `has_news` | `pct_change` desc |
 | Low Float Runners | `float_shares < 20M`, `pct_change > 5`, `rvol > 3` | `pct_change` desc |
+
+The Aziz and Cameron presets are the two educators' published scans
+translated to this app's fields — each preset's description (hover it, or
+`GET /api/screener/presets`) documents the translation and its caveats,
+including that `has_news` can only *require* a catalyst (the headline cache
+follows ranked symbols, so its absence proves nothing) and that Cameron's
+sub-$5 sweet spot needs `UNIVERSE_MIN_PRICE` lowered in `backend/.env`.
 
 Screens are not persisted yet — presets are server-side, but a screen you
 build yourself is lost on reload.
@@ -256,7 +296,7 @@ Two resolutions, because they can reconstruct different things:
 | **Daily** | one bar per session | up to 365d | 1–5 days forward |
 | **Intraday (5m)** | every 5 minutes | capped at 45d | that session's close |
 
-**Daily** can reconstruct 16 of the 22 fields — anything derivable from an
+**Daily** can reconstruct most fields — anything derivable from an
 OHLCV bar and its trailing window. **Intraday** adds `volume_1h`,
 `volume_surge` and `rvol_1h`, which are rates measured *inside* a session and
 so have nothing to reconstruct from at daily resolution. It rebuilds each
@@ -322,40 +362,90 @@ past dates.
   starting heuristics, not yet backtested the way the catalyst/fade-risk
   multipliers were.
 - One chart widget: click any symbol anywhere in the app to load it —
-  candlestick chart, volume pane, and a session-anchored VWAP line (resets
-  at 09:30 ET), fed by Alpaca's live minute-bar stream, plus a company info
-  + recent news panel (name/sector/industry/description from FMP, headlines
-  from Alpaca's news feed). Every symbol is clickable, not just the main
-  scanner table — the AI past-picks table, the scanner benchmark table, and
-  the scanner match history leaderboards all load into the same chart. A
-  **Levels** toggle overlays EMA 9/20 (sourced from 1-minute bars
-  regardless of the displayed timeframe) plus premarket/weekly/monthly
-  range lines — a small pluggable indicator system
+  candlestick chart (1m/5m/15m aggregated client-side, plus native
+  1h/4h/D/W/M), volume pane, TradingView-style premarket/after-hours
+  tinting on intraday views, and a VWAP line switchable between the
+  session anchor (resets 09:30 ET) and the premarket anchor — on a gapper
+  the two disagree about which side of the line price is on. Fed by
+  Alpaca's live minute-bar stream, plus a company info + recent news panel
+  (name/sector/industry/description from FMP, headlines from both feeds).
+  Recent headlines are also **pinned on the timeline** as 📰 markers at the
+  bar nearest their publish time; clicking a pinned bar scrolls the news
+  panel to that story and highlights it. Every symbol is clickable, not
+  just the main scanner table — the AI past-picks table, the scanner
+  benchmark table, and the scanner match history leaderboards all load
+  into the same chart. A **Levels** toggle overlays EMA 9/20 (sourced from
+  1-minute bars regardless of the displayed timeframe), premarket/daily/
+  weekly/monthly range lines, hourly structure levels, the opening-range
+  box (5 or 15 min, following the Signals panel's switch), and the active
+  strategies' stop/target lines with an entry arrow on the bar the last
+  setup fired — a small pluggable indicator system
   (`backend/app/indicators/`): drop a new file in that directory exposing a
   `compute(ctx)` function and it shows up on the chart on the next
   request, no backend restart needed.
 - **Strategy scripts** (`backend/app/strategies/`): the same drop-in idea as
   the indicators above, but for trade setups rather than chart lines. A file
   exposes `NAME`, an optional `ENABLED` flag and an `evaluate(ctx)` that
-  returns a `Signal` (entry, stop, target) or `None`, and it is picked up by
-  both the live scanner and the backtest � one definition, so a rule cannot
-  be measured one way and traded another. Stops and targets are *places*
-  (under the opening range, under VWAP, under the flag low), and the R
-  multiple the backtest reports is the same distance
+  returns a `Signal` (entry, stop, target, side, stop trigger, scale-out) or
+  `None`, and it is picked up by the live scanner, the chart *and* the
+  backtest — one definition, so a rule cannot be measured one way and traded
+  another. Stops and targets are *places* (under the opening range, under
+  VWAP), and the R multiple the backtest reports is the same distance
   `trading/sizing.py::shares_for_risk` sizes a live position from.
-  `ENABLED = False` parks a rule without deleting the file.
+
+  Shipped rules: **Opening Range Breakout** (far-end stop), **ORB Break**
+  (wick stop), **ORB Retest**, **Premarket Range Breakout**, **VWAP Retest**
+  (break–hold–retest), **VWAP Open Range Break** (the session VWAP *line*
+  crossing out of the opening range — the box breaks it only when the whole
+  session has, volume-weighted) and its **Line Stop** sibling. Each file's
+  docstring carries its measured expectancy tables and, where a variant lost,
+  the record of why — the measurement history is part of the rule.
+
+  What sits *around* every rule, enforced once at the loader rather than in
+  each file: a **VWAP-side gate** (a signal may only be long above the
+  session VWAP, short below it), a **runtime on/off switch per strategy**
+  (the scanner's **Signals** panel — persisted, applied to scanner markers,
+  chart lines and full backtest runs alike; `--strategy <name>` at the CLI
+  bypasses it so a parked rule can still be measured), a switchable
+  **opening-range length** (5 min, Aziz's definition, or 15 min for names
+  whose first minutes are too thin to make a box), and a switchable
+  **measured-move fallback** (no mapped level above a breakout → aim at
+  entry + 2R instead of declining, which is what a new-high day otherwise
+  does to every break rule). Signals show as compact `▲ ORB`-style badges on
+  scanner rows and as stop/target lines plus an entry arrow on the chart.
 
   Two deliberate differences from the indicator loader. Strategies are loaded
-  once per run rather than re-executed per evaluation � a 120-symbol, 30-day
+  once per run rather than re-executed per evaluation — a 120-symbol, 30-day
   backtest is ~200k evaluations, and a report has to describe one version of
-  a rule anyway. And a file that fails to load is *reported*, not just
-  logged: a missing chart line is visible, whereas a strategy that never
-  loaded looks exactly like one that found no setups.
+  a rule anyway (backtests also pin the switch state at start, so a toggle
+  clicked mid-run cannot change the rule mid-walk). And a file that fails to
+  load is *reported*, not just logged: a missing chart line is visible,
+  whereas a strategy that never loaded looks exactly like one that found no
+  setups.
 
   Backtest a single rule with
-  `python -m scripts.strategy_backtest_report --strategy <name> [--cost-bps 10]`,
+  `python -m scripts.strategy_backtest_report --strategy <name> [--cost-bps 2]`,
   which reports expectancy in R alongside the percentage stats every other
-  backtest here uses.
+  backtest here uses, plus the exit mix and the ambiguous-bar share.
+- **Trading panel** (paper-only, off by default): order entry and live
+  position management against the Alpaca **paper** account. Write paths are
+  double-gated in the service layer — `TRADING_ENABLED=true` must be set in
+  `backend/.env`, and a live (non-paper) account is refused outright —
+  with fat-finger ceilings (`TRADING_MAX_ORDER_QTY` / `_NOTIONAL` /
+  `_NOTIONAL_PCT`) checked before anything reaches the broker. The ticket
+  sizes from risk (risk % of equity or a fixed amount against your stop
+  distance — the same arithmetic the strategy backtests report R in) or from
+  a fixed quantity, previews server-side before submitting, and attaches
+  take-profit/stop legs as a bracket or OTO. The positions table joins each
+  position to its working exits (including a bracket's stop parked in
+  Alpaca's `held` status, which the naive "open orders" query hides — a
+  position without a stop gets a loud **NO STOP** badge) and manages them in
+  place: click the stop price to move it, **BE** sets it to your entry
+  (refused with the reason if price is on the wrong side), **Sell…** does a
+  partial close that re-arms the remainder's stop and take-profit as one OCO
+  pair at their old prices — and says so loudly if the stop could not come
+  back. Orders (working/filled), an account equity curve and the account
+  summary round out the tabs.
 
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks the 3 most
   notable current setups from gap %, RVOL, dollar volume, HOD status, news
