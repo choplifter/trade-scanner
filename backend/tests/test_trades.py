@@ -332,3 +332,130 @@ def test_sync_trades_pairs_persists_and_reports(tmp_path):
     client._orders = []
     again = asyncio.run(service.sync_trades(store))
     assert [t["symbol"] for t in again["trades"]] == ["DAIC"]
+
+
+# --- periods ---------------------------------------------------------------
+
+from zoneinfo import ZoneInfo
+
+from app.trading.errors import OrderRejected
+from app.trading.trades import bucket_by_day, in_period, period_start
+
+ET = ZoneInfo("America/New_York")
+# Tuesday 2026-08-25, 19:30 ET -- after the close, and already Wednesday in UTC.
+TUESDAY_EVENING = datetime(2026, 8, 25, 19, 30, tzinfo=ET)
+
+
+def _et(y, m, d, hh=0, mm=0):
+    return datetime(y, m, d, hh, mm, tzinfo=ET)
+
+
+def test_period_start_is_the_et_calendar_not_utc():
+    """Day = this ET date's midnight, even though UTC has rolled over."""
+    assert period_start("day", TUESDAY_EVENING) == _et(2026, 8, 25)
+    assert period_start("week", TUESDAY_EVENING) == _et(2026, 8, 24)  # Monday
+    assert period_start("month", TUESDAY_EVENING) == _et(2026, 8, 1)
+    assert period_start("all", TUESDAY_EVENING) is None
+    assert period_start("DAY", TUESDAY_EVENING) == _et(2026, 8, 25)
+
+
+def test_period_start_refuses_a_rolling_window_it_does_not_know():
+    with pytest.raises(ValueError):
+        period_start("7d", TUESDAY_EVENING)
+
+
+def test_a_late_evening_close_belongs_to_its_et_date():
+    """23:00 ET Monday is 03:00Z Tuesday. It is Monday's trade."""
+    rows = [
+        {"closed_at": "2026-08-25T03:00:00+00:00", "pnl": 10.0},  # Mon 23:00 ET
+        {"closed_at": "2026-08-25T15:00:00+00:00", "pnl": -4.0},  # Tue 11:00 ET
+    ]
+    assert in_period(rows, period_start("day", TUESDAY_EVENING)) == rows[1:]
+    assert in_period(rows, period_start("week", TUESDAY_EVENING)) == rows
+    assert in_period(rows, None) == rows
+    assert [b["date"] for b in bucket_by_day(rows)] == ["2026-08-24", "2026-08-25"]
+
+
+def test_buckets_subtotal_each_day_and_run_a_cumulative():
+    rows = [
+        {"closed_at": "2026-08-24T14:00:00+00:00", "pnl": 100.0},
+        {"closed_at": "2026-08-24T15:00:00+00:00", "pnl": -30.0},
+        {"closed_at": "2026-08-24T16:00:00+00:00", "pnl": 0.0},
+        {"closed_at": "2026-08-25T14:00:00+00:00", "pnl": -50.0},
+    ]
+    buckets = bucket_by_day(rows)
+    assert buckets[0] == {
+        "date": "2026-08-24",
+        "count": 3,
+        "wins": 1,
+        "losses": 1,
+        "pnl": pytest.approx(70.0),
+        "cumulative_pnl": pytest.approx(70.0),
+    }
+    assert buckets[1]["pnl"] == pytest.approx(-50.0)
+    assert buckets[1]["cumulative_pnl"] == pytest.approx(20.0)
+    assert bucket_by_day([]) == []
+
+
+def test_sync_trades_narrows_to_the_period_but_syncs_everything(tmp_path):
+    old = _order(
+        id="old-entry",
+        filled_at="2026-08-20T14:00:00Z",
+        legs=[
+            _order(
+                id="old-exit",
+                side="sell",
+                order_type="stop",
+                stop_price="4.0",
+                filled_avg_price="4.30",
+                filled_at="2026-08-20T15:00:00Z",
+            )
+        ],
+    )
+    today = _order(
+        id="new-entry",
+        filled_at="2026-08-25T14:00:00Z",
+        legs=[
+            _order(
+                id="new-exit",
+                side="sell",
+                order_type="stop",
+                stop_price="4.0",
+                filled_avg_price="4.10",
+                filled_at="2026-08-25T15:00:00Z",
+            )
+        ],
+    )
+    client = _StubTradingClient([old, today])
+    clients = type("C", (), {"trading": client, "feed": "sip"})()
+    service = OrderService(
+        clients=clients,
+        settings=Settings(alpaca_api_key_id="k", alpaca_api_secret_key="s"),
+    )
+    store = _store(tmp_path)
+
+    # The period is measured from *now*, so pin it to a day both trades precede
+    # only in the "all" sense: patch period_start's clock via a wrapper.
+    import app.trading.service as service_module
+
+    real = service_module.period_start
+    service_module.period_start = lambda key, now=None: real(key, TUESDAY_EVENING)
+    try:
+        day = asyncio.run(service.sync_trades(store, "day"))
+        everything = asyncio.run(service.sync_trades(store, "all"))
+        with pytest.raises(OrderRejected) as exc:
+            asyncio.run(service.sync_trades(store, "7d"))
+    finally:
+        service_module.period_start = real
+
+    assert exc.value.field == "range"
+    assert day["range"] == "day"
+    assert datetime.fromisoformat(day["period_start"]) == _et(2026, 8, 25)
+    assert [t["entry_order_id"] for t in day["trades"]] == ["new-entry"]
+    assert day["summary"]["count"] == 1 and day["summary"][
+        "total_pnl"
+    ] == pytest.approx(-10.0)
+    assert [b["date"] for b in day["buckets"]] == ["2026-08-25"]
+    # Both trips were synced into the store regardless of the narrowing.
+    assert len(everything["trades"]) == 2 and everything["period_start"] is None
+    assert [b["date"] for b in everything["buckets"]] == ["2026-08-20", "2026-08-25"]

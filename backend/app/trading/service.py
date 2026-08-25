@@ -13,7 +13,7 @@ get_all_assets/get_asset/get_corporate_announcements.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.alpaca.client import AlpacaClients
@@ -26,7 +26,14 @@ from app.trading.errors import (
 )
 from app.trading.models import OrderTicket, ResolvedOrder, resolve_ticket
 from app.trading.trade_store import TradeStore
-from app.trading.trades import fills_from_orders, round_trips, summarize
+from app.trading.trades import (
+    bucket_by_day,
+    fills_from_orders,
+    in_period,
+    period_start,
+    round_trips,
+    summarize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +163,7 @@ class OrderService:
         request = GetOrdersRequest(status=query, limit=_ORDER_FETCH_LIMIT)
         return _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
 
-    async def sync_trades(self, store: TradeStore) -> dict:
+    async def sync_trades(self, store: TradeStore, range_key: str = "all") -> dict:
         """Closed round trips -- which position made or lost what.
 
         Re-pairs the broker's recent fills on every call and persists any
@@ -171,9 +178,19 @@ class OrderService:
         stop belonged to which entry. Symbols whose fills do not net to
         flat are positions, not trades, and are reported separately so the
         UI can say so instead of showing nothing.
+
+        `range_key` narrows the answer to a calendar period (day / week /
+        month / all, in ET -- see trades.period_start); the summary and the
+        per-day buckets cover the narrowed set, so "how did I do today" is
+        one request. The sync itself is always complete.
         """
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
+
+        try:
+            start = period_start(range_key)
+        except ValueError as exc:
+            raise OrderRejected(str(exc), field="range") from None
 
         request = GetOrdersRequest(
             status=QueryOrderStatus.CLOSED, limit=_ORDER_FETCH_LIMIT, nested=True
@@ -181,10 +198,13 @@ class OrderService:
         orders = _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
         closed, still_open = round_trips(fills_from_orders(orders or []))
         await store.upsert(closed)
-        trades = await store.all()
+        selected = in_period(await store.all(), start)
         return {
-            "trades": trades,
-            "summary": summarize(trades),
+            "range": (range_key or "all").lower(),
+            "period_start": start.isoformat() if start else None,
+            "trades": selected,
+            "summary": summarize(selected),
+            "buckets": bucket_by_day(selected),
             "open_symbols": sorted(still_open),
         }
 
@@ -645,7 +665,7 @@ def _with_live_point(points: list[dict], equity: float) -> list[dict]:
     balance *is* at the moment of the request, and dating it forward would put
     a point in the future, which the chart would happily draw.
     """
-    now = int(datetime.now(timezone.utc).timestamp())
+    now = int(datetime.now(UTC).timestamp())
     if points and now <= points[-1]["t"]:
         return points
     previous = points[-1]["equity"] if points else None

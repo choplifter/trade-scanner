@@ -1601,6 +1601,22 @@ a.symbol-news-headline {
   flex-shrink: 0;
 }
 
+/* Two selectors on one bar: the period on the left, the view on the right.
+   Wraps on a narrow widget rather than clipping either. */
+.trading-subview-bar-split {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+}
+
+/* The per-day breakdown sits above the trade list and reads as a distinct
+   block: a little air below, and the same border the summary uses. */
+.trading-breakdown {
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
 .trading-subview-body {
   flex: 1;
   min-height: 0;

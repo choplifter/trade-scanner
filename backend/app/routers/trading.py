@@ -89,8 +89,15 @@ async def get_orders(request: Request, status: str = "open") -> dict:
 
 
 @router.get("/trades")
-async def get_trades(request: Request) -> dict:
-    """Closed round trips with realized P&L, newest first, plus a summary.
+async def get_trades(
+    request: Request,
+    # ?range=day|week|month|all -- calendar periods in ET. Aliased for the
+    # same reason as portfolio-history's. An unknown value is refused by
+    # the service and arrives as the usual typed 422.
+    range_key: str = Query("all", alias="range"),
+) -> dict:
+    """Closed round trips with realized P&L, newest first, plus a summary
+    and per-day subtotals for the requested period.
 
     Read-only like the other history routes, and each call also records
     any newly closed trip -- see OrderService.sync_trades for why the
@@ -100,7 +107,7 @@ async def get_trades(request: Request) -> dict:
     if store is None:
         raise HTTPException(status_code=503, detail="Trade record not initialised")
     try:
-        return await _service(request).sync_trades(store)
+        return await _service(request).sync_trades(store, range_key)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:

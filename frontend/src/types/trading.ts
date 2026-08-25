@@ -118,9 +118,32 @@ export interface TradeSummary {
   total_r: number | null;
 }
 
+/** Calendar periods, in ET: today's session, this week from Monday, this
+ * month from the 1st. Not rolling windows. */
+export type TradesRange = "day" | "week" | "month" | "all";
+
+/** One ET trading date's subtotal within the requested period. */
+export interface TradeBucket {
+  /** YYYY-MM-DD in ET. */
+  date: string;
+  count: number;
+  wins: number;
+  losses: number;
+  pnl: number;
+  /** Running total through this date, oldest first. */
+  cumulative_pnl: number;
+}
+
 export interface TradesResponse {
+  range: TradesRange;
+  /** ISO start of the period, or null for "all". */
+  period_start: string | null;
+  /** Only the trades closed within the period. */
   trades: Trade[];
+  /** Summary over those trades. */
   summary: TradeSummary;
+  /** Per-day subtotals over those trades, oldest first. */
+  buckets: TradeBucket[];
   /** Symbols with fills whose position is still open -- not trades yet. */
   open_symbols: string[];
 }

@@ -451,8 +451,13 @@ past dates.
   partial close that re-arms the remainder's stop and take-profit as one OCO
   pair at their old prices — and says so loudly if the stop could not come
   back. Orders (working/filled/**trades**), an account equity curve and the
-  account summary round out the tabs. The Trades view pairs fills back into
-  round trips — Alpaca has no closed-positions endpoint — and shows each
+  account summary round out the tabs. The Filled and Trades views share a
+  **Day / Week / Month / All** period (calendar periods in ET, not rolling
+  windows), and the Trades summary recomputes for the period; on Week and
+  Month a per-day breakdown (trades, W/L, P&L, running total) sits above
+  the list, and clicking a day narrows the list to it. The Trades view
+  pairs fills back into round trips — Alpaca has no closed-positions
+  endpoint — and shows each
   closed position's entry, exit, P&L, % and **R** (P&L over the initial
   risk to the stop the entry was placed with, the unit the strategy
   backtests report expectancy in), with totals, win rate, profit factor and

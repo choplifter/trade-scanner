@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useBalanceHistory } from "../../hooks/useBalanceHistory";
 import { useOrderHistory } from "../../hooks/useOrderHistory";
@@ -12,7 +12,9 @@ import type {
   Position,
   PortfolioHistoryResponse,
   Trade,
+  TradeBucket,
   TradeSummary,
+  TradesRange,
 } from "../../types/trading";
 import { exitsForPosition, num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
@@ -38,6 +40,59 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 const BALANCE_RANGES: BalanceRange[] = ["1D", "1W", "1M", "3M", "1Y", "ALL"];
+
+/** Calendar periods for the Filled and Trades views. Labelled as periods
+ * ("Day", not "1D") because they are calendar windows in ET -- this
+ * session, this week from Monday, this month -- not rolling ones like the
+ * balance curve's. */
+const TRADE_RANGES: { id: TradesRange; label: string; title: string }[] = [
+  { id: "day", label: "Day", title: "Today's session (ET)." },
+  { id: "week", label: "Week", title: "This week, from Monday (ET)." },
+  { id: "month", label: "Month", title: "This month, from the 1st (ET)." },
+  { id: "all", label: "All", title: "Everything on record." },
+];
+
+/** YYYY-MM-DD of an instant in ET -- the calendar a session lives in. A
+ * fill at 19:30 ET belongs to that day even though UTC has rolled over.
+ * Mirrors trades.period_start on the backend, which applies the same
+ * calendar to the Trades view server-side. */
+const ET_DATE = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function etDate(ms: number): string {
+  const parts = ET_DATE.formatToParts(new Date(ms));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** First ET date of the period containing `nowMs`, or null for "all". */
+function periodStartDate(range: TradesRange, nowMs: number): string | null {
+  if (range === "all") return null;
+  const today = etDate(nowMs);
+  if (range === "day") return today;
+  if (range === "month") return `${today.slice(0, 8)}01`;
+  // Back to Monday. Noon UTC of the ET date keeps the arithmetic clear of
+  // any DST edge when stepping days.
+  const d = new Date(`${today}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+function inPeriod(stamp: string | null, range: TradesRange, nowMs: number): boolean {
+  const start = periodStartDate(range, nowMs);
+  if (start === null) return true;
+  if (!stamp) return false;
+  const ms = Date.parse(stamp);
+  return Number.isFinite(ms) && etDate(ms) >= start;
+}
+
+function periodNoun(range: TradesRange): string {
+  return range === "day" ? "today" : range === "week" ? "this week" : range === "month" ? "this month" : "yet";
+}
 
 /** Ranges whose points are one-per-session, so the chart labels them as
  * dates. Mirrors _DAILY_TIMEFRAMES on the backend, matched on the timeframe
@@ -111,9 +166,21 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
   const [balanceRange, setBalanceRange] = useState<BalanceRange>("1M");
   // Both hooks are held here rather than inside their panels so the header
   // count can read them, and both stay idle until their tab is open.
+  // One period for both history views, so switching Filled <-> Trades keeps
+  // looking at the same days. Defaults to today: the question the tab is
+  // opened for most often is "how is the session going".
+  const [tradesRange, setTradesRange] = useState<TradesRange>("day");
   const orderHistory = useOrderHistory(tab === "orders" && ordersView === "filled");
-  const tradeHistory = useTrades(tab === "orders" && ordersView === "trades");
+  const tradeHistory = useTrades(tab === "orders" && ordersView === "trades", tradesRange);
   const balance = useBalanceHistory(balanceRange, tab === "balance");
+  // The fills view is narrowed client-side -- the broker's closed-orders
+  // query has no calendar filter, and the list is already in hand.
+  const periodFills = useMemo(() => {
+    const now = Date.now();
+    return orderHistory.fills.filter((o) =>
+      inPeriod(o.filled_at ?? o.submitted_at ?? o.created_at, tradesRange, now),
+    );
+  }, [orderHistory.fills, tradesRange]);
   // One pending destructive action at a time, confirmed before it runs.
   // Cancelling a protective stop and flattening a position are both easy to
   // hit by accident in a dense table, and neither is undoable.
@@ -180,7 +247,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
       ? positions.length
       : tab === "orders"
         ? ordersView === "filled"
-          ? orderHistory.fills.length
+          ? periodFills.length
           : ordersView === "trades"
             ? tradeHistory.trades.length
             : orders.length
@@ -247,8 +314,10 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             view={ordersView}
             onViewChange={setOrdersView}
             orders={orders}
-            history={orderHistory}
+            history={{ ...orderHistory, fills: periodFills }}
             trades={tradeHistory}
+            range={tradesRange}
+            onRangeChange={setTradesRange}
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
             onCancelOrder={(id, symbol) => setPending({ kind: "cancel", id, symbol })}
@@ -654,6 +723,8 @@ function OrdersPanel({
   orders,
   history,
   trades,
+  range,
+  onRangeChange,
   selectedSymbol,
   onSelectSymbol,
   onCancelOrder,
@@ -663,13 +734,33 @@ function OrdersPanel({
   orders: Order[];
   history: { fills: Order[]; loading: boolean; error: string | null };
   trades: TradesState;
+  range: TradesRange;
+  onRangeChange: (range: TradesRange) => void;
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
   onCancelOrder: (id: string, symbol: string) => void;
 }) {
   return (
     <div className="trading-subview">
-      <div className="trading-subview-bar">
+      <div className="trading-subview-bar trading-subview-bar-split">
+        {/* Working orders are whatever is live right now; a period only
+            means something for the two history views. */}
+        {view !== "working" && (
+          <div className="timeframe-selector">
+            {TRADE_RANGES.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                className="timeframe-button"
+                aria-pressed={range === r.id}
+                onClick={() => onRangeChange(r.id)}
+                title={r.title}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="timeframe-selector">
           <button
             type="button"
@@ -715,6 +806,8 @@ function OrdersPanel({
             <TradesTable
               trades={trades.trades}
               summary={trades.summary}
+              buckets={trades.buckets}
+              range={range}
               openSymbols={trades.openSymbols}
               selectedSymbol={selectedSymbol}
               onSelectSymbol={onSelectSymbol}
@@ -727,6 +820,7 @@ function OrdersPanel({
         ) : (
           <FillsTable
             fills={history.fills}
+            range={range}
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
           />
@@ -740,15 +834,17 @@ function OrdersPanel({
  * something that already happened, and there is nothing to do to it. */
 function FillsTable({
   fills,
+  range,
   selectedSymbol,
   onSelectSymbol,
 }: {
   fills: Order[];
+  range: TradesRange;
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
 }) {
   if (fills.length === 0) {
-    return <div className="widget-empty">No fills yet.</div>;
+    return <div className="widget-empty">No fills {periodNoun(range)}.</div>;
   }
   return (
     <table className="performance-table">
@@ -798,29 +894,79 @@ function tradeTime(stamp: string): string {
 function TradesTable({
   trades,
   summary,
+  buckets,
+  range,
   openSymbols,
   selectedSymbol,
   onSelectSymbol,
 }: {
   trades: Trade[];
   summary: TradeSummary | null;
+  buckets: TradeBucket[];
+  range: TradesRange;
   openSymbols: string[];
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
 }) {
+  // A day picked from the breakdown narrows the trade list to that date;
+  // picking it again (or changing the period) lets go.
+  const [dayFilter, setDayFilter] = useState<string | null>(null);
+  useEffect(() => setDayFilter(null), [range]);
+  const shown = useMemo(
+    () => (dayFilter ? trades.filter((t) => etDate(Date.parse(t.closed_at)) === dayFilter) : trades),
+    [trades, dayFilter],
+  );
+
   if (trades.length === 0) {
     return (
       <div className="widget-empty">
-        No closed trades yet.
+        No closed trades {periodNoun(range)}.
         {openSymbols.length > 0 ? ` Still open: ${openSymbols.join(", ")}.` : ""}
       </div>
     );
   }
   const total = summary ? signedNumber(summary.total_pnl, 2) : null;
   const avgR = summary ? signedNumber(summary.avg_r, 2, "R") : null;
+  // The breakdown earns its space once a period spans more than one day.
+  const showBreakdown = range !== "day" && buckets.length > 1;
   return (
     <div className="trading-subview">
       <div className="trading-subview-body">
+        {showBreakdown && (
+          <table className="performance-table trading-breakdown">
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th>Trades</th>
+                <th>W / L</th>
+                <th>P&amp;L</th>
+                <th title="Running total through this day.">Cum.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {buckets.map((b) => {
+                const pnl = signedNumber(b.pnl, 2);
+                const cum = signedNumber(b.cumulative_pnl, 2);
+                return (
+                  <tr
+                    key={b.date}
+                    aria-selected={b.date === dayFilter}
+                    onClick={() => setDayFilter(dayFilter === b.date ? null : b.date)}
+                    title="Click to show only this day's trades."
+                  >
+                    <td>{b.date}</td>
+                    <td>{b.count}</td>
+                    <td>
+                      {b.wins} / {b.losses}
+                    </td>
+                    <td className={pnl.cls}>{pnl.text}</td>
+                    <td className={cum.cls}>{cum.text}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
         <table className="performance-table">
           <thead>
             <tr>
@@ -838,7 +984,7 @@ function TradesTable({
             </tr>
           </thead>
           <tbody>
-            {trades.map((t) => {
+            {shown.map((t) => {
               const pnl = signedNumber(t.pnl, 2);
               const pct = signedNumber(t.pnl_pct, 2, "%");
               const r = signedNumber(t.r_multiple, 2, "R");

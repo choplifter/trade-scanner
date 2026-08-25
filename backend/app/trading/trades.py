@@ -18,11 +18,18 @@ results and backtests read side by side. A stop that was moved later
 """
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
+
+from app.services.market_clock import ET
 
 # Fills are reported in shares, but as strings from the broker; anything
 # below this is float noise from the arithmetic, not a position.
 _FLAT = 1e-9
+
+# The windows the Trades view can be narrowed to. Calendar periods in ET --
+# the calendar a session lives in -- not rolling 24h/7d windows: "today" is
+# this session, "this week" starts Monday, "this month" on the 1st.
+RANGES = ("day", "week", "month", "all")
 
 
 @dataclass(frozen=True)
@@ -233,6 +240,72 @@ def summarize(trades: list[dict]) -> dict:
         "avg_r": (sum(rs) / len(rs)) if rs else None,
         "total_r": sum(rs) if rs else None,
     }
+
+
+# --- periods --------------------------------------------------------------
+
+
+def period_start(range_key: str, now: datetime | None = None) -> datetime | None:
+    """When the requested calendar period began, in UTC; None for "all".
+
+    Anchored in ET because that is where the trading day lives: a trade
+    closed at 19:30 ET is that day's trade, though it is already tomorrow
+    in UTC. Raises ValueError for a range that is not in RANGES.
+    """
+    key = (range_key or "all").lower()
+    if key not in RANGES:
+        raise ValueError(
+            f"Unknown range {range_key!r}; expected one of {', '.join(RANGES)}"
+        )
+    if key == "all":
+        return None
+    day = (now or datetime.now(UTC)).astimezone(ET).date()
+    if key == "week":
+        day -= timedelta(days=day.weekday())
+    elif key == "month":
+        day = day.replace(day=1)
+    return datetime.combine(day, time.min, tzinfo=ET).astimezone(UTC)
+
+
+def in_period(trades: list[dict], start: datetime | None) -> list[dict]:
+    """The trade dicts closed at or after `start`; all of them for None."""
+    if start is None:
+        return list(trades)
+    kept = []
+    for t in trades:
+        closed = _when(t.get("closed_at"))
+        if closed is not None and closed >= start:
+            kept.append(t)
+    return kept
+
+
+def bucket_by_day(trades: list[dict]) -> list[dict]:
+    """One row per ET trading date, oldest first, with a running total --
+    the "which days made or lost the money" view of a week or a month."""
+    days: dict[str, dict] = {}
+    for t in trades:
+        closed = _when(t.get("closed_at"))
+        if closed is None:
+            continue
+        key = closed.astimezone(ET).date().isoformat()
+        bucket = days.setdefault(
+            key, {"date": key, "count": 0, "wins": 0, "losses": 0, "pnl": 0.0}
+        )
+        pnl = float(t["pnl"])
+        bucket["count"] += 1
+        bucket["pnl"] += pnl
+        if pnl > 0:
+            bucket["wins"] += 1
+        elif pnl < 0:
+            bucket["losses"] += 1
+    running = 0.0
+    out = []
+    for key in sorted(days):
+        bucket = days[key]
+        running += bucket["pnl"]
+        bucket["cumulative_pnl"] = running
+        out.append(bucket)
+    return out
 
 
 # --- from the broker's order dumps --------------------------------------
