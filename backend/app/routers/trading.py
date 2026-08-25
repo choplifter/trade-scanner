@@ -88,6 +88,28 @@ async def get_orders(request: Request, status: str = "open") -> dict:
     return {"orders": orders, "status": status}
 
 
+@router.get("/trades")
+async def get_trades(request: Request) -> dict:
+    """Closed round trips with realized P&L, newest first, plus a summary.
+
+    Read-only like the other history routes, and each call also records
+    any newly closed trip -- see OrderService.sync_trades for why the
+    store, not the broker, is the record.
+    """
+    store = getattr(request.app.state, "trade_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Trade record not initialised")
+    try:
+        return await _service(request).sync_trades(store)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Trade sync failed")
+        raise HTTPException(status_code=502, detail="Failed to reach the trading API")
+
+
 @router.get("/portfolio-history")
 async def get_portfolio_history(
     request: Request,

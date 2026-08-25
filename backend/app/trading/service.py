@@ -25,6 +25,8 @@ from app.trading.errors import (
     rejection_from_api_error,
 )
 from app.trading.models import OrderTicket, ResolvedOrder, resolve_ticket
+from app.trading.trade_store import TradeStore
+from app.trading.trades import fills_from_orders, round_trips, summarize
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +155,38 @@ class OrderService:
 
         request = GetOrdersRequest(status=query, limit=_ORDER_FETCH_LIMIT)
         return _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
+
+    async def sync_trades(self, store: TradeStore) -> dict:
+        """Closed round trips -- which position made or lost what.
+
+        Re-pairs the broker's recent fills on every call and persists any
+        trip that has closed, then answers from the store rather than from
+        the broker: the store is the record. It outlives a paper-account
+        reset (which wipes the broker's history) and the 500-order cap on
+        the closed-orders query (which would silently drop the oldest trips
+        of a busy account).
+
+        nested=True is what makes the R multiple possible: a bracket's
+        stop-loss leg arrives under its parent, so the pairing knows which
+        stop belonged to which entry. Symbols whose fills do not net to
+        flat are positions, not trades, and are reported separately so the
+        UI can say so instead of showing nothing.
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED, limit=_ORDER_FETCH_LIMIT, nested=True
+        )
+        orders = _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
+        closed, still_open = round_trips(fills_from_orders(orders or []))
+        await store.upsert(closed)
+        trades = await store.all()
+        return {
+            "trades": trades,
+            "summary": summarize(trades),
+            "open_symbols": sorted(still_open),
+        }
 
     async def portfolio_history(self, range_key: str = "1M") -> dict:
         """The account equity curve, for one of the ranges in _HISTORY_RANGES.

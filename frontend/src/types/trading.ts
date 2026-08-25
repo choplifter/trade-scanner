@@ -77,6 +77,54 @@ export interface OrdersResponse {
   status: string;
 }
 
+/** One closed round trip: opened from flat, closed back to flat. Computed
+ * server-side from fills and persisted there, since the broker keeps no
+ * such thing. Numbers, not strings -- these are ours, not Alpaca's. */
+export interface Trade {
+  id: string;
+  symbol: string;
+  side: "long" | "short";
+  opened_at: string;
+  closed_at: string;
+  qty: number;
+  entry_avg: number;
+  exit_avg: number;
+  pnl: number;
+  pnl_pct: number | null;
+  /** The stop-loss leg the entry was placed with; null for a naked entry. */
+  initial_stop: number | null;
+  risk_per_share: number | null;
+  /** pnl / (risk_per_share * qty): the unit the strategy backtests report
+   * expectancy in. Null when there was no initial stop to measure against. */
+  r_multiple: number | null;
+  entry_order_id: string;
+  exit_order_ids: string[];
+  fill_count: number;
+}
+
+export interface TradeSummary {
+  count: number;
+  wins: number;
+  losses: number;
+  /** Percent of decided (non-flat) trades that won; null with none. */
+  win_rate: number | null;
+  total_pnl: number;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  /** How many trades had an R to measure. */
+  r_count: number;
+  avg_r: number | null;
+  total_r: number | null;
+}
+
+export interface TradesResponse {
+  trades: Trade[];
+  summary: TradeSummary;
+  /** Symbols with fills whose position is still open -- not trades yet. */
+  open_symbols: string[];
+}
+
 /** The ranges the balance curve offers. The matching Alpaca period and
  * timeframe are chosen server-side -- the valid timeframe depends on the
  * period's length, so the pair is not the UI's to assemble. */

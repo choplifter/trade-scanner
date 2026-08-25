@@ -450,8 +450,15 @@ past dates.
   (refused with the reason if price is on the wrong side), **Sell…** does a
   partial close that re-arms the remainder's stop and take-profit as one OCO
   pair at their old prices — and says so loudly if the stop could not come
-  back. Orders (working/filled), an account equity curve and the account
-  summary round out the tabs.
+  back. Orders (working/filled/**trades**), an account equity curve and the
+  account summary round out the tabs. The Trades view pairs fills back into
+  round trips — Alpaca has no closed-positions endpoint — and shows each
+  closed position's entry, exit, P&L, % and **R** (P&L over the initial
+  risk to the stop the entry was placed with, the unit the strategy
+  backtests report expectancy in), with totals, win rate, profit factor and
+  expectancy underneath. Round trips are persisted into
+  `scanner_history.sqlite3` (`trades` table), so the record survives a
+  paper-account reset and the broker's 500-order history cap.
 
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks the 3 most
   notable current setups from gap %, RVOL, dollar volume, HOD status, news

@@ -2,8 +2,18 @@ import { useState } from "react";
 
 import { useBalanceHistory } from "../../hooks/useBalanceHistory";
 import { useOrderHistory } from "../../hooks/useOrderHistory";
+import { useTrades } from "../../hooks/useTrades";
+import type { TradesState } from "../../hooks/useTrades";
 import { useTrading } from "../../hooks/useTrading";
-import type { Account, BalanceRange, Order, Position, PortfolioHistoryResponse } from "../../types/trading";
+import type {
+  Account,
+  BalanceRange,
+  Order,
+  Position,
+  PortfolioHistoryResponse,
+  Trade,
+  TradeSummary,
+} from "../../types/trading";
 import { exitsForPosition, num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
 import { Modal } from "../common/Modal";
@@ -13,8 +23,11 @@ import { OrderTicket } from "./OrderTicket";
 type Tab = "ticket" | "positions" | "orders" | "balance" | "account";
 
 /** Working orders and completed fills are both "orders", but one is a thing
- * you can still act on and the other is a record. Same tab, two views. */
-type OrdersView = "working" | "filled";
+ * you can still act on and the other is a record. Trades are the fills
+ * paired back into round trips -- the record that answers "which position
+ * made or lost what", which neither of the other two can. Same tab, three
+ * views. */
+type OrdersView = "working" | "filled" | "trades";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "ticket", label: "Ticket" },
@@ -56,6 +69,20 @@ function signedMoney(value: string | null | undefined): { text: string; cls: str
   };
 }
 
+/** Like signedMoney/signedPct, but for the numbers the trades endpoint
+ * returns -- already numbers, already in the unit shown. */
+function signedNumber(
+  value: number | null,
+  digits: number,
+  suffix = "",
+): { text: string; cls: string } {
+  if (value === null || !Number.isFinite(value)) return { text: "—", cls: "" };
+  return {
+    text: `${value > 0 ? "+" : ""}${value.toFixed(digits)}${suffix}`,
+    cls: value === 0 ? "" : value > 0 ? "delta-up" : "delta-down",
+  };
+}
+
 interface TradingWidgetProps {
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
@@ -85,6 +112,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
   // Both hooks are held here rather than inside their panels so the header
   // count can read them, and both stay idle until their tab is open.
   const orderHistory = useOrderHistory(tab === "orders" && ordersView === "filled");
+  const tradeHistory = useTrades(tab === "orders" && ordersView === "trades");
   const balance = useBalanceHistory(balanceRange, tab === "balance");
   // One pending destructive action at a time, confirmed before it runs.
   // Cancelling a protective stop and flattening a position are both easy to
@@ -153,7 +181,9 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
       : tab === "orders"
         ? ordersView === "filled"
           ? orderHistory.fills.length
-          : orders.length
+          : ordersView === "trades"
+            ? tradeHistory.trades.length
+            : orders.length
         : 0;
 
   return (
@@ -218,6 +248,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             onViewChange={setOrdersView}
             orders={orders}
             history={orderHistory}
+            trades={tradeHistory}
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
             onCancelOrder={(id, symbol) => setPending({ kind: "cancel", id, symbol })}
@@ -622,6 +653,7 @@ function OrdersPanel({
   onViewChange,
   orders,
   history,
+  trades,
   selectedSymbol,
   onSelectSymbol,
   onCancelOrder,
@@ -630,6 +662,7 @@ function OrdersPanel({
   onViewChange: (view: OrdersView) => void;
   orders: Order[];
   history: { fills: Order[]; loading: boolean; error: string | null };
+  trades: TradesState;
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
   onCancelOrder: (id: string, symbol: string) => void;
@@ -654,6 +687,15 @@ function OrdersPanel({
           >
             Filled
           </button>
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={view === "trades"}
+            onClick={() => onViewChange("trades")}
+            title="Fills paired into round trips: what each closed position made or lost."
+          >
+            Trades
+          </button>
         </div>
       </div>
       <div className="trading-subview-body">
@@ -664,6 +706,20 @@ function OrdersPanel({
             onSelectSymbol={onSelectSymbol}
             onCancelOrder={onCancelOrder}
           />
+        ) : view === "trades" ? (
+          trades.error ? (
+            <div className="widget-error">{trades.error}</div>
+          ) : trades.loading && trades.trades.length === 0 ? (
+            <div className="widget-empty">Loading trades&hellip;</div>
+          ) : (
+            <TradesTable
+              trades={trades.trades}
+              summary={trades.summary}
+              openSymbols={trades.openSymbols}
+              selectedSymbol={selectedSymbol}
+              onSelectSymbol={onSelectSymbol}
+            />
+          )
         ) : history.error ? (
           <div className="widget-error">{history.error}</div>
         ) : history.loading && history.fills.length === 0 ? (
@@ -727,6 +783,130 @@ function FillsTable({
         })}
       </tbody>
     </table>
+  );
+}
+
+function tradeTime(stamp: string): string {
+  const parsed = Date.parse(stamp);
+  return Number.isFinite(parsed) ? FILL_TIME_FORMAT.format(new Date(parsed)) : "—";
+}
+
+/** Closed round trips, newest first, with the totals underneath. R is the
+ * same unit the strategy backtests report in, so a live week can be read
+ * against a backtest of the same rule; a trade placed without a stop has
+ * no R and shows a dash rather than a number that would mean nothing. */
+function TradesTable({
+  trades,
+  summary,
+  openSymbols,
+  selectedSymbol,
+  onSelectSymbol,
+}: {
+  trades: Trade[];
+  summary: TradeSummary | null;
+  openSymbols: string[];
+  selectedSymbol: string | null;
+  onSelectSymbol: (symbol: string) => void;
+}) {
+  if (trades.length === 0) {
+    return (
+      <div className="widget-empty">
+        No closed trades yet.
+        {openSymbols.length > 0 ? ` Still open: ${openSymbols.join(", ")}.` : ""}
+      </div>
+    );
+  }
+  const total = summary ? signedNumber(summary.total_pnl, 2) : null;
+  const avgR = summary ? signedNumber(summary.avg_r, 2, "R") : null;
+  return (
+    <div className="trading-subview">
+      <div className="trading-subview-body">
+        <table className="performance-table">
+          <thead>
+            <tr>
+              <th>Closed</th>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Qty</th>
+              <th>Entry</th>
+              <th>Exit</th>
+              <th>P&amp;L</th>
+              <th>%</th>
+              <th title="P&L in units of the initial risk (entry to the stop the trade was placed with).">
+                R
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {trades.map((t) => {
+              const pnl = signedNumber(t.pnl, 2);
+              const pct = signedNumber(t.pnl_pct, 2, "%");
+              const r = signedNumber(t.r_multiple, 2, "R");
+              return (
+                <tr
+                  key={t.id}
+                  aria-selected={t.symbol === selectedSymbol}
+                  onClick={() => onSelectSymbol(t.symbol)}
+                  title={`Opened ${tradeTime(t.opened_at)} · ${t.fill_count} fills${
+                    t.initial_stop !== null ? ` · initial stop ${t.initial_stop.toFixed(2)}` : " · no stop"
+                  }`}
+                >
+                  <td>{tradeTime(t.closed_at)}</td>
+                  <td className="symbol-cell">{t.symbol}</td>
+                  <td>{t.side}</td>
+                  <td>{t.qty.toLocaleString()}</td>
+                  <td>{formatPrice(t.entry_avg)}</td>
+                  <td>{formatPrice(t.exit_avg)}</td>
+                  <td className={pnl.cls}>{pnl.text}</td>
+                  <td className={pct.cls}>{pct.text}</td>
+                  <td className={r.cls}>{r.text}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {summary && total && avgR && (
+        <div className="trading-balance-summary">
+          <span className="trading-balance-figure">
+            <span className="trading-account-label">Total</span>
+            <strong className={total.cls}>{total.text}</strong>
+          </span>
+          <span className="trading-balance-figure">
+            <span className="trading-account-label">Win rate</span>
+            <strong>
+              {summary.win_rate === null ? "—" : `${summary.win_rate.toFixed(0)}%`}
+              {` (${summary.wins}W / ${summary.losses}L)`}
+            </strong>
+          </span>
+          <span className="trading-balance-figure">
+            <span className="trading-account-label">Avg win / loss</span>
+            <strong>
+              {summary.avg_win === null ? "—" : formatPrice(summary.avg_win)}
+              {" / "}
+              {summary.avg_loss === null ? "—" : formatPrice(summary.avg_loss)}
+            </strong>
+          </span>
+          <span className="trading-balance-figure" title="Gross wins divided by gross losses.">
+            <span className="trading-account-label">Profit factor</span>
+            <strong>{summary.profit_factor === null ? "—" : summary.profit_factor.toFixed(2)}</strong>
+          </span>
+          <span
+            className="trading-balance-figure"
+            title={`Mean R over the ${summary.r_count} trade(s) that had an initial stop -- the expectancy the strategy backtests report.`}
+          >
+            <span className="trading-account-label">Expectancy</span>
+            <strong className={avgR.cls}>{avgR.text}</strong>
+          </span>
+          {openSymbols.length > 0 && (
+            <span className="trading-balance-figure">
+              <span className="trading-account-label">Still open</span>
+              <strong>{openSymbols.join(", ")}</strong>
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

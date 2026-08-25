@@ -20,6 +20,7 @@ import type {
   OrdersResponse,
   PortfolioHistoryResponse,
   PositionsResponse,
+  TradesResponse,
   TradingRejection,
 } from "../types/trading";
 import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types/tradeIdeas";
@@ -216,6 +217,12 @@ export function getPositions(): Promise<PositionsResponse> {
 /** Working orders by default; "all" or "closed" for history. */
 export function getOrders(status = "open"): Promise<OrdersResponse> {
   return getJson<OrdersResponse>(`/trading/orders?status=${encodeURIComponent(status)}`);
+}
+
+/** Closed round trips with realized P&L, newest first. Read-only; each call
+ * also has the backend record any trip that closed since the last one. */
+export function getTrades(): Promise<TradesResponse> {
+  return getJson<TradesResponse>("/trading/trades");
 }
 
 /** The account equity curve for one range. Read-only, like getAccount. */
