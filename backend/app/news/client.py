@@ -8,7 +8,7 @@ sidebar without reproducing a third party's full article text.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from alpaca.common.enums import Sort
 from alpaca.data.requests import NewsRequest
@@ -23,11 +23,35 @@ from app.market_data.fmp_news import (
 
 logger = logging.getLogger(__name__)
 
-# Retained for reference; the fetch now uses recent_news_cutoff() instead --
-# see the comment at its use site. Deliberately NOT changed in
-# app.market_data.news, whose 48h window is the baseline _CATALYST_BOOST was
-# calibrated against.
+# The scanner's catalyst window (app.market_data.news.DEFAULT_NEWS_LOOKBACK):
+# a flat 48h, the baseline _CATALYST_BOOST was calibrated against and
+# deliberately not changed there.
 _LOOKBACK = timedelta(hours=48)
+
+
+def symbol_news_cutoff(now: datetime | None = None) -> datetime:
+    """How far back the symbol panel (and the chart's news pins) look.
+
+    The earlier of the two windows this app uses, so that a story the
+    scanner is flagging as *the* catalyst can never be missing from the
+    panel that is supposed to explain the move:
+
+    - recent_news_cutoff(): session-anchored, so a Monday panel still
+      reaches Friday's session instead of stopping at Saturday.
+    - the scanner's flat 48h: on an ordinary weekday afternoon this reaches
+      ~27h further back than the session anchor does (today's open less an
+      18h buffer starts at ~15:30 ET *yesterday*).
+
+    Observed on BCTX, 2026-08-25: Monday's 07:33 ET press release drove the
+    scanner's catalyst badge (inside 48h) while /symbols/BCTX/info returned
+    no news at all (before the session anchor), so the chart had nothing to
+    pin. Taking the earlier of the two closes that gap; the chart's own
+    guard against stories older than its first loaded bar keeps the wider
+    window from cluttering a chart that does not reach back that far.
+    """
+    now = now or datetime.now(UTC)
+    return min(recent_news_cutoff(now), now - _LOOKBACK)
+
 
 _FMP_URL = "https://financialmodelingprep.com/stable/news/stock"
 # Over-fetch relative to `limit`: ~83% of raw FMP items are filtered out, so
@@ -49,7 +73,9 @@ class NewsItem(BaseModel):
     feed: str = "alpaca"
 
 
-async def fetch_recent_news(alpaca: AlpacaClients, symbol: str, limit: int = 5) -> list[NewsItem]:
+async def fetch_recent_news(
+    alpaca: AlpacaClients, symbol: str, limit: int = 5
+) -> list[NewsItem]:
     """Best-effort: a fetch failure (rate limit, transient API error)
     degrades to no news rather than failing the caller outright, same as
     app.ai.trade_ideas._fetch_headlines.
@@ -57,11 +83,10 @@ async def fetch_recent_news(alpaca: AlpacaClients, symbol: str, limit: int = 5) 
     try:
         request = NewsRequest(
             symbols=symbol,
-            # Session-anchored, not a flat 48h back from now: measured on a
-            # Monday a flat window reaches only to Saturday and hides the
-            # whole of Friday's session. Shared with the FMP half below so
-            # one panel doesn't apply two different notions of "recent".
-            start=recent_news_cutoff(),
+            # The wider of session-anchored and flat-48h -- see
+            # symbol_news_cutoff. Shared with the FMP half below so one
+            # panel doesn't apply two different notions of "recent".
+            start=symbol_news_cutoff(),
             sort=Sort.DESC,
             limit=limit,
         )
@@ -100,12 +125,12 @@ async def fetch_recent_fmp_news(
     """
     if not api_key:
         return []
-    # Same session-anchored cutoff the scanner flag uses. Without it this
-    # panel is headed "Recent News" while showing whatever FMP has, which for
-    # a quiet name is months old -- CPRT's four Business Wire items were all
-    # stale, and a stale story sitting under that heading reads as the
-    # explanation for today's move.
-    cutoff = recent_news_cutoff()
+    # Same cutoff as the Alpaca half above. Without one this panel is headed
+    # "Recent News" while showing whatever FMP has, which for a quiet name
+    # is months old -- CPRT's four Business Wire items were all stale, and a
+    # stale story sitting under that heading reads as the explanation for
+    # today's move.
+    cutoff = symbol_news_cutoff()
     try:
         response = await http_client.get(
             _FMP_URL,
