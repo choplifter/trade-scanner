@@ -404,12 +404,15 @@ class OrderService:
         cancelled = await self._cancel_orders(symbol, exits)
 
         remaining = 0.0
+        closing_side = "sell"
         if qty is not None:
             if qty <= 0:
                 raise OrderRejected("Quantity must be positive.", field="qty")
             position_qty = await self._position_qty(symbol)
             if position_qty is None:
                 raise OrderRejected(f"No open position in {symbol}.", field="symbol")
+            # Alpaca reports a short as a negative quantity.
+            closing_side = "sell" if position_qty > 0 else "buy"
             if qty >= position_qty:
                 # Selling everything is a full close, whatever the caller
                 # typed -- and a full close must not re-arm anything.
@@ -440,7 +443,16 @@ class OrderService:
         result["cancelled_orders"] = cancelled
 
         if qty is not None and remaining > 0:
-            rearmed, stop_lost = await self._rearm_exits(symbol, exits, remaining)
+            # Only orders that *close* the position are exits. A resting
+            # buy-stop add-on to a long is also "a stop on this symbol", and
+            # without this filter it would be captured as the protective
+            # stop and re-armed for the remainder -- the wrong side, at the
+            # wrong size. It was cancelled above along with everything else;
+            # flattening part of a position is not the moment to add to it.
+            closing = [
+                e for e in exits if str(e.get("side", "")).lower() == closing_side
+            ]
+            rearmed, stop_lost = await self._rearm_exits(symbol, closing, remaining)
             result["rearmed_orders"] = rearmed
             result["stop_lost"] = stop_lost
         return result
@@ -753,7 +765,9 @@ def _build_request(resolved):
     from alpaca.trading.requests import (
         LimitOrderRequest,
         MarketOrderRequest,
+        StopLimitOrderRequest,
         StopLossRequest,
+        StopOrderRequest,
         TakeProfitRequest,
     )
 
@@ -775,6 +789,15 @@ def _build_request(resolved):
     if resolved.stop_loss_price is not None:
         kwargs["stop_loss"] = StopLossRequest(stop_price=resolved.stop_loss_price)
 
+    # The entry's own stop_price is its *trigger* -- a breakout entry --
+    # and is unrelated to the stop_loss leg above, which protects the
+    # position the entry opens.
     if resolved.order_type == "limit":
         return LimitOrderRequest(limit_price=resolved.limit_price, **kwargs)
+    if resolved.order_type == "stop":
+        return StopOrderRequest(stop_price=resolved.stop_price, **kwargs)
+    if resolved.order_type == "stop_limit":
+        return StopLimitOrderRequest(
+            stop_price=resolved.stop_price, limit_price=resolved.limit_price, **kwargs
+        )
     return MarketOrderRequest(**kwargs)

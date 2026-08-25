@@ -53,6 +53,32 @@ def test_limit_orders_need_a_price_and_market_orders_must_not_have_one():
         OrderTicket(symbol="AAPL", side="buy", qty=10, order_type="market", limit_price=10.0)
 
 
+def test_stop_entries_need_a_trigger_and_only_stop_limits_take_both_prices():
+    with pytest.raises(ValidationError):
+        OrderTicket(symbol="AAPL", side="buy", qty=10, order_type="stop")
+    with pytest.raises(ValidationError):
+        OrderTicket(symbol="AAPL", side="buy", qty=10, order_type="stop", stop_price=11.0, limit_price=11.2)
+    with pytest.raises(ValidationError):
+        OrderTicket(symbol="AAPL", side="buy", qty=10, order_type="stop_limit", stop_price=11.0)
+    with pytest.raises(ValidationError):
+        OrderTicket(symbol="AAPL", side="buy", qty=10, order_type="limit", limit_price=11.0, stop_price=11.0)
+    assert OrderTicket(symbol="AAPL", side="buy", qty=10, order_type="stop", stop_price=11.0).stop_price == 11.0
+    ticket = OrderTicket(
+        symbol="AAPL", side="buy", qty=10, order_type="stop_limit", stop_price=11.0, limit_price=11.2
+    )
+    assert (ticket.stop_price, ticket.limit_price) == (11.0, 11.2)
+
+
+def test_a_stop_limits_limit_sits_on_the_far_side_of_its_trigger():
+    """Buy: limit at or above the trigger. Sell: at or below. Inverted, the
+    order could only fill on a pullback after triggering."""
+    with pytest.raises(ValidationError):
+        OrderTicket(symbol="AAPL", side="buy", qty=10, order_type="stop_limit", stop_price=11.0, limit_price=10.9)
+    with pytest.raises(ValidationError):
+        OrderTicket(symbol="AAPL", side="sell", qty=10, order_type="stop_limit", stop_price=9.0, limit_price=9.1)
+    OrderTicket(symbol="AAPL", side="sell", qty=10, order_type="stop_limit", stop_price=9.0, limit_price=8.9)
+
+
 def test_order_class_is_derived_not_supplied():
     """Not accepting it from the client means a malformed leg combination is
     not expressible over the wire."""
@@ -149,6 +175,159 @@ def test_missing_price_is_refused_rather_than_guessed():
     with pytest.raises(OrderRejected) as exc:
         _resolve(OrderTicket(symbol="AAPL", side="buy", qty=10), reference_price=None)
     assert exc.value.field == "symbol"
+
+
+# --- the live incident: limits above the market, stops above the fill -----
+#
+# Six DAIC buy limits at 4.50-5.00 against a 4.2 market, every one filled
+# on arrival; two carried a 4.50 stop-loss that was above the 4.2 fill and
+# fired on the next tick. What the user wanted was a breakout entry.
+
+
+def test_a_marketable_limit_is_allowed_but_warned():
+    """A buy limit above the market is a capped market order, which is a
+    legitimate thing to want -- so not a refusal. But it is not the resting
+    order it looks like, and the preview must say so."""
+    resolved = _resolve(
+        OrderTicket(symbol="DAIC", side="buy", qty=100, order_type="limit", limit_price=5.0),
+        reference_price=4.2,
+    )
+    assert len(resolved.warnings) == 1
+    assert "fills immediately" in resolved.warnings[0]
+    assert "Stop order" in resolved.warnings[0]
+
+    resting = _resolve(
+        OrderTicket(symbol="DAIC", side="buy", qty=100, order_type="limit", limit_price=4.0),
+        reference_price=4.2,
+    )
+    assert resting.warnings == []
+
+
+def test_a_sell_limit_below_the_market_is_warned_too():
+    resolved = _resolve(
+        OrderTicket(symbol="DAIC", side="sell", qty=100, order_type="limit", limit_price=4.0),
+        reference_price=4.2,
+    )
+    assert len(resolved.warnings) == 1
+
+
+def test_market_and_stop_entries_carry_no_marketability_warning():
+    assert _resolve(OrderTicket(symbol="DAIC", side="buy", qty=100), reference_price=4.2).warnings == []
+    assert _resolve(
+        OrderTicket(symbol="DAIC", side="buy", qty=100, order_type="stop", stop_price=5.0),
+        reference_price=4.2,
+    ).warnings == []
+
+
+def test_a_stop_loss_above_where_a_marketable_limit_will_fill_is_refused():
+    """The 4.50 stop under a 5.00 limit on a 4.2 market. Checked against
+    the limit it passed; checked against the fill it does not."""
+    with pytest.raises(OrderRejected) as exc:
+        _resolve(
+            OrderTicket(
+                symbol="DAIC", side="buy", qty=100, order_type="limit", limit_price=5.0,
+                stop_loss_price=4.5,
+            ),
+            reference_price=4.2,
+        )
+    assert exc.value.field == "stop_loss_price"
+    assert "4.2000" in exc.value.message
+
+
+def test_the_sizing_stop_is_held_to_the_same_rule():
+    """The 13:54 order: risk-sized from a 4.50 stop under a 5.00 limit. The
+    sizing stop becomes the stop-loss leg, so it cannot be exempt."""
+    with pytest.raises(OrderRejected) as exc:
+        _resolve(
+            OrderTicket(
+                symbol="DAIC", side="buy", order_type="limit", limit_price=5.0,
+                risk=RiskSizing(stop_price=4.5, risk_amount=200.0),
+            ),
+            reference_price=4.2,
+        )
+    assert exc.value.field == "stop_loss_price"
+
+
+def test_a_take_profit_between_the_fill_and_a_marketable_limit_is_fine():
+    """Fill will be ~4.2, so a 4.8 target is above it -- even though it is
+    below the 5.00 written on the order."""
+    resolved = _resolve(
+        OrderTicket(
+            symbol="DAIC", side="buy", qty=100, order_type="limit", limit_price=5.0,
+            take_profit_price=4.8, stop_loss_price=4.0,
+        ),
+        reference_price=4.2,
+    )
+    assert resolved.order_class == "bracket"
+
+
+def test_a_resting_limit_still_checks_legs_against_the_limit():
+    """Below the market, the limit IS where it fills."""
+    with pytest.raises(OrderRejected) as exc:
+        _resolve(
+            OrderTicket(
+                symbol="DAIC", side="buy", qty=100, order_type="limit", limit_price=4.0,
+                stop_loss_price=4.1,
+            ),
+            reference_price=4.2,
+        )
+    assert exc.value.field == "stop_loss_price"
+
+
+def test_a_buy_stop_below_the_market_is_refused():
+    """Not a trigger -- it would fire on arrival, the very thing the user
+    reached for a stop order to avoid."""
+    with pytest.raises(OrderRejected) as exc:
+        _resolve(
+            OrderTicket(symbol="DAIC", side="buy", qty=100, order_type="stop", stop_price=4.0),
+            reference_price=4.2,
+        )
+    assert exc.value.field == "stop_price"
+    with pytest.raises(OrderRejected):
+        _resolve(
+            OrderTicket(symbol="DAIC", side="sell", qty=100, order_type="stop", stop_price=4.5),
+            reference_price=4.2,
+        )
+
+
+def test_a_stop_entry_is_sized_at_its_trigger_and_protected_below_it():
+    """The breakout the user meant: in at 5.00 on the way up, stop 4.50.
+    The stop-loss sits between the market and the trigger, which is fine --
+    it only exists once the entry has filled at 5.00."""
+    resolved = _resolve(
+        OrderTicket(
+            symbol="DAIC", side="buy", order_type="stop", stop_price=5.0,
+            risk=RiskSizing(stop_price=4.5, risk_amount=200.0),
+        ),
+        reference_price=4.2,
+    )
+    assert resolved.entry_reference == 5.0
+    assert resolved.stop_price == 5.0
+    assert resolved.stop_loss_price == 4.5
+    assert resolved.qty == 400
+    assert resolved.order_class == "oto"
+
+
+def test_a_stop_limit_is_sized_at_its_limit_the_worst_case():
+    resolved = _resolve(
+        OrderTicket(
+            symbol="DAIC", side="buy", qty=100, order_type="stop_limit", stop_price=5.0, limit_price=5.1,
+        ),
+        reference_price=4.2,
+    )
+    assert resolved.entry_reference == 5.1
+    assert resolved.notional == pytest.approx(510.0)
+
+
+def test_without_a_reference_price_a_stop_entry_still_resolves():
+    """The market checks need the last trade; without one they are skipped
+    rather than guessed -- the broker applies its own."""
+    resolved = _resolve(
+        OrderTicket(symbol="DAIC", side="buy", qty=100, order_type="stop", stop_price=5.0),
+        reference_price=None,
+    )
+    assert resolved.entry_reference == 5.0
+    assert resolved.warnings == []
 
 
 def test_ceilings_and_buying_power_apply_to_resolved_quantity():

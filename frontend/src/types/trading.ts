@@ -183,14 +183,23 @@ export interface RiskSizingRequest {
   risk_pct_of_equity?: number;
 }
 
+/** Entry types. `stop` / `stop_limit` are breakout entries -- the order
+ * rests until price trades through `stop_price`, then goes in as a market /
+ * limit order. Distinct from the stop-loss leg, which protects the position
+ * the entry opens. A *limit* on the far side of the market is not a resting
+ * order: a buy limit means "this price or lower" and fills at once. */
+export type EntryOrderType = "market" | "limit" | "stop" | "stop_limit";
+
 export interface OrderTicketRequest {
   symbol: string;
   side: "buy" | "sell";
-  order_type: "market" | "limit";
+  order_type: EntryOrderType;
   time_in_force?: "day" | "gtc";
   qty?: number;
   risk?: RiskSizingRequest;
   limit_price?: number;
+  /** The trigger of a stop / stop_limit entry. */
+  stop_price?: number;
   take_profit_price?: number;
   stop_loss_price?: number;
   client_order_id?: string;
@@ -211,11 +220,16 @@ export interface ResolvedOrder {
   entry_reference: number;
   notional: number;
   limit_price: number | null;
+  /** Entry trigger of a stop / stop_limit order; null otherwise. */
+  stop_price: number | null;
   take_profit_price: number | null;
   stop_loss_price: number | null;
   risk_amount: number | null;
   risk_per_share: number | null;
   risk_pct_of_equity: number | null;
+  /** Not refusals, but things the server wants said before the confirm --
+   * chiefly a limit that will fill on arrival instead of resting. */
+  warnings: string[];
 }
 
 export interface OrderPreview {

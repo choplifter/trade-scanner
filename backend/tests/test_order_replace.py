@@ -272,6 +272,24 @@ def test_partial_close_cancels_sells_and_rearms_in_that_order():
     assert len(result["rearmed_orders"]) == 1
 
 
+def test_a_resting_buy_stop_add_on_is_not_rearmed_as_the_protective_stop():
+    """Now that stop entries exist, "a stop order on this symbol" is no
+    longer necessarily an exit. A buy-stop above the market on a long is an
+    add-on; after a partial sell it must be cancelled (everything is) but
+    NOT re-armed -- least of all as the remainder's stop-loss."""
+    add_on = _stop_order(id="addon", side="buy", stop_price="12.00")
+    client = _StubTradingClient(orders=[add_on, _stop_order()], position_qty="100")
+    service = _service(client)
+
+    result = asyncio.run(service.close_position("AAA", qty=40))
+
+    assert sorted(client.cancelled) == ["abc", "addon"]
+    assert len(client.submitted) == 1
+    assert str(client.submitted[0].side).lower().endswith("sell")
+    assert client.submitted[0].stop_price == 9.5
+    assert result["stop_lost"] is False
+
+
 def test_selling_everything_is_a_full_close_without_rearm():
     client = _StubTradingClient(orders=[_stop_order()], position_qty="100")
     service = _service(client)

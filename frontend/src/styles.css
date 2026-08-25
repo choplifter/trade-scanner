@@ -1702,6 +1702,18 @@ a.symbol-news-headline {
   border-radius: 3px;
 }
 
+/* A warning is not a refusal: the order can be placed, but not the one the
+   user probably thinks they typed (a limit that fills on arrival). Warning
+   colour, not critical, and it stays visible on the confirmation. */
+.order-warning {
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--status-warning);
+  border: 1px solid var(--status-warning);
+  border-radius: 3px;
+}
+
 /* Shares its look with .alarms-backdrop / .alarms-panel, which predate it.
    AlarmsOverlay should migrate onto Modal eventually; not done in the change
    that introduced order confirmation. */

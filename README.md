@@ -436,7 +436,13 @@ past dates.
   sizes from risk (risk % of equity or a fixed amount against your stop
   distance — the same arithmetic the strategy backtests report R in) or from
   a fixed quantity, previews server-side before submitting, and attaches
-  take-profit/stop legs as a bracket or OTO. The positions table joins each
+  take-profit/stop legs as a bracket or OTO. Entries can be market, limit,
+  **stop** or **stop-limit** — the stop types are breakout entries that rest
+  until price trades through the trigger, which is what a limit *above* the
+  market is often mistaken for (a buy limit means "this price or lower", so
+  it fills at once; the preview warns when a limit is marketable, and
+  refuses a stop trigger on the wrong side of the market or a stop-loss
+  that would sit above where the entry will actually fill). The positions table joins each
   position to its working exits (including a bracket's stop parked in
   Alpaca's `held` status, which the naive "open orders" query hides — a
   position without a stop gets a loud **NO STOP** badge) and manages them in

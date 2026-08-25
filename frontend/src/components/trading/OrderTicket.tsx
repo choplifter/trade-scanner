@@ -2,9 +2,41 @@ import { useEffect, useRef, useState } from "react";
 
 import { OrderRejectedError, previewOrder, submitOrder } from "../../api/http";
 import { Modal } from "../common/Modal";
-import type { OrderPreview, OrderTicketRequest, TradingRejection } from "../../types/trading";
+import type {
+  EntryOrderType,
+  OrderPreview,
+  OrderTicketRequest,
+  TradingRejection,
+} from "../../types/trading";
 
 type SizingMode = "shares" | "risk";
+
+/** Which entry price each type carries. A stop-limit has both: the trigger
+ * that activates it and the limit it then goes in at. */
+const NEEDS_LIMIT: ReadonlySet<EntryOrderType> = new Set(["limit", "stop_limit"]);
+const NEEDS_TRIGGER: ReadonlySet<EntryOrderType> = new Set(["stop", "stop_limit"]);
+
+const ORDER_TYPES: { type: EntryOrderType; label: string; title: string }[] = [
+  { type: "market", label: "Market", title: "Fills now at the current price." },
+  {
+    type: "limit",
+    label: "Limit",
+    title:
+      "Buy at this price or lower / sell at this price or higher. A buy limit ABOVE the market fills immediately -- it does not wait for price to reach it.",
+  },
+  {
+    type: "stop",
+    label: "Stop",
+    title:
+      "Breakout entry: rests until price trades through the trigger, then fills at market. A buy stop sits above the market, a sell stop below.",
+  },
+  {
+    type: "stop_limit",
+    label: "Stop-limit",
+    title:
+      "Breakout entry with a cap: rests until price trades through the trigger, then goes in as a limit order.",
+  },
+];
 
 /** Debounce: the preview is a round trip that also fetches the account, so
  * firing per keystroke would be wasteful and would make the displayed size
@@ -35,11 +67,15 @@ interface OrderTicketProps {
  * dialog stands between the button and the order. */
 export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicketProps) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [orderType, setOrderType] = useState<"market" | "limit">("market");
+  const [orderType, setOrderType] = useState<EntryOrderType>("market");
   const [sizingMode, setSizingMode] = useState<SizingMode>("risk");
 
   const [qty, setQty] = useState("");
   const [limitPrice, setLimitPrice] = useState("");
+  // The entry trigger of a stop / stop-limit order. Kept apart from
+  // stopPrice below, which is the *protective* stop the risk sizing works
+  // from -- a breakout ticket has both, and they mean opposite things.
+  const [triggerPrice, setTriggerPrice] = useState("");
   const [stopPrice, setStopPrice] = useState("");
   const [riskPct, setRiskPct] = useState(String(defaultRiskPct));
   const [takeProfit, setTakeProfit] = useState("");
@@ -69,7 +105,9 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
   // broken, which is exactly how the empty-stop case got reported.
   const missing: string | null = !symbol
     ? "Select a symbol"
-    : orderType === "limit" && !numberOrUndefined(limitPrice)
+    : NEEDS_TRIGGER.has(orderType) && !numberOrUndefined(triggerPrice)
+      ? "Enter a trigger price — the order rests until price trades through it"
+      : NEEDS_LIMIT.has(orderType) && !numberOrUndefined(limitPrice)
       ? "Enter a limit price"
       : sizingMode === "shares"
         ? !numberOrUndefined(qty)
@@ -95,7 +133,8 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
       // Only when pinned. Left out, the server decides -- keeping that rule
       // in one place instead of restating it here where it could drift.
       ...(timeInForce ? { time_in_force: timeInForce } : {}),
-      ...(orderType === "limit" ? { limit_price: numberOrUndefined(limitPrice) } : {}),
+      ...(NEEDS_LIMIT.has(orderType) ? { limit_price: numberOrUndefined(limitPrice) } : {}),
+      ...(NEEDS_TRIGGER.has(orderType) ? { stop_price: numberOrUndefined(triggerPrice) } : {}),
       ...(takeProfit.trim() ? { take_profit_price: numberOrUndefined(takeProfit) } : {}),
       ...(sizingMode === "shares"
         ? { qty: numberOrUndefined(qty) }
@@ -142,7 +181,19 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
       cancelled = true;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [symbol, side, orderType, sizingMode, qty, limitPrice, stopPrice, riskPct, takeProfit, missing]);
+  }, [
+    symbol,
+    side,
+    orderType,
+    sizingMode,
+    qty,
+    limitPrice,
+    triggerPrice,
+    stopPrice,
+    riskPct,
+    takeProfit,
+    missing,
+  ]);
 
   if (!symbol) {
     return <div className="widget-empty">Select a symbol to build an order.</div>;
@@ -170,13 +221,14 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
       const ticket: OrderTicketRequest = {
         symbol: order.symbol,
         side: order.side as "buy" | "sell",
-        order_type: order.order_type as "market" | "limit",
+        order_type: order.order_type as EntryOrderType,
         // Carried from the priced order rather than recomputed: the user
         // confirmed a ticket that said gtc or day, and submitting without it
         // would silently fall back to the default -- which is how a bracket
         // ends up as a day order nobody chose.
         time_in_force: order.time_in_force as "day" | "gtc",
         ...(order.limit_price !== null ? { limit_price: order.limit_price } : {}),
+        ...(order.stop_price !== null ? { stop_price: order.stop_price } : {}),
         ...(order.take_profit_price !== null ? { take_profit_price: order.take_profit_price } : {}),
         // Submit the resolved quantity rather than re-sending the risk inputs:
         // the user confirmed a specific size, and re-sizing server-side could
@@ -237,15 +289,16 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
 
       <div className="order-ticket-row">
         <div className="timeframe-selector">
-          {(["market", "limit"] as const).map((t) => (
+          {ORDER_TYPES.map(({ type, label, title }) => (
             <button
-              key={t}
+              key={type}
               type="button"
               className="timeframe-button"
-              aria-pressed={orderType === t}
-              onClick={() => setOrderType(t)}
+              aria-pressed={orderType === type}
+              onClick={() => setOrderType(type)}
+              title={title}
             >
-              {t === "market" ? "Market" : "Limit"}
+              {label}
             </button>
           ))}
         </div>
@@ -267,18 +320,40 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
             </button>
           ))}
         </div>
-        {orderType === "limit" && (
-          <label>
-            Limit
-            <input
-              type="number"
-              step="0.01"
-              value={limitPrice}
-              onChange={(e) => setLimitPrice(e.target.value)}
-            />
-          </label>
-        )}
       </div>
+
+      {(NEEDS_TRIGGER.has(orderType) || NEEDS_LIMIT.has(orderType)) && (
+        <div className="order-ticket-row">
+          {NEEDS_TRIGGER.has(orderType) && (
+            <label title="The order rests until price trades through this, then goes in.">
+              Trigger
+              <input
+                type="number"
+                step="0.01"
+                value={triggerPrice}
+                onChange={(e) => setTriggerPrice(e.target.value)}
+              />
+            </label>
+          )}
+          {NEEDS_LIMIT.has(orderType) && (
+            <label
+              title={
+                orderType === "stop_limit"
+                  ? "Once triggered, the most a buy pays / least a sell takes."
+                  : "Buy at this or lower; sell at this or higher. Above the market on a buy, it fills immediately."
+              }
+            >
+              Limit
+              <input
+                type="number"
+                step="0.01"
+                value={limitPrice}
+                onChange={(e) => setLimitPrice(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+      )}
 
       <div className="order-ticket-row">
         <div className="timeframe-selector">
@@ -364,6 +439,12 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
         </div>
       )}
 
+      {order?.warnings.map((w) => (
+        <div key={w} className="order-warning" role="status">
+          {w}
+        </div>
+      ))}
+
       {placed && <div className="order-preview">Order submitted.</div>}
 
       {disabledReason && <div className="order-hint">{disabledReason}</div>}
@@ -385,9 +466,15 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
               <strong>
                 {order.side.toUpperCase()} {order.qty.toLocaleString()} {order.symbol}
               </strong>{" "}
-              {order.order_type}
+              {order.order_type.replace("_", "-")}
+              {order.stop_price !== null ? ` · trigger ${order.stop_price}` : ""}
               {order.limit_price !== null ? ` @ ${order.limit_price}` : ""}
             </p>
+            {order.warnings.map((w) => (
+              <p key={w} className="order-warning">
+                {w}
+              </p>
+            ))}
             <p className="order-confirm-line">
               Notional {order.notional.toFixed(2)}
               {order.risk_amount !== null ? ` · risk ${order.risk_amount.toFixed(2)}` : ""}

@@ -50,6 +50,42 @@ def test_limit_order_carries_its_price():
     assert request.limit_price == 99.0
 
 
+def test_stop_entry_is_a_stop_order_with_its_trigger():
+    """A breakout entry: the request type is what makes the broker wait.
+    Sending the trigger as a limit instead is exactly the immediate-fill
+    bug this type exists to prevent."""
+    from alpaca.trading.requests import StopOrderRequest
+
+    request = _build_request(_resolved(order_type="stop", stop_price=105.0, entry_reference=105.0))
+    assert isinstance(request, StopOrderRequest)
+    assert request.stop_price == 105.0
+    assert getattr(request, "limit_price", None) is None
+
+
+def test_stop_limit_entry_carries_both_prices():
+    from alpaca.trading.requests import StopLimitOrderRequest
+
+    request = _build_request(
+        _resolved(order_type="stop_limit", stop_price=105.0, limit_price=105.5, entry_reference=105.5)
+    )
+    assert isinstance(request, StopLimitOrderRequest)
+    assert request.stop_price == 105.0
+    assert request.limit_price == 105.5
+
+
+def test_a_stop_entry_keeps_its_stop_loss_leg_separate_from_its_trigger():
+    """Two different stops on one order: the trigger that opens it and the
+    leg that protects it. They must not be conflated."""
+    request = _build_request(
+        _resolved(
+            order_type="stop", order_class="oto", stop_price=105.0, entry_reference=105.0,
+            stop_loss_price=100.0,
+        )
+    )
+    assert request.stop_price == 105.0
+    assert request.stop_loss.stop_price == 100.0
+
+
 def test_client_order_id_is_passed_through_for_idempotent_retries():
     """Alpaca rejects a duplicate id, so a retry after a timeout is the same
     order rather than a second one."""
