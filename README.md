@@ -382,7 +382,14 @@ past dates.
   setup fired — a small pluggable indicator system
   (`backend/app/indicators/`): drop a new file in that directory exposing a
   `compute(ctx)` function and it shows up on the chart on the next
-  request, no backend restart needed.
+  request, no backend restart needed. When a paper position is open on the
+  symbol on screen, its entry/stop/target render as solid price lines
+  (blue/red/green, distinct from the dashed Levels lines) regardless of the
+  Levels toggle — a position reflects real capital at risk, not a togglable
+  overlay. Sourced from a `TradingContext` shared with the trading panel
+  (`frontend/src/context/TradingContext.tsx`) rather than a second poll
+  loop, so the chart doesn't remount or double-poll when the panel's
+  positions/orders refresh.
 - **Strategy scripts** (`backend/app/strategies/`): the same drop-in idea as
   the indicators above, but for trade setups rather than chart lines. A file
   exposes `NAME`, an optional `ENABLED` flag and an `evaluate(ctx)` that
@@ -442,8 +449,20 @@ past dates.
   market is often mistaken for (a buy limit means "this price or lower", so
   it fills at once; the preview warns when a limit is marketable, and
   refuses a stop trigger on the wrong side of the market or a stop-loss
-  that would sit above where the entry will actually fill). The positions table joins each
-  position to its working exits (including a bracket's stop parked in
+  that would sit above where the entry will actually fill). The ticket shows
+  buying power, equity and any existing position on the symbol before you
+  size anything, offers 25/50/75/100%-of-buying-power quick-size buttons in
+  fixed-quantity mode, and — while a risk-mode preview is in flight — a
+  synchronous local "≈ N sh" estimate plus a "Pricing…" indicator so the
+  field isn't blank waiting on the round trip. The server's own order
+  ceilings are shown once priced, and Risk % carries a client-side sanity
+  guardrail (the backend enforces no upper bound — a value far outside your
+  account's default blocks submit with a hint, catching a fat-fingered 50
+  typed for 0.5). If the symbol already has a working stop/target, a
+  dismissible banner says so before you place a second order on it. B/S for
+  side, 1-4 for order type and Enter to open the confirm dialog work as
+  hotkeys, suppressed while typing in a field or while that dialog is open.
+  The positions table joins each position to its working exits (including a bracket's stop parked in
   Alpaca's `held` status, which the naive "open orders" query hides — a
   position without a stop gets a loud **NO STOP** badge) and manages them in
   place: click the stop price to move it, **BE** sets it to your entry
