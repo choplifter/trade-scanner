@@ -55,6 +55,9 @@ interface CandleChartProps {
   vwap: (number | null)[];
   indicators: IndicatorResult[];
   showIndicators: boolean;
+  /** Entry/stop/target for the position open on the symbol on screen, if
+   * any. Null when there is none. */
+  positionLevels: PositionLevels | null;
   cursorMode: CursorMode;
   /** Unix seconds to scroll into view — a backtest pick's entry time. Null
    * leaves the chart wherever the user left it. */
@@ -81,6 +84,26 @@ const FOCUS_PADDING_SECONDS = 90 * 60;
  * dash_app/assets/lightweight_chart.html's markPick), so the two surfaces
  * mark an entry identically. */
 const PICK_MARKER_COLOR = "#2a78d6";
+
+/** Entry/stop/target for whatever position is open on the symbol on screen --
+ * not a toggleable overlay like an indicator "level", so it renders
+ * regardless of showIndicators. */
+export interface PositionLevels {
+  side: "long" | "short";
+  entry: number;
+  stop: number | null;
+  target: number | null;
+}
+
+const POSITION_ENTRY_COLOR = "#5b8bd6";
+// Same green/red as the candlestick series' up/down colors below -- a
+// position's stop and target reuse the chart's own favorable/unfavorable
+// semantic rather than introducing a second palette.
+const POSITION_TARGET_COLOR = "#0ca30c";
+const POSITION_STOP_COLOR = "#d03b3b";
+// Solid and a shade wider than a "level" indicator's default (width 1,
+// dashed) so a position line reads as distinct at a glance.
+const POSITION_LINE_WIDTH = 2 as const;
 
 /** The bar closest to `time`, since a pick's entry rarely lands exactly on a
  * bar boundary of whatever timeframe is being displayed -- a 5-minute entry
@@ -142,9 +165,9 @@ const LEVEL_LABEL_CLEARANCE_PX = 150;
 // was applied, then immediately cancelled by the next range set -- including
 // the one the indicators effect does itself, restoring the range it saved
 // before adding the lines.
-function applyLabelClearance(chart: IChartApi, showIndicators: boolean) {
+function applyLabelClearance(chart: IChartApi, needsClearance: boolean) {
   chart.timeScale().applyOptions({
-    rightOffsetPixels: showIndicators ? LEVEL_LABEL_CLEARANCE_PX : 0,
+    rightOffsetPixels: needsClearance ? LEVEL_LABEL_CLEARANCE_PX : 0,
   });
 }
 
@@ -223,6 +246,7 @@ export function CandleChart({
   vwap,
   indicators,
   showIndicators,
+  positionLevels,
   cursorMode,
   focusTime,
   news = [],
@@ -245,6 +269,7 @@ export function CandleChart({
   // The premarket/after-hours background washes -- see sessionBands.ts.
   const sessionBandsRef = useRef<{ pre: ISeriesApi<"Histogram">; post: ISeriesApi<"Histogram"> } | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const positionLinesRef = useRef<IPriceLine[]>([]);
   const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
   // The markers primitive, kept so the pick pin is updated in place rather
   // than layered again on every focus change.
@@ -257,6 +282,10 @@ export function CandleChart({
   // over the prop -- it would keep first render's value forever.
   const showIndicatorsRef = useRef(showIndicators);
   showIndicatorsRef.current = showIndicators;
+  // Same reason as showIndicatorsRef: handleSizeChange is subscribed once in
+  // the mount effect and can't close over per-render props.
+  const positionLevelsRef = useRef(positionLevels);
+  positionLevelsRef.current = positionLevels;
   // Applying a range can itself change the time scale's width (different
   // visible bars -> different price labels -> a wider/narrower price scale),
   // which fires subscribeSizeChange again. This swallows that echo.
@@ -372,7 +401,7 @@ export function CandleChart({
       if (!range) return;
       applyingRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange(range);
-      applyLabelClearance(chart, showIndicatorsRef.current);
+      applyLabelClearance(chart, showIndicatorsRef.current || positionLevelsRef.current != null);
       requestAnimationFrame(() => {
         applyingRangeRef.current = false;
       });
@@ -414,6 +443,7 @@ export function CandleChart({
       // series that was never added to it, which lightweight-charts throws
       // on ("Value is undefined" from its internal ensureDefined check).
       priceLinesRef.current = [];
+      positionLinesRef.current = [];
       indicatorSeriesRef.current = [];
     };
   }, []);
@@ -468,6 +498,7 @@ export function CandleChart({
       // own them would act on a dead object after the swap.
       markersRef.current = null;
       priceLinesRef.current = [];
+      positionLinesRef.current = [];
     };
   }, [chartType]);
 
@@ -524,7 +555,7 @@ export function CandleChart({
       const chart = chartRef.current;
       if (chart) {
         chart.timeScale().setVisibleRange(pendingRange);
-        applyLabelClearance(chart, showIndicators);
+        applyLabelClearance(chart, showIndicators || positionLevels != null);
       }
       return;
     }
@@ -547,15 +578,16 @@ export function CandleChart({
       const chart = chartRef.current;
       if (range && chart) {
         chart.timeScale().setVisibleLogicalRange(range);
-        applyLabelClearance(chart, showIndicators);
+        applyLabelClearance(chart, showIndicators || positionLevels != null);
       }
     }
     // showIndicators is a dependency because this effect repositions the
     // viewport, and the margin has to be re-asserted whenever it does.
     // chartType is one because the swap above leaves a brand-new, empty
     // series behind -- without it, toggling would blank the price until the
-    // next tick.
-  }, [bars, vwap, focusTime, showIndicators, chartType, shadeSessions]);
+    // next tick. positionLevels is one for the same margin reason as
+    // showIndicators.
+  }, [bars, vwap, focusTime, showIndicators, positionLevels, chartType, shadeSessions]);
 
   // Scroll a clicked backtest pick into view and pin it with an arrow. Runs
   // after the data effect above, so the bars it needs are already on the
@@ -744,10 +776,65 @@ export function CandleChart({
     }
     // After the restore, never before: setVisibleRange repositions the
     // content and drops the margin.
-    applyLabelClearance(chart, showIndicators);
+    applyLabelClearance(chart, showIndicators || positionLevels != null);
     // chartType, because the price lines live on the price series and the
-    // swap disposes them along with it.
-  }, [indicators, showIndicators, chartType]);
+    // swap disposes them along with it. positionLevels, because it also
+    // feeds the margin call above.
+  }, [indicators, showIndicators, positionLevels, chartType]);
+
+  // Its own effect rather than folded into the indicators effect above: that
+  // one's clear-and-rebuild lifecycle is specifically about the `indicators`
+  // prop, and sharing it would mean a position line flickers/rebuilds on
+  // every indicator toggle for no reason, and vice versa. Not gated on
+  // showIndicators -- a position reflects real capital at risk, not a
+  // togglable scanner overlay, so it renders regardless of that toggle.
+  useEffect(() => {
+    const priceSeries = priceSeriesRef.current;
+    if (!priceSeries) return;
+
+    positionLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
+    positionLinesRef.current = [];
+
+    if (positionLevels) {
+      const { entry, stop, target } = positionLevels;
+      positionLinesRef.current.push(
+        priceSeries.createPriceLine({
+          price: entry,
+          color: POSITION_ENTRY_COLOR,
+          lineWidth: POSITION_LINE_WIDTH,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "Entry",
+        }),
+      );
+      if (stop != null) {
+        positionLinesRef.current.push(
+          priceSeries.createPriceLine({
+            price: stop,
+            color: POSITION_STOP_COLOR,
+            lineWidth: POSITION_LINE_WIDTH,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: "Stop",
+          }),
+        );
+      }
+      if (target != null) {
+        positionLinesRef.current.push(
+          priceSeries.createPriceLine({
+            price: target,
+            color: POSITION_TARGET_COLOR,
+            lineWidth: POSITION_LINE_WIDTH,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: "Target",
+          }),
+        );
+      }
+    }
+    // chartType, because the position lines live on the price series and the
+    // candle/line swap disposes them along with it.
+  }, [positionLevels, chartType]);
 
   // Its own effect, so switching the cursor does not tear the chart down and
   // lose the zoom -- the same reason the series swap has one.

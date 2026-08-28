@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { useTradingContext } from "../../context/TradingContext";
 import { useBalanceHistory } from "../../hooks/useBalanceHistory";
 import { useOrderHistory } from "../../hooks/useOrderHistory";
 import { useTrades } from "../../hooks/useTrades";
 import type { TradesState } from "../../hooks/useTrades";
-import { useTrading } from "../../hooks/useTrading";
 import type {
   Account,
   BalanceRange,
@@ -160,7 +160,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
     cancel,
     close,
     moveStop,
-  } = useTrading();
+  } = useTradingContext();
   const [tab, setTab] = useState<Tab>("ticket");
   const [ordersView, setOrdersView] = useState<OrdersView>("working");
   const [balanceRange, setBalanceRange] = useState<BalanceRange>("1M");

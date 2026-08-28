@@ -12,6 +12,7 @@ import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWid
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
 import { TradingWidget } from "./components/trading/TradingWidget";
+import { TradingProvider } from "./context/TradingContext";
 import type { ChartFocus } from "./types/screener";
 import { useAlarms } from "./hooks/useAlarms";
 import { useDashboardLayout, type WidgetId } from "./hooks/useDashboardLayout";
@@ -81,7 +82,9 @@ export default function App() {
       // Owns its own polling hook rather than taking state from here. If that
       // state were lifted into App, this memo would recompute every poll tick
       // and remount CandleChart -- exactly what the comment above guards
-      // against. Revisit when position lines need the data on the chart.
+      // against. Position lines on the chart (ChartWidget) get the same
+      // positions/orders via TradingContext instead, which re-renders its
+      // own consumers on a poll tick without touching this memo at all.
       trading: (
         <TradingWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
@@ -90,96 +93,98 @@ export default function App() {
   );
 
   return (
-    <div className="app-shell">
-      <header className="app-header">
-        <h1>Stocks in Play</h1>
-        <div className="header-actions">
-          <a
-            className="analytics-link"
-            href="/analytics"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open Plotly Dash analytics -- scanner heatmap, multi-panel symbol charts, seasonality, and cross-symbol comparison"
-          >
-            Analytics ↗
-          </a>
-          {conditions.available && conditions.level && (
+    <TradingProvider>
+      <div className="app-shell">
+        <header className="app-header">
+          <h1>Stocks in Play</h1>
+          <div className="header-actions">
             <a
-              className="market-conditions-badge"
-              data-level={conditions.level}
-              href="/analytics/market-conditions"
+              className="analytics-link"
+              href="/analytics"
               target="_blank"
               rel="noopener noreferrer"
-              title={`${conditions.reasons?.join(" · ")} -- click for details`}
+              title="Open Plotly Dash analytics -- scanner heatmap, multi-panel symbol charts, seasonality, and cross-symbol comparison"
             >
-              <span className="market-conditions-dot" />
-              {CONDITIONS_LABEL[conditions.level] ?? conditions.level}
+              Analytics ↗
             </a>
+            {conditions.available && conditions.level && (
+              <a
+                className="market-conditions-badge"
+                data-level={conditions.level}
+                href="/analytics/market-conditions"
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`${conditions.reasons?.join(" · ")} -- click for details`}
+              >
+                <span className="market-conditions-dot" />
+                {CONDITIONS_LABEL[conditions.level] ?? conditions.level}
+              </a>
+            )}
+            <span className="session-badge" data-session={session}>
+              <span className="session-dot" />
+              {SESSION_LABEL[session] ?? session}
+            </span>
+            <LayoutModeToggle
+              mode={dashboardLayout.mode}
+              onChange={dashboardLayout.setMode}
+              onReset={dashboardLayout.resetLayout}
+            />
+            <AlarmsToggle
+              enabled={alarms.enabled}
+              onToggle={alarms.setEnabled}
+              activeCount={alarms.alarms.length}
+              onClickCount={alarms.openOverlay}
+            />
+          </div>
+        </header>
+        <AlarmsOverlay
+          open={alarms.overlayOpen}
+          alarms={alarms.alarms}
+          onClose={alarms.closeOverlay}
+          onSelectSymbol={setSelectedSymbol}
+          momentumWindowMinutes={alarms.momentumWindowMinutes}
+        />
+        <main className="dashboard-main">
+          {dashboardLayout.mode === "grid" ? (
+            <DashboardGrid
+              layout={dashboardLayout.layout}
+              onLayoutChange={dashboardLayout.setLayout}
+              widgets={widgets}
+            />
+          ) : (
+            <ResizablePanels
+              direction="column"
+              storageKey="layout:main-rows"
+              defaultSizes={[0.65, 0.35]}
+              minSizePx={140}
+            >
+              <ResizablePanels
+                direction="row"
+                storageKey="layout:top-row"
+                defaultSizes={[0.32, 0.44, 0.24]}
+                // The trading panel's floor is its own: the order ticket is a
+                // narrow form and can give the scanner far more room than a
+                // table- or chart-width minimum would allow.
+                minSizePx={[220, 220, 150]}
+              >
+                {widgets.scanner}
+                {widgets.chart}
+                {widgets.trading}
+              </ResizablePanels>
+              <ResizablePanels
+                direction="row"
+                storageKey="layout:bottom-row"
+                defaultSizes={[0.34, 0.33, 0.33]}
+                minSizePx={220}
+              >
+                {widgets.ideas}
+                {widgets.benchmark}
+                {widgets.history}
+              </ResizablePanels>
+            </ResizablePanels>
           )}
-          <span className="session-badge" data-session={session}>
-            <span className="session-dot" />
-            {SESSION_LABEL[session] ?? session}
-          </span>
-          <LayoutModeToggle
-            mode={dashboardLayout.mode}
-            onChange={dashboardLayout.setMode}
-            onReset={dashboardLayout.resetLayout}
-          />
-          <AlarmsToggle
-            enabled={alarms.enabled}
-            onToggle={alarms.setEnabled}
-            activeCount={alarms.alarms.length}
-            onClickCount={alarms.openOverlay}
-          />
-        </div>
-      </header>
-      <AlarmsOverlay
-        open={alarms.overlayOpen}
-        alarms={alarms.alarms}
-        onClose={alarms.closeOverlay}
-        onSelectSymbol={setSelectedSymbol}
-        momentumWindowMinutes={alarms.momentumWindowMinutes}
-      />
-      <main className="dashboard-main">
-        {dashboardLayout.mode === "grid" ? (
-          <DashboardGrid
-            layout={dashboardLayout.layout}
-            onLayoutChange={dashboardLayout.setLayout}
-            widgets={widgets}
-          />
-        ) : (
-          <ResizablePanels
-            direction="column"
-            storageKey="layout:main-rows"
-            defaultSizes={[0.65, 0.35]}
-            minSizePx={140}
-          >
-            <ResizablePanels
-              direction="row"
-              storageKey="layout:top-row"
-              defaultSizes={[0.32, 0.44, 0.24]}
-              // The trading panel's floor is its own: the order ticket is a
-              // narrow form and can give the scanner far more room than a
-              // table- or chart-width minimum would allow.
-              minSizePx={[220, 220, 150]}
-            >
-              {widgets.scanner}
-              {widgets.chart}
-              {widgets.trading}
-            </ResizablePanels>
-            <ResizablePanels
-              direction="row"
-              storageKey="layout:bottom-row"
-              defaultSizes={[0.34, 0.33, 0.33]}
-              minSizePx={220}
-            >
-              {widgets.ideas}
-              {widgets.benchmark}
-              {widgets.history}
-            </ResizablePanels>
-          </ResizablePanels>
-        )}
-      </main>
-    </div>
+        </main>
+      </div>
+    </TradingProvider>
   );
 }

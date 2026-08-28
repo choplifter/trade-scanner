@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { useTradingContext } from "../../context/TradingContext";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import type { ChartFocus } from "../../types/screener";
 import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { useSymbolInfo } from "../../hooks/useSymbolInfo";
+import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
 import { CandleChart } from "./CandleChart";
-import type { ChartType, CursorMode } from "./CandleChart";
+import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
 import { SymbolInfoPanel } from "./SymbolInfoPanel";
 
 interface ChartWidgetProps {
@@ -148,6 +150,23 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   // highlight cannot mark a different stock's story.
   const [highlightedNews, setHighlightedNews] = useState<number[] | null>(null);
   useEffect(() => setHighlightedNews(null), [symbol]);
+
+  // Entry/stop/target lines for whatever position is open on the symbol on
+  // screen -- via context rather than a second useTrading() call, which
+  // would be an independent, out-of-sync poll loop (see TradingContext).
+  const { positions, orders } = useTradingContext();
+  const position = positions.find((p) => p.symbol === symbol) ?? null;
+  const entry = position ? num(position.avg_entry_price) : null;
+  const exits = position ? exitsForPosition(position, orders) : null;
+  const positionSide: "long" | "short" = position?.side === "short" ? "short" : "long";
+  // Memoized on the extracted primitives, not on `positions`/`orders`
+  // directly: those get new array/object identities on every poll tick even
+  // when nothing for this symbol changed, and an unstable identity here would
+  // make CandleChart tear down and rebuild its price lines just as often.
+  const positionLevels = useMemo<PositionLevels | null>(() => {
+    if (!position || entry == null) return null;
+    return { side: positionSide, entry, stop: exits?.stopLoss ?? null, target: exits?.takeProfit ?? null };
+  }, [position, entry, positionSide, exits?.stopLoss, exits?.takeProfit]);
 
   const newsMarkers = useMemo(
     () =>
@@ -335,6 +354,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             vwap={displayed.vwap}
             indicators={displayed.indicators.filter((i) => !hiddenIndicators.has(i.name))}
             showIndicators={showIndicators}
+            positionLevels={positionLevels}
             cursorMode={cursorMode}
             // Session tinting only where a bar sits inside one session --
             // on daily and coarser charts the distinction does not exist.
