@@ -2,12 +2,22 @@ import { useEffect, useRef, useState } from "react";
 
 import { OrderRejectedError, previewOrder, submitOrder } from "../../api/http";
 import { Modal } from "../common/Modal";
+import { exitsForPosition, num } from "../../types/trading";
 import type {
+  Account,
   EntryOrderType,
+  Order,
   OrderPreview,
   OrderTicketRequest,
+  Position,
   TradingRejection,
 } from "../../types/trading";
+import { formatPrice } from "../../utils/format";
+
+function money(value: string | null | undefined): string {
+  const parsed = num(value);
+  return parsed === null ? "—" : formatPrice(parsed);
+}
 
 type SizingMode = "shares" | "risk";
 
@@ -66,6 +76,15 @@ function randomUUID(): string {
 interface OrderTicketProps {
   symbol: string | null;
   defaultRiskPct: number;
+  /** For the buying-power/equity context strip and the quick-% sizing
+   * buttons (#1) -- read-only here, the ticket never mutates the account. */
+  account: Account | null;
+  /** The position already open on `symbol`, if any -- drives the "already
+   * holding N @ price" context line and the existing-exit warning (#6). */
+  position: Position | null;
+  /** Paired with `position` via `exitsForPosition` for the existing-exit
+   * warning (#6). */
+  orders: Order[];
   /** Called after a successful submit so the positions/orders tables and the
    * account line refresh immediately rather than waiting for the next poll. */
   onSubmitted: () => void;
@@ -79,7 +98,14 @@ interface OrderTicketProps {
  * Submit is gated twice over: the button only enables when the server says
  * can_submit (TRADING_ENABLED and a paper account), and the confirmation
  * dialog stands between the button and the order. */
-export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicketProps) {
+export function OrderTicket({
+  symbol,
+  defaultRiskPct,
+  account,
+  position,
+  orders,
+  onSubmitted,
+}: OrderTicketProps) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderType, setOrderType] = useState<EntryOrderType>("market");
   const [sizingMode, setSizingMode] = useState<SizingMode>("risk");
@@ -99,6 +125,7 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
   const [timeInForce, setTimeInForce] = useState<"day" | "gtc" | null>(null);
 
   const [preview, setPreview] = useState<OrderPreview | null>(null);
+  const [previewPending, setPreviewPending] = useState(false);
   const [rejection, setRejection] = useState<TradingRejection | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,12 +133,68 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
   const [submitting, setSubmitting] = useState(false);
   const [placed, setPlaced] = useState<string | null>(null);
 
+  // Advisory only -- doesn't affect canSubmit/disabledReason. Reset below
+  // whenever the symbol changes, so switching to a different already-exited
+  // position re-shows it rather than staying dismissed from a prior symbol.
+  const [existingExitsDismissed, setExistingExitsDismissed] = useState(false);
+  useEffect(() => {
+    setExistingExitsDismissed(false);
+  }, [symbol]);
+
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Minted once when the dialog opens, not per attempt: Alpaca rejects a
   // duplicate client_order_id, so retrying after a timeout resubmits the
   // *same* order rather than opening a second position. A server-generated
   // id would defeat that, since a retry would arrive with a new one.
   const clientOrderIdRef = useRef<string | null>(null);
+
+  // Hotkeys: B/S for side, 1-4 for order type (matching ORDER_TYPES' order),
+  // Enter to open the confirm dialog. Placed above the `if (!symbol) return`
+  // below so this hook always runs -- referencing preview/submitting/
+  // confirming state directly rather than the canSubmit/openConfirm consts
+  // defined further down, which only exist once a symbol is selected.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = document.activeElement;
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      // Modal.tsx already owns Escape on the confirm dialog; leave every key
+      // alone while it's open rather than risk double-handling one of these.
+      if (isTyping || confirming) return;
+
+      if (e.key === "b" || e.key === "B") {
+        setSide("buy");
+      } else if (e.key === "s" || e.key === "S") {
+        setSide("sell");
+      } else if (e.key >= "1" && e.key <= String(ORDER_TYPES.length)) {
+        setOrderType(ORDER_TYPES[Number(e.key) - 1].type);
+      } else if (e.key === "Enter") {
+        const canSubmitNow = Boolean(preview?.order && preview?.can_submit) && !submitting;
+        if (!canSubmitNow) return;
+        clientOrderIdRef.current = randomUUID();
+        setPlaced(null);
+        setConfirming(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirming, preview, submitting]);
+
+  // Sanity bound for Risk %, not a hard broker limit -- the backend enforces
+  // only gt=0 (no ceiling exists server-side), so this exists purely to
+  // catch a fat-fingered value (50 typed for 0.5) before it prices as a real
+  // order. Relative to the account's own default rather than a flat number,
+  // with a 5% floor so a very low default doesn't make the guardrail trip on
+  // ordinary values. Deliberately NOT keyed off preview.limits.default_risk_pct
+  // -- that would put `missing` (an effect dependency) in a feedback loop
+  // with the very preview the effect fetches: a blocked ticket clears
+  // preview, which removes the reference, which unblocks it, which
+  // re-fetches, forever.
+  const riskPctCeiling = Math.max(5, defaultRiskPct * 5);
+  const riskPctValue = numberOrUndefined(riskPct);
 
   // What the ticket still needs before it can be priced at all. Used both
   // to skip pointless preview requests and to say, on the button itself, why
@@ -129,9 +212,11 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
           : null
         : !numberOrUndefined(stopPrice)
           ? "Enter a stop price — it is what sizes the order"
-          : !numberOrUndefined(riskPct)
+          : riskPctValue === undefined
             ? "Enter a risk %"
-            : null;
+            : riskPctValue > riskPctCeiling
+              ? "Risk % looks too high — check the value before pricing"
+              : null;
 
   useEffect(() => {
     if (!symbol) {
@@ -165,11 +250,13 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
     if (missing) {
       setPreview(null);
       setRejection(null);
+      setPreviewPending(false);
       return;
     }
 
     if (timerRef.current) clearTimeout(timerRef.current);
     let cancelled = false;
+    setPreviewPending(true);
     timerRef.current = setTimeout(() => {
       previewOrder(ticket)
         .then((result) => {
@@ -188,6 +275,10 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
             setRejection(null);
             setError(err instanceof Error ? err.message : String(err));
           }
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setPreviewPending(false);
         });
     }, PREVIEW_DEBOUNCE_MS);
 
@@ -214,6 +305,28 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
   }
 
   const order = preview?.order;
+  // Reference price for the quick-% sizing buttons (#1) -- never fires an
+  // extra preview request just to have a price; falls back to the position's
+  // last known price, then gives up and disables the buttons.
+  const sizingPrice = order?.entry_reference ?? num(position?.current_price) ?? null;
+  const buyingPower = num(account?.buying_power);
+  const exits = position ? exitsForPosition(position, orders) : null;
+
+  // A synchronous, client-side "≈ N shares" estimate for risk mode, shown
+  // while the authoritative server-priced qty in the preview panel is
+  // stale or still in flight -- it must read as visually distinct from that
+  // qty since the two can disagree during previewPending.
+  const riskEntryRef = num(position?.current_price) ?? order?.entry_reference ?? null;
+  const estimatedRiskShares = (() => {
+    if (sizingMode !== "risk") return null;
+    const equity = num(account?.equity);
+    const stop = numberOrUndefined(stopPrice);
+    const pct = numberOrUndefined(riskPct);
+    if (equity == null || stop == null || pct == null || riskEntryRef == null) return null;
+    const riskPerShare = Math.abs(riskEntryRef - stop);
+    if (riskPerShare <= 0) return null;
+    return Math.floor((equity * (pct / 100)) / riskPerShare);
+  })();
   const canSubmit = Boolean(order && preview?.can_submit) && !submitting;
   const disabledReason = canSubmit
     ? null
@@ -287,6 +400,7 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
             className="timeframe-button"
             aria-pressed={side === "buy"}
             onClick={() => setSide("buy")}
+            title="Hotkey: B"
           >
             Buy
           </button>
@@ -295,22 +409,54 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
             className="timeframe-button"
             aria-pressed={side === "sell"}
             onClick={() => setSide("sell")}
+            title="Hotkey: S"
           >
             Sell
           </button>
         </div>
       </div>
 
+      <div className="order-ticket-context">
+        <span>
+          Buying power <strong>{money(account?.buying_power)}</strong>
+        </span>
+        <span>
+          Equity <strong>{money(account?.equity)}</strong>
+        </span>
+        {position && (
+          <span>
+            Holding <strong>{position.qty}</strong> @ {money(position.avg_entry_price)}
+          </span>
+        )}
+      </div>
+
+      {exits && (exits.stopLoss !== null || exits.takeProfit !== null) && !existingExitsDismissed && (
+        <div className="order-rejection" role="status">
+          {symbol} already has
+          {exits.stopLoss !== null ? ` a stop at ${formatPrice(exits.stopLoss)}` : ""}
+          {exits.stopLoss !== null && exits.takeProfit !== null ? " and" : ""}
+          {exits.takeProfit !== null ? ` a target at ${formatPrice(exits.takeProfit)}` : ""}. A new
+          order here does not replace {exits.stopLoss !== null && exits.takeProfit !== null ? "them" : "it"}.{" "}
+          <button
+            type="button"
+            className="row-action"
+            onClick={() => setExistingExitsDismissed(true)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="order-ticket-row">
         <div className="timeframe-selector">
-          {ORDER_TYPES.map(({ type, label, title }) => (
+          {ORDER_TYPES.map(({ type, label, title }, i) => (
             <button
               key={type}
               type="button"
               className="timeframe-button"
               aria-pressed={orderType === type}
               onClick={() => setOrderType(type)}
-              title={title}
+              title={`${title} Hotkey: ${i + 1}`}
             >
               {label}
             </button>
@@ -347,6 +493,7 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
                 value={triggerPrice}
                 onChange={(e) => setTriggerPrice(e.target.value)}
               />
+              <span className="order-hint">rests until price trades through it</span>
             </label>
           )}
           {NEEDS_LIMIT.has(orderType) && (
@@ -364,6 +511,9 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
                 value={limitPrice}
                 onChange={(e) => setLimitPrice(e.target.value)}
               />
+              <span className="order-hint">
+                {orderType === "stop_limit" ? "cap once triggered" : "fills at this price or better"}
+              </span>
             </label>
           )}
         </div>
@@ -391,6 +541,32 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
             Qty
             <input type="number" step="1" value={qty} onChange={(e) => setQty(e.target.value)} />
           </label>
+          <div
+            className="timeframe-selector"
+            title={
+              sizingPrice == null
+                ? "No reference price yet -- pick an order type/price or wait for a position price."
+                : buyingPower == null
+                  ? "Buying power unavailable."
+                  : undefined
+            }
+          >
+            {[25, 50, 75, 100].map((pct) => (
+              <button
+                key={pct}
+                type="button"
+                className="timeframe-button"
+                disabled={sizingPrice == null || buyingPower == null}
+                onClick={() => {
+                  if (sizingPrice == null || buyingPower == null) return;
+                  const shares = Math.floor(((buyingPower * pct) / 100) / sizingPrice);
+                  setQty(String(Math.max(0, shares)));
+                }}
+              >
+                {pct}%
+              </button>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="order-ticket-row">
@@ -408,9 +584,16 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
             <input
               type="number"
               step="0.1"
+              min="0.1"
+              max="10"
               value={riskPct}
               onChange={(e) => setRiskPct(e.target.value)}
             />
+            {estimatedRiskShares !== null && (
+              <span className="order-hint" style={{ fontStyle: "italic" }}>
+                ≈ {estimatedRiskShares.toLocaleString()} sh
+              </span>
+            )}
           </label>
         </div>
       )}
@@ -434,6 +617,8 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
       )}
       {error && <div className="order-rejection">{error}</div>}
 
+      {previewPending && <div className="order-hint">Pricing…</div>}
+
       {order && (
         <div className="order-preview">
           <strong>
@@ -448,6 +633,12 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
               risk {order.risk_amount.toFixed(2)}
               {order.risk_pct_of_equity !== null ? ` (${order.risk_pct_of_equity}% of equity)` : ""}
               {order.risk_per_share !== null ? ` · ${order.risk_per_share.toFixed(2)}/sh` : ""}
+            </span>
+          )}
+          {preview?.limits && (
+            <span>
+              Ceilings: {preview.limits.max_order_qty.toLocaleString()} sh /{" "}
+              {preview.limits.max_order_notional.toLocaleString()} notional
             </span>
           )}
         </div>
@@ -468,7 +659,7 @@ export function OrderTicket({ symbol, defaultRiskPct, onSubmitted }: OrderTicket
         className="generate-button"
         disabled={!canSubmit}
         onClick={openConfirm}
-        title={disabledReason ?? undefined}
+        title={disabledReason ?? "Hotkey: Enter"}
       >
         {submitting ? "Submitting…" : `${side === "buy" ? "Buy" : "Sell"} ${symbol}`}
       </button>

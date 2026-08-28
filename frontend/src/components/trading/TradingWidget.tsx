@@ -289,6 +289,9 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
           <OrderTicket
             symbol={selectedSymbol}
             defaultRiskPct={defaultRiskPct}
+            account={account}
+            position={positions.find((p) => p.symbol === selectedSymbol) ?? null}
+            orders={orders}
             onSubmitted={afterAction}
           />
         ) : tab === "positions" ? (
