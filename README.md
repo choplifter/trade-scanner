@@ -459,9 +459,11 @@ past dates.
   guardrail (the backend enforces no upper bound — a value far outside your
   account's default blocks submit with a hint, catching a fat-fingered 50
   typed for 0.5). If the symbol already has a working stop/target, a
-  dismissible banner says so before you place a second order on it. B/S for
-  side, 1-4 for order type and Enter to open the confirm dialog work as
-  hotkeys, suppressed while typing in a field or while that dialog is open.
+  dismissible banner says so before you place a second order on it. Keyboard
+  shortcuts: **B**/**S** for side, **1**-**4** for order type (market, limit,
+  stop, stop-limit, in that order) and **Enter** to open the confirm dialog —
+  suppressed while typing in a field or while that dialog is open, and shown
+  in each button's hover tooltip.
   The positions table joins each position to its working exits (including a bracket's stop parked in
   Alpaca's `held` status, which the naive "open orders" query hides — a
   position without a stop gets a loud **NO STOP** badge) and manages them in
