@@ -569,7 +569,17 @@ export function CandleChart({
       const dragging = draggingRef.current;
       if (dragging) {
         const price = priceSeries.coordinateToPrice(y);
-        if (price != null) {
+        // `!= null` alone isn't enough: NaN is neither null nor undefined,
+        // so a NaN result -- coordinateToPrice can return one while the
+        // price scale is mid-recompute, which is exactly what's happening
+        // right as indicativeLevels/positionLevels changes and the
+        // line-drawing effects tear down and rebuild every line -- would
+        // otherwise sail through and get handed to a real chart price line.
+        // A price line pinned to NaN (or a wild, non-positive value from an
+        // out-of-bounds coordinate) can send the library's own axis/scale
+        // math into a pathological loop with nothing to throw or catch,
+        // which reads as the chart hanging with no console error at all.
+        if (price != null && Number.isFinite(price) && price > 0) {
           try {
             dragging.line.applyOptions({ price });
           } catch {
