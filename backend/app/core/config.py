@@ -91,7 +91,35 @@ class Settings(BaseSettings):
     # (e.g. early premarket); this keeps the "$ Vol" column in both
     # frontends' scanner tables from showing rows that technically qualify
     # but haven't actually traded much yet.
-    scanner_min_dollar_volume: float = 1_000_000.0
+    #
+    # Was $1M, unchanged since before the 2026-08-20 IEX->SIP feed switch --
+    # on IEX that was ~$30M+ effective (dollar_volume_today read only the
+    # ~3% of the tape IEX itself saw), so moving to SIP without touching
+    # this number silently dropped the real floor by ~30x.
+    #
+    # Re-derived 2026-08-29 with scripts/dollar_volume_backtest_report.py
+    # --from-history (1810 previously-ranked symbols, 180 calendar days,
+    # 1-trading-day-forward outcome), sweeping the floor and reading each
+    # view's `edge` -- win_rate minus the SAME floor's base rate (a random
+    # tradable-at-that-floor symbol-day), so the reading isolates the
+    # ranking's own contribution from "a higher floor just selects calmer
+    # names" (the base rate itself barely moved across the whole sweep,
+    # 48.0% at $0 to 49.2% at $50M, so that confound wasn't actually
+    # present here -- but it needed checking, not assuming). At $1M: losers
+    # edge -1.6pp, gainers edge -5.1pp. Both improve as the floor rises;
+    # losers crosses positive around $5-10M and peaks near $30M (+0.9pp);
+    # gainers improves monotonically but stays negative everywhere tested,
+    # -2.5pp even at $50M (a separate finding worth its own investigation --
+    # today's biggest % gainer underperformed a random pick at every floor
+    # in this 180-day window). most_active is flat throughout, as expected:
+    # it's already ranked by the same dollar volume this floor filters on.
+    # $20M chosen as a conservative pick inside the region both views
+    # improved in, short of chasing the single $30M peak point: losers'
+    # distinct-symbol count was already declining with the floor (1409 at
+    # $1M, 1251 at $20M, 1171 at $30M, 1034 at $50M) and its edge dropped
+    # back to +0.1pp by $50M, so treating the $30M peak (+0.9pp) as the
+    # exact right answer risked reading noise in a shrinking sample.
+    scanner_min_dollar_volume: float = 20_000_000.0
 
     # Divide RVOL's denominator by the share of a typical day's volume normally
     # done by this time of day, instead of comparing today's partial volume

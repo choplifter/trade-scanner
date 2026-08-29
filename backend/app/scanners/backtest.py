@@ -523,6 +523,48 @@ def fade_risk_by_view(picks: list[dict], views: tuple[str, ...] = bucket_analysi
     return rows
 
 
+def dollar_volume_sweep(
+    bars_by_symbol: dict[str, list],
+    thresholds: list[float],
+    horizon_days: int = 1,
+    benchmark_returns: dict[date, float] | None = None,
+) -> list[dict]:
+    """Win rate/avg return per view, at each candidate
+    settings.scanner_min_dollar_volume floor -- the daily-bar analog of
+    rvol_backtest.run_rvol_backtest's threshold sweep, for re-deriving that
+    setting the same disciplined way.
+
+    Unlike the RVOL sweep, this doesn't need an intraday replay: the floor
+    only gates which rows are *tradable* before a day's top-N ranking
+    (engine._tradable, called from _ranked_views), and simulate_from_bars
+    already recomputes that ranking from scratch. So each threshold is just
+    a fresh call to simulate_from_bars over the same already-fetched bars --
+    cheap and network-free, unlike RVOL where the threshold determines the
+    entry timing itself and has no such shortcut.
+
+    A higher floor doesn't just relabel the existing picks, it changes which
+    symbols even reach the top-N -- so, same as the RVOL sweep, this is a
+    sweep over what *would have been ranked* at each floor, not a bucketing
+    of one fixed run's picks by their own dollar volume.
+    """
+    rows = []
+    for threshold in thresholds:
+        picks = simulate_from_bars(bars_by_symbol, threshold, horizon_days, benchmark_returns)
+        for view_name in bucket_analysis.VIEWS:
+            view_picks = [p for p in picks if p["view"] == view_name]
+            stats = bucket_analysis.bucket_stats(view_picks)
+            rows.append(
+                {
+                    "min_dollar_volume": threshold,
+                    "view": view_name,
+                    **stats,
+                    "distinct_symbols": len({p["symbol"] for p in view_picks}),
+                    "sufficient_sample": len(view_picks) >= bucket_analysis.MIN_SAMPLE_SIZE,
+                }
+            )
+    return rows
+
+
 async def run_backtest(
     clients: AlpacaClients,
     settings: Settings,

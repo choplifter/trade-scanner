@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from app.scanners.backtest import (
     active_views,
     look_ahead_filters,
+    dollar_volume_sweep,
     fade_risk_by_view,
     simulate_from_bars,
     unsupported_filters,
@@ -169,6 +170,21 @@ def test_simulate_from_bars_ranks_most_active_by_dollar_volume_not_share_volume(
 
     # Picks are appended in ranked order within a (date, view) cohort.
     assert [p["symbol"] for p in picks if p["view"] == "most_active"] == ["PRICEY", "PENNY"]
+
+
+def test_dollar_volume_sweep_excludes_thin_symbols_at_higher_floor():
+    closes = [100.0] * 20 + [110.0, 115.0]
+    thin = _daily_bars(date(2026, 1, 1), closes, volume=2_000.0)  # ~$220k entry-day dollar volume
+    liquid = _daily_bars(date(2026, 1, 1), closes, volume=200_000.0)  # ~$22M entry-day dollar volume
+    bars_by_symbol = {"THIN": thin, "LIQ": liquid}
+
+    rows = dollar_volume_sweep(bars_by_symbol, thresholds=[0, 1_000_000], horizon_days=1)
+
+    at_zero = next(r for r in rows if r["min_dollar_volume"] == 0 and r["view"] == "gainers")
+    at_1m = next(r for r in rows if r["min_dollar_volume"] == 1_000_000 and r["view"] == "gainers")
+
+    assert at_zero["distinct_symbols"] == 2
+    assert at_1m["distinct_symbols"] == 1
 
 
 def test_simulate_from_bars_records_entry_dollar_volume():
