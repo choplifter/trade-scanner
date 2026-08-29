@@ -110,7 +110,8 @@ class Settings(BaseSettings):
     # side over 5-minute bars (ranking_drift_report.py, the pointer that used
     # to be here, cannot do it: it only sees whatever definition was live when
     # the appearance was recorded). Measured over 613 previously-ranked
-    # symbols, 21 trading days, entry-to-session-close:
+    # symbols, 21 trading days, entry-to-session-close (2026-08-16, before the
+    # 2026-08-20 IEX->SIP feed switch):
     #
     #   raw >=15x   -> n=85, win 41.2%, median -0.47%  (today's live setting)
     #   norm >=50x  -> n=86, win 43.0%, median -1.90%
@@ -118,11 +119,23 @@ class Settings(BaseSettings):
     #
     # 50x picks out almost exactly the same population 15x does today (86 vs
     # 85 entries, 71 vs 71 distinct symbols) and sits where win rate and
-    # median return start degrading, so ~50x is the candidate replacement and
-    # 50-75x the defensible range. Still OFF: that rests on 21 trading days of
-    # one symbol set in one period, and enabling the flag means shipping a
-    # second threshold constant for the normalized definition rather than
-    # reusing 15x. Re-run the report over a longer window before flipping it.
+    # median return start degrading, so ~50x looked like the candidate
+    # replacement and 50-75x the defensible range.
+    #
+    # Re-run 2026-08-29, entirely under the SIP feed and against a larger
+    # population (1810 symbols, 22 trading days): raw >=15x -> n=172, win
+    # 40.1%, median -3.1%; norm >=15x -> n=378, win 39.9%, median -1.86%;
+    # norm >=50x -> n=138, win 37.7%, median -7.15%. Both runs' raw-column
+    # control disagrees with the 25.6%/-10.38% live baseline in the same
+    # direction and by roughly the same amount (see formulas._FADE_RISK_RVOL
+    # for the read on why), and per the script's own rule an unvalidated
+    # control means no threshold should be taken from either run -- so the
+    # ~50x normalized candidate above is not confirmed by this second run,
+    # just not contradicted either (50x's win rate moved from 43.0% to 37.7%
+    # between runs, a bigger swing than the raw column's). Still OFF: the
+    # feed switch didn't change the picture, but the underlying control
+    # problem is unresolved, so there still isn't a normalized threshold this
+    # data actually supports shipping.
     scanner_rvol_time_normalized: bool = False
 
     # How often to re-check Alpaca's movers screener for symbols that are

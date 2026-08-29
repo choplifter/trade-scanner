@@ -178,6 +178,28 @@ _CATALYST_BOOST = 1.15
 # volume spike is as often exhaustion/a blow-off top as it is genuine
 # continuation. So past this point extreme RVOL is treated as a fade-risk
 # warning, not an extra bullish signal.
+#
+# Re-checked 2026-08-29 with scripts/rvol_backtest_report.py --from-history
+# (1810 previously-ranked symbols, 22 trading days, entry-to-session-close;
+# every bar in this run was fetched under the current feed, which has been
+# SIP -- not IEX -- since 2026-08-20, so this reading is not an IEX/SIP
+# artifact). The control at 15x came back n=172, win 40.1%, avg -0.09%,
+# which does not reproduce the 25.6%/-10.38% baseline -- per this script's
+# own rule, that means no new threshold should be taken from this run. But
+# the same-shaped mismatch (~40% win rate at 15x, not 25.6%) already showed
+# up in the pre-SIP 2026-08-16 run recorded next to
+# settings.scanner_rvol_time_normalized (n=85, win 41.2%), on a different,
+# largely non-overlapping window. Two independent runs on opposite sides of
+# the feed cutover landing on the same ~40% figure means the gap from the
+# 25.6% baseline is a pre-existing methodology difference (most likely the
+# original analysis used a different win/exit-horizon definition than
+# "held to session close"), not something the SIP switch caused or moved.
+# The raw sweep's shape is also unchanged either side of the cutover: win
+# rate runs ~49% at 1x down to ~35-40% by 20-30x+, monotonic, with adequate
+# per-bucket sample even at 150x (n=48, 48 distinct symbols) -- the same
+# degradation shape the 2026-08-16 run showed. So RVOL keeps its scale
+# post-SIP as expected, and there is no SIP-driven case to move this
+# threshold -- left at 15.0.
 _FADE_RISK_RVOL = 15.0
 _FADE_RISK_DISCOUNT = 0.7
 
