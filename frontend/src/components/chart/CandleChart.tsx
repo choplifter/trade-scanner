@@ -583,6 +583,26 @@ export function CandleChart({
       const current = chartRef.current?.timeScale().getVisibleLogicalRange();
       const atRightEdge = !current || current.to >= previousBarCount - 1.5;
       if (!atRightEdge) return;
+
+      // At the edge with new bars to follow: slide the *current* window
+      // forward by exactly how many bars just arrived, rather than falling
+      // through to the "fit everything to the pane" recompute below. That
+      // recompute picks its own spacing from the total bar count, which
+      // drifts as the session goes on and rarely matches whatever zoom the
+      // viewer actually has -- so scrolling right, close enough to the edge
+      // to count as "following," could still land somewhere else entirely
+      // the moment the next tick's effect run reasserted it. A translation
+      // keeps the viewer's own zoom and just advances it, which is what
+      // "still following" should look like.
+      const newBars = bars.length - previousBarCount;
+      if (current && newBars > 0) {
+        const chart = chartRef.current;
+        if (chart) {
+          chart.timeScale().setVisibleLogicalRange({ from: current.from + newBars, to: current.to + newBars });
+          applyLabelClearance(chart, hasLevelsRef.current);
+        }
+        return;
+      }
     }
 
     const container = containerRef.current;
