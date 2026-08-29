@@ -25,6 +25,13 @@ const POLL_MS = 4_000;
  * harder for a short window rather than holding a socket open all day. */
 const HOT_POLL_MS = 1_200;
 const HOT_WINDOW_MS = 12_000;
+/** A single failed poll is usually a one-off network blip (or, in dev, the
+ * backend mid-restart from --reload) rather than a real outage -- and the
+ * very next poll, a second or two later, typically succeeds. Surfacing it
+ * immediately flickered an error banner over live positions every time that
+ * happened. Wait for a few in a row before treating it as real; a genuine
+ * outage still surfaces within a handful of seconds. */
+const ERROR_THRESHOLD = 3;
 
 export interface TradingState {
   account: Account | null;
@@ -66,6 +73,7 @@ export function useTrading(): TradingState & TradingActions {
   const [state, setState] = useState<TradingState>(EMPTY_STATE);
   const cancelledRef = useRef(false);
   const hotUntilRef = useRef(0);
+  const failureCountRef = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -77,6 +85,7 @@ export function useTrading(): TradingState & TradingActions {
         getOrders("open"),
       ]);
       if (cancelledRef.current) return;
+      failureCountRef.current = 0;
       setState({
         account: account.account,
         paper: account.paper,
@@ -89,6 +98,8 @@ export function useTrading(): TradingState & TradingActions {
       });
     } catch (err: unknown) {
       if (cancelledRef.current) return;
+      failureCountRef.current += 1;
+      if (failureCountRef.current < ERROR_THRESHOLD) return;
       // Keep whatever was last known rather than blanking the panel: a
       // transient failure should not make it look like the positions closed.
       setState((s) => ({
