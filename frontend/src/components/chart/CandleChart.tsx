@@ -568,7 +568,7 @@ export function CandleChart({
       const chart = chartRef.current;
       if (chart) {
         chart.timeScale().setVisibleRange(pendingRange);
-        applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels));
+        applyLabelClearance(chart, hasLevelsRef.current);
       }
       return;
     }
@@ -591,15 +591,22 @@ export function CandleChart({
       const chart = chartRef.current;
       if (range && chart) {
         chart.timeScale().setVisibleLogicalRange(range);
-        applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels));
+        applyLabelClearance(chart, hasLevelsRef.current);
       }
     }
-    // indicators and positionLevels are dependencies because this effect
-    // repositions the viewport, and the margin has to be re-asserted
-    // whenever either changes what's actually drawn. chartType is one
-    // because the swap above leaves a brand-new, empty series behind --
-    // without it, toggling would blank the price until the next tick.
-  }, [bars, vwap, focusTime, indicators, positionLevels, chartType, shadeSessions]);
+    // Deliberately NOT dependent on `indicators`: that array gets a fresh
+    // identity on every ChartWidget render (it's filtered inline there), so
+    // depending on it here would re-run this effect -- and its unconditional
+    // setData() calls above -- on renders that carry no new bars at all,
+    // fighting the atRightEdge check below and stomping a scrolled-back
+    // viewport the same way a live tick could before that check existed.
+    // hasLevelsRef (read via applyLabelClearance above) stays current every
+    // render regardless. positionLevels is a dependency because it's already
+    // stable (memoized upstream on primitives) and the margin has to be
+    // re-asserted when it changes for real. chartType is one because the
+    // swap above leaves a brand-new, empty series behind -- without it,
+    // toggling would blank the price until the next tick.
+  }, [bars, vwap, focusTime, positionLevels, chartType, shadeSessions]);
 
   // Scroll a clicked backtest pick into view and pin it with an arrow. Runs
   // after the data effect above, so the bars it needs are already on the
@@ -724,15 +731,28 @@ export function CandleChart({
     const priceSeries = priceSeriesRef.current;
     if (!chart || !priceSeries) return;
 
-    // Adding/removing a "series"-kind indicator (e.g. an EMA, sourced from
-    // 1-minute bars regardless of the displayed timeframe) can be a much
-    // higher time-resolution than the currently-displayed candles -- that
-    // changes what a *logical* bar index even means, so preserving by
-    // logical index (as opposed to by actual time) still lets the visible
-    // window jump. Time-based range is immune to that: it's the same wall-
-    // clock window regardless of how many logical points now exist inside
-    // it.
-    const preservedRange = chart.timeScale().getVisibleRange();
+    // Logical (bar-index) range, not time-based: this effect never touches
+    // `bars` itself, only price lines and indicator series, so the bar count
+    // is provably unchanged between the capture below and the restore at the
+    // end -- capturing by index is exact, with no time-to-index resolution
+    // for the library to redo.
+    //
+    // A time-based range was used here previously, on the theory that a
+    // "series"-kind indicator (e.g. an EMA, sourced from 1-minute bars
+    // regardless of the displayed timeframe) could be a different
+    // resolution than the candles, making a logical index mean something
+    // different by the time it was restored. That doesn't hold up against
+    // aggregateBars, which already rebuckets every "series" sub-series to
+    // match `bars` one-for-one before either reaches this component -- so
+    // logical and time-based describe the same window here, and logical is
+    // the one with no round-trip to get wrong. On a multi-day GDXD session
+    // with overnight/weekend gaps, the time-based restore was occasionally
+    // resolving to the wrong bar and snapping the view to the right edge --
+    // this effect reruns on every live tick even when `indicators` is
+    // unchanged content-wise (ChartWidget filters it inline into a fresh
+    // array each render), so that resolution ran far more often than a
+    // toggle in the Levels dropdown alone would suggest.
+    const preservedRange = chart.timeScale().getVisibleLogicalRange();
 
     priceLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
     priceLinesRef.current = [];
@@ -784,10 +804,10 @@ export function CandleChart({
     });
 
     if (preservedRange) {
-      chart.timeScale().setVisibleRange(preservedRange);
+      chart.timeScale().setVisibleLogicalRange(preservedRange);
     }
-    // After the restore, never before: setVisibleRange repositions the
-    // content and drops the margin.
+    // After the restore, never before: setVisibleLogicalRange repositions
+    // the content and drops the margin.
     applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels));
     // chartType, because the price lines live on the price series and the
     // swap disposes them along with it. positionLevels, because it also
