@@ -1,9 +1,12 @@
-"""The catalyst boost is wired into _rank_gainers only.
+"""The catalyst boost/no-catalyst discount is wired into _rank_gainers and
+(since 2026-08-29) _rank_losers, not _rank_most_active.
 
-formulas.rank_score can apply the boost, but whether a given view *asks* it to
-is the thing that actually decides ranking -- so these assert the wiring, not
-the arithmetic (see test_formulas.py for that). Each case is built so the boost
-would flip the order if it were applied, making its absence observable.
+formulas.rank_score can apply the boost/discount, but whether a given view
+*asks* it to is the thing that actually decides ranking -- so these assert
+the wiring, not the arithmetic (see test_formulas.py for that). Each case is
+built so the effect would flip the order if it weren't applied where it
+should be, or were applied where it shouldn't, making the wiring observable
+either way.
 """
 
 from datetime import datetime, timezone
@@ -64,12 +67,27 @@ def test_gainers_without_a_headline_rank_purely_on_magnitude():
     assert _symbols(ranked) == ["BIG", "SMALL"]
 
 
-def test_losers_do_not_apply_the_catalyst_boost():
-    # Mirror of the gainers case: -9 * 1.15 = -10.35 would sort CAT ahead of
-    # BIG's -10 if the boost were applied. It must not be.
+def test_losers_apply_the_catalyst_boost():
+    # BIG drops 10% with no headline (-10 * 0.1 = -1.0), CAT only 9% but with
+    # one (-9 * 1.15 = -10.35) -- the catalyst-backed loser ranks as the more
+    # notable one (more negative, sorts first), same shape as the gainers
+    # case above. This is the 2026-08-29 override -- see
+    # formulas._NO_CATALYST_DISCOUNT for why it exists despite the original
+    # per-view measurement finding no edge here.
     rows = [_row("BIG", -10.0), _row("CAT", -9.0)]
     ranked = _rank_losers(rows, _StubNewsCache({"CAT": "Guidance cut"}))
-    assert _symbols(ranked) == ["BIG", "CAT"]
+    assert _symbols(ranked) == ["CAT", "BIG"]
+
+
+def test_losers_without_a_headline_still_apply_the_no_catalyst_discount():
+    # Both undiscounted magnitudes would sort BIG first (-10 < -9); the
+    # discount (*0.1 for both, no headline either) doesn't change relative
+    # order when applied uniformly, so this should read the same as pure
+    # magnitude -- confirms the discount doesn't accidentally apply only to
+    # one row.
+    rows = [_row("BIG", -10.0), _row("SMALL", -9.0)]
+    ranked = _rank_losers(rows, _StubNewsCache({}))
+    assert _symbols(ranked) == ["BIG", "SMALL"]
 
 
 def test_most_active_does_not_apply_the_catalyst_boost():

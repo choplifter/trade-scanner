@@ -11,9 +11,10 @@ VWAP overlay, EMA/premarket/weekly/monthly range indicators, news pinned on
 the timeline, and company info/news; a drop-in **strategy engine** (ORB
 family, VWAP rules) whose signals are switchable from the UI, drawn on the
 chart, badged in the scanner and measured by the same backtest that would
-trade them; a **paper-trading panel** (risk-sized tickets, brackets, and
-live position management: move the stop, break-even, partial sells with
-exit re-arm); a dashboard-wide momentum alarm, AI-generated trade-idea
+trade them; a **paper-trading panel** (risk-sized tickets, brackets, live
+position management, and DAS Trader/Andrew Aziz-style instant-fire hotkeys
+for entries, breakout orders, flatten, scale-out and stop-to-breakeven —
+no confirm dialog); a dashboard-wide momentum alarm, AI-generated trade-idea
 annotations, a scanner-wide benchmark against SPY, a persistent scanner
 match history with fade-risk analysis, one-click backtesting of whatever
 screen you're looking at, CLI tools for re-validating the ranking formula
@@ -96,10 +97,13 @@ backend on port 8000, so both must be running.
   movers-screener backstop periodically pulls in today's runners that weren't
   in the trailing-volume-filtered universe to begin with, and keeps running
   even while the market's closed so a big mover from the last session isn't
-  invisible over a weekend/holiday. Rows need at least $1M of today's own
+  invisible over a weekend/holiday. Rows need at least $20M of today's own
   dollar volume to appear at all (`SCANNER_MIN_DOLLAR_VOLUME`), applied
   *before* your filters, so a thin name that clears the universe filters but
-  hasn't traded much today doesn't clutter the list.
+  hasn't traded much today doesn't clutter the list. Re-derived from $1M
+  after the 2026-08-20 IEX→SIP feed switch quietly dropped the *effective*
+  floor ~30x (`dollar_volume_backtest_report.py`, see Ranking validation
+  CLI tools below, has the sweep behind the new number).
 - **Presets, not hardcoded views.** **Top Gainers**, **Top Losers** and
   **Most Active** are ordinary screens you can open, read and edit — load one
   and its filters and sort appear in the filter bar. Editing it shows
@@ -111,14 +115,25 @@ backend on port 8000, so both must be running.
   current rows, so no filter expresses it and the filter bar hides itself
   there.
 - **Ranking formula**: gap % magnitude is boosted 1.15x on the **gainers**
-  views when a genuine news catalyst is behind the move, and any view's
-  magnitude is discounted 0.7x when RVOL exceeds 15x -- both tuned from this
-  app's own scanner-history win-rate data (`app/scanners/formulas.py`'s
-  `rank_score`). The catalyst boost is deliberately gainers-only: re-checked
-  per view, the headline edge is +9.1pp on gainers but statistically
-  indistinguishable from zero on losers and most-active, so it's applied only
-  where it's measurable (see `_CATALYST_BOOST`, and
-  `scripts/ranking_drift_report.py` to re-check as more data accumulates).
+  and **losers** views when a genuine news catalyst is behind the move, and
+  discounted 0.1x on both when there's no catalyst at all -- so a headline
+  costs or earns real rank, not just a one-directional bonus (raised from an
+  initial 0.9x the same day: a mild haircut can't outrank a big enough gap
+  on its own -- observed live, a +95% no-news mover still outscored a +19%
+  catalyst-backed one at 0.9x, since 10% off a 5x-larger number is still the
+  larger number; 0.1x can actually flip that kind of matchup). Any view's
+  magnitude is separately discounted 0.7x when RVOL exceeds 15x -- both
+  tuned from this app's own scanner-history win-rate data
+  (`app/scanners/formulas.py`'s `rank_score`). **Most-active** stays
+  untouched by the catalyst signal (headline edge measured at -3.1pp there,
+  actually negative) while gainers keeps its measured +9.1pp backing (see
+  `_CATALYST_BOOST`). **Losers is a deliberate, not-yet-validated
+  extension** past what was actually measured there (+3.1pp, statistically
+  indistinguishable from zero, per view) -- shipped 2026-08-29 on request
+  despite that, and flagged as such right next to the constant
+  (`_NO_CATALYST_DISCOUNT`) so it's re-checked with
+  `scripts/ranking_drift_report.py` once enough losers data accumulates,
+  the same discipline the gainers number has already been through twice.
   The fade-risk discount is direction-agnostic and so applies everywhere. A
   roundup headline that just lists a symbol alongside a dozen others ("12
   Health Care Stocks Moving...") doesn't count as a catalyst, only a story
@@ -389,7 +404,12 @@ past dates.
   overlay. Sourced from a `TradingContext` shared with the trading panel
   (`frontend/src/context/TradingContext.tsx`) rather than a second poll
   loop, so the chart doesn't remount or double-poll when the panel's
-  positions/orders refresh.
+  positions/orders refresh. The order ticket's *own* current entry/stop/
+  target — whatever's typed or auto-suggested right now, before anything is
+  submitted — draw the same way but dashed and labeled "(draft)", so a
+  hypothetical ticket line can never be mistaken for a real position's. Both
+  can show at once for the same symbol (e.g. planning a scale-in next to
+  the position already protecting it); the Levels checkboxes gate both.
 - **Strategy scripts** (`backend/app/strategies/`): the same drop-in idea as
   the indicators above, but for trade setups rather than chart lines. A file
   exposes `NAME`, an optional `ENABLED` flag and an `evaluate(ctx)` that
@@ -459,11 +479,47 @@ past dates.
   guardrail (the backend enforces no upper bound — a value far outside your
   account's default blocks submit with a hint, catching a fat-fingered 50
   typed for 0.5). If the symbol already has a working stop/target, a
-  dismissible banner says so before you place a second order on it. Keyboard
-  shortcuts: **B**/**S** for side, **1**-**4** for order type (market, limit,
-  stop, stop-limit, in that order) and **Enter** to open the confirm dialog —
-  suppressed while typing in a field or while that dialog is open, and shown
-  in each button's hover tooltip.
+  dismissible banner says so before you place a second order on it.
+  Stop/Target/Limit/Trigger auto-suggest once a symbol (and, for Limit/
+  Trigger, an order type) is picked, so nothing sits blank waiting to be
+  typed — Stop to 6% below/above the reference price (the minimum distance
+  that clears this app's own risk-sizing-vs-notional-ceiling math at the
+  default risk %, not a technical level), Target to a 2:1 reward:risk off
+  whatever's actually in the Stop field, Limit to a **resting** 1% pullback
+  (not a marketable price — that's what **Stop** is for; the preview
+  already warns if a limit would fill immediately), and a stop-limit's cap
+  to a nickel beyond its *own* trigger rather than the market, or the entry
+  could never fill once triggered. Retyping a field by hand stops it from
+  updating further. Ticket-building hotkeys: **B**/**S** for side,
+  **1**-**4** for order type (market, limit, stop, stop-limit) and
+  **Enter** to open the confirm dialog — suppressed while typing in a field
+  or while that dialog is open, shown in each button's hover tooltip.
+
+  **Instant-fire hotkeys** (DAS Trader/Andrew Aziz style — one keypress,
+  no confirm dialog, mirrored as buttons in the panel) sit alongside that
+  confirm-gated flow rather than replacing it; safe to skip the preview
+  round trip entirely because `submitOrder` re-derives price/size and
+  re-checks every ceiling above server-side regardless of whether
+  `previewOrder` was ever called, so instant-fire hits the identical guards
+  the confirm-gated path does. Entries: **Q**/**W**/**E** buy at 0.5%/1%/2%
+  equity risk off the ticket's own Stop field (**Shift**+ for sell), sized
+  and stop-loss-attached the same server-side arithmetic the confirm-gated
+  risk mode uses — if Target also has a value it rides along as a bracket,
+  same as it would from the confirm-gated flow. **T** fires a breakout
+  entry: buy-stop at the day's high + $0.01 (fetched fresh, one round trip,
+  the only instant-fire action that needs one — acceptable since it's a
+  resting order, not an immediate fill), risk-sized the same way, stop-loss
+  8% below the trigger (a percentage rather than DAS's flat $0.30: this
+  app's universe spans $2-$100, where a fixed dollar offset is either
+  negligible or a ceiling-blowing pittance depending which end of that
+  range the symbol's on). Position/order management, same no-dialog style:
+  **F** flattens the position on the selected symbol, **C** cancels every
+  working order (no bulk-cancel endpoint exists on purpose, so this loops
+  what's already on screen), **0** moves the stop to breakeven, **Shift+0**
+  to breakeven plus a $0.05 buffer (direction-aware: above entry long,
+  below it short), **X** scales the position out 50% at market via the same
+  partial-close path **Sell…** below uses, exits re-armed for the
+  remainder. All suppressed while typing in a field.
   The positions table joins each position to its working exits (including a bracket's stop parked in
   Alpaca's `held` status, which the naive "open orders" query hides — a
   position without a stop gets a loud **NO STOP** badge) and manages them in
@@ -486,12 +542,22 @@ past dates.
   `scanner_history.sqlite3` (`trades` table), so the record survives a
   paper-account reset and the broker's 500-order history cap.
 
-- **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks the 3 most
-  notable current setups from gap %, RVOL, dollar volume, HOD status, news
-  catalyst, VWAP position, 30-minute momentum, spread, multi-day context,
-  float, and short interest — framed as descriptive scanner annotation, not
-  investment advice. A past-picks performance table tracks how prior AI
-  picks have actually moved since they were generated.
+- **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks up to 3 of
+  today's movers, each **required** to have a genuine, stock-specific news
+  catalyst — enforced server-side before the model ever sees a candidate
+  (`is_roundup_headline`-filtered, same "genuine catalyst" definition used
+  everywhere else in the app), not just asked for in the prompt, since an
+  LLM instruction to strictly enforce "must have X" over a ranking task
+  isn't reliably deterministic the way a Python filter is. On a quiet news
+  day this can return fewer than 3 ideas, or none, rather than padding the
+  list with a numbers-only setup. Among candidates that clear that bar,
+  ranks first by how significant the news itself is (an earnings
+  beat/FDA decision/M&A announcement outranks a routine press release),
+  then by gap %, RVOL, dollar volume, HOD status, VWAP position,
+  30-minute momentum, spread, multi-day context, float, and short interest
+  — framed as descriptive scanner annotation, not investment advice. A
+  past-picks performance table tracks how prior AI picks have actually
+  moved since they were generated.
 - **Scanner benchmark**: every symbol the scanner itself has flagged during
   this process's uptime (gainers/losers/most active — not just the 3 AI
   picks above) gets logged the moment it first appears, then tracked live against
@@ -548,6 +614,17 @@ past dates.
   rather than the mean, since entry-to-close returns on thin names ran
   from -66% to +459% in the first real run -- a range in which a mean
   describes its outliers rather than its population.
+  `dollar_volume_backtest_report.py` re-derives `SCANNER_MIN_DOLLAR_VOLUME`
+  itself the same disciplined way: it sweeps candidate floors through
+  `simulate_from_bars` (so each floor reflects what would actually have
+  ranked that day, not a post-hoc bucketing of one run's picks) and reports
+  each view's win-rate **edge** over a same-floor base rate -- a random
+  *tradable-at-that-floor* symbol-day -- to separate "the ranking got
+  better" from "the floor just selected calmer names." That control mattered
+  in practice: raising the floor barely moved the base rate (48.0% at $0 to
+  49.2% at $50M across one real sweep) while `losers`' edge went from -1.6pp
+  at the old $1M floor to positive past $5-10M, which is what motivated
+  re-deriving the number in the first place (see above).
 - **Analytics app** (`/analytics`, Plotly Dash): a resizable 4-panel scanner
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
   for the scanner benchmark, scanner match history, cross-symbol
@@ -623,7 +700,11 @@ past dates.
   (`scripts/ranking_drift_report.py`) would flag most of the morning as fade
   risk. Also note there's no RVOL *floor* at all -- unlike scanners that
   require e.g. RVOL >= 5x as a hard gate, a big gap on unremarkable volume
-  still ranks here.
+  still ranks here. The 15x threshold itself was re-checked against
+  post-SIP data with `rvol_backtest_report.py --from-history` and left
+  unchanged: the raw-RVOL degradation shape is the same before and after
+  the 2026-08-20 feed switch, so RVOL keeps its scale as expected -- see
+  `formulas._FADE_RISK_RVOL`'s own comment for the run's numbers.
 - **Float** comes from FMP's **bulk** shares-float file
   (`app/fundamentals/float_bulk.py`), so unlike market cap and company profile
   it's available for the *whole* universe rather than only for symbols already

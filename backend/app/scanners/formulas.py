@@ -172,6 +172,36 @@ def is_stale(last_trade_at: datetime | None, now: datetime, threshold_seconds: f
 # only defensible for the same-session question the ranking actually asks.
 _CATALYST_BOOST = 1.15
 
+# Deliberate, unvalidated departure from the measurement above, 2026-08-29:
+# extended to the losers view (engine._rank_losers, catalyst_boost=False ->
+# True) and given real teeth by discounting the *absence* of a headline
+# instead of only rewarding its presence -- previously a no-catalyst row got
+# no adjustment at all (score *= 1.0), so the catalyst signal only ever
+# pushed one direction. This constant is what makes "no catalyst" cost
+# something rather than just "not gain something," which is what makes the
+# gainers-side effect stronger too, without touching the measured 1.15
+# boost itself.
+#
+# This overrides, on request, the per-view re-measurement above that found
+# the catalyst edge statistically indistinguishable from zero on losers
+# (+3.1pp, inside one standard error of ~5pp) -- i.e. shipped without the
+# evidence _CATALYST_BOOST itself required before it was applied anywhere.
+# Re-check with scripts/ranking_drift_report.py once enough post-2026-08-29
+# losers data accumulates, the same way the gainers number has been
+# re-checked since deploy.
+#
+# Shipped at 0.9, raised to 0.1 the same day: 0.9 is still just a rescaling,
+# and a rescaling can't outrank a big enough gap -- observed live, PSQL at
+# +95.2% with no headline outscored ESTC's +19.3% *with* a catalyst even at
+# the full 1.15 boost (85.7 vs 22.2), because a 10% haircut on a 5x-larger
+# magnitude is still the larger number. 0.1 makes "no catalyst" cost an
+# order of magnitude rather than a fraction of one, so it can actually flip
+# that kind of matchup -- also unvalidated, same as the extension to losers
+# above, and worth watching for the opposite failure mode: a genuinely huge,
+# newsless mover (a short squeeze, a halt resumption) getting buried under
+# minor-catalyst names it should arguably still rank above.
+_NO_CATALYST_DISCOUNT = 0.1
+
 # Above this RVOL, the same history analysis found win rate *drops*
 # (25.6% win rate, -10.38% avg return vs. the overall average) rather than
 # rising further -- consistent with "gap and crap": an extreme, sudden
@@ -222,14 +252,15 @@ def rank_score(
     it never changes sign or reorders which symbols even qualify for a view.
 
     `catalyst_boost=False` suppresses the headline multiplier for views where
-    the win-rate data doesn't support it (losers, most-active -- see
-    _CATALYST_BOOST). The fade-risk discount still applies either way: it's
-    direction-agnostic, so unlike the catalyst boost it means the same thing
-    in every view.
+    the win-rate data doesn't support it (most-active -- see _CATALYST_BOOST;
+    losers was in this category too until the 2026-08-29 override recorded
+    next to _NO_CATALYST_DISCOUNT). The fade-risk discount still applies
+    either way: it's direction-agnostic, so unlike the catalyst boost it
+    means the same thing in every view.
     """
     score = magnitude
-    if has_headline and catalyst_boost:
-        score *= _CATALYST_BOOST
+    if catalyst_boost:
+        score *= _CATALYST_BOOST if has_headline else _NO_CATALYST_DISCOUNT
     if is_fade_risk(rvol):
         score *= _FADE_RISK_DISCOUNT
     return score

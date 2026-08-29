@@ -13,7 +13,7 @@ from app.market_data.momentum import (
     MOMENTUM_WINDOW_MINUTES,
     pct_change_over_window,
 )
-from app.market_data.news import fetch_headlines
+from app.market_data.news import fetch_headlines, is_roundup_headline
 from app.market_data.vwap import SessionVwapState
 from app.scanners.schemas import ScannerRow
 from app.services.market_clock import ET
@@ -34,16 +34,28 @@ _ATR_WINDOW = 10
 # a ranking by quantifiable scanner criteria (gap %, relative volume, dollar
 # volume, high-of-day, news catalyst, VWAP position, float, short interest),
 # not a judgment about which stock will perform best.
-_SYSTEM_PROMPT = f"""You annotate a day-trading scanner dashboard. You are given a candidate list of stocks currently showing unusual price/volume activity, as JSON. Each candidate may include a recent news headline, its position relative to today's session VWAP (volume-weighted average price), its price change over the last {MOMENTUM_WINDOW_MINUTES} minutes, its current bid-ask spread as a % of price, multi-day context (consecutive up days and % change over the prior 5 trading days, both excluding today), its average daily trading range over roughly the last 10 sessions as a % of price, its public float (shares available for trading), market capitalization, and short interest as a % of float. Select the 3 that stand out most for a trader's watchlist, weighing: the size of gap %, relative volume, dollar volume (liquidity), high-of-day status, whether there's a clear news catalyst behind the move, whether price is holding above VWAP (trend intact) rather than fading below it, whether the move is still active in the last {MOMENTUM_WINDOW_MINUTES} minutes rather than having already stalled or reversed, how tight or wide the bid-ask spread is, whether today's move is a fresh breakout versus a continuation of an already-extended multi-day run, whether today's gap is unusual even relative to that specific stock's own typical daily range (a 40% gap on a name that normally moves 2%/day is a very different thing from the same gap on a name that swings double digits routinely), how small the float is relative to a large-cap/large-float name (a low-float stock tends to move more per dollar of volume, which is why the same dollar volume means something different on a 5M-share float than a 500M-share float), and how elevated the short interest is (a high % of float sold short raises the odds that continued buying pressure forces short covering, which can itself accelerate a move). You are not a financial advisor and this is not investment advice.
+#
+# A genuine recent news catalyst (headline present, not a roundup mention --
+# see is_roundup_headline) is a HARD requirement, filtered server-side in
+# generate_trade_ideas before the model ever sees a candidate, not just a
+# prompt instruction -- asking an LLM to strictly enforce "must have X" over
+# a ranking task is unreliable in a way a Python filter isn't, and this bar
+# is deliberately absolute (2026-08-29, on request): a spectacular setup
+# with zero news doesn't qualify, and on a quiet news day this may return
+# fewer than _TOP_N ideas, or none. The system prompt below no longer asks
+# the model to weigh *whether* there's a catalyst -- every candidate already
+# has one -- only how significant each one's actually is, alongside the
+# other signals.
+_SYSTEM_PROMPT = f"""You annotate a day-trading scanner dashboard. You are given a candidate list of stocks currently showing unusual price/volume activity, as JSON. Every candidate has already been filtered to require a genuine, recent news headline specific to that stock (not a "12 stocks moving" roundup mention) -- this is not one signal among many here, it's the entry bar every candidate already cleared. Each candidate also includes its position relative to today's session VWAP (volume-weighted average price), its price change over the last {MOMENTUM_WINDOW_MINUTES} minutes, its current bid-ask spread as a % of price, multi-day context (consecutive up days and % change over the prior 5 trading days, both excluding today), its average daily trading range over roughly the last 10 sessions as a % of price, its public float (shares available for trading), market capitalization, and short interest as a % of float. Select up to {_TOP_N} that stand out most for a trader's watchlist -- fewer if fewer candidates are given, never pad the list -- weighing FIRST how significant and market-moving the news itself actually is (an earnings beat, an FDA decision, an M&A announcement, or guidance is a different order of event than a minor analyst note or a routine press release, even though both clear the "genuine headline" bar), and THEN, among comparably newsworthy candidates, the size of gap %, relative volume, dollar volume (liquidity), high-of-day status, whether price is holding above VWAP (trend intact) rather than fading below it, whether the move is still active in the last {MOMENTUM_WINDOW_MINUTES} minutes rather than having already stalled or reversed, how tight or wide the bid-ask spread is, whether today's move is a fresh breakout versus a continuation of an already-extended multi-day run, whether today's gap is unusual even relative to that specific stock's own typical daily range (a 40% gap on a name that normally moves 2%/day is a very different thing from the same gap on a name that swings double digits routinely), how small the float is relative to a large-cap/large-float name (a low-float stock tends to move more per dollar of volume, which is why the same dollar volume means something different on a 5M-share float than a 500M-share float), and how elevated the short interest is (a high % of float sold short raises the odds that continued buying pressure forces short covering, which can itself accelerate a move). You are not a financial advisor and this is not investment advice.
 
-A stock with a visible catalyst (an actual headline, not just "a big move"), price holding above VWAP, momentum that's still positive in the last {MOMENTUM_WINDOW_MINUTES} minutes, and a tight spread is more noteworthy than one with similar all-day numbers that has since gone flat, reversed, or trades with a wide spread that would make it an awkward, expensive fill. A wide spread is a real quality concern worth naming, not just a footnote. Multi-day context, average daily range, float, market cap, and short interest are neutral, descriptive information, not a "good" or "bad" label -- a stock already up several days running and one gapping fresh off a flat base are both worth naming factually, without implying one is a better setup than the other; a stock that's normally volatile isn't "worse" than a normally calm one, just different context for interpreting the same gap %; and a small float or high short interest is a factual characteristic of the setup (more prone to fast, volatile moves either direction), not a signal that the stock is a better or safer pick than a large-float, low-short-interest one. Only cite any of this when the data actually shows it. Missing headline, VWAP, momentum-window-change, spread, multi-day, range, float, market cap, or short interest data just means that data isn't available for this candidate right now, not that anything is wrong with it -- never treat absence of data as a negative signal.
+A major, specific catalyst (earnings, an FDA decision, M&A, a guidance change) with price holding above VWAP, momentum that's still positive in the last {MOMENTUM_WINDOW_MINUTES} minutes, and a tight spread is more noteworthy than a minor or generic headline with similar all-day numbers that has since gone flat, reversed, or trades with a wide spread that would make it an awkward, expensive fill. A wide spread is a real quality concern worth naming, not just a footnote. Multi-day context, average daily range, float, market cap, and short interest are neutral, descriptive information, not a "good" or "bad" label -- a stock already up several days running and one gapping fresh off a flat base are both worth naming factually, without implying one is a better setup than the other; a stock that's normally volatile isn't "worse" than a normally calm one, just different context for interpreting the same gap %; and a small float or high short interest is a factual characteristic of the setup (more prone to fast, volatile moves either direction), not a signal that the stock is a better or safer pick than a large-float, low-short-interest one. Only cite any of this when the data actually shows it. Missing VWAP, momentum-window-change, spread, multi-day, range, float, market cap, or short interest data just means that data isn't available for this candidate right now, not that anything is wrong with it -- never treat absence of data as a negative signal.
 
 Ranking is purely about which of these signals are most extreme/notable in this candidate set, not a prediction of which stock will go up. Do not predict future price movement, state a price target, or use directive language like "buy", "sell", "should", "will", "a good entry". If the data doesn't clearly support an observation, keep the reason generic and purely descriptive.
 
-For each of the 3 selected symbols, write:
+For each selected symbol, write:
 - headline: 4-8 words summarizing the setup (e.g. "Large premarket gap on earnings beat")
-- reason: one or two sentences citing the specific numbers (and catalyst/VWAP/float/short-interest context when present) that got it selected over the other candidates, in plain language
-- signal_score: an integer 1-10 for how many of the available data points (gap size, relative volume, dollar volume, HOD, catalyst, VWAP position, momentum over that window, spread tightness, multi-day continuation, range-relative-to-normal, float size, short interest) corroborate each other for this specific pick, and how strong they are, relative to the other candidates in this set. This is a measure of data confluence, not a probability of profit, a confidence level in the trade working out, or a recommendation strength -- a candidate can score high because many signals are present and pointing the same way, and low because signals are sparse, missing, or conflicting (e.g. a big gap but a wide spread and no catalyst).
+- reason: one or two sentences citing the specific numbers (and the news itself, VWAP/float/short-interest context when present) that got it selected over the other candidates, in plain language -- lead with what the news actually is, not just that news exists
+- signal_score: an integer 1-10 for how significant the news catalyst is together with how many of the other available data points (gap size, relative volume, dollar volume, HOD, VWAP position, momentum over that window, spread tightness, multi-day continuation, range-relative-to-normal, float size, short interest) corroborate it, and how strong they are, relative to the other candidates in this set. This is a measure of catalyst strength and data confluence, not a probability of profit, a confidence level in the trade working out, or a recommendation strength -- a candidate can score high because the news is major and other signals point the same way, and low because the news is minor or the other signals are sparse, missing, or conflicting (e.g. a big gap but a wide spread).
 
 Also write one overall disclaimer sentence reminding the reader this is an automated ranking of scanner data, not trading advice, and they should do their own research before acting on anything."""
 
@@ -205,12 +217,35 @@ async def _fetch_continuation_context(alpaca: AlpacaClients, symbols: list[str])
 async def generate_trade_ideas(
     client: anthropic.AsyncAnthropic, alpaca: AlpacaClients, rows: list[ScannerRow]
 ) -> TradeIdeasResponse:
-    candidates = rows[:_CANDIDATE_POOL]
+    # Headlines are fetched for the *whole* incoming view (up to engine._TOP_N
+    # = 50), not a pre-truncated slice -- the genuine-news filter below runs
+    # before any truncation, so a real catalyst sitting at rank 20 by the
+    # scanner's own score isn't discarded before it's even checked for news.
+    all_symbols = [r.symbol for r in rows]
+    headlines = await fetch_headlines(alpaca, all_symbols)
+
+    # Hard filter, not a prompt instruction -- see _SYSTEM_PROMPT's own
+    # comment for why. Same "genuine catalyst" definition used everywhere
+    # else in this app (engine._has_headline, history_store's
+    # has_headline): present and not a roundup mention.
+    newsworthy = [
+        r for r in rows if headlines.get(r.symbol) and not is_roundup_headline(headlines[r.symbol])
+    ]
+    if not newsworthy:
+        return TradeIdeasResponse(
+            ideas=[],
+            disclaimer=(
+                "No current mover has a genuine, stock-specific news catalyst behind it -- "
+                "picking on gap/volume numbers alone no longer qualifies. Check back once a "
+                "mover has a real story."
+            ),
+        )
+
+    candidates = newsworthy[:_CANDIDATE_POOL]
     symbols = [r.symbol for r in candidates]
     last_prices = {r.symbol: r.last_price for r in candidates}
 
-    headlines, intraday_context, continuation_context = await asyncio.gather(
-        fetch_headlines(alpaca, symbols),
+    intraday_context, continuation_context = await asyncio.gather(
         _fetch_intraday_context(alpaca, symbols, last_prices),
         _fetch_continuation_context(alpaca, symbols),
     )
@@ -234,9 +269,10 @@ async def generate_trade_ideas(
             {
                 "role": "user",
                 "content": (
-                    f"Here are today's top {len(candidates)} movers from a stock scanner, "
-                    f"as JSON. Select the {_TOP_N} that stand out most and write one entry "
-                    "each, ranked best first.\n\n" + json.dumps(payload)
+                    f"Here are today's {len(candidates)} movers with a genuine news catalyst, "
+                    f"from a stock scanner, as JSON. Select up to {_TOP_N} that stand out most "
+                    "(fewer if fewer stand out, never pad the list) and write one entry each, "
+                    "ranked best first.\n\n" + json.dumps(payload)
                 ),
             }
         ],

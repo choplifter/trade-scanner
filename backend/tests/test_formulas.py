@@ -37,8 +37,11 @@ def test_is_fade_risk_false_when_none():
     assert is_fade_risk(None) is False
 
 
-def test_rank_score_no_headline_no_fade_risk_is_unchanged():
-    assert rank_score(10.0, False, 5.0) == 10.0
+def test_rank_score_no_headline_applies_no_catalyst_discount():
+    # No headline is no longer a no-op: _NO_CATALYST_DISCOUNT (0.1) applies
+    # whenever catalyst_boost is on, same as the boost applies when there is
+    # one -- see formulas._NO_CATALYST_DISCOUNT for why.
+    assert rank_score(10.0, False, 5.0) == 1.0
 
 
 def test_rank_score_headline_boosts():
@@ -46,7 +49,7 @@ def test_rank_score_headline_boosts():
 
 
 def test_rank_score_fade_risk_discounts():
-    assert rank_score(10.0, False, 20.0) == 7.0
+    assert rank_score(10.0, False, 20.0) == 10.0 * 0.1 * 0.7
 
 
 def test_rank_score_headline_and_fade_risk_both_apply():
@@ -56,10 +59,10 @@ def test_rank_score_headline_and_fade_risk_both_apply():
 def test_rank_score_preserves_sign_for_negative_magnitudes():
     # Losers rank by negative pct_change, so the multipliers have to keep
     # working on a negative magnitude: the boost pushes it further negative
-    # (bigger drop, ranks higher), the fade-risk discount pulls it back toward
-    # zero (ranks lower), same as the positive/gainers case. The losers view
-    # itself no longer passes catalyst_boost -- see the engine ranking tests --
-    # but the arithmetic still has to hold for whoever does.
+    # (bigger drop, ranks higher), the fade-risk *and* no-catalyst discounts
+    # both pull it back toward zero (ranks lower), same as the positive/
+    # gainers case. The losers view does pass catalyst_boost now (see the
+    # engine ranking tests), so this is exactly the arithmetic it exercises.
     boosted = rank_score(-10.0, True, 5.0)
     discounted = rank_score(-10.0, False, 20.0)
     assert boosted < -10.0

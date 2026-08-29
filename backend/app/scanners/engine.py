@@ -101,17 +101,17 @@ def _rank_losers(
     # rank_score's discount multiplies whatever magnitude it's given, so
     # applying it directly to pct_change (negative here) still sorts correctly
     # ascending: a fade-risk discount pulls a negative number toward zero
-    # (ranks lower) -- same as it does for the positive gainers case.
-    #
-    # catalyst_boost=False: the headline multiplier is gainers-only, since the
-    # per-view win-rate data doesn't support it here (see
-    # formulas._CATALYST_BOOST).
+    # (ranks lower) -- same as it does for the positive gainers case. The
+    # catalyst_boost=True below (2026-08-29, an explicit override -- see
+    # formulas._NO_CATALYST_DISCOUNT) works the same way in both directions:
+    # a catalyst-backed loser gets pushed *more* negative (_CATALYST_BOOST,
+    # ranks higher -- more notable a loser), a no-catalyst one gets pulled
+    # toward zero (_NO_CATALYST_DISCOUNT, ranks lower), same arithmetic as
+    # the fade-risk discount just described.
     tradable = _tradable(rows, min_dollar_volume)
     return sorted(
         (r for r in tradable if r.pct_change < 0),
-        key=lambda r: formulas.rank_score(
-            r.pct_change, _has_headline(r, news_cache), r.rvol, catalyst_boost=False
-        ),
+        key=lambda r: formulas.rank_score(r.pct_change, _has_headline(r, news_cache), r.rvol),
     )[:_TOP_N]
 
 
@@ -131,8 +131,11 @@ def _rank_most_active(
     the better "most active" measure regardless of feed, since it doesn't rank
     a $6 name above a $45 one purely on share count.
 
-    catalyst_boost=False for the same reason as _rank_losers: the headline
-    multiplier is gainers-only (see formulas._CATALYST_BOOST).
+    catalyst_boost=False: the headline multiplier/discount is gainers- and
+    (since 2026-08-29) losers-only, not this view -- the per-view win-rate
+    data here read -3.1pp, i.e. actually negative, so unlike losers this one
+    was never a borderline case worth overriding (see
+    formulas._NO_CATALYST_DISCOUNT).
     """
     tradable = _tradable(rows, min_dollar_volume)
     return sorted(
