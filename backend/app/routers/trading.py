@@ -142,6 +142,40 @@ async def get_portfolio_history(
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
 
 
+@router.get("/reference-price/{symbol}")
+async def get_reference_price(symbol: str, request: Request) -> dict:
+    """Last price for `symbol`, independent of any ticket -- what the
+    Stop/Target auto-suggestion in the ticket sizes off before a ticket
+    exists to preview. previewOrder can't fill this role: it's gated on the
+    ticket already being complete (a stop price, for risk sizing), which is
+    exactly the field this is suggesting a starting value for.
+    """
+    try:
+        price = await _service(request).reference_price(symbol.upper())
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Reference-price lookup failed for %s", symbol)
+        raise HTTPException(status_code=502, detail="Failed to fetch reference price")
+    return {"price": price}
+
+
+@router.get("/day-high/{symbol}")
+async def get_day_high(symbol: str, request: Request) -> dict:
+    """Today's high for `symbol` -- the trigger price a breakout-entry
+    hotkey sizes off. Ungated like the other read paths: this is a quote,
+    not an order.
+    """
+    try:
+        high = await _service(request).day_high(symbol.upper())
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Day-high lookup failed for %s", symbol)
+        raise HTTPException(status_code=502, detail="Failed to fetch day high")
+    return {"day_high": high}
+
+
 @router.post("/orders/preview")
 async def preview_order(ticket: OrderTicket, request: Request) -> dict:
     """Size and price a ticket without placing anything.
@@ -217,6 +251,31 @@ async def replace_stop(order_id: str, body: ReplaceStopRequest, request: Request
     except Exception:
         logger.exception("Stop replace failed for %s", order_id)
         raise HTTPException(status_code=502, detail="Failed to move the stop")
+    return {"order": order}
+
+
+class ReplaceTargetRequest(BaseModel):
+    """Body of the target-move endpoint -- same cross-check convention as
+    ReplaceStopRequest, for the take-profit leg."""
+
+    symbol: str = Field(min_length=1)
+    limit_price: float
+
+
+@router.patch("/orders/{order_id}/target")
+async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Request) -> dict:
+    """Move a working take-profit -- a distinct path from the stop-move
+    route above since the two need different body shapes for the same
+    underlying resource."""
+    try:
+        order = await _service(request).replace_target(order_id, body.symbol, body.limit_price)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Target replace failed for %s", order_id)
+        raise HTTPException(status_code=502, detail="Failed to move the target")
     return {"order": order}
 
 

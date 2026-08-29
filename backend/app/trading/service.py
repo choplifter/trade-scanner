@@ -312,6 +312,29 @@ class OrderService:
             logger.warning("No reference price available for %s", symbol, exc_info=True)
             return None
 
+    async def day_high(self, symbol: str) -> float | None:
+        """Today's high, for a breakout-entry hotkey's trigger price.
+
+        Same free-first-fallback-second shape as reference_price() right
+        above: the live scanner engine already tracks this per row, so
+        prefer that over a fresh network round trip.
+        """
+        row = getattr(self._engine, "rows", {}).get(symbol) if self._engine else None
+        if row is not None and getattr(row, "day_high", None):
+            return float(row.day_high)
+
+        from alpaca.data.requests import StockSnapshotRequest
+
+        try:
+            request = StockSnapshotRequest(symbol_or_symbols=symbol, feed=self._clients.feed)
+            snapshots = await asyncio.to_thread(self._clients.data.get_stock_snapshot, request)
+            snap = snapshots.get(symbol) if isinstance(snapshots, dict) else None
+            daily_bar = snap.daily_bar if snap else None
+            return float(daily_bar.high) if daily_bar and daily_bar.high else None
+        except Exception:
+            logger.warning("No day-high available for %s", symbol, exc_info=True)
+            return None
+
     # --- preview ------------------------------------------------------
 
     async def preview(self, ticket: OrderTicket) -> ResolvedOrder:
@@ -427,6 +450,53 @@ class OrderService:
             raise
 
         logger.info("Replaced stop %s on %s -> %.4f", order_id, symbol, stop_price)
+        return _plain(replaced)
+
+    async def replace_target(self, order_id: str, symbol: str, limit_price: float) -> dict:
+        """Move one working take-profit order to a new price -- same shape
+        as replace_stop, for the other exit leg.
+
+        A take-profit is an ordinary limit order (order_type == "limit"),
+        found the same way exitsForPosition finds it client-side, so the
+        only real differences from replace_stop are the order-type check and
+        which SDK field carries the new price.
+        """
+        self._assert_can_trade()
+        symbol = symbol.upper()
+
+        try:
+            order = _plain(
+                await asyncio.to_thread(self._clients.trading.get_order_by_id, order_id)
+            )
+        except Exception as exc:
+            # See replace_stop's identical block for why both spellings of
+            # status are checked and why a 5xx/network failure re-raises
+            # rather than becoming "no such order".
+            status = getattr(exc, "status_code", None)
+            if status is None:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500:
+                raise OrderRejected("No such order.", field="order_id") from exc
+            raise
+        _validate_target_replacement(
+            order, symbol, limit_price, await self.reference_price(symbol)
+        )
+
+        from alpaca.trading.requests import ReplaceOrderRequest
+
+        try:
+            replaced = await asyncio.to_thread(
+                self._clients.trading.replace_order_by_id,
+                order_id,
+                ReplaceOrderRequest(limit_price=limit_price),
+            )
+        except Exception as exc:
+            rejection = rejection_from_api_error(exc)
+            if rejection is not None:
+                raise rejection from exc
+            raise
+
+        logger.info("Replaced target %s on %s -> %.4f", order_id, symbol, limit_price)
         return _plain(replaced)
 
     async def close_position(self, symbol: str, qty: float | None = None) -> dict:
@@ -733,6 +803,52 @@ def _validate_stop_replacement(
                 f"Stop {stop_price:.2f} must be above the current price "
                 f"{reference_price:.2f} -- below it, it would trigger instantly.",
                 field="stop_price",
+            )
+
+
+def _validate_target_replacement(
+    order: dict | None, symbol: str, limit_price: float, reference_price: float | None
+) -> None:
+    """Same shape as _validate_stop_replacement, for a take-profit leg.
+
+    A take-profit already on the marketable side of the current price would
+    fill immediately at roughly that price rather than waiting for
+    limit_price -- not dangerous the way an instantly-triggered stop is (see
+    _marketable_warning's own treatment of a plain limit order on the wrong
+    side, which only warns), but this is a drop-to-submit move with no
+    preview step to attach a warning to, so it is refused outright here
+    instead, matching the stop side's conservatism.
+    """
+    if not isinstance(order, dict) or not order:
+        raise OrderRejected("No such order.", field="order_id")
+    if str(order.get("symbol", "")).upper() != symbol:
+        raise OrderRejected(
+            f"Order belongs to {order.get('symbol')}, not {symbol}.", field="order_id"
+        )
+    if str(order.get("status", "")).lower() not in _WORKING_STATUSES:
+        raise OrderRejected(
+            f"Order is {order.get('status')} -- only a working order can be moved.",
+            field="order_id",
+        )
+    if str(order.get("order_type", "")).lower() != "limit":
+        raise OrderRejected(
+            f"Order is a {order.get('order_type')} order, not a take-profit.", field="order_id"
+        )
+    if limit_price <= 0:
+        raise OrderRejected("Target price must be positive.", field="limit_price")
+    if reference_price is not None:
+        side = str(order.get("side", "")).lower()
+        if side == "sell" and limit_price <= reference_price:
+            raise OrderRejected(
+                f"Target {limit_price:.2f} must be above the current price "
+                f"{reference_price:.2f} -- at or below it, it would fill instantly.",
+                field="limit_price",
+            )
+        if side == "buy" and limit_price >= reference_price:
+            raise OrderRejected(
+                f"Target {limit_price:.2f} must be below the current price "
+                f"{reference_price:.2f} -- at or above it, it would fill instantly.",
+                field="limit_price",
             )
 
 

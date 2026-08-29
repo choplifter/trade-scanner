@@ -17,6 +17,7 @@ from app.trading.errors import OrderRejected, TradingDisabled
 from app.trading.service import (
     OrderService,
     _validate_stop_replacement,
+    _validate_target_replacement,
     rearm_requests,
 )
 
@@ -47,6 +48,13 @@ def test_partial_close_is_guarded_before_anything_else():
 
     with pytest.raises(TradingDisabled):
         asyncio.run(service.close_position("AAA", qty=5))
+
+
+def test_replace_target_is_guarded_before_anything_else():
+    service = OrderService(clients=None, settings=_settings(trading_enabled=False))
+
+    with pytest.raises(TradingDisabled):
+        asyncio.run(service.replace_target("id", "AAA", 15.0))
 
 
 # --- refusals, pure -------------------------------------------------------
@@ -102,6 +110,57 @@ def test_an_unknowable_reference_price_does_not_block_the_move():
     and refusing on ignorance would freeze the stop exactly when the feed
     hiccups."""
     _validate_stop_replacement(_stop_order(), "AAA", 10.5, reference_price=None)
+
+
+def _target_order(**overrides):
+    order = {
+        "id": "tgt",
+        "symbol": "AAA",
+        "side": "sell",
+        "order_type": "limit",
+        "status": "new",
+        "limit_price": "14.80",
+        "time_in_force": "gtc",
+    }
+    order.update(overrides)
+    return order
+
+
+def test_a_working_target_on_the_right_symbol_passes():
+    _validate_target_replacement(_target_order(), "AAA", 15.0, reference_price=10.0)
+
+
+def test_the_wrong_symbol_is_refused_for_a_target():
+    with pytest.raises(OrderRejected) as exc:
+        _validate_target_replacement(_target_order(symbol="BBB"), "AAA", 15.0, 10.0)
+    assert exc.value.field == "order_id"
+
+
+def test_a_filled_target_cannot_be_moved():
+    with pytest.raises(OrderRejected):
+        _validate_target_replacement(_target_order(status="filled"), "AAA", 15.0, 10.0)
+
+
+def test_a_stop_order_is_not_a_target():
+    with pytest.raises(OrderRejected):
+        _validate_target_replacement(_target_order(order_type="stop"), "AAA", 15.0, 10.0)
+
+
+def test_a_sell_target_at_or_below_the_market_would_fill_instantly():
+    with pytest.raises(OrderRejected) as exc:
+        _validate_target_replacement(_target_order(), "AAA", 9.5, reference_price=10.0)
+    assert exc.value.field == "limit_price"
+
+
+def test_a_buy_target_at_or_above_the_market_would_fill_instantly():
+    with pytest.raises(OrderRejected):
+        _validate_target_replacement(
+            _target_order(side="buy"), "AAA", 10.5, reference_price=10.0
+        )
+
+
+def test_an_unknowable_reference_price_does_not_block_the_target_move():
+    _validate_target_replacement(_target_order(), "AAA", 9.5, reference_price=None)
 
 
 # --- the re-arm mapping, pure ---------------------------------------------
@@ -184,7 +243,12 @@ class _StubTradingClient:
 
     def replace_order_by_id(self, order_id, request):
         self.replaced.append((order_id, request))
-        return {"id": order_id, "stop_price": str(request.stop_price)}
+        result = {"id": order_id}
+        if request.stop_price is not None:
+            result["stop_price"] = str(request.stop_price)
+        if request.limit_price is not None:
+            result["limit_price"] = str(request.limit_price)
+        return result
 
     def close_position(self, symbol, close_options=None):
         self.closed.append((symbol, close_options))
@@ -321,3 +385,14 @@ def test_replace_stop_calls_the_sdk_with_the_new_price():
     assert client.replaced[0][0] == "abc"
     assert client.replaced[0][1].stop_price == 9.0
     assert result["stop_price"] == "9.0"
+
+
+def test_replace_target_calls_the_sdk_with_the_new_price():
+    client = _StubTradingClient(orders=[_target_order()])
+    service = _service(client)
+
+    result = asyncio.run(service.replace_target("tgt", "AAA", 16.5))
+
+    assert client.replaced[0][0] == "tgt"
+    assert client.replaced[0][1].limit_price == 16.5
+    assert result["limit_price"] == "16.5"
