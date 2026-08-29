@@ -259,8 +259,16 @@ function draggableLineAt(
   lines: DraggableLine[],
 ): DraggableLine | null {
   for (const entry of lines) {
-    const lineY = priceSeries.priceToCoordinate(entry.line.options().price);
-    if (lineY != null && Math.abs(lineY - y) <= DRAG_HIT_TOLERANCE_PX) return entry;
+    // A disposed line (its effect removed it a moment ago but hasn't
+    // rebuilt draggableLinesRef yet) throws on .options() rather than
+    // returning something -- skip it instead of breaking hit-testing, here
+    // on every mousemove, for every other line in the list too.
+    try {
+      const lineY = priceSeries.priceToCoordinate(entry.line.options().price);
+      if (lineY != null && Math.abs(lineY - y) <= DRAG_HIT_TOLERANCE_PX) return entry;
+    } catch {
+      continue;
+    }
   }
   return null;
 }
@@ -419,6 +427,25 @@ export function CandleChart({
     handleScale: HandleScaleOptions | boolean;
   } | null>(null);
 
+  // Aborts an in-progress drag on `source`'s lines -- called by the
+  // position-lines/indicative-lines effects just before they dispose and
+  // recreate their own lines, so draggingRef is never left pointing at a
+  // now-disposed IPriceLine. Left unguarded, an edit landing mid-drag (e.g.
+  // typing a new Limit/Target price, whose async preview republishes
+  // indicativeLevels a moment later and rebuilds every indicative line,
+  // including whichever one is being dragged right then) leaves the next
+  // mousemove calling .applyOptions() on a disposed line, which
+  // lightweight-charts throws for -- on every remaining mousemove of the
+  // drag, which is frequent enough to read as the chart freezing.
+  function cancelActiveDrag(source: "position" | "indicative") {
+    if (draggingRef.current?.source !== source) return;
+    draggingRef.current = null;
+    const suspended = suspendedInteractionRef.current;
+    suspendedInteractionRef.current = null;
+    if (chartRef.current && suspended) chartRef.current.applyOptions(suspended);
+    if (containerRef.current) containerRef.current.style.cursor = "";
+  }
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -542,7 +569,17 @@ export function CandleChart({
       const dragging = draggingRef.current;
       if (dragging) {
         const price = priceSeries.coordinateToPrice(y);
-        if (price != null) dragging.line.applyOptions({ price });
+        if (price != null) {
+          try {
+            dragging.line.applyOptions({ price });
+          } catch {
+            // The line was disposed out from under this drag -- cancelActiveDrag
+            // is meant to catch that before it happens (see its own comment),
+            // this is only a backstop against a case it doesn't. Ending the
+            // drag cleanly beats leaving every remaining mousemove throwing.
+            cancelActiveDrag(dragging.source);
+          }
+        }
         return;
       }
 
@@ -588,13 +625,19 @@ export function CandleChart({
       suspendedInteractionRef.current = null;
       if (suspended) chart.applyOptions(suspended);
       if (!dragging) return;
-      // A click that never actually moved the line commits nothing.
-      const price = dragging.line.options().price;
-      if (price === dragging.startPrice) return;
-      if (dragging.source === "position") {
-        onMovePositionLevelRef.current?.(dragging.field, price);
-      } else {
-        onMoveIndicativeLevelRef.current?.(dragging.field, price);
+      try {
+        // A click that never actually moved the line commits nothing.
+        const price = dragging.line.options().price;
+        if (price === dragging.startPrice) return;
+        if (dragging.source === "position") {
+          onMovePositionLevelRef.current?.(dragging.field, price);
+        } else {
+          onMoveIndicativeLevelRef.current?.(dragging.field, price);
+        }
+      } catch {
+        // The line was disposed out from under this drag -- see the
+        // identical catch in handleMouseMove. Nothing to commit from a line
+        // that no longer exists.
       }
     };
 
@@ -1020,6 +1063,9 @@ export function CandleChart({
     const priceSeries = priceSeriesRef.current;
     if (!priceSeries) return;
 
+    // Before disposing anything below -- see cancelActiveDrag's own comment.
+    cancelActiveDrag("position");
+
     positionLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
     positionLinesRef.current = [];
     // Only this source's entries -- the indicative-lines effect owns the
@@ -1091,6 +1137,9 @@ export function CandleChart({
   useEffect(() => {
     const priceSeries = priceSeriesRef.current;
     if (!priceSeries) return;
+
+    // Before disposing anything below -- see cancelActiveDrag's own comment.
+    cancelActiveDrag("indicative");
 
     indicativeLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
     indicativeLinesRef.current = [];
