@@ -154,7 +154,23 @@ class ScannerHistoryStore:
         self.db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        # A fresh connection per call (see module docstring) means every read
+        # and write here -- the poll loop's own appearance/snapshot writes,
+        # plus whatever request happens to be computing performance or
+        # ranking drift at the same moment -- lands on its own OS thread via
+        # asyncio.to_thread, hitting the same file from independent
+        # connections. SQLite's default rollback-journal mode takes an
+        # exclusive file lock for any write and a shared lock for any read,
+        # so a write can only proceed once every concurrent reader has
+        # finished -- "database is locked" was that wait exceeding the
+        # driver's default 5s retry budget. WAL mode lets readers and a
+        # writer proceed at the same time (only two writers still contend),
+        # and is a one-time, persistent change to the database file, so
+        # setting it on every connect just confirms it's already in effect.
+        # The generous timeout is the remaining safety net for that rarer
+        # writer-vs-writer case.
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
