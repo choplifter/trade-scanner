@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useTradingContext } from "../../context/TradingContext";
 import { useChartFeed } from "../../hooks/useChartFeed";
@@ -8,7 +9,7 @@ import { useSymbolInfo } from "../../hooks/useSymbolInfo";
 import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
-import { CandleChart } from "./CandleChart";
+import { CandleChart, POSITION_ENTRY_COLOR, POSITION_STOP_COLOR, POSITION_TARGET_COLOR } from "./CandleChart";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
 import { SymbolInfoPanel } from "./SymbolInfoPanel";
 
@@ -21,20 +22,54 @@ interface ChartWidgetProps {
 
 const DEFAULT_TIMEFRAME_KEY = "5m";
 
-// Which indicators the reader has switched off, by name. Persisted because
-// "show me only the strategy" is a way of working, not a property of the
-// symbol on screen -- it should survive a reload and a symbol change the way
-// the timeframe and chart type already do.
-const HIDDEN_INDICATORS_KEY = "chart:hiddenIndicators";
+// Which indicators the reader has checked on in the Levels dropdown, by
+// name. Persisted because "show me only the strategy" is a way of working,
+// not a property of the symbol on screen -- it should survive a reload and a
+// symbol change the way the timeframe and chart type already do. Stored as
+// the *visible* set, not a hidden one: the control is a checklist, so each
+// row's checked state has to read directly off this.
+const VISIBLE_INDICATORS_KEY = "chart:visibleIndicators";
 
-function loadHidden(): Set<string> {
+type TradeLevelKey = "entry" | "stop" | "target";
+const ALL_TRADE_LEVEL_KEYS: TradeLevelKey[] = ["entry", "stop", "target"];
+const VISIBLE_TRADE_LEVELS_KEY = "chart:visibleTradeLevels";
+
+const TRADE_LEVEL_ITEMS: { key: TradeLevelKey; label: string; color: string }[] = [
+  { key: "entry", label: "Entry", color: POSITION_ENTRY_COLOR },
+  { key: "stop", label: "Stop", color: POSITION_STOP_COLOR },
+  { key: "target", label: "Target", color: POSITION_TARGET_COLOR },
+];
+
+function loadVisibleIndicators(): Set<string> {
   try {
-    const raw = localStorage.getItem(HIDDEN_INDICATORS_KEY);
+    const raw = localStorage.getItem(VISIBLE_INDICATORS_KEY);
     return new Set<string>(raw ? JSON.parse(raw) : []);
   } catch {
     // Private browsing, storage disabled, or a value from an older shape --
     // none of which is worth failing a chart over.
     return new Set<string>();
+  }
+}
+
+// Trade levels default to all-visible -- before this control existed, an
+// open position's entry/stop/target always drew unconditionally.
+function loadVisibleTradeLevels(): Set<TradeLevelKey> {
+  try {
+    const raw = localStorage.getItem(VISIBLE_TRADE_LEVELS_KEY);
+    if (!raw) return new Set(ALL_TRADE_LEVEL_KEYS);
+    const parsed = JSON.parse(raw) as unknown[];
+    return new Set(parsed.filter((k): k is TradeLevelKey => ALL_TRADE_LEVEL_KEYS.includes(k as TradeLevelKey)));
+  } catch {
+    return new Set(ALL_TRADE_LEVEL_KEYS);
+  }
+}
+
+function persistLevelSet(key: string, values: Set<string>) {
+  try {
+    localStorage.setItem(key, JSON.stringify([...values]));
+  } catch {
+    // The toggle still works for this session; it just will not be
+    // remembered next time.
   }
 }
 
@@ -90,25 +125,63 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   }, [focus]);
   // Off by default -- these are reference lines, not something every chart
   // view needs cluttered onto it.
-  const [showIndicators, setShowIndicators] = useState(false);
-  // Stored as the *hidden* set rather than the visible one so a newly added
-  // indicator shows up by default instead of being invisible until someone
-  // discovers a toggle for it.
-  const [hiddenIndicators, setHiddenIndicators] = useState<Set<string>>(loadHidden);
+  const [visibleIndicators, setVisibleIndicators] = useState<Set<string>>(loadVisibleIndicators);
+  const [visibleTradeLevels, setVisibleTradeLevels] = useState<Set<TradeLevelKey>>(loadVisibleTradeLevels);
+  // The Levels button just opens/closes this checklist -- there's no
+  // separate master on/off any more, each row owns its own visibility.
+  const [levelsMenuOpen, setLevelsMenuOpen] = useState(false);
+  const levelsButtonRef = useRef<HTMLDivElement | null>(null);
+  // The menu itself is rendered through a portal (see below for why) and so
+  // needs its own ref for the outside-click check -- it's no longer a DOM
+  // descendant of levelsButtonRef.
+  const levelsMenuRef = useRef<HTMLDivElement | null>(null);
+  // Screen position for the portaled menu, measured off the trigger button
+  // when it opens.
+  const [levelsMenuPos, setLevelsMenuPos] = useState<{ top: number; left: number } | null>(null);
 
-  function toggleIndicator(name: string) {
-    setHiddenIndicators((current) => {
+  function toggleIndicatorVisible(name: string) {
+    setVisibleIndicators((current) => {
       const next = new Set(current);
       if (!next.delete(name)) next.add(name);
-      try {
-        localStorage.setItem(HIDDEN_INDICATORS_KEY, JSON.stringify([...next]));
-      } catch {
-        // The toggle still works for this session; it just will not be
-        // remembered next time.
-      }
+      persistLevelSet(VISIBLE_INDICATORS_KEY, next);
       return next;
     });
   }
+
+  function toggleTradeLevel(key: TradeLevelKey) {
+    setVisibleTradeLevels((current) => {
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
+      persistLevelSet(VISIBLE_TRADE_LEVELS_KEY, next);
+      return next;
+    });
+  }
+
+  // Measures where to portal the menu, and closes it on an outside click or
+  // Escape -- there's no other affordance to dismiss it once open.
+  useEffect(() => {
+    if (!levelsMenuOpen) return;
+    const button = levelsButtonRef.current;
+    if (button) {
+      const rect = button.getBoundingClientRect();
+      setLevelsMenuPos({ top: rect.bottom + 4, left: rect.left });
+    }
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (levelsButtonRef.current?.contains(target)) return;
+      if (levelsMenuRef.current?.contains(target)) return;
+      setLevelsMenuOpen(false);
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setLevelsMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [levelsMenuOpen]);
   const option =
     TIMEFRAME_OPTIONS.find((o) => o.key === timeframeKey) ??
     TIMEFRAME_OPTIONS.find((o) => o.key === DEFAULT_TIMEFRAME_KEY)!;
@@ -167,6 +240,19 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     if (!position || entry == null) return null;
     return { side: positionSide, entry, stop: exits?.stopLoss ?? null, target: exits?.takeProfit ?? null };
   }, [position, entry, positionSide, exits?.stopLoss, exits?.takeProfit]);
+
+  // What the chart actually draws -- each field nulled out when its Levels
+  // checkbox is unchecked, independent of whether the position itself has
+  // that value.
+  const visiblePositionLevels = useMemo<PositionLevels | null>(() => {
+    if (!positionLevels) return null;
+    return {
+      side: positionLevels.side,
+      entry: visibleTradeLevels.has("entry") ? positionLevels.entry : null,
+      stop: visibleTradeLevels.has("stop") ? positionLevels.stop : null,
+      target: visibleTradeLevels.has("target") ? positionLevels.target : null,
+    };
+  }, [positionLevels, visibleTradeLevels]);
 
   const newsMarkers = useMemo(
     () =>
@@ -295,42 +381,78 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
               <span className="vwap-swatch" /> VWAP {vwapFromPremarket ? "(pre)" : "(session)"}
             </button>
           )}
-          <button
-            type="button"
-            className="timeframe-button"
-            aria-pressed={showIndicators}
-            onClick={() => setShowIndicators((v) => !v)}
-            title="Toggle the indicator lines. Individual ones can be switched off next to this."
-          >
-            Levels
-          </button>
-          {showIndicators &&
-            displayed.indicators.map((indicator) => (
-              <button
-                key={indicator.name}
-                type="button"
-                className={
-                  indicator.error ? "indicator-legend failed" : "indicator-legend"
-                }
-                aria-pressed={indicator.error ? true : !hiddenIndicators.has(indicator.name)}
-                onClick={() => !indicator.error && toggleIndicator(indicator.name)}
-                title={
-                  indicator.error
-                    ? `${indicator.name} failed: ${indicator.error}`
-                    : `Show or hide ${indicator.name}`
-                }
+          <div className="levels-dropdown" ref={levelsButtonRef}>
+            <button
+              type="button"
+              className="timeframe-button"
+              aria-expanded={levelsMenuOpen}
+              onClick={() => setLevelsMenuOpen((v) => !v)}
+              title="Choose which indicator and trade levels are drawn on the chart"
+            >
+              Levels ▾
+            </button>
+          </div>
+          {levelsMenuOpen &&
+            levelsMenuPos &&
+            createPortal(
+              // Portalled to <body> rather than positioned relative to
+              // .levels-dropdown: react-grid-layout positions every widget
+              // with a CSS transform, which makes the widget the containing
+              // block for anything positioned inside it, and .widget itself
+              // clips overflow -- so an absolutely-positioned menu renders
+              // but gets cut off at the widget's own edge (see Modal.tsx,
+              // which hit the identical bug).
+              <div
+                className="levels-menu"
+                role="menu"
+                ref={levelsMenuRef}
+                style={{ top: levelsMenuPos.top, left: levelsMenuPos.left }}
               >
-                <span
-                  className="indicator-swatch"
-                  style={{
-                    background: indicator.error
-                      ? "#d1242f"
-                      : Object.values(indicator.colors ?? {})[0] ?? "#888",
-                  }}
-                />
-                {indicator.error ? `${indicator.name} ✕` : indicator.name}
-              </button>
-            ))}
+                {displayed.indicators.length === 0 && !position && (
+                  <div className="levels-menu-empty">No levels available</div>
+                )}
+                {displayed.indicators.map((indicator) => (
+                  <label
+                    key={indicator.name}
+                    className={indicator.error ? "levels-menu-item failed" : "levels-menu-item"}
+                    title={indicator.error ? `${indicator.name} failed: ${indicator.error}` : undefined}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!indicator.error && visibleIndicators.has(indicator.name)}
+                      disabled={!!indicator.error}
+                      onChange={() => toggleIndicatorVisible(indicator.name)}
+                    />
+                    <span
+                      className="indicator-swatch"
+                      style={{
+                        background: indicator.error
+                          ? "#d1242f"
+                          : Object.values(indicator.colors ?? {})[0] ?? "#888",
+                      }}
+                    />
+                    {indicator.error ? `${indicator.name} ✕` : indicator.name}
+                  </label>
+                ))}
+                {position && (
+                  <>
+                    <div className="levels-menu-divider" />
+                    {TRADE_LEVEL_ITEMS.map((item) => (
+                      <label key={item.key} className="levels-menu-item">
+                        <input
+                          type="checkbox"
+                          checked={visibleTradeLevels.has(item.key)}
+                          onChange={() => toggleTradeLevel(item.key)}
+                        />
+                        <span className="indicator-swatch" style={{ background: item.color }} />
+                        {item.label}
+                      </label>
+                    ))}
+                  </>
+                )}
+              </div>,
+              document.body,
+            )}
         </div>
       </div>
       <div className="widget-body">
@@ -352,9 +474,8 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             bars={displayed.bars}
             chartType={chartType}
             vwap={displayed.vwap}
-            indicators={displayed.indicators.filter((i) => !hiddenIndicators.has(i.name))}
-            showIndicators={showIndicators}
-            positionLevels={positionLevels}
+            indicators={displayed.indicators.filter((i) => visibleIndicators.has(i.name))}
+            positionLevels={visiblePositionLevels}
             cursorMode={cursorMode}
             // Session tinting only where a bar sits inside one session --
             // on daily and coarser charts the distinction does not exist.

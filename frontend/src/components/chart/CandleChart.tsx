@@ -53,10 +53,13 @@ interface CandleChartProps {
   bars: Bar[];
   chartType: ChartType;
   vwap: (number | null)[];
+  /** Already filtered down to whatever the Levels dropdown has checked --
+   * this component draws exactly what it's given, it doesn't decide what's
+   * on. */
   indicators: IndicatorResult[];
-  showIndicators: boolean;
   /** Entry/stop/target for the position open on the symbol on screen, if
-   * any. Null when there is none. */
+   * any. Null when there is none; an individual field is null when the
+   * Levels dropdown has that one unchecked. */
   positionLevels: PositionLevels | null;
   cursorMode: CursorMode;
   /** Unix seconds to scroll into view — a backtest pick's entry time. Null
@@ -85,22 +88,23 @@ const FOCUS_PADDING_SECONDS = 90 * 60;
  * mark an entry identically. */
 const PICK_MARKER_COLOR = "#2a78d6";
 
-/** Entry/stop/target for whatever position is open on the symbol on screen --
- * not a toggleable overlay like an indicator "level", so it renders
- * regardless of showIndicators. */
+/** Entry/stop/target for whatever position is open on the symbol on screen.
+ * Each field is independently nullable -- the caller (ChartWidget) nulls out
+ * whichever of the three the Levels dropdown has unchecked, so this is drawn
+ * unconditionally: by the time it gets here, null already means "hidden." */
 export interface PositionLevels {
   side: "long" | "short";
-  entry: number;
+  entry: number | null;
   stop: number | null;
   target: number | null;
 }
 
-const POSITION_ENTRY_COLOR = "#5b8bd6";
+export const POSITION_ENTRY_COLOR = "#5b8bd6";
 // Same green/red as the candlestick series' up/down colors below -- a
 // position's stop and target reuse the chart's own favorable/unfavorable
 // semantic rather than introducing a second palette.
-const POSITION_TARGET_COLOR = "#0ca30c";
-const POSITION_STOP_COLOR = "#d03b3b";
+export const POSITION_TARGET_COLOR = "#0ca30c";
+export const POSITION_STOP_COLOR = "#d03b3b";
 // Solid and a shade wider than a "level" indicator's default (width 1,
 // dashed) so a position line reads as distinct at a glance.
 const POSITION_LINE_WIDTH = 2 as const;
@@ -169,6 +173,17 @@ function applyLabelClearance(chart: IChartApi, needsClearance: boolean) {
   chart.timeScale().applyOptions({
     rightOffsetPixels: needsClearance ? LEVEL_LABEL_CLEARANCE_PX : 0,
   });
+}
+
+/** Whether there's anything the Levels dropdown has actually checked --
+ * indicators is already pre-filtered by the caller, and positionLevels'
+ * fields are individually nulled out when unchecked, so this is the one
+ * place that needs to look at both to decide if label space is worth
+ * reserving. */
+function hasAnyVisibleLevel(indicators: IndicatorResult[], positionLevels: PositionLevels | null): boolean {
+  if (indicators.length > 0) return true;
+  if (!positionLevels) return false;
+  return positionLevels.entry != null || positionLevels.stop != null || positionLevels.target != null;
 }
 
 // Show as many bars as fit at a readable spacing: fit everything when there's
@@ -245,7 +260,6 @@ export function CandleChart({
   chartType,
   vwap,
   indicators,
-  showIndicators,
   positionLevels,
   cursorMode,
   focusTime,
@@ -278,14 +292,13 @@ export function CandleChart({
   // can't close over the current bars. A ref rather than a dep of the mount
   // effect, which would rebuild the whole chart on every tick.
   const barCountRef = useRef(0);
-  // The resize handler is built once in the mount effect and cannot close
-  // over the prop -- it would keep first render's value forever.
-  const showIndicatorsRef = useRef(showIndicators);
-  showIndicatorsRef.current = showIndicators;
-  // Same reason as showIndicatorsRef: handleSizeChange is subscribed once in
-  // the mount effect and can't close over per-render props.
+  // The resize handler is built once in the mount effect and can't close
+  // over per-render props.
   const positionLevelsRef = useRef(positionLevels);
   positionLevelsRef.current = positionLevels;
+  // Same reason as positionLevelsRef -- read by the resize handler.
+  const hasLevelsRef = useRef(false);
+  hasLevelsRef.current = hasAnyVisibleLevel(indicators, positionLevels);
   // Applying a range can itself change the time scale's width (different
   // visible bars -> different price labels -> a wider/narrower price scale),
   // which fires subscribeSizeChange again. This swallows that echo.
@@ -401,7 +414,7 @@ export function CandleChart({
       if (!range) return;
       applyingRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange(range);
-      applyLabelClearance(chart, showIndicatorsRef.current || positionLevelsRef.current != null);
+      applyLabelClearance(chart, hasLevelsRef.current);
       requestAnimationFrame(() => {
         applyingRangeRef.current = false;
       });
@@ -555,7 +568,7 @@ export function CandleChart({
       const chart = chartRef.current;
       if (chart) {
         chart.timeScale().setVisibleRange(pendingRange);
-        applyLabelClearance(chart, showIndicators || positionLevels != null);
+        applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels));
       }
       return;
     }
@@ -578,16 +591,15 @@ export function CandleChart({
       const chart = chartRef.current;
       if (range && chart) {
         chart.timeScale().setVisibleLogicalRange(range);
-        applyLabelClearance(chart, showIndicators || positionLevels != null);
+        applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels));
       }
     }
-    // showIndicators is a dependency because this effect repositions the
-    // viewport, and the margin has to be re-asserted whenever it does.
-    // chartType is one because the swap above leaves a brand-new, empty
-    // series behind -- without it, toggling would blank the price until the
-    // next tick. positionLevels is one for the same margin reason as
-    // showIndicators.
-  }, [bars, vwap, focusTime, showIndicators, positionLevels, chartType, shadeSessions]);
+    // indicators and positionLevels are dependencies because this effect
+    // repositions the viewport, and the margin has to be re-asserted
+    // whenever either changes what's actually drawn. chartType is one
+    // because the swap above leaves a brand-new, empty series behind --
+    // without it, toggling would blank the price until the next tick.
+  }, [bars, vwap, focusTime, indicators, positionLevels, chartType, shadeSessions]);
 
   // Scroll a clicked backtest pick into view and pin it with an arrow. Runs
   // after the data effect above, so the bars it needs are already on the
@@ -626,24 +638,24 @@ export function CandleChart({
       });
     }
 
-    if (showIndicators) {
-      indicators.forEach((indicator) => {
-        if (indicator.kind !== "marker") return;
-        Object.entries(indicator.series).forEach(([subName, value]) => {
-          if (!isMarkerSeries(value)) return;
-          const color = indicator.colors[subName] ?? "#898781";
-          value.forEach((marker) => {
-            markers.push({
-              time: marker.time as Time,
-              position: marker.position,
-              shape: marker.shape,
-              color,
-              text: marker.text,
-            });
+    // indicators is already filtered down to whatever the Levels dropdown
+    // has checked, so no separate on/off gate is needed here.
+    indicators.forEach((indicator) => {
+      if (indicator.kind !== "marker") return;
+      Object.entries(indicator.series).forEach(([subName, value]) => {
+        if (!isMarkerSeries(value)) return;
+        const color = indicator.colors[subName] ?? "#898781";
+        value.forEach((marker) => {
+          markers.push({
+            time: marker.time as Time,
+            position: marker.position,
+            shape: marker.shape,
+            color,
+            text: marker.text,
           });
         });
       });
-    }
+    });
 
     // News pins: one 📰 per bar, at the bar nearest each headline's publish
     // time. size 0 keeps the emoji as the whole glyph rather than stacking
@@ -699,7 +711,7 @@ export function CandleChart({
       from: Math.max(first, target - FOCUS_PADDING_SECONDS) as UTCTimestamp,
       to: Math.min(last, target + FOCUS_PADDING_SECONDS) as UTCTimestamp,
     });
-  }, [focusTime, bars, chartType, indicators, showIndicators, news]);
+  }, [focusTime, bars, chartType, indicators, news]);
 
   // Separate from the bars/vwap effect above: indicators only change when
   // the symbol changes or the toggle flips, not on every live tick, and
@@ -727,67 +739,65 @@ export function CandleChart({
     indicatorSeriesRef.current.forEach((series) => chart.removeSeries(series));
     indicatorSeriesRef.current = [];
 
-    if (showIndicators) {
-      indicators.forEach((indicator) => {
-        Object.entries(indicator.series).forEach(([subName, value]) => {
-          const color = indicator.colors[subName] ?? "#898781";
-          // "EMA" + "EMA 9" reads as "EMA EMA 9" and pushes the label that
-          // much further over the candles. Where the sub-series already names
-          // its group, the group name adds nothing.
-          const title = subName.startsWith(indicator.name) ? subName : `${indicator.name} ${subName}`;
+    // indicators is already filtered down to whatever the Levels dropdown
+    // has checked, so no separate on/off gate is needed here.
+    indicators.forEach((indicator) => {
+      Object.entries(indicator.series).forEach(([subName, value]) => {
+        const color = indicator.colors[subName] ?? "#898781";
+        // "EMA" + "EMA 9" reads as "EMA EMA 9" and pushes the label that
+        // much further over the candles. Where the sub-series already names
+        // its group, the group name adds nothing.
+        const title = subName.startsWith(indicator.name) ? subName : `${indicator.name} ${subName}`;
 
-          if (indicator.kind === "level") {
-            if (typeof value !== "number") return;
-            const style = resolveStyle(indicator.style, DEFAULT_LEVEL_STYLE);
-            const line = priceSeries.createPriceLine({
-              price: value,
-              color,
-              lineWidth: style.width as 1 | 2 | 3 | 4,
-              lineStyle: style.dash,
-              axisLabelVisible: true,
-              title,
-            });
-            priceLinesRef.current.push(line);
-          } else if (indicator.kind === "series" && isPointSeries(value)) {
-            const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
-            const series = chart.addSeries(LineSeries, {
-              color,
-              lineWidth: style.width as 1 | 2 | 3 | 4,
-              lineStyle: style.dash,
-              crosshairMarkerVisible: false,
-              lastValueVisible: true,
-              title,
-            });
-            series.setData(
-              toLinePoints(
-                value,
-                (p) => toUnixSeconds(p.t),
-                (p) => p.value,
-              ),
-            );
-            indicatorSeriesRef.current.push(series);
-          }
-        });
+        if (indicator.kind === "level") {
+          if (typeof value !== "number") return;
+          const style = resolveStyle(indicator.style, DEFAULT_LEVEL_STYLE);
+          const line = priceSeries.createPriceLine({
+            price: value,
+            color,
+            lineWidth: style.width as 1 | 2 | 3 | 4,
+            lineStyle: style.dash,
+            axisLabelVisible: true,
+            title,
+          });
+          priceLinesRef.current.push(line);
+        } else if (indicator.kind === "series" && isPointSeries(value)) {
+          const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
+          const series = chart.addSeries(LineSeries, {
+            color,
+            lineWidth: style.width as 1 | 2 | 3 | 4,
+            lineStyle: style.dash,
+            crosshairMarkerVisible: false,
+            lastValueVisible: true,
+            title,
+          });
+          series.setData(
+            toLinePoints(
+              value,
+              (p) => toUnixSeconds(p.t),
+              (p) => p.value,
+            ),
+          );
+          indicatorSeriesRef.current.push(series);
+        }
       });
-    }
+    });
 
     if (preservedRange) {
       chart.timeScale().setVisibleRange(preservedRange);
     }
     // After the restore, never before: setVisibleRange repositions the
     // content and drops the margin.
-    applyLabelClearance(chart, showIndicators || positionLevels != null);
+    applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels));
     // chartType, because the price lines live on the price series and the
     // swap disposes them along with it. positionLevels, because it also
     // feeds the margin call above.
-  }, [indicators, showIndicators, positionLevels, chartType]);
+  }, [indicators, positionLevels, chartType]);
 
   // Its own effect rather than folded into the indicators effect above: that
   // one's clear-and-rebuild lifecycle is specifically about the `indicators`
   // prop, and sharing it would mean a position line flickers/rebuilds on
-  // every indicator toggle for no reason, and vice versa. Not gated on
-  // showIndicators -- a position reflects real capital at risk, not a
-  // togglable scanner overlay, so it renders regardless of that toggle.
+  // every indicator toggle for no reason, and vice versa.
   useEffect(() => {
     const priceSeries = priceSeriesRef.current;
     if (!priceSeries) return;
@@ -797,16 +807,18 @@ export function CandleChart({
 
     if (positionLevels) {
       const { entry, stop, target } = positionLevels;
-      positionLinesRef.current.push(
-        priceSeries.createPriceLine({
-          price: entry,
-          color: POSITION_ENTRY_COLOR,
-          lineWidth: POSITION_LINE_WIDTH,
-          lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: "Entry",
-        }),
-      );
+      if (entry != null) {
+        positionLinesRef.current.push(
+          priceSeries.createPriceLine({
+            price: entry,
+            color: POSITION_ENTRY_COLOR,
+            lineWidth: POSITION_LINE_WIDTH,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: "Entry",
+          }),
+        );
+      }
       if (stop != null) {
         positionLinesRef.current.push(
           priceSeries.createPriceLine({

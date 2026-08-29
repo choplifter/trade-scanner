@@ -820,50 +820,69 @@ body {
   color: var(--text-primary);
 }
 
-/* One chip per indicator on the chart, so a reader can pare the chart back to
-   the one thing being examined. Built off .vwap-legend, which already reads as
-   "a legend entry you can click", rather than as another .timeframe-button --
-   these select nothing, they show and hide. */
-.indicator-legend {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: none;
-  border: none;
-  padding: 2px 4px;
-  border-radius: 3px;
-  cursor: pointer;
-  font-family: inherit;
-  opacity: 0.45;
-}
-
-.indicator-legend:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover, rgba(127, 127, 127, 0.12));
-}
-
-/* Full opacity means drawn. The dimmed state is the off one, so the strip
-   reads at a glance as "these are on, those are not" without a checkbox. */
-.indicator-legend[aria-pressed="true"] {
-  color: var(--text-primary);
-  opacity: 1;
-}
-
-/* A file that could not be loaded. Loud on purpose: the failure it replaces
-   was invisible, and an indicator drawing nothing reads as a quiet market
-   rather than as a broken file. */
-.indicator-legend.failed {
-  color: #d1242f;
-  opacity: 1;
-  cursor: help;
-}
-
 .indicator-swatch {
   width: 10px;
   height: 2px;
   display: inline-block;
+}
+
+.levels-dropdown {
+  display: inline-flex;
+}
+
+/* Portalled to <body> (see ChartWidget.tsx) rather than positioned relative
+   to .levels-dropdown, so top/left come in as an inline style computed from
+   the trigger button's screen position -- position:fixed here is what lets
+   that escape .widget's overflow:hidden and the transformed grid item, the
+   same reason Modal.tsx's backdrop is a portal. */
+.levels-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.levels-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.levels-menu-item:hover {
+  color: var(--text-primary);
+  background: var(--row-hover);
+}
+
+/* Same failure styling .indicator-legend.failed used to carry: loud on
+   purpose, since an indicator drawing nothing reads as a quiet market rather
+   than as a broken file. */
+.levels-menu-item.failed {
+  color: #d1242f;
+  cursor: help;
+}
+
+.levels-menu-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+.levels-menu-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 3px 6px;
 }
 
 .symbol-info-panel {
