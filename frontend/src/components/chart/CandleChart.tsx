@@ -8,8 +8,6 @@ import {
   LineSeries,
   LineStyle,
   type CandlestickData,
-  type HandleScaleOptions,
-  type HandleScrollOptions,
   type HistogramData,
   type IChartApi,
   type IPriceLine,
@@ -419,13 +417,21 @@ export function CandleChart({
   // a real drag apart from a click that never moved -- see the mouseup
   // handler). Null when nothing is being dragged.
   const draggingRef = useRef<(DraggableLine & { startPrice: number }) | null>(null);
-  // handleScroll/handleScale as they were just before a drag disabled them,
-  // for the mouseup handler to restore -- see the mount effect for why
-  // they're disabled at all.
-  const suspendedInteractionRef = useRef<{
-    handleScroll: HandleScrollOptions | boolean;
-    handleScale: HandleScaleOptions | boolean;
-  } | null>(null);
+
+  // Re-enables the chart's own pan/zoom after a drag -- see handleMouseDown
+  // for why it's disabled at all. Always restores to the enabled shape
+  // outright, rather than snapshotting whatever handleScroll/handleScale
+  // were right before the drag and restoring *that*: this app never sets
+  // them to anything else, so the snapshot was never protecting against a
+  // real customization, and it made a stuck-disabled state self-
+  // perpetuating -- if a drag anywhere ever ended without its restore
+  // running (a mouseup lightweight-charts itself swallowed, a dev-tools
+  // interruption, anything), the *next* drag would snapshot that already-
+  // disabled state as "correct" and restore back to disabled again,
+  // forever. Hardcoding the target means every drag heals it instead.
+  function reenableChartInteraction() {
+    chartRef.current?.applyOptions({ handleScroll: true, handleScale: true });
+  }
 
   // Aborts an in-progress drag on `source`'s lines -- called by the
   // position-lines/indicative-lines effects just before they dispose and
@@ -440,9 +446,7 @@ export function CandleChart({
   function cancelActiveDrag(source: "position" | "indicative") {
     if (draggingRef.current?.source !== source) return;
     draggingRef.current = null;
-    const suspended = suspendedInteractionRef.current;
-    suspendedInteractionRef.current = null;
-    if (chartRef.current && suspended) chartRef.current.applyOptions(suspended);
+    reenableChartInteraction();
     if (containerRef.current) containerRef.current.style.cursor = "";
   }
 
@@ -617,10 +621,6 @@ export function CandleChart({
       // whole-chart on/off -- switched off for exactly the duration of the
       // drag and restored in handleMouseUp, so a fast drag doesn't also pan
       // the chart underneath the line.
-      suspendedInteractionRef.current = {
-        handleScroll: chart.options().handleScroll,
-        handleScale: chart.options().handleScale,
-      };
       chart.applyOptions({ handleScroll: false, handleScale: false });
       draggingRef.current = { ...hit, startPrice: hit.line.options().price };
     };
@@ -631,9 +631,7 @@ export function CandleChart({
     const handleMouseUp = () => {
       const dragging = draggingRef.current;
       draggingRef.current = null;
-      const suspended = suspendedInteractionRef.current;
-      suspendedInteractionRef.current = null;
-      if (suspended) chart.applyOptions(suspended);
+      reenableChartInteraction();
       if (!dragging) return;
       try {
         // A click that never actually moved the line commits nothing.
@@ -653,7 +651,11 @@ export function CandleChart({
 
     container.addEventListener("mousemove", handleMouseMove);
     container.addEventListener("mousedown", handleMouseDown);
-    window.addEventListener("mouseup", handleMouseUp);
+    // Capture phase: a mouseup that lightweight-charts' own internal
+    // handling (or anything else between the event target and window)
+    // stops propagation on must still reach this, or the drag it ended
+    // never gets its pan/zoom re-enabled -- see reenableChartInteraction.
+    window.addEventListener("mouseup", handleMouseUp, true);
 
     return () => {
       // Before remove(), which disposes the time scale -- reaching for
@@ -662,7 +664,7 @@ export function CandleChart({
       chart.timeScale().unsubscribeSizeChange(handleSizeChange);
       container.removeEventListener("mousemove", handleMouseMove);
       container.removeEventListener("mousedown", handleMouseDown);
-      window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("mouseup", handleMouseUp, true);
       chart.remove();
       chartRef.current = null;
       priceSeriesRef.current = null;
