@@ -2,6 +2,10 @@
 backend/.venv/
 backend/.env
 backend/*.sqlite3
+# WAL-mode sidecar files -- same DBs as above, just the journal and the
+# shared-memory index it uses instead of a single rollback journal.
+backend/*.sqlite3-wal
+backend/*.sqlite3-shm
 # Dashboard toggle state for strategy signals -- local UI state, like the DB
 backend/strategy_switches.json
 backend/__pycache__/
