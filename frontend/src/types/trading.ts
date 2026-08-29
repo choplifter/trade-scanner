@@ -214,6 +214,9 @@ export interface PositionExits {
    * client is where this join lives, so the client supplies the id and the
    * server only cross-checks it (see OrderService.replace_stop). */
   stopOrderId: string | null;
+  /** Same as stopOrderId, for the take-profit leg -- what the move-target
+   * endpoint takes (see OrderService.replace_target). */
+  targetOrderId: string | null;
 }
 
 /** Orders flattened so a bracket parent's legs are matched too -- Alpaca may
@@ -242,6 +245,7 @@ export function exitsForPosition(position: Position, orders: Order[]): PositionE
     takeProfit: limit ? num(limit.limit_price) : null,
     stopLoss: stop ? num(stop.stop_price) : null,
     stopOrderId: stop ? stop.id : null,
+    targetOrderId: limit ? limit.id : null,
   };
 }
 

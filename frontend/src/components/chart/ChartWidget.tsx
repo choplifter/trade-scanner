@@ -223,11 +223,20 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   // highlight cannot mark a different stock's story.
   const [highlightedNews, setHighlightedNews] = useState<number[] | null>(null);
   useEffect(() => setHighlightedNews(null), [symbol]);
+  // A rejected drag (wrong side of market, order already filled, trading
+  // switched off, ...) needs somewhere to surface without switching to the
+  // Positions tab -- same .order-rejection + Dismiss pattern TradingWidget's
+  // own instantError uses. A draft (indicative) line's drag never reaches
+  // here: there's no order to reject, just a ticket field to overwrite.
+  // Cleared on symbol change for the same reason as highlightedNews above.
+  const [dragError, setDragError] = useState<string | null>(null);
+  useEffect(() => setDragError(null), [symbol]);
 
   // Entry/stop/target lines for whatever position is open on the symbol on
   // screen -- via context rather than a second useTrading() call, which
   // would be an independent, out-of-sync poll loop (see TradingContext).
-  const { positions, orders } = useTradingContext();
+  const { positions, orders, indicativeLevels: rawIndicativeLevels, moveStop, moveTarget } =
+    useTradingContext();
   const position = positions.find((p) => p.symbol === symbol) ?? null;
   const entry = position ? num(position.avg_entry_price) : null;
   const exits = position ? exitsForPosition(position, orders) : null;
@@ -253,6 +262,52 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
       target: visibleTradeLevels.has("target") ? positionLevels.target : null,
     };
   }, [positionLevels, visibleTradeLevels]);
+
+  // The order ticket's own draft entry/stop/target, for the same symbol on
+  // screen -- refused (not just filtered) when the symbol doesn't match, so
+  // switching charts never leaves a stale draft floating over an unrelated
+  // stock while OrderTicket's own effects catch up. Reuses the Levels
+  // dropdown's own entry/stop/target checkboxes -- one mental model for
+  // "is this level showing," real or draft.
+  const visibleIndicativeLevels = useMemo<PositionLevels | null>(() => {
+    if (!rawIndicativeLevels || rawIndicativeLevels.symbol !== symbol) return null;
+    return {
+      side: rawIndicativeLevels.side,
+      entry: visibleTradeLevels.has("entry") ? rawIndicativeLevels.entry : null,
+      stop: visibleTradeLevels.has("stop") ? rawIndicativeLevels.stop : null,
+      target: visibleTradeLevels.has("target") ? rawIndicativeLevels.target : null,
+    };
+  }, [rawIndicativeLevels, symbol, visibleTradeLevels]);
+
+  // Committed on drop, not memoized: CandleChart reads these through a ref
+  // it keeps current every render (see onMovePositionLevelRef there), not
+  // through its effect dependency arrays, specifically so a fresh function
+  // identity here -- unavoidable anyway, since moveStop/moveTarget are new
+  // functions on every render of useTrading() -- doesn't tear down and
+  // rebuild the chart's price lines on every poll tick.
+  const onMovePositionLevel = symbol
+    ? (field: "stop" | "target", price: number) => {
+        const orderId = field === "stop" ? exits?.stopOrderId : exits?.targetOrderId;
+        if (!orderId) return;
+        const move = field === "stop" ? moveStop : moveTarget;
+        move(orderId, symbol, price).catch((err: unknown) => {
+          setDragError(err instanceof Error ? err.message : String(err));
+        });
+      }
+    : undefined;
+
+  // No order to reject here -- just writes the new price into the ticket
+  // that published these levels (see IndicativeLevels.onDragStop/
+  // onDragTarget). Guarded on the symbol match even though a mismatched
+  // draft never has a line to drag in the first place (visibleIndicativeLevels
+  // is null then), for the same belt-and-suspenders reason that memo is.
+  const onMoveIndicativeLevel =
+    rawIndicativeLevels && rawIndicativeLevels.symbol === symbol
+      ? (field: "stop" | "target", price: number) => {
+          if (field === "stop") rawIndicativeLevels.onDragStop?.(price);
+          else rawIndicativeLevels.onDragTarget?.(price);
+        }
+      : undefined;
 
   const newsMarkers = useMemo(
     () =>
@@ -408,7 +463,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
                 ref={levelsMenuRef}
                 style={{ top: levelsMenuPos.top, left: levelsMenuPos.left }}
               >
-                {displayed.indicators.length === 0 && !position && (
+                {displayed.indicators.length === 0 && !position && !visibleIndicativeLevels && (
                   <div className="levels-menu-empty">No levels available</div>
                 )}
                 {displayed.indicators.map((indicator) => (
@@ -434,7 +489,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
                     {indicator.error ? `${indicator.name} ✕` : indicator.name}
                   </label>
                 ))}
-                {position && (
+                {(position || visibleIndicativeLevels) && (
                   <>
                     <div className="levels-menu-divider" />
                     {TRADE_LEVEL_ITEMS.map((item) => (
@@ -455,6 +510,14 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             )}
         </div>
       </div>
+      {dragError && (
+        <div className="order-rejection" role="status">
+          {dragError}{" "}
+          <button type="button" className="row-action" onClick={() => setDragError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="widget-body">
         {!symbol ? (
           <div className="widget-empty">Click a symbol in a scanner to load its chart.</div>
@@ -476,6 +539,9 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             vwap={displayed.vwap}
             indicators={displayed.indicators.filter((i) => visibleIndicators.has(i.name))}
             positionLevels={visiblePositionLevels}
+            indicativeLevels={visibleIndicativeLevels}
+            onMovePositionLevel={onMovePositionLevel}
+            onMoveIndicativeLevel={onMoveIndicativeLevel}
             cursorMode={cursorMode}
             // Session tinting only where a bar sits inside one session --
             // on daily and coarser charts the distinction does not exist.

@@ -8,6 +8,8 @@ import {
   LineSeries,
   LineStyle,
   type CandlestickData,
+  type HandleScaleOptions,
+  type HandleScrollOptions,
   type HistogramData,
   type IChartApi,
   type IPriceLine,
@@ -61,6 +63,28 @@ interface CandleChartProps {
    * any. Null when there is none; an individual field is null when the
    * Levels dropdown has that one unchecked. */
   positionLevels: PositionLevels | null;
+  /** Entry/stop/target from the order ticket currently being built for the
+   * symbol on screen -- not a real position, drawn dashed (see
+   * INDICATIVE_LINE_STYLE) specifically so it can never be mistaken for one.
+   * Same per-field nulling convention as positionLevels. Independent of it:
+   * a real position and a draft ticket for the same symbol can both have
+   * values, and both draw -- e.g. planning a scale-in the levels line
+   * shows next to the position already protecting it. */
+  indicativeLevels: PositionLevels | null;
+  /** Dragging a real position's Stop or Target line to a new price calls
+   * this with the field and the price it was dropped at -- the caller is
+   * responsible for actually moving the order (and for what happens if that
+   * fails; this component only draws whatever positionLevels says next,
+   * which is how a rejected move visibly snaps back). Undefined, or a field
+   * whose line has nothing to move (see the position-lines effect), means
+   * that line isn't offered as draggable at all -- entry is never included,
+   * it's a fill price, not an order. */
+  onMovePositionLevel?: (field: "stop" | "target", price: number) => void;
+  /** Same as onMovePositionLevel, for the order ticket's draft Stop/Target
+   * lines -- there's no order to move here, so the caller just writes the
+   * new price back into the ticket's own input (see IndicativeLevels'
+   * onDragStop/onDragTarget, which is what ChartWidget wires this to). */
+  onMoveIndicativeLevel?: (field: "stop" | "target", price: number) => void;
   cursorMode: CursorMode;
   /** Unix seconds to scroll into view — a backtest pick's entry time. Null
    * leaves the chart wherever the user left it. */
@@ -108,6 +132,12 @@ export const POSITION_STOP_COLOR = "#d03b3b";
 // Solid and a shade wider than a "level" indicator's default (width 1,
 // dashed) so a position line reads as distinct at a glance.
 const POSITION_LINE_WIDTH = 2 as const;
+// Indicative (draft-ticket) lines reuse positionLevels' own colors -- same
+// meaning, just not real yet -- but stay dashed at all times, unlike a real
+// position's always-solid lines, so the two can never read as the same
+// thing even at a glance.
+const INDICATIVE_LINE_WIDTH = 2 as const;
+const INDICATIVE_LINE_STYLE = LineStyle.Dashed;
 
 /** The bar closest to `time`, since a pick's entry rarely lands exactly on a
  * bar boundary of whatever timeframe is being displayed -- a 5-minute entry
@@ -175,15 +205,21 @@ function applyLabelClearance(chart: IChartApi, needsClearance: boolean) {
   });
 }
 
+function hasAnyLevel(levels: PositionLevels | null): boolean {
+  return levels != null && (levels.entry != null || levels.stop != null || levels.target != null);
+}
+
 /** Whether there's anything the Levels dropdown has actually checked --
- * indicators is already pre-filtered by the caller, and positionLevels'
- * fields are individually nulled out when unchecked, so this is the one
- * place that needs to look at both to decide if label space is worth
- * reserving. */
-function hasAnyVisibleLevel(indicators: IndicatorResult[], positionLevels: PositionLevels | null): boolean {
-  if (indicators.length > 0) return true;
-  if (!positionLevels) return false;
-  return positionLevels.entry != null || positionLevels.stop != null || positionLevels.target != null;
+ * indicators is already pre-filtered by the caller, and positionLevels'/
+ * indicativeLevels' fields are individually nulled out when unchecked, so
+ * this is the one place that needs to look at all three to decide if label
+ * space is worth reserving. */
+function hasAnyVisibleLevel(
+  indicators: IndicatorResult[],
+  positionLevels: PositionLevels | null,
+  indicativeLevels: PositionLevels | null,
+): boolean {
+  return indicators.length > 0 || hasAnyLevel(positionLevels) || hasAnyLevel(indicativeLevels);
 }
 
 // Show as many bars as fit at a readable spacing: fit everything when there's
@@ -197,6 +233,36 @@ function visibleLogicalRange(width: number, barCount: number) {
   const spacing = Math.min(MAX_SPACING, Math.max(MIN_SPACING, width / barCount));
   const visibleCount = Math.min(barCount, Math.max(1, Math.ceil(width / spacing)));
   return { from: barCount - visibleCount, to: barCount - 1 };
+}
+
+/** One entry per currently-draggable Stop/Target line -- see
+ * draggableLinesRef for how this list is kept current. */
+interface DraggableLine {
+  line: IPriceLine;
+  source: "position" | "indicative";
+  field: "stop" | "target";
+}
+
+// Pixel tolerance for "the cursor is on this line" -- generous enough to
+// grab a thin line without pixel-perfect aim, tight enough not to swallow
+// clicks meant for the chart just below or above it.
+const DRAG_HIT_TOLERANCE_PX = 6;
+
+/** Which draggable line, if any, sits under a given pane-local y coordinate
+ * right now -- reads each line's *current* price via IPriceLine.options()
+ * rather than a value cached at creation time, so this stays correct as a
+ * line's price changes (including mid-drag, when the line being dragged is
+ * itself moving). */
+function draggableLineAt(
+  y: number,
+  priceSeries: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">,
+  lines: DraggableLine[],
+): DraggableLine | null {
+  for (const entry of lines) {
+    const lineY = priceSeries.priceToCoordinate(entry.line.options().price);
+    if (lineY != null && Math.abs(lineY - y) <= DRAG_HIT_TOLERANCE_PX) return entry;
+  }
+  return null;
 }
 
 // Chart instance is created once and mutated imperatively via the
@@ -261,6 +327,9 @@ export function CandleChart({
   vwap,
   indicators,
   positionLevels,
+  indicativeLevels,
+  onMovePositionLevel,
+  onMoveIndicativeLevel,
   cursorMode,
   focusTime,
   news = [],
@@ -284,6 +353,7 @@ export function CandleChart({
   const sessionBandsRef = useRef<{ pre: ISeriesApi<"Histogram">; post: ISeriesApi<"Histogram"> } | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const positionLinesRef = useRef<IPriceLine[]>([]);
+  const indicativeLinesRef = useRef<IPriceLine[]>([]);
   const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
   // The markers primitive, kept so the pick pin is updated in place rather
   // than layered again on every focus change.
@@ -298,7 +368,7 @@ export function CandleChart({
   positionLevelsRef.current = positionLevels;
   // Same reason as positionLevelsRef -- read by the resize handler.
   const hasLevelsRef = useRef(false);
-  hasLevelsRef.current = hasAnyVisibleLevel(indicators, positionLevels);
+  hasLevelsRef.current = hasAnyVisibleLevel(indicators, positionLevels, indicativeLevels);
   // Applying a range can itself change the time scale's width (different
   // visible bars -> different price labels -> a wider/narrower price scale),
   // which fires subscribeSizeChange again. This swallows that echo.
@@ -322,6 +392,32 @@ export function CandleChart({
   const newsPinsRef = useRef<Map<number, number[]>>(new Map());
   const onNewsClickRef = useRef(onNewsClick);
   onNewsClickRef.current = onNewsClick;
+  // Read by the mousedown/mousemove/mouseup handlers below, which are
+  // subscribed once in the mount effect and can't close over per-render
+  // props -- same reason onNewsClickRef exists.
+  const onMovePositionLevelRef = useRef(onMovePositionLevel);
+  onMovePositionLevelRef.current = onMovePositionLevel;
+  const onMoveIndicativeLevelRef = useRef(onMoveIndicativeLevel);
+  onMoveIndicativeLevelRef.current = onMoveIndicativeLevel;
+  // Which of the currently-drawn Stop/Target lines can be dragged, rebuilt
+  // by the position-lines and indicative-lines effects below whenever they
+  // rebuild their own lines -- each effect only touches its own `source`
+  // entries here, since the two run independently of each other. Read by
+  // the drag handlers to hit-test a mousedown/hover against every
+  // draggable line's *current* on-screen position, not just the ones that
+  // existed when the listener was attached.
+  const draggableLinesRef = useRef<DraggableLine[]>([]);
+  // The line currently being dragged, and the price it started at (to tell
+  // a real drag apart from a click that never moved -- see the mouseup
+  // handler). Null when nothing is being dragged.
+  const draggingRef = useRef<(DraggableLine & { startPrice: number }) | null>(null);
+  // handleScroll/handleScale as they were just before a drag disabled them,
+  // for the mouseup handler to restore -- see the mount effect for why
+  // they're disabled at all.
+  const suspendedInteractionRef = useRef<{
+    handleScroll: HandleScrollOptions | boolean;
+    handleScale: HandleScaleOptions | boolean;
+  } | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -433,11 +529,87 @@ export function CandleChart({
     };
     chart.subscribeClick(handleClick);
 
+    // Dragging a Stop/Target line. lightweight-charts has no price-line drag
+    // API, so this is native mouse events on the container, hit-testing
+    // against draggableLinesRef (kept current by the position-lines and
+    // indicative-lines effects further down).
+    const handleMouseMove = (event: MouseEvent) => {
+      const priceSeries = priceSeriesRef.current;
+      if (!priceSeries) return;
+      const rect = container.getBoundingClientRect();
+      const y = event.clientY - rect.top;
+
+      const dragging = draggingRef.current;
+      if (dragging) {
+        const price = priceSeries.coordinateToPrice(y);
+        if (price != null) dragging.line.applyOptions({ price });
+        return;
+      }
+
+      // Not dragging: just update the cursor affordance for whatever's
+      // under the pointer. Set directly on the element rather than through
+      // the cursor-${cursorMode} class (see the component's return value) --
+      // that class still owns every other pixel of the chart, this is only
+      // ever a hover-local override.
+      const hit = draggableLineAt(y, priceSeries, draggableLinesRef.current);
+      container.style.cursor = hit ? "ns-resize" : "";
+    };
+
+    const handleMouseDown = (event: MouseEvent) => {
+      const priceSeries = priceSeriesRef.current;
+      if (!priceSeries) return;
+      const rect = container.getBoundingClientRect();
+      const y = event.clientY - rect.top;
+      const hit = draggableLineAt(y, priceSeries, draggableLinesRef.current);
+      if (!hit) return;
+      // Keeps this from also being read as the start of a chart pan, and
+      // the eventual mouseup from being read as a click on whatever bar it
+      // lands over (which would wrongly open a news pin under the cursor).
+      event.stopPropagation();
+      // The chart's own pan/zoom has no per-gesture opt-out, only a
+      // whole-chart on/off -- switched off for exactly the duration of the
+      // drag and restored in handleMouseUp, so a fast drag doesn't also pan
+      // the chart underneath the line.
+      suspendedInteractionRef.current = {
+        handleScroll: chart.options().handleScroll,
+        handleScale: chart.options().handleScale,
+      };
+      chart.applyOptions({ handleScroll: false, handleScale: false });
+      draggingRef.current = { ...hit, startPrice: hit.line.options().price };
+    };
+
+    // On window, not the container: releasing past the chart's edge (an
+    // overshot drag) must still end it, or it would stay "stuck" dragging
+    // until the next mousedown inside the chart.
+    const handleMouseUp = () => {
+      const dragging = draggingRef.current;
+      draggingRef.current = null;
+      const suspended = suspendedInteractionRef.current;
+      suspendedInteractionRef.current = null;
+      if (suspended) chart.applyOptions(suspended);
+      if (!dragging) return;
+      // A click that never actually moved the line commits nothing.
+      const price = dragging.line.options().price;
+      if (price === dragging.startPrice) return;
+      if (dragging.source === "position") {
+        onMovePositionLevelRef.current?.(dragging.field, price);
+      } else {
+        onMoveIndicativeLevelRef.current?.(dragging.field, price);
+      }
+    };
+
+    container.addEventListener("mousemove", handleMouseMove);
+    container.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("mouseup", handleMouseUp);
+
     return () => {
       // Before remove(), which disposes the time scale -- reaching for
       // timeScale() afterwards throws.
       chart.unsubscribeClick(handleClick);
       chart.timeScale().unsubscribeSizeChange(handleSizeChange);
+      container.removeEventListener("mousemove", handleMouseMove);
+      container.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("mouseup", handleMouseUp);
       chart.remove();
       chartRef.current = null;
       priceSeriesRef.current = null;
@@ -457,7 +629,10 @@ export function CandleChart({
       // on ("Value is undefined" from its internal ensureDefined check).
       priceLinesRef.current = [];
       positionLinesRef.current = [];
+      indicativeLinesRef.current = [];
       indicatorSeriesRef.current = [];
+      draggableLinesRef.current = [];
+      draggingRef.current = null;
     };
   }, []);
 
@@ -512,6 +687,9 @@ export function CandleChart({
       markersRef.current = null;
       priceLinesRef.current = [];
       positionLinesRef.current = [];
+      indicativeLinesRef.current = [];
+      draggableLinesRef.current = [];
+      draggingRef.current = null;
     };
   }, [chartType]);
 
@@ -828,11 +1006,11 @@ export function CandleChart({
     }
     // After the restore, never before: setVisibleLogicalRange repositions
     // the content and drops the margin.
-    applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels));
+    applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels, indicativeLevels));
     // chartType, because the price lines live on the price series and the
-    // swap disposes them along with it. positionLevels, because it also
-    // feeds the margin call above.
-  }, [indicators, positionLevels, chartType]);
+    // swap disposes them along with it. positionLevels/indicativeLevels,
+    // because they also feed the margin call above.
+  }, [indicators, positionLevels, indicativeLevels, chartType]);
 
   // Its own effect rather than folded into the indicators effect above: that
   // one's clear-and-rebuild lifecycle is specifically about the `indicators`
@@ -844,6 +1022,9 @@ export function CandleChart({
 
     positionLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
     positionLinesRef.current = [];
+    // Only this source's entries -- the indicative-lines effect owns the
+    // rest of the list and runs independently.
+    draggableLinesRef.current = draggableLinesRef.current.filter((l) => l.source !== "position");
 
     if (positionLevels) {
       const { entry, stop, target } = positionLevels;
@@ -859,34 +1040,111 @@ export function CandleChart({
           }),
         );
       }
+      // Draggable only when the caller can actually do something about the
+      // drop -- onMovePositionLevelRef.current undefined means nothing
+      // wired it up; stop/targetOrderId null (checked upstream, before this
+      // prop is even built) means there's no order there to move. Either
+      // way, a line that can't be moved shouldn't invite the attempt. Read
+      // via the ref, not the prop itself, so this effect isn't also forced
+      // to rerun (tearing down and rebuilding every line) on every poll
+      // tick just because the callback ChartWidget passes is rebuilt from
+      // moveStop/moveTarget, which are fresh functions every render of
+      // useTrading() -- the same non-memoizable-action-callback problem
+      // `indicators` had before it was pulled out of this effect's deps.
       if (stop != null) {
-        positionLinesRef.current.push(
-          priceSeries.createPriceLine({
-            price: stop,
-            color: POSITION_STOP_COLOR,
-            lineWidth: POSITION_LINE_WIDTH,
-            lineStyle: LineStyle.Solid,
-            axisLabelVisible: true,
-            title: "Stop",
-          }),
-        );
+        const line = priceSeries.createPriceLine({
+          price: stop,
+          color: POSITION_STOP_COLOR,
+          lineWidth: POSITION_LINE_WIDTH,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "Stop",
+        });
+        positionLinesRef.current.push(line);
+        if (onMovePositionLevelRef.current) {
+          draggableLinesRef.current.push({ line, source: "position", field: "stop" });
+        }
       }
       if (target != null) {
-        positionLinesRef.current.push(
-          priceSeries.createPriceLine({
-            price: target,
-            color: POSITION_TARGET_COLOR,
-            lineWidth: POSITION_LINE_WIDTH,
-            lineStyle: LineStyle.Solid,
-            axisLabelVisible: true,
-            title: "Target",
-          }),
-        );
+        const line = priceSeries.createPriceLine({
+          price: target,
+          color: POSITION_TARGET_COLOR,
+          lineWidth: POSITION_LINE_WIDTH,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "Target",
+        });
+        positionLinesRef.current.push(line);
+        if (onMovePositionLevelRef.current) {
+          draggableLinesRef.current.push({ line, source: "position", field: "target" });
+        }
       }
     }
     // chartType, because the position lines live on the price series and the
     // candle/line swap disposes them along with it.
   }, [positionLevels, chartType]);
+
+  // Same shape as the positionLevels effect just above, own effect for the
+  // same reason -- but dashed (INDICATIVE_LINE_STYLE) and titled "(draft)"
+  // so these can never be mistaken for a real position's lines even where
+  // both are showing at once (see indicativeLevels' own doc comment).
+  useEffect(() => {
+    const priceSeries = priceSeriesRef.current;
+    if (!priceSeries) return;
+
+    indicativeLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
+    indicativeLinesRef.current = [];
+    // Only this source's entries -- see the equivalent line in the
+    // positionLevels effect above.
+    draggableLinesRef.current = draggableLinesRef.current.filter((l) => l.source !== "indicative");
+
+    if (indicativeLevels) {
+      const { entry, stop, target } = indicativeLevels;
+      if (entry != null) {
+        indicativeLinesRef.current.push(
+          priceSeries.createPriceLine({
+            price: entry,
+            color: POSITION_ENTRY_COLOR,
+            lineWidth: INDICATIVE_LINE_WIDTH,
+            lineStyle: INDICATIVE_LINE_STYLE,
+            axisLabelVisible: true,
+            title: "Entry (draft)",
+          }),
+        );
+      }
+      // Read via the ref, not the prop -- see the equivalent comment in the
+      // positionLevels effect above for why.
+      if (stop != null) {
+        const line = priceSeries.createPriceLine({
+          price: stop,
+          color: POSITION_STOP_COLOR,
+          lineWidth: INDICATIVE_LINE_WIDTH,
+          lineStyle: INDICATIVE_LINE_STYLE,
+          axisLabelVisible: true,
+          title: "Stop (draft)",
+        });
+        indicativeLinesRef.current.push(line);
+        if (onMoveIndicativeLevelRef.current) {
+          draggableLinesRef.current.push({ line, source: "indicative", field: "stop" });
+        }
+      }
+      if (target != null) {
+        const line = priceSeries.createPriceLine({
+          price: target,
+          color: POSITION_TARGET_COLOR,
+          lineWidth: INDICATIVE_LINE_WIDTH,
+          lineStyle: INDICATIVE_LINE_STYLE,
+          axisLabelVisible: true,
+          title: "Target (draft)",
+        });
+        indicativeLinesRef.current.push(line);
+        if (onMoveIndicativeLevelRef.current) {
+          draggableLinesRef.current.push({ line, source: "indicative", field: "target" });
+        }
+      }
+    }
+    // chartType, same reason as the positionLevels effect.
+  }, [indicativeLevels, chartType]);
 
   // Its own effect, so switching the cursor does not tear the chart down and
   // lose the zoom -- the same reason the series swap has one.

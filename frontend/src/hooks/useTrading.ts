@@ -7,6 +7,7 @@ import {
   getOrders,
   getPositions,
   replaceStop,
+  replaceTarget,
   type CloseResult,
 } from "../api/http";
 import type { Account, Order, Position } from "../types/trading";
@@ -32,6 +33,29 @@ const HOT_WINDOW_MS = 12_000;
  * happened. Wait for a few in a row before treating it as real; a genuine
  * outage still surfaces within a handful of seconds. */
 const ERROR_THRESHOLD = 3;
+
+/** Draft entry/stop/target from the order ticket currently being built --
+ * not a real position, just what's typed/suggested right now. Published by
+ * OrderTicket, read by ChartWidget so the two siblings can share it without
+ * prop-drilling through App.tsx (same reason positions/orders live here).
+ * Carries its own `symbol` so a reader can refuse to draw a stale ticket's
+ * levels over a chart that's since moved to a different one. */
+export interface IndicativeLevels {
+  symbol: string;
+  side: "long" | "short";
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
+  /** Called when the chart's draft Stop/Target line is dragged to a new
+   * price -- writes straight back into the ticket's own Stop/Target input,
+   * the same as if the user had retyped it. There's no order to move here
+   * (nothing has been submitted yet), so unlike a real position's drag this
+   * can't fail or round-trip a network call. Optional because a reader with
+   * no way to edit the ticket that produced these levels (there isn't one
+   * today, but nothing guarantees there won't be) has nothing to call. */
+  onDragStop?: (price: number) => void;
+  onDragTarget?: (price: number) => void;
+}
 
 export interface TradingState {
   account: Account | null;
@@ -67,10 +91,21 @@ export interface TradingActions {
    * remainder; the result is returned so the caller can surface stop_lost. */
   close: (symbol: string, qty?: number) => Promise<CloseResult>;
   moveStop: (orderId: string, symbol: string, stopPrice: number) => Promise<void>;
+  /** Same as moveStop, for the take-profit leg (see OrderService.replace_target). */
+  moveTarget: (orderId: string, symbol: string, limitPrice: number) => Promise<void>;
+  /** See IndicativeLevels. Kept out of TradingState/EMPTY_STATE on purpose:
+   * that object is fully replaced by every poll tick's setState in
+   * refresh(), which would silently wipe this out unless every such call
+   * remembered to carry it forward. It's genuinely more a value+setter pair
+   * than an "action", but living next to setIndicativeLevels here avoids
+   * that footgun entirely. */
+  indicativeLevels: IndicativeLevels | null;
+  setIndicativeLevels: (levels: IndicativeLevels | null) => void;
 }
 
 export function useTrading(): TradingState & TradingActions {
   const [state, setState] = useState<TradingState>(EMPTY_STATE);
+  const [indicativeLevels, setIndicativeLevels] = useState<IndicativeLevels | null>(null);
   const cancelledRef = useRef(false);
   const hotUntilRef = useRef(0);
   const failureCountRef = useRef(0);
@@ -153,5 +188,11 @@ export function useTrading(): TradingState & TradingActions {
       await replaceStop(orderId, symbol, stopPrice);
       afterAction();
     },
+    moveTarget: async (orderId: string, symbol: string, limitPrice: number) => {
+      await replaceTarget(orderId, symbol, limitPrice);
+      afterAction();
+    },
+    indicativeLevels,
+    setIndicativeLevels,
   };
 }

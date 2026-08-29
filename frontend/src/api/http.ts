@@ -11,6 +11,7 @@ import type {
   ScreenBacktestResponse,
 } from "../types/screener";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
+import type { WatchlistQuotes } from "../types/watchlist";
 import type {
   AccountResponse,
   BalanceRange,
@@ -88,6 +89,22 @@ export function getSymbolBars(symbol: string, timeframe = "1Min"): Promise<Symbo
 
 export function getSymbolInfo(symbol: string): Promise<SymbolInfoResponse> {
   return getJson<SymbolInfoResponse>(`/symbols/${symbol}/info`);
+}
+
+/** Prefix matches against the live scanner universe -- used for watchlist
+ * add-symbol suggestions only, never as validation: the universe excludes
+ * ETFs and anything outside the price/volume band, all of which are
+ * legitimate watchlist entries even though they'd never appear here. */
+export function searchSymbols(query: string): Promise<{ matches: string[] }> {
+  return getJson<{ matches: string[] }>(`/symbols/search?q=${encodeURIComponent(query)}`);
+}
+
+/** Last price / % change for an arbitrary symbol list, polled by the
+ * watchlist panel. Works for any symbol regardless of universe membership --
+ * see routers/watchlist.py for why this can't just reuse the chart feed. */
+export function getWatchlistQuotes(symbols: string[]): Promise<WatchlistQuotes> {
+  if (symbols.length === 0) return Promise.resolve({});
+  return getJson<WatchlistQuotes>(`/watchlist/quotes?symbols=${encodeURIComponent(symbols.join(","))}`);
 }
 
 export interface SessionResponse {
@@ -245,6 +262,27 @@ export class OrderRejectedError extends Error {
   }
 }
 
+/** Today's high for `symbol` -- the trigger price the breakout-entry hotkey
+ * sizes off. Returns null rather than throwing when unavailable (e.g. no
+ * quote data yet), matching how the ticket already treats a missing
+ * reference price -- a hotkey guard, not a hard failure. */
+export async function dayHigh(symbol: string): Promise<number | null> {
+  const res = await fetch(`${API_BASE}/trading/day-high/${encodeURIComponent(symbol)}`);
+  if (!res.ok) return null;
+  const body = (await res.json()) as { day_high: number | null };
+  return body.day_high;
+}
+
+/** Last price for `symbol`, independent of any ticket -- what the Stop/
+ * Target auto-suggestion sizes off before a ticket exists to preview. Same
+ * null-on-failure shape as dayHigh, for the same reason. */
+export async function referencePrice(symbol: string): Promise<number | null> {
+  const res = await fetch(`${API_BASE}/trading/reference-price/${encodeURIComponent(symbol)}`);
+  if (!res.ok) return null;
+  const body = (await res.json()) as { price: number | null };
+  return body.price;
+}
+
 /** Size and price a ticket without placing anything. */
 export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPreview> {
   const res = await fetch(`${API_BASE}/trading/orders/preview`, {
@@ -323,6 +361,20 @@ export function replaceStop(
   return patchJson<{ order: Order }>(`/trading/orders/${encodeURIComponent(orderId)}`, {
     symbol,
     stop_price: stopPrice,
+  });
+}
+
+/** Move a working take-profit order to a new price. Same cross-check
+ * convention as replaceStop, on the distinct /target path the take-profit
+ * leg needs (see OrderService.replace_target). */
+export function replaceTarget(
+  orderId: string,
+  symbol: string,
+  limitPrice: number,
+): Promise<{ order: Order }> {
+  return patchJson<{ order: Order }>(`/trading/orders/${encodeURIComponent(orderId)}/target`, {
+    symbol,
+    limit_price: limitPrice,
   });
 }
 
