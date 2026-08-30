@@ -91,10 +91,11 @@ export function getSymbolInfo(symbol: string): Promise<SymbolInfoResponse> {
   return getJson<SymbolInfoResponse>(`/symbols/${symbol}/info`);
 }
 
-/** Prefix matches against the live scanner universe -- used for watchlist
- * add-symbol suggestions only, never as validation: the universe excludes
- * ETFs and anything outside the price/volume band, all of which are
- * legitimate watchlist entries even though they'd never appear here. */
+/** Prefix matches against the full active-equity list (ETFs and anything
+ * outside the scanner's price/volume band included -- see
+ * list_active_equity_symbols) -- used for watchlist add-symbol suggestions
+ * only, never as validation: addSymbol accepts any ticker-shaped string
+ * regardless of whether it ever shows up here. */
 export function searchSymbols(query: string): Promise<{ matches: string[] }> {
   return getJson<{ matches: string[] }>(`/symbols/search?q=${encodeURIComponent(query)}`);
 }

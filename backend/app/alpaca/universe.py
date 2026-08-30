@@ -87,6 +87,30 @@ def _chunk(items: list[str], size: int) -> list[list[str]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+async def list_active_equity_symbols(clients: AlpacaClients) -> list[str]:
+    """All plain-ticker, major-exchange active symbols -- including ETFs and
+    anything outside the scanner's price/volume band -- for the watchlist's
+    add-symbol autocomplete.
+
+    build_universe's own result deliberately excludes both an ETF (see
+    _looks_like_etf) and anything outside settings.universe_min/max_price:
+    neither belongs in a day-trading scanner, but either is a completely
+    normal thing to want on a personal watchlist (SPY, AAPL). A second
+    get_all_assets call rather than reusing build_universe's own -- this
+    runs once at startup same as that does, and keeps autocomplete from
+    being coupled to the scanner's filtering pipeline.
+    """
+    assets = await asyncio.to_thread(
+        clients.trading.get_all_assets,
+        GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE),
+    )
+    return sorted(
+        a.symbol
+        for a in assets
+        if a.tradable and a.exchange.value in _ALLOWED_EXCHANGES and _PLAIN_TICKER_RE.match(a.symbol)
+    )
+
+
 async def build_universe(
     clients: AlpacaClients, settings: Settings
 ) -> dict[str, UniverseSymbol]:

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.ai.trade_idea_tracker import TradeIdeaTracker
 from app.alpaca.client import AlpacaClients
-from app.alpaca.universe import build_universe
+from app.alpaca.universe import build_universe, list_active_equity_symbols
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.dash_app import dash_app
@@ -86,13 +86,23 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Failed to build universe at startup -- scanners will stay empty")
             universe = {}
+        try:
+            all_symbols = await list_active_equity_symbols(clients)
+        except Exception:
+            logger.exception(
+                "Failed to fetch the full symbol list -- watchlist autocomplete will "
+                "fall back to the (narrower) scanner universe"
+            )
+            all_symbols = []
     else:
         logger.warning(
             "No Alpaca credentials configured. Copy backend/.env.example to backend/.env "
             "and fill in ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY to get live data."
         )
         universe = {}
+        all_symbols = []
     app.state.universe = universe
+    app.state.all_symbols = all_symbols
 
     engine = ScannerEngine(
         clients,

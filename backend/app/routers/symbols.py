@@ -93,9 +93,13 @@ async def _compute_indicators(
 
 @router.get("/search")
 async def search_symbols(q: str, request: Request) -> dict:
-    universe = request.app.state.universe
+    # The full active-equity list (includes ETFs and anything outside the
+    # scanner's price/volume band, e.g. SPY, AAPL) -- see
+    # list_active_equity_symbols. Falls back to the narrower scanner
+    # universe only if that startup fetch failed or credentials are missing.
+    symbols = request.app.state.all_symbols or list(request.app.state.universe)
     q_upper = q.upper()
-    matches = [s for s in universe if s.startswith(q_upper)][:20]
+    matches = sorted(s for s in symbols if s.startswith(q_upper))[:20]
     return {"matches": matches}
 
 
