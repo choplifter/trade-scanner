@@ -1,6 +1,10 @@
-"""Has fresh scanner_history.sqlite3 data held up against the one-off
-analysis the catalyst-boost/fade-risk ranking change (commit 1ce30a2,
-deployed 2026-08-12) was based on?
+"""Has fresh scanner_history.sqlite3 data held up against the baseline the
+catalyst-boost/fade-risk ranking change (commit 1ce30a2, deployed
+2026-08-12) is checked against? That baseline was recalibrated 2026-08-30
+using post-SIP data (see history_store._DEPLOY_DATE and the comment above
+it) -- the ranking change's own deploy date didn't move, only the
+comparison data did, after the 2026-08-20 IEX->SIP feed cutover made the
+original pre-SIP baseline non-comparable to fresh data.
 
 Run from backend/ (after `pip install -e ".[dev]"`):
     python -m scripts.ranking_drift_report [--since YYYY-MM-DD]
@@ -19,7 +23,7 @@ from app.core.config import get_settings
 from app.scanners.history_store import ScannerHistoryStore
 
 # Must match history_store._DEPLOY_DATE.
-_DEPLOY_DATE = "2026-08-12"
+_DEPLOY_DATE = "2026-08-20"
 
 
 def _fmt_bucket(label: str, stats: dict) -> str:
@@ -39,6 +43,7 @@ _WIN_MEANING = {
     "losers": "win = price ROSE after being flagged, i.e. the flagged drop REVERSED "
     "-- read this view inverted",
     "most_active": "win = price rose after being flagged",
+    "moderate_movers": "win = price rose after being flagged",
 }
 
 

@@ -83,15 +83,39 @@ _LEADERBOARD_SIZE = 15
 
 # Baseline correlations the catalyst-boost/fade-risk ranking change
 # (commit 1ce30a2, "Boost catalyst headlines and flag RVOL fade-risk in
-# scanner ranking") was based on -- a one-off analysis of 1447 historical
-# picks in this same table, on 2026-08-12. See compute_ranking_drift: this
-# is a comparison point for re-checking whether fresh data since deploy
-# still supports the same direction/magnitude, not a certainty that should
-# be assumed to hold forever.
-_DEPLOY_DATE = "2026-08-12"
-_BASELINE_CATALYST_WIN_RATE_DELTA_PP = 8.5
-_BASELINE_FADE_RISK_WIN_RATE = 25.6
-_BASELINE_FADE_RISK_AVG_RETURN = -10.38
+# scanner ranking") was originally based on -- a one-off analysis of 1447
+# historical picks in this same table, on 2026-08-12. That pre-SIP baseline
+# was superseded 2026-08-30: the 2026-08-20 IEX->SIP feed cutover (commit
+# 875330d) changed the universe and volume definitions enough that the old
+# baseline and fresh data are no longer comparable (per that commit's own
+# message). Recalibrated via `scripts/ranking_drift_report.py --since
+# 2026-08-20` against 6513 post-SIP picks (773 excluded as non-trading-day
+# fallback data), pooled across gainers/losers/most_active same as the
+# original analysis (moderate_movers didn't exist yet at the original
+# baseline and is left out of the pool for like-for-like comparison, though
+# the report itself does show it per-view).
+#
+# The recalibrated catalyst number is a real reversal, not noise: all three
+# per-view catalyst buckets cleared the 30-sample floor (with-headline
+# n=1439, without-headline n=3181 pooled), and every one came in at or below
+# zero (gainers -2.6pp, losers -5.8pp, most_active +1.7pp) versus the
+# +8.5pp the boost was calibrated on -- headlined picks are no longer
+# outperforming un-headlined ones post-SIP. formulas._CATALYST_BOOST itself
+# is left unchanged here (out of scope for this recalibration -- this only
+# updates the reporting baseline, not live ranking behavior); re-derive it
+# with a fresh ranking_drift_report.py run if enough data accumulates to
+# confirm this isn't transitional.
+#
+# The fade-risk number pools only gainers/losers/most_active >15x RVOL
+# (n=45/17/13=75 pooled, since none individually clears 30) and holds up
+# close to its original magnitude: 24.0% win rate / -14.34% avg return
+# post-SIP vs. 25.6% / -10.38% originally -- consistent with
+# rvol_backtest_report.py's independent post-SIP re-check leaving the 15x
+# threshold itself unchanged (see README.md).
+_DEPLOY_DATE = "2026-08-20"
+_BASELINE_CATALYST_WIN_RATE_DELTA_PP = -4.1
+_BASELINE_FADE_RISK_WIN_RATE = 24.0
+_BASELINE_FADE_RISK_AVG_RETURN = -14.34
 # Must match formulas._FADE_RISK_RVOL -- duplicated rather than imported,
 # same as bucket_analysis.RVOL_BUCKETS' own ">15x" boundary.
 _FADE_RISK_RVOL_THRESHOLD = 15.0
