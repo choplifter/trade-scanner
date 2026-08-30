@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 from app.auth.dependency import get_current_user
 from app.scanners.formulas import pct_change, resolve_last_price
-from app.watchlist.defaults import DEFAULT_WATCHLIST_SYMBOLS
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
@@ -25,7 +24,6 @@ _TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 @router.get("/symbols")
 async def get_watchlist_symbols(request: Request, user: dict = Depends(get_current_user)) -> dict:
     store = request.app.state.watchlist_store
-    await store.seed_if_empty(user["id"], DEFAULT_WATCHLIST_SYMBOLS)
     return {"symbols": await store.list_symbols(user["id"])}
 
 

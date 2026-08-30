@@ -61,23 +61,3 @@ class WatchlistStore:
 
     async def remove_symbol(self, user_id: int, symbol: str) -> None:
         await asyncio.to_thread(self._remove_symbol_sync, user_id, symbol)
-
-    def _seed_if_empty_sync(self, user_id: int, defaults: list[str], now: str) -> None:
-        with self._connect() as conn:
-            existing = conn.execute(
-                "SELECT 1 FROM watchlist_symbols WHERE user_id = ? LIMIT 1", (user_id,)
-            ).fetchone()
-            if existing is None:
-                conn.executemany(
-                    "INSERT OR IGNORE INTO watchlist_symbols (user_id, symbol, added_at) VALUES (?, ?, ?)",
-                    [(user_id, s, now) for s in defaults],
-                )
-
-    async def seed_if_empty(self, user_id: int, defaults: list[str]) -> None:
-        """A fresh user still gets the symbols_pinned.txt-derived default
-        list on first use -- checked/inserted every call (cheap, a single
-        indexed SELECT) rather than tracked with a separate "have I seeded
-        this user" flag, so it's correct even if a user's list is emptied
-        out entirely by hand later (still counts as "has rows", stays empty)
-        versus never having been touched at all."""
-        await asyncio.to_thread(self._seed_if_empty_sync, user_id, defaults, datetime.now(UTC).isoformat())
