@@ -31,6 +31,11 @@ type Tab = "ticket" | "positions" | "orders" | "balance" | "account";
  * views. */
 type OrdersView = "working" | "filled" | "trades";
 
+// DAS script #2 ("Move Stop to Breakeven Plus Offset") and #11/#13 ("Sell/
+// Cover % of Position") -- both DAS defaults, adjustable here.
+const BREAKEVEN_OFFSET = 0.05;
+const SCALE_OUT_FRACTION = 0.5;
+
 const TABS: { id: Tab; label: string }[] = [
   { id: "ticket", label: "Ticket" },
   { id: "positions", label: "Positions" },
@@ -192,6 +197,92 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
   // again, so the warning lives on the panel instead.
   const [stopLostWarning, setStopLostWarning] = useState<string | null>(null);
 
+  // Instant-fire position/order hotkeys: F flattens the selected symbol's
+  // position, C cancels every working order, 0 moves its stop to
+  // breakeven, Shift+0 to breakeven plus a small offset (DAS script #2),
+  // X scales the position out by SCALE_OUT_FRACTION (DAS's "sell/cover %"
+  // scripts #11-14). Same actions PositionsTable's BE/Sell.../Close buttons
+  // already trigger via setPending + the confirm Modal below -- these call
+  // close/cancel/moveStop directly instead, no dialog. There is deliberately
+  // no bulk-cancel endpoint on the backend (see close_position's docstring
+  // in routers/trading.py), so C loops the orders already on screen rather
+  // than calling a new server-side "cancel everything" route.
+  const [instantBusy, setInstantBusy] = useState(false);
+  const [instantError, setInstantError] = useState<string | null>(null);
+
+  // Shared by the F/C/0/Shift+0/X hotkeys below and their button-row
+  // equivalents in the JSX further down.
+  const runInstantAction = async (
+    kind: "flatten" | "cancel-all" | "breakeven" | "breakeven-offset" | "scale-out",
+  ) => {
+    if (instantBusy) return;
+    setInstantBusy(true);
+    setInstantError(null);
+    try {
+      if (kind === "flatten") {
+        if (!selectedSymbol) return;
+        if (!positions.some((p) => p.symbol === selectedSymbol)) return;
+        await close(selectedSymbol);
+      } else if (kind === "cancel-all") {
+        if (orders.length === 0) return;
+        await Promise.all(orders.map((o) => cancel(o.id)));
+      } else if (kind === "breakeven" || kind === "breakeven-offset") {
+        if (!selectedSymbol) return;
+        const position = positions.find((p) => p.symbol === selectedSymbol);
+        if (!position) return;
+        const exits = exitsForPosition(position, orders);
+        const entry = num(position.avg_entry_price);
+        if (exits.stopOrderId === null || entry === null) return;
+        const offset =
+          kind === "breakeven-offset" ? (position.side === "short" ? -BREAKEVEN_OFFSET : BREAKEVEN_OFFSET) : 0;
+        await moveStop(exits.stopOrderId, selectedSymbol, entry + offset);
+      } else {
+        if (!selectedSymbol) return;
+        const position = positions.find((p) => p.symbol === selectedSymbol);
+        if (!position) return;
+        const positionQty = Math.floor(Math.abs(num(position.qty) ?? 0));
+        if (positionQty < 2) return;
+        const qty = Math.max(1, Math.floor(positionQty * SCALE_OUT_FRACTION));
+        await close(selectedSymbol, qty);
+      }
+    } catch (err: unknown) {
+      setInstantError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInstantBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = document.activeElement;
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      if (isTyping || instantBusy || pending !== null) return;
+
+      const key = e.key.toLowerCase();
+      if (key === "0") {
+        e.preventDefault();
+        void runInstantAction(e.shiftKey ? "breakeven-offset" : "breakeven");
+        return;
+      }
+      if (key === "f") {
+        e.preventDefault();
+        void runInstantAction("flatten");
+      } else if (key === "c") {
+        e.preventDefault();
+        void runInstantAction("cancel-all");
+      } else if (key === "x") {
+        e.preventDefault();
+        void runInstantAction("scale-out");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [instantBusy, pending, runInstantAction]);
+
   const runPending = async () => {
     if (!pending) return;
     // Input validation happens before busy: a typo should not round-trip.
@@ -253,6 +344,13 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             : orders.length
         : 0;
 
+  // Drives the instant-fire button row's disabled states -- same reads
+  // runInstantAction itself does, computed once here instead of per-button.
+  const selectedPosition = selectedSymbol
+    ? (positions.find((p) => p.symbol === selectedSymbol) ?? null)
+    : null;
+  const selectedExits = selectedPosition ? exitsForPosition(selectedPosition, orders) : null;
+
   return (
     <div className="widget trading-widget">
       <div className="widget-header">
@@ -279,6 +377,80 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
           <span className="widget-count">{count}</span>
         )}
       </div>
+
+      <div
+        className="timeframe-selector instant-fire-row"
+        title="Fires immediately -- no confirmation dialog."
+      >
+        <button
+          type="button"
+          className="timeframe-button instant-fire-sell"
+          disabled={!selectedPosition || instantBusy}
+          onClick={() => void runInstantAction("flatten")}
+          title={
+            selectedPosition ? "Hotkey: F" : "Select a symbol with an open position"
+          }
+        >
+          Flatten
+        </button>
+        <button
+          type="button"
+          className="timeframe-button instant-fire-sell"
+          disabled={orders.length === 0 || instantBusy}
+          onClick={() => void runInstantAction("cancel-all")}
+          title={orders.length === 0 ? "No working orders" : "Hotkey: C"}
+        >
+          Cancel all
+        </button>
+        <button
+          type="button"
+          className="timeframe-button"
+          disabled={!selectedExits || selectedExits.stopOrderId === null || instantBusy}
+          onClick={() => void runInstantAction("breakeven")}
+          title={
+            selectedExits && selectedExits.stopOrderId !== null
+              ? "Hotkey: 0"
+              : "Select a symbol with a working stop"
+          }
+        >
+          Stop to BE
+        </button>
+        <button
+          type="button"
+          className="timeframe-button"
+          disabled={!selectedExits || selectedExits.stopOrderId === null || instantBusy}
+          onClick={() => void runInstantAction("breakeven-offset")}
+          title={
+            selectedExits && selectedExits.stopOrderId !== null
+              ? `Hotkey: Shift+0 -- breakeven +/- $${BREAKEVEN_OFFSET.toFixed(2)}`
+              : "Select a symbol with a working stop"
+          }
+        >
+          BE+offset
+        </button>
+        <button
+          type="button"
+          className="timeframe-button instant-fire-sell"
+          disabled={!selectedPosition || Math.floor(Math.abs(num(selectedPosition.qty) ?? 0)) < 2 || instantBusy}
+          onClick={() => void runInstantAction("scale-out")}
+          title={
+            selectedPosition
+              ? `Hotkey: X -- sell/cover ${SCALE_OUT_FRACTION * 100}% at market`
+              : "Select a symbol with an open position"
+          }
+        >
+          Scale out
+        </button>
+      </div>
+
+      {instantError && (
+        <div className="order-rejection" role="status">
+          {instantError}{" "}
+          <button type="button" className="row-action" onClick={() => setInstantError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <div className="widget-body">
         {error ? (

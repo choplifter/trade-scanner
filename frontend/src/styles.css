@@ -1836,6 +1836,27 @@ a.symbol-news-headline {
   color: var(--delta-down);
 }
 
+/* Instant-fire buttons (OrderTicket's Q/W/E row, TradingWidget's
+   Flatten/Cancel all/Stop to BE): same direction-colour convention as
+   side-toggle above, on hover rather than a resting state -- these aren't a
+   toggle, they fire on click. */
+.instant-fire-buy:hover:not(:disabled) {
+  color: var(--delta-up);
+}
+
+.instant-fire-sell:hover:not(:disabled) {
+  color: var(--delta-down);
+}
+
+.timeframe-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.timeframe-button:disabled:hover {
+  background: transparent;
+}
+
 .order-preview {
   display: flex;
   flex-direction: column;
