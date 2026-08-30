@@ -479,7 +479,16 @@ export function OrderTicket({
     setFiring(true);
     setError(null);
     try {
-      const high = await dayHigh(symbol);
+      // Fetched together, right now, rather than trusting the day-high
+      // alone: day_high (see service.day_high) prefers the scanner engine's
+      // last-scanned row over a fresh quote, so on a fast-moving breakout it
+      // can already be behind the tape by the time this fires -- a buy stop
+      // built from a stale high lands at or below the current price and the
+      // server refuses it outright (_check_trigger_side) instead of resting
+      // above the market like a breakout entry needs to. Anchoring off
+      // whichever of the two is actually higher keeps the trigger valid even
+      // when day_high hasn't caught up yet.
+      const [high, current] = await Promise.all([dayHigh(symbol), referencePrice(symbol)]);
       if (high === null) {
         setError("No day-high available for this symbol yet.");
         return;
@@ -488,7 +497,7 @@ export function OrderTicket({
       // Alpaca actually prices in, not just for display. `trigger * (1 -
       // pct)` in particular lands on a binary-float artifact like
       // 20.110000000000003 far more often than not.
-      const trigger = roundToCent(high + BREAKOUT_TRIGGER_OFFSET);
+      const trigger = roundToCent(Math.max(high, current ?? high) + BREAKOUT_TRIGGER_OFFSET);
       const protectiveStop = roundToCent(trigger * (1 - BREAKOUT_STOP_OFFSET_PCT));
       clientOrderIdRef.current = randomUUID();
       const ticket: OrderTicketRequest = {
