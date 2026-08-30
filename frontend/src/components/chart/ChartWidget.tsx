@@ -5,6 +5,8 @@ import { useTradingContext } from "../../context/TradingContext";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import type { ChartFocus } from "../../types/screener";
 import { useHistoricalBars } from "../../hooks/useHistoricalBars";
+import { useReplayBars } from "../../hooks/useReplayBars";
+import { useReplaySession } from "../../hooks/useReplaySession";
 import { useSymbolInfo } from "../../hooks/useSymbolInfo";
 import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
@@ -215,6 +217,25 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     symbol,
     option.kind === "historical" ? (option.alpacaTimeframe ?? null) : null,
   );
+  // When the symbol on screen is part of the logged-in user's active
+  // replay session, the chart switches its *intraday* bars (1m/5m/15m --
+  // all clean multiples of replay's native 5-minute resolution via
+  // aggregateBars below) to the clipped-to-as_of replay source instead of
+  // live data -- see routers/replay.py's /bars/{symbol}
+  // (ReplayEngine.bars_up_to). Historical-kind timeframes (1h and up)
+  // keep showing real live data regardless: building those from 5-minute
+  // bars would need multi-day aggregation this doesn't have, and there's
+  // little use for a weekly candle while replaying a single session.
+  //
+  // Trading against what's on screen needs no separate wiring here --
+  // positions/orders (below) already come from Simulation Mode, whose own
+  // price seam (see routers/trading_sim.py's _replay_seam) already fills
+  // sim orders against this same replayed price. The chart just has to
+  // show the same data the fill priced against.
+  const replaySession = useReplaySession();
+  const isReplaySymbol = !!symbol && !!replaySession && replaySession.symbols.includes(symbol);
+  const usingReplayBars = isReplaySymbol && option.kind === "intraday";
+  const replay = useReplayBars(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
   // Fetched here rather than inside SymbolInfoPanel: the chart marks the
   // same news on its timeline, and two hook callers would double-fetch.
   const symbolInfo = useSymbolInfo(symbol);
@@ -322,6 +343,12 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
 
   const displayed = useMemo(() => {
     if (option.kind === "intraday") {
+      if (usingReplayBars) {
+        // No VWAP/indicators here -- see app.replay.engine's module
+        // docstring for why (no historical NBBO quotes, no cached minute
+        // bars for a strategy indicator to read).
+        return aggregateBars(replay.bars, [], option.minutes ?? 1, []);
+      }
       return aggregateBars(
         intraday.bars,
         vwapFromPremarket ? intraday.vwapPremarket : intraday.vwap,
@@ -348,6 +375,8 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     };
   }, [
     option,
+    usingReplayBars,
+    replay.bars,
     intraday.bars,
     intraday.vwap,
     intraday.vwapPremarket,
@@ -358,14 +387,19 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     historical.indicators,
   ]);
 
+  // Prefers the finer-grained live feed's own latest tick over the
+  // (possibly coarser-aggregated) displayed series, same as before replay
+  // existed -- except while replaying, where there is no finer-grained
+  // source than displayed.bars itself (replay's native resolution is
+  // already 5 minutes).
   const lastPrice =
-    intraday.bars[intraday.bars.length - 1]?.c ??
+    (!usingReplayBars ? intraday.bars[intraday.bars.length - 1]?.c : undefined) ??
     displayed.bars[displayed.bars.length - 1]?.c ??
     null;
 
-  const activeFeed = option.kind === "intraday" ? intraday : historical;
+  const activeFeed = option.kind === "intraday" ? (usingReplayBars ? replay : intraday) : historical;
   const noBarsYet =
-    option.kind === "intraday" && !intraday.loading && intraday.bars.length === 0 && !intraday.error;
+    option.kind === "intraday" && !activeFeed.loading && activeFeed.bars.length === 0 && !activeFeed.error;
   const noHistoricalData =
     option.kind === "historical" &&
     !historical.loading &&
@@ -378,6 +412,14 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
         <div className="chart-toolbar">
           <span className="symbol">{symbol ?? "Select a symbol"}</span>
           {lastPrice != null && <span className="last-price">{formatPrice(lastPrice)}</span>}
+          {usingReplayBars && replaySession && (
+            <span
+              className="replay-chart-badge"
+              title={`Showing replayed bars as of ${new Date(replaySession.as_of).toLocaleString()} -- not live`}
+            >
+              REPLAY
+            </span>
+          )}
         </div>
         <div className="chart-toolbar">
           <div className="timeframe-selector" role="group" aria-label="Chart timeframe">
@@ -527,8 +569,9 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
           <div className="widget-empty">Loading {symbol}…</div>
         ) : noBarsYet ? (
           <div className="widget-empty">
-            No trades printed for {symbol} yet today. Premarket volume is thin — this fills in
-            once trades start (most reliably at 9:30 ET open).
+            {usingReplayBars
+              ? `No bars for ${symbol} yet at this point in the replay.`
+              : `No trades printed for ${symbol} yet today. Premarket volume is thin — this fills in once trades start (most reliably at 9:30 ET open).`}
           </div>
         ) : noHistoricalData ? (
           <div className="widget-empty">No {option.label} history available for {symbol}.</div>

@@ -24,6 +24,7 @@ import { useAuth } from "./hooks/useAuth";
 import { useDashboardLayout, type WidgetId } from "./hooks/useDashboardLayout";
 import { useMarketConditions } from "./hooks/useMarketConditions";
 import { useMarketSession } from "./hooks/useMarketSession";
+import { useReplaySession } from "./hooks/useReplaySession";
 import { useTradingMode } from "./hooks/useTradingMode";
 import type { TradingMode } from "./api/tradingMode";
 
@@ -76,6 +77,12 @@ function AppShell({ user, onLogout }: AppShellProps) {
   const alarms = useAlarms();
   const dashboardLayout = useDashboardLayout();
   const tradingMode = useTradingMode();
+  // Drives panels-mode's idle-vs-active row split below -- see the
+  // ResizablePanels branch in the render. Grid mode needs no equivalent:
+  // ReplayPanel's own .replay-collapsed class (styles.css) handles its
+  // content-level collapse regardless of layout mode, this only decides
+  // whether panels mode gives the row its own resizable slot back.
+  const replaySession = useReplaySession();
   const { refresh: refreshTrading } = useTradingContext();
 
   const handleTradingModeChange = useCallback(
@@ -126,8 +133,12 @@ function AppShell({ user, onLogout }: AppShellProps) {
       watchlist: (
         <WatchlistPanel selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
+      // key: harmless as a plain widgets.replay reference (React strips it
+      // from props either way), but required where App's panels-mode
+      // layout places this element inside an array alongside topAndBottomRows
+      // instead of as its own literal JSX child -- see that array's build site.
       replay: (
-        <ReplayPanel selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+        <ReplayPanel key="replay" selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
@@ -136,6 +147,53 @@ function AppShell({ user, onLogout }: AppShellProps) {
     // change does -- it is a rare, intentional action, not a tick.
     [selectedSymbol, chartFocus, selectSymbol, selectPick, tradingMode.mode],
   );
+
+  // Shared between the panels-mode active and idle layouts below -- only
+  // whether replay gets a resizable third row differs between them, not
+  // this part. An array, not a fragment: ResizablePanels treats each item
+  // of its `children` array as one resizable panel (see its `children.map`
+  // in ResizablePanels.tsx), so this has to end up as two flat entries in
+  // the parent ResizablePanels' children array, not one combined node --
+  // each needs its own `key` for the same reason any array of elements does.
+  const topAndBottomRows: ReactNode[] = [
+    <ResizablePanels
+      key="top-row"
+      direction="row"
+      storageKey="layout:top-row"
+      defaultSizes={[0.32, 0.44, 0.24]}
+      // The trading panel's floor is its own: the order ticket is a
+      // narrow form and can give the scanner far more room than a
+      // table- or chart-width minimum would allow.
+      minSizePx={[220, 220, 150]}
+    >
+      {widgets.scanner}
+      {widgets.chart}
+      {/* Trading was oversized for a form at full column height --
+          it shares the column with the watchlist instead, 50/50 by
+          default, each still draggable further via the handle
+          between them. */}
+      <ResizablePanels
+        direction="column"
+        storageKey="layout:trading-column"
+        defaultSizes={[0.5, 0.5]}
+        minSizePx={150}
+      >
+        {widgets.trading}
+        {widgets.watchlist}
+      </ResizablePanels>
+    </ResizablePanels>,
+    <ResizablePanels
+      key="bottom-row"
+      direction="row"
+      storageKey="layout:bottom-row"
+      defaultSizes={[0.34, 0.33, 0.33]}
+      minSizePx={220}
+    >
+      {widgets.ideas}
+      {widgets.benchmark}
+      {widgets.history}
+    </ResizablePanels>,
+  ];
 
   return (
     <div className="app-shell">
@@ -202,50 +260,44 @@ function AppShell({ user, onLogout }: AppShellProps) {
               onLayoutChange={dashboardLayout.setLayout}
               widgets={widgets}
             />
-          ) : (
+          ) : replaySession ? (
+            // A session is running -- replay gets its own resizable third
+            // row, same as it always has. One array expression as the sole
+            // child (not {topAndBottomRows}{widgets.replay} as two separate
+            // ones) -- see topAndBottomRows' own comment for why: two
+            // expressions here would nest the 2-element array inside a
+            // 2-element children array ([[top,bottom], replay], length 2),
+            // not flatten to the 3 panels defaultSizes expects.
             <ResizablePanels
               direction="column"
               storageKey="layout:main-rows"
               defaultSizes={[0.55, 0.25, 0.2]}
               minSizePx={140}
             >
+              {[...topAndBottomRows, widgets.replay]}
+            </ResizablePanels>
+          ) : (
+            // No session -- replay collapses to its own content-sized strip
+            // (see ReplayPanel's .replay-collapsed) outside the resizable
+            // split entirely, so the two real rows get that row's screen
+            // space back instead of it sitting empty inside a fixed-height
+            // slot. A distinct storageKey from the active case above: the
+            // two ResizablePanels here have different child counts (2 vs.
+            // 3), and ResizablePanels' own loadSizes already falls back to
+            // defaultSizes on a length mismatch -- sharing one key would
+            // otherwise have switching between idle and active silently
+            // clobber whichever arrangement wasn't currently on screen.
+            <div className="dashboard-idle-column">
               <ResizablePanels
-                direction="row"
-                storageKey="layout:top-row"
-                defaultSizes={[0.32, 0.44, 0.24]}
-                // The trading panel's floor is its own: the order ticket is a
-                // narrow form and can give the scanner far more room than a
-                // table- or chart-width minimum would allow.
-                minSizePx={[220, 220, 150]}
+                direction="column"
+                storageKey="layout:main-rows-idle"
+                defaultSizes={[0.65, 0.35]}
+                minSizePx={140}
               >
-                {widgets.scanner}
-                {widgets.chart}
-                {/* Trading was oversized for a form at full column height --
-                    it shares the column with the watchlist instead, 50/50 by
-                    default, each still draggable further via the handle
-                    between them. */}
-                <ResizablePanels
-                  direction="column"
-                  storageKey="layout:trading-column"
-                  defaultSizes={[0.5, 0.5]}
-                  minSizePx={150}
-                >
-                  {widgets.trading}
-                  {widgets.watchlist}
-                </ResizablePanels>
-              </ResizablePanels>
-              <ResizablePanels
-                direction="row"
-                storageKey="layout:bottom-row"
-                defaultSizes={[0.34, 0.33, 0.33]}
-                minSizePx={220}
-              >
-                {widgets.ideas}
-                {widgets.benchmark}
-                {widgets.history}
+                {topAndBottomRows}
               </ResizablePanels>
               {widgets.replay}
-            </ResizablePanels>
+            </div>
           )}
         </main>
       </div>

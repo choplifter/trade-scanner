@@ -69,7 +69,10 @@ export const DEFAULT_LAYOUT: Layout = [
   // 12x12 was already full at row y8 (4+4+4), so replay takes a new row
   // below rather than shrinking an existing widget -- full width, since
   // its own control bar + three ranked mini-tables need more than a
-  // quarter-width column would give them.
+  // quarter-width column would give them. No chart pane of its own -- the
+  // main ChartWidget shows replayed bars directly when the selected symbol
+  // is part of the active session (see ChartWidget's isReplaySymbol), so
+  // this widget stays table-height rather than chart-height.
   { i: "replay", x: 0, y: 12, w: 12, h: 5, minW: 4, minH: 3 },
 ];
 
@@ -89,7 +92,10 @@ const MODE_STORAGE_KEY = "layout:mode";
 // 6: moved "watchlist" into the trading column (stacked, sharing its height)
 // instead of the bottom row, which goes back to 3 widgets at w:4.
 // 7: added "replay" as a new full-width row below the existing 12x12 grid.
-const LAYOUT_VERSION = 7;
+// 8: briefly gave "replay" h:8 for a chart pane of its own.
+// 9: reverted to h:5 -- the chart moved into the main ChartWidget instead
+// (see ChartWidget's isReplaySymbol), so replay stays table-height.
+const LAYOUT_VERSION = 9;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */

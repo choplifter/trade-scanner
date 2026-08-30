@@ -337,6 +337,26 @@ body {
   padding: 10px;
 }
 
+/* Panels mode, replay idle only (see App.tsx's AppShell): wraps the 2-row
+   ResizablePanels plus the collapsed History Replay strip below it. The
+   inner ResizablePanels normally assumes it's the sole child of a
+   flex/height:100% ancestor (.resizable-panels sets height:100% itself) --
+   here it has a sibling, so it takes flex:1 instead and leaves the
+   collapsed strip its own natural (small) height. */
+.dashboard-idle-column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
+
+.dashboard-idle-column > .resizable-panels {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+
 /* Drag-resizable layout: panels are a fixed % of their container (see
    ResizablePanels) instead of CSS-grid auto-rows, so a panel whose content
    grows (e.g. the trade-ideas performance table gaining rows) scrolls
@@ -2069,21 +2089,25 @@ a.symbol-news-headline {
   padding: 8px;
 }
 
-/* History replay -- backend/app/replay + components/replay/ReplayPanel. */
+/* History replay -- backend/app/replay + components/replay/ReplayPanel.
+   Idle (no session) renders its start form inline in the widget header
+   itself, a single row alongside the title -- see .replay-collapsed --
+   rather than a separate body section, so the whole widget is just one
+   compact strip until a session actually exists. */
 .replay-start-form {
   display: flex;
-  align-items: flex-end;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 10px 12px;
 }
 
 .replay-start-form label {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .replay-optional-hint {
@@ -2093,7 +2117,7 @@ a.symbol-news-headline {
 
 .replay-start-form input {
   font-size: 12px;
-  padding: 4px 8px;
+  padding: 3px 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface-raised);
@@ -2101,7 +2125,22 @@ a.symbol-news-headline {
 }
 
 .replay-start-form input[type="text"] {
-  width: 260px;
+  width: 200px;
+}
+
+/* The whole widget while idle -- header (title + inline start form) only,
+   no body/controls/table below it, so the box is as short as its content
+   allows. Grid mode's cell height stays whatever the user dragged it to
+   (that's their own saved layout state -- see useDashboardLayout.ts, left
+   alone here); panels mode additionally reclaims the freed row height by
+   pulling this widget out of the resizable column split entirely while
+   collapsed -- see App.tsx's AppShell. */
+.replay-collapsed {
+  flex: 0 0 auto;
+}
+
+.replay-collapsed .widget-header {
+  border-bottom: none;
 }
 
 .replay-controls {
@@ -2134,6 +2173,21 @@ a.symbol-news-headline {
 
 .replay-view-tabs {
   padding: 0 12px 6px;
+}
+
+/* The main ChartWidget's small badge when it's showing replay-clipped
+   bars for the selected symbol -- see ChartWidget's isReplaySymbol. Same
+   shape/weight as .trading-mode-badge, its own colour so the two are
+   never mistaken for each other. */
+.replay-chart-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--status-warning);
+  color: var(--status-warning);
+  white-space: nowrap;
 }
 
 .logout-link {

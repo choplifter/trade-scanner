@@ -6,6 +6,7 @@
 
 import { deleteJson, getJson, patchJson, postJson } from "./http";
 import { setReplaySession } from "./replayMode";
+import type { Bar } from "../types/alpaca";
 import type { ReplayStateResponse } from "../types/replay";
 
 function sync(res: ReplayStateResponse): ReplayStateResponse {
@@ -60,6 +61,13 @@ export function seekReplay(asOf: string): Promise<ReplayStateResponse> {
 
 export function setReplaySpeed(speed: number): Promise<ReplayStateResponse> {
   return patchJson<ReplayStateResponse>("/replay/speed", { speed }).then(sync);
+}
+
+/** `symbol`'s 5-minute bars clipped to the session's current as_of -- see
+ * ReplayEngine.bars_up_to. The server does the clipping, not this call:
+ * there's nothing here to slice a "future" bar off of even transiently. */
+export function getReplayBars(symbol: string): Promise<{ symbol: string; bars: Bar[] }> {
+  return getJson<{ symbol: string; bars: Bar[] }>(`/replay/bars/${encodeURIComponent(symbol)}`);
 }
 
 export function stopReplay(): Promise<{ stopped: boolean }> {

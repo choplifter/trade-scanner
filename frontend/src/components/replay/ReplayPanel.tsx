@@ -46,6 +46,16 @@ function parseSymbols(raw: string): string[] {
  * self-contained dashboard widget, same footing as WatchlistPanel/
  * ScannerBenchmarkWidget -- see hooks/useDashboardLayout.ts's "replay" id.
  *
+ * selectedSymbol/onSelectSymbol are the same app-wide selection the main
+ * ChartWidget reads -- clicking a replayed row here loads that symbol into
+ * the *main* chart up top, same as clicking any other scanner row always
+ * has. There's no second chart here: when the selected symbol is part of
+ * the active replay session, ChartWidget itself switches its intraday
+ * bars to the clipped-to-as_of replay source instead of live data (see
+ * ChartWidget's own isReplaySymbol) -- one chart, not two, so trading it
+ * works exactly the way trading any other symbol already does (the Order
+ * Ticket panel, not the chart itself).
+ *
  * Symbols are optional: leaving the field blank replays the real
  * historical "stocks in play" for that date -- whatever the live scanner
  * actually flagged, pulled from ScannerHistoryStore.symbols_for_date (see
@@ -57,6 +67,13 @@ function parseSymbols(raw: string): string[] {
  * fills against replayed prices when trading through Simulation Mode's
  * local order book (see routers/trading_sim.py's _replay_seam) -- so this
  * shows a pointer to switch modes rather than the controls when live.
+ *
+ * Idle (no session) renders as a single-row strip -- just the header and a
+ * compact inline start form, no controls/table/hints below it -- since most
+ * sessions of this app aren't actively replaying most of the time. See
+ * App.tsx's AppShell for how panels-mode layout additionally reclaims the
+ * screen space this frees up (grid mode's cell height is user-owned drag
+ * state and is deliberately left alone here).
  */
 export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps) {
   const tradingMode = useTradingMode();
@@ -89,6 +106,12 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
   }, []);
 
   const feed = useReplayFeed(session ? activeView : null);
+  // session.as_of is kept live by useReplayFeed's own tick handler calling
+  // api/replayMode.ts's updateReplayAsOf on every WS message -- so reading
+  // it straight off `session` here (rather than off `feed.asOf`) already
+  // reflects the pacing loop's own advances while playing, not just
+  // whatever it was at the last explicit REST call.
+  const currentAsOf = session?.as_of ?? null;
 
   async function run<T>(action: () => Promise<T>): Promise<void> {
     setBusy(true);
@@ -108,56 +131,55 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
   const symbols = parseSymbols(symbolsInput);
 
   return (
-    <div className="widget replay-widget">
+    <div className={session ? "widget replay-widget" : "widget replay-widget replay-collapsed"}>
       <div className="widget-header">
         <h2>History Replay</h2>
-        {session && (
+        {session ? (
           <span className="widget-count" title="Symbols in this replay session">
             {session.symbols.length}
           </span>
+        ) : (
+          <div className="replay-start-form">
+            <label>
+              <span>Start date</span>
+              <input
+                type="date"
+                value={startDate}
+                max={todayIso()}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+            </label>
+            <label>
+              <span>Symbols <span className="replay-optional-hint">(optional)</span></span>
+              <input
+                type="text"
+                placeholder="Leave blank for that day's actual stocks in play"
+                value={symbolsInput}
+                onChange={(e) => setSymbolsInput(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="tab"
+              disabled={busy}
+              onClick={() => run(() => startReplay(startDate, symbols))}
+            >
+              {busy ? "Loading…" : "Start replay"}
+            </button>
+          </div>
         )}
       </div>
 
-      {tradingMode.mode !== "simulation" ? (
-        <div className="widget-empty">
-          Switch to Simulation Mode (top right) to trade against replayed history --
-          the scanner below still shows real historical data either way.
-        </div>
-      ) : null}
-
       {error && <p className="widget-error">{error}</p>}
 
-      {!session ? (
-        <div className="widget-body replay-start-form">
-          <label>
-            Start date
-            <input
-              type="date"
-              value={startDate}
-              max={todayIso()}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
-          </label>
-          <label>
-            Symbols <span className="replay-optional-hint">(optional)</span>
-            <input
-              type="text"
-              placeholder="Leave blank for that day's actual stocks in play"
-              value={symbolsInput}
-              onChange={(e) => setSymbolsInput(e.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            className="tab"
-            disabled={busy}
-            onClick={() => run(() => startReplay(startDate, symbols))}
-          >
-            {busy ? "Loading…" : "Start replay"}
-          </button>
-        </div>
-      ) : (
+      {session && (
         <>
+          {tradingMode.mode !== "simulation" && (
+            <div className="widget-empty">
+              Switch to Simulation Mode (top right) to trade against replayed history --
+              the scanner below still shows real historical data either way.
+            </div>
+          )}
           <div className="replay-controls">
             <button
               type="button"
@@ -185,7 +207,7 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
                 min={Date.parse(range.start)}
                 max={Date.parse(range.end)}
                 step={5 * 60 * 1000}
-                value={scrubMs ?? Date.parse(session.as_of)}
+                value={scrubMs ?? (currentAsOf ? Date.parse(currentAsOf) : Date.parse(range.start))}
                 onChange={(e) => setScrubMs(Number(e.target.value))}
                 onMouseUp={(e) => {
                   const ms = Number(e.currentTarget.value);
@@ -204,7 +226,9 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
                 }}
               />
             )}
-            <span className="replay-as-of">{new Date(session.as_of).toLocaleString()}</span>
+            <span className="replay-as-of">
+              {currentAsOf ? new Date(currentAsOf).toLocaleString() : "—"}
+            </span>
             <button
               type="button"
               className="tab"

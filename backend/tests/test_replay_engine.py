@@ -107,6 +107,26 @@ def test_reference_price_and_day_high_match_the_ranked_row():
     assert engine.reference_price("ZZZ", ts) is None
 
 
+def test_bars_up_to_never_includes_a_bar_after_as_of():
+    bars = {"AAA": _session([11.0, 22.0, 33.0])}
+    engine = _engine(bars)
+    first, second, _third = [b.timestamp for b in bars["AAA"]]
+
+    assert [b.close for b in engine.bars_up_to("AAA", first)] == [11.0]
+    assert [b.close for b in engine.bars_up_to("AAA", second)] == [11.0, 22.0]
+    # Between two bars -- must read as the earlier one only (no look-ahead).
+    between = first + (second - first) / 2
+    assert [b.close for b in engine.bars_up_to("AAA", between)] == [11.0]
+
+
+def test_bars_up_to_empty_before_the_first_bar_or_for_an_unknown_symbol():
+    bars = {"AAA": _session([11.0])}
+    engine = _engine(bars)
+    before = bars["AAA"][0].timestamp - timedelta(days=1)
+    assert engine.bars_up_to("AAA", before) == []
+    assert engine.bars_up_to("ZZZ", bars["AAA"][0].timestamp) == []
+
+
 def test_first_at_or_after_lands_on_the_next_available_bar():
     bars = {"AAA": _session([11.0, 22.0])}
     engine = _engine(bars)

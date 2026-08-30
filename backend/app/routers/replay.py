@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.dependency import get_current_user
 from app.replay.engine import load_replay_engine
+from app.routers.symbols import _bar_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,30 @@ async def set_speed(body: SpeedRequest, request: Request, user: dict = Depends(g
     _session_or_404(await request.app.state.replay_store.get(user["id"]))
     session = await request.app.state.replay_store.update(user["id"], speed=body.speed)
     return await _state_payload(request, session)
+
+
+@router.get("/bars/{symbol}")
+async def get_replay_bars(symbol: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """5-minute bars for `symbol` from the start of this session's fetched
+    range through the current as_of -- what the replay chart draws (see
+    ReplayEngine.bars_up_to). Clipped server-side rather than sending the
+    whole fetched range and trusting the client to slice it, so a replay
+    chart can never show a bar the clock hasn't reached yet, even
+    transiently -- the entire point of "replay" is not seeing the future.
+
+    Empty rather than a 404/502 when the session exists but has no
+    resident engine (e.g. right after a server restart, before the pacing
+    loop or another request has reloaded it) or the symbol wasn't part of
+    this session's universe -- same "nothing to show yet, not an error"
+    convention _state_payload's own `views: null` uses.
+    """
+    session = _session_or_404(await request.app.state.replay_store.get(user["id"]))
+    engine = request.app.state.replay_engines.get(user["id"])
+    if engine is None:
+        return {"symbol": symbol.upper(), "bars": []}
+    as_of = datetime.fromisoformat(session["as_of"])
+    bars = engine.bars_up_to(symbol.upper(), as_of)
+    return {"symbol": symbol.upper(), "bars": [_bar_to_dict(b) for b in bars]}
 
 
 @router.delete("/stop")

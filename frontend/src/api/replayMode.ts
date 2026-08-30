@@ -34,6 +34,20 @@ export function setReplaySession(next: ReplaySession | null): void {
   listeners.forEach((fn) => fn(session));
 }
 
+/** Keeps `session.as_of` live while playing. REST calls (start/play/pause/
+ * seek/speed) are the only thing that calls setReplaySession, but the
+ * clock itself advances server-side on its own timer and is pushed out
+ * over /ws/replay instead (see app.replay.loop._advance_one) -- so
+ * whichever hook is currently subscribed to that socket (useReplayFeed)
+ * calls this on every tick, keeping the singleton's as_of current for
+ * every OTHER consumer too (the seek slider, ChartWidget's replay-clipped
+ * bars) without each of them needing their own WS subscription. */
+export function updateReplayAsOf(asOf: string): void {
+  if (session === null) return;
+  session = { ...session, as_of: asOf };
+  listeners.forEach((fn) => fn(session));
+}
+
 export function subscribeReplaySession(fn: Listener): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);

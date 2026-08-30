@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { updateReplayAsOf } from "../api/replayMode";
 import { replaySocket } from "../api/ws";
 import type { ScannerRow } from "../types/alpaca";
 
@@ -35,6 +36,10 @@ export function useReplayFeed(scanner: string | null): ReplayFeedState {
     const unsubscribe = replaySocket.subscribe(scanner, (msg) => {
       setRows(msg.rows);
       setAsOf(msg.as_of);
+      // Keeps api/replayMode.ts's singleton current for every other
+      // consumer (the seek slider, ChartWidget's replay-clipped bars) --
+      // see updateReplayAsOf's own docstring.
+      updateReplayAsOf(msg.as_of);
       setLoading(false);
     });
     return unsubscribe;

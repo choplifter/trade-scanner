@@ -94,6 +94,12 @@ class ReplayEngine:
     """
 
     def __init__(self, bars_by_symbol: dict[str, list], daily_bars_by_symbol: dict[str, list], curve: list):
+        # Kept for bars_up_to (the replay chart's data source) -- everything
+        # else here only ever needs the derived rows_by_ts, but the chart
+        # wants the raw OHLCV series, which build_rows_by_timestamp doesn't
+        # preserve (it only carries forward the running state a ranking
+        # needs, not each bar's own open/high/low).
+        self._bars_by_symbol = bars_by_symbol
         avg_vol_by_date = trailing_avg_daily_volume(daily_bars_by_symbol)
         prev_close_by_date = previous_closes(daily_bars_by_symbol)
         rows_by_ts, _exit_price, _session_bars = build_rows_by_timestamp(
@@ -162,6 +168,25 @@ class ReplayEngine:
             if row.symbol == symbol:
                 return row.day_high
         return None
+
+    def bars_up_to(self, symbol: str, as_of: datetime) -> list:
+        """This symbol's 5-minute bars from the start of the fetched range
+        through `as_of` (inclusive) -- what the replay chart draws, so it
+        never shows a bar the replayed clock hasn't reached yet. Returns
+        the raw fetched bars (Alpaca's own Bar objects, not _IntradayRow):
+        routers/replay.py serializes them with the exact _bar_to_dict
+        routers/symbols.py's live bars endpoint already uses, so the
+        frontend's chart needs zero changes to render a replayed candle
+        the same way it renders a live one.
+        """
+        bars = self._bars_by_symbol.get(symbol) or []
+        # Alpaca returns each symbol's own bars already in chronological
+        # order, so bisecting directly against their timestamps -- rather
+        # than a linear scan -- is safe and matches the bisect approach
+        # already used against self.timestamps elsewhere in this class.
+        times = [b.timestamp for b in bars]
+        idx = bisect_right(times, as_of)
+        return bars[:idx]
 
 
 async def load_replay_engine(
