@@ -297,8 +297,9 @@ def _render_symbol_info(info: SymbolInfoResponse | None) -> list:
 
 _TRADE_IDEAS_PROMPT = (
     "Click Generate to have Claude select today's 3 most notable setups from the "
-    "gainers scanner, with reasons and a signal score based on gap %, relative "
-    "volume, dollar volume, high-of-day status, news, VWAP, momentum, spread, "
+    "gainers scanner — every candidate already requires a genuine, stock-specific "
+    "news catalyst, ranked first by how significant that news is, then by gap %, "
+    "relative volume, dollar volume, high-of-day status, VWAP, momentum, spread, "
     "multi-day context, float, and short interest."
 )
 

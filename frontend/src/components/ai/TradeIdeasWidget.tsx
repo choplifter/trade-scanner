@@ -68,7 +68,7 @@ export function TradeIdeasWidget({ selectedSymbol, onSelectSymbol }: TradeIdeasW
           <div className="widget-empty">
             {loading
               ? "Asking Claude to pick today's top 3 setups…"
-              : "Click Generate to have Claude select today's 3 most notable setups from the gainers scanner, with reasons and a signal score based on gap %, relative volume, dollar volume, high-of-day status, news, VWAP, momentum, spread, multi-day context, float, and short interest."}
+              : "Click Generate to have Claude select today's 3 most notable setups from the gainers scanner — every candidate already requires a genuine, stock-specific news catalyst, ranked first by how significant that news is, then by gap %, relative volume, dollar volume, high-of-day status, VWAP, momentum, spread, multi-day context, float, and short interest."}
           </div>
         ) : (
           <>
