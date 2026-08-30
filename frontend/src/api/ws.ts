@@ -1,6 +1,7 @@
 import ReconnectingWebSocket from "reconnecting-websocket";
 
 import type { ChartSocketMessage, ScannerUpdateMessage } from "../types/alpaca";
+import type { ReplayUpdateMessage } from "../types/replay";
 import type { Screen, ScreenUpdateMessage } from "../types/screener";
 
 const WS_OPEN = 1;
@@ -154,4 +155,14 @@ export const chartSocket = new TopicSocket<ChartSocketMessage>(
   "/ws/chart",
   (msg) => msg.symbol,
   "symbol",
+);
+
+/** History-replay's counterpart to scannerSocket -- topic-keyed the same
+ * way ("gainers"/"losers"/"most_active"), but scoped server-side to the
+ * connected user's own session (see ws/replay_ws.py), so unlike
+ * scannerSocket there's no shared-screen message type to claim here. */
+export const replaySocket = new TopicSocket<ReplayUpdateMessage>(
+  "/ws/replay",
+  (msg) => msg.scanner,
+  "scanner",
 );

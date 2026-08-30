@@ -337,3 +337,64 @@ def test_buckets_split_by_entry_rvol(tmp_path):
 
     assert rows["<2x"]["win_rate"] == 100.0
     assert rows[">15x"]["win_rate"] == 0.0
+
+
+def _seed_appearance(store: ScannerHistoryStore, symbol: str, pct_change: float, view: str, now: datetime) -> None:
+    asyncio.run(
+        store.record_appearances(
+            [
+                NewAppearance(
+                    symbol=symbol,
+                    view=view,
+                    entry_price=10.0,
+                    entry_pct_change=pct_change,
+                    entry_rvol=3.0,
+                    benchmark_entry_price=None,
+                )
+            ],
+            now=now,
+        )
+    )
+
+
+def test_symbols_for_date_returns_every_symbol_seen_that_day(tmp_path):
+    """The real historical "stocks in play" universe app.replay.engine
+    fetches bars for when a session is started without an explicit symbol
+    list -- see routers/replay.py's /start."""
+    store = _store(tmp_path)
+    _seed_appearance(store, "AAA", pct_change=5.0, view="gainers", now=TRADING_DAY)
+    _seed_appearance(store, "BBB", pct_change=-8.0, view="losers", now=TRADING_DAY)
+    # A different day -- must not leak into the 2026-08-12 query below.
+    _seed_appearance(store, "CCC", pct_change=50.0, view="gainers", now=NON_TRADING_DAY)
+
+    symbols = asyncio.run(store.symbols_for_date("2026-08-12"))
+
+    assert set(symbols) == {"AAA", "BBB"}
+
+
+def test_symbols_for_date_dedupes_a_symbol_seen_in_multiple_views(tmp_path):
+    store = _store(tmp_path)
+    _seed_appearance(store, "AAA", pct_change=5.0, view="gainers", now=TRADING_DAY)
+    _seed_appearance(store, "AAA", pct_change=5.0, view="most_active", now=TRADING_DAY)
+
+    symbols = asyncio.run(store.symbols_for_date("2026-08-12"))
+
+    assert symbols == ["AAA"]
+
+
+def test_symbols_for_date_orders_and_limits_by_move_magnitude(tmp_path):
+    """A limit truncates to the most notable movers (largest |entry_pct_change|
+    seen that day), not an arbitrary DB-order slice -- the busy-day proxy for
+    "most worth watching"."""
+    store = _store(tmp_path)
+    _seed_appearance(store, "SMALL", pct_change=2.0, view="gainers", now=TRADING_DAY)
+    _seed_appearance(store, "BIG", pct_change=-40.0, view="losers", now=TRADING_DAY)
+    _seed_appearance(store, "MEDIUM", pct_change=10.0, view="gainers", now=TRADING_DAY)
+
+    assert asyncio.run(store.symbols_for_date("2026-08-12")) == ["BIG", "MEDIUM", "SMALL"]
+    assert asyncio.run(store.symbols_for_date("2026-08-12", limit=2)) == ["BIG", "MEDIUM"]
+
+
+def test_symbols_for_date_empty_when_nothing_recorded(tmp_path):
+    store = _store(tmp_path)
+    assert asyncio.run(store.symbols_for_date("2026-08-12")) == []

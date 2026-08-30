@@ -39,7 +39,7 @@ async function extractErrorMessage(res: Response, fallback: string): Promise<str
   }
 }
 
-async function getJson<T>(path: string): Promise<T> {
+export async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res, `GET ${path} failed: ${res.status}`));
@@ -47,7 +47,7 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function postJson<T>(path: string, body?: unknown): Promise<T> {
+export async function postJson<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     credentials: "include",
@@ -356,7 +356,7 @@ export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: 
   return (await res.json()) as { order: Order };
 }
 
-async function deleteJson<T>(path: string): Promise<T> {
+export async function deleteJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", credentials: "include" });
   if (res.status === 422) {
     const body = (await res.json()) as { detail: TradingRejection };
@@ -368,7 +368,7 @@ async function deleteJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function patchJson<T>(path: string, body: unknown): Promise<T> {
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "PATCH",
     credentials: "include",

@@ -12,7 +12,15 @@ export type LayoutMode = "panels" | "grid";
  * would remount subtrees -- destroying CandleChart's chart instance, every
  * widget's local useState, and restarting the three analytics widgets'
  * poll intervals. Keying by id means dragging only moves a cell. */
-export type WidgetId = "scanner" | "chart" | "ideas" | "benchmark" | "history" | "trading" | "watchlist";
+export type WidgetId =
+  | "scanner"
+  | "chart"
+  | "ideas"
+  | "benchmark"
+  | "history"
+  | "trading"
+  | "watchlist"
+  | "replay";
 
 /** Render order of grid cells. Deliberately constant and independent of
  * `layout` -- position comes from the layout item's x/y, never from DOM
@@ -25,6 +33,7 @@ export const WIDGET_IDS: readonly WidgetId[] = [
   "history",
   "trading",
   "watchlist",
+  "replay",
 ];
 
 export const GRID_COLS = 12;
@@ -57,6 +66,11 @@ export const DEFAULT_LAYOUT: Layout = [
   { i: "ideas", x: 0, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
   { i: "benchmark", x: 4, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
   { i: "history", x: 8, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
+  // 12x12 was already full at row y8 (4+4+4), so replay takes a new row
+  // below rather than shrinking an existing widget -- full width, since
+  // its own control bar + three ranked mini-tables need more than a
+  // quarter-width column would give them.
+  { i: "replay", x: 0, y: 12, w: 12, h: 5, minW: 4, minH: 3 },
 ];
 
 const LAYOUT_STORAGE_KEY = "layout:grid";
@@ -74,7 +88,8 @@ const MODE_STORAGE_KEY = "layout:mode";
 // 5: added "watchlist", reflowing the bottom row from 3 widgets to 4.
 // 6: moved "watchlist" into the trading column (stacked, sharing its height)
 // instead of the bottom row, which goes back to 3 widgets at w:4.
-const LAYOUT_VERSION = 6;
+// 7: added "replay" as a new full-width row below the existing 12x12 grid.
+const LAYOUT_VERSION = 7;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */

@@ -61,6 +61,18 @@ class Settings(BaseSettings):
     # has nothing to do with how the scanner is tuned.
     trading_sim_fill_check_interval: float = 5.0
 
+    # History-replay (app.replay): how often the pacing loop checks whether
+    # any playing user's clock is due to advance. Real advance cadence is
+    # speed-adjusted per user against replay_bar_seconds below, so this only
+    # bounds the loop's own polling granularity -- keep it well under the
+    # fastest supported speed's per-bar interval.
+    replay_pacing_check_interval: float = 1.0
+    # Wall-clock seconds per 5-minute bar at speed=1x (300s -> real-time,
+    # i.e. one bar every five real minutes). Defaults far faster than
+    # real-time since the point of replay is compressing a session into a
+    # practice-length sitting, not literally re-living it minute for minute.
+    replay_bar_seconds: float = 3.0
+
     # Never hardcode a feed elsewhere in the app -- every Alpaca data call must
     # read this value. That held up: moving to the paid SIP subscription on
     # 2026-08-20 was a one-line .env change, no code touched.

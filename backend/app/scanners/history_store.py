@@ -261,6 +261,36 @@ class ScannerHistoryStore:
             ).fetchall()
         return {(symbol, view) for symbol, view in rows}
 
+    def _symbols_for_date_sync(self, trading_date: str, limit: int | None) -> list[str]:
+        with self._connect() as conn:
+            query = (
+                "SELECT symbol, MAX(ABS(entry_pct_change)) AS magnitude FROM appearances "
+                "WHERE trading_date = ? GROUP BY symbol ORDER BY magnitude DESC"
+            )
+            params: list = [trading_date]
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+            rows = conn.execute(query, params).fetchall()
+        return [symbol for symbol, _magnitude in rows]
+
+    async def symbols_for_date(self, trading_date: str, limit: int | None = None) -> list[str]:
+        """Every symbol the live scanner actually flagged (any view) on
+        `trading_date` (an ET date, ISO format) -- the real historical
+        "stocks in play" universe for that day, as recorded by the poll
+        loop's own record_appearances calls -- ranked by each symbol's
+        largest recorded |entry_pct_change| that day (a busy-day proxy for
+        "most worth watching"), so a `limit` truncates to the most notable
+        names rather than an arbitrary DB-order slice.
+
+        This is what app.replay.engine.load_replay_engine fetches bars for
+        when a replay session is started without an explicit symbol list --
+        see routers/replay.py's /start -- rather than requiring the user to
+        already know in advance which symbols were worth watching, which
+        would defeat the point of replaying a *scanner*.
+        """
+        return await asyncio.to_thread(self._symbols_for_date_sync, trading_date, limit)
+
     async def existing_keys_for_date(self, trading_date: str) -> set[tuple[str, str]]:
         """(symbol, view) pairs already recorded for `trading_date` (an ET
         date, ISO format) -- lets a caller cheaply figure out which

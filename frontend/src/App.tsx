@@ -9,6 +9,7 @@ import { ChartWidget } from "./components/chart/ChartWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
+import { ReplayPanel } from "./components/replay/ReplayPanel";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
@@ -125,6 +126,9 @@ function AppShell({ user, onLogout }: AppShellProps) {
       watchlist: (
         <WatchlistPanel selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
+      replay: (
+        <ReplayPanel selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+      ),
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
     // state the comment above guards against: switching modes should
@@ -202,7 +206,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
             <ResizablePanels
               direction="column"
               storageKey="layout:main-rows"
-              defaultSizes={[0.65, 0.35]}
+              defaultSizes={[0.55, 0.25, 0.2]}
               minSizePx={140}
             >
               <ResizablePanels
@@ -240,6 +244,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
                 {widgets.benchmark}
                 {widgets.history}
               </ResizablePanels>
+              {widgets.replay}
             </ResizablePanels>
           )}
         </main>

@@ -21,9 +21,13 @@ from app.dash_app.state import bind as bind_dash_state
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.news_cache import NewsCache
 from app.market_data.stream_manager import StreamManager
+from app.replay.engine import ReplayEngineCache
+from app.replay.loop import run_replay_pacing_loop
+from app.replay.store import ReplayStore
 from app.routers import (
     auth,
     meta,
+    replay,
     scanners,
     screener,
     strategies,
@@ -41,7 +45,7 @@ from app.trading.sim.loop import run_sim_fill_loop
 from app.trading.sim.store import SimStore
 from app.trading.trade_store import TradeStore
 from app.watchlist.store import WatchlistStore
-from app.ws import chart_ws, scanner_ws
+from app.ws import chart_ws, replay_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
 from app.ws.screen_subscriptions import ScreenSubscriptions
 
@@ -100,6 +104,15 @@ async def lifespan(app: FastAPI):
     sim_store = SimStore(settings.scanner_history_db_path)
     await sim_store.init_schema()
     app.state.sim_store = sim_store
+
+    # History replay: an optional clock layered on top of Simulation Mode
+    # (see app.replay's module docstrings). Session metadata is durable
+    # (same db file, its own table); the fetched bars behind a resident
+    # ReplayEngine are not -- see app.replay.engine's module docstring.
+    replay_store = ReplayStore(settings.scanner_history_db_path)
+    await replay_store.init_schema()
+    app.state.replay_store = replay_store
+    app.state.replay_engines = ReplayEngineCache()
 
     # Per-user watchlist -- was localStorage-only before real users existed.
     watchlist_store = WatchlistStore(settings.scanner_history_db_path)
@@ -173,12 +186,16 @@ async def lifespan(app: FastAPI):
 
     scanner_task = asyncio.create_task(engine.run_loop())
     sim_fill_task = asyncio.create_task(run_sim_fill_loop(clients, settings, sim_store))
+    replay_task = asyncio.create_task(
+        run_replay_pacing_loop(replay_store, sim_store, app.state.replay_engines, manager, clients, settings)
+    )
 
     try:
         yield
     finally:
         scanner_task.cancel()
         sim_fill_task.cancel()
+        replay_task.cancel()
         await clients.stop_stream()
         await fundamentals.aclose()
 
@@ -214,8 +231,10 @@ app.include_router(symbols.router, dependencies=_auth_gate)
 app.include_router(trade_ideas.router, dependencies=_auth_gate)
 app.include_router(trading.router, dependencies=_auth_gate)
 app.include_router(trading_sim.router)
+app.include_router(replay.router)
 app.include_router(watchlist.router)
 app.include_router(scanner_ws.router)
 app.include_router(chart_ws.router)
+app.include_router(replay_ws.router)
 
 app.mount("/analytics", WSGIMiddleware(dash_app.server))

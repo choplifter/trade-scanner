@@ -79,13 +79,28 @@ def _public_order(row: dict) -> dict:
 
 class SimOrderService:
     def __init__(
-        self, clients: AlpacaClients, settings: Settings, store: SimStore, user_id: int, engine=None
+        self,
+        clients: AlpacaClients,
+        settings: Settings,
+        store: SimStore,
+        user_id: int,
+        engine=None,
+        replay=None,
     ) -> None:
+        """`engine` is the live ScannerEngine (optional fast-path cache for
+        reference_price/day_high, falls through to a fresh Alpaca call --
+        see below). `replay` is `(ReplayEngine, as_of)` when this user's
+        clock is currently in an active history-replay session (see
+        app.replay); when set it takes over pricing *entirely*, bypassing
+        both `engine` and the live Alpaca fallback below, since a replay
+        fill must never blend in a live price -- see reference_price/day_high.
+        """
         self._clients = clients
         self._settings = settings
         self._store = store
         self._user_id = user_id
         self._engine = engine
+        self._replay = replay
         self._broker = SimBroker(store, user_id)
 
     # --- read paths ---------------------------------------------------
@@ -226,6 +241,10 @@ class SimOrderService:
     # stays untouched.
 
     async def reference_price(self, symbol: str) -> float | None:
+        if self._replay is not None:
+            replay_engine, as_of = self._replay
+            return replay_engine.reference_price(symbol, as_of)
+
         row = getattr(self._engine, "rows", {}).get(symbol) if self._engine else None
         if row is not None and getattr(row, "last_price", 0):
             return float(row.last_price)
@@ -242,6 +261,10 @@ class SimOrderService:
             return None
 
     async def day_high(self, symbol: str) -> float | None:
+        if self._replay is not None:
+            replay_engine, as_of = self._replay
+            return replay_engine.day_high(symbol, as_of)
+
         row = getattr(self._engine, "rows", {}).get(symbol) if self._engine else None
         if row is not None and getattr(row, "day_high", None):
             return float(row.day_high)

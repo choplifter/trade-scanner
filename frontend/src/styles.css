@@ -2069,6 +2069,73 @@ a.symbol-news-headline {
   padding: 8px;
 }
 
+/* History replay -- backend/app/replay + components/replay/ReplayPanel. */
+.replay-start-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+}
+
+.replay-start-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.replay-optional-hint {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.replay-start-form input {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.replay-start-form input[type="text"] {
+  width: 260px;
+}
+
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  flex-wrap: wrap;
+}
+
+.replay-controls select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.replay-seek {
+  flex: 1;
+  min-width: 120px;
+}
+
+.replay-as-of {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.replay-view-tabs {
+  padding: 0 12px 6px;
+}
+
 .logout-link {
   font-size: 12px;
   color: var(--text-secondary);
