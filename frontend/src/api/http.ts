@@ -11,7 +11,7 @@ import type {
   ScreenBacktestResponse,
 } from "../types/screener";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
-import type { WatchlistQuotes } from "../types/watchlist";
+import type { SymbolSuggestion, WatchlistQuotes } from "../types/watchlist";
 import type {
   AccountResponse,
   BalanceRange,
@@ -96,8 +96,8 @@ export function getSymbolInfo(symbol: string): Promise<SymbolInfoResponse> {
  * list_active_equity_symbols) -- used for watchlist add-symbol suggestions
  * only, never as validation: addSymbol accepts any ticker-shaped string
  * regardless of whether it ever shows up here. */
-export function searchSymbols(query: string): Promise<{ matches: string[] }> {
-  return getJson<{ matches: string[] }>(`/symbols/search?q=${encodeURIComponent(query)}`);
+export function searchSymbols(query: string): Promise<{ matches: SymbolSuggestion[] }> {
+  return getJson<{ matches: SymbolSuggestion[] }>(`/symbols/search?q=${encodeURIComponent(query)}`);
 }
 
 /** Last price / % change for an arbitrary symbol list, polled by the

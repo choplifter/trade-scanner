@@ -12,7 +12,7 @@ export type LayoutMode = "panels" | "grid";
  * would remount subtrees -- destroying CandleChart's chart instance, every
  * widget's local useState, and restarting the three analytics widgets'
  * poll intervals. Keying by id means dragging only moves a cell. */
-export type WidgetId = "scanner" | "chart" | "ideas" | "benchmark" | "history" | "trading";
+export type WidgetId = "scanner" | "chart" | "ideas" | "benchmark" | "history" | "trading" | "watchlist";
 
 /** Render order of grid cells. Deliberately constant and independent of
  * `layout` -- position comes from the layout item's x/y, never from DOM
@@ -24,6 +24,7 @@ export const WIDGET_IDS: readonly WidgetId[] = [
   "benchmark",
   "history",
   "trading",
+  "watchlist",
 ];
 
 export const GRID_COLS = 12;
@@ -35,21 +36,24 @@ export const GRID_ROWS = 12;
 export const GRID_MARGIN = 8;
 
 /** Mirrors today's ResizablePanels arrangement (App.tsx): scanner + chart
- * across the top at 65% height / 45-55% width, the three analytics widgets
- * across the bottom -- so switching into grid mode looks identical until you
+ * across the top at 65% height / 45-55% width, trading and watchlist
+ * stacked in the same right-hand column, the three analytics widgets across
+ * the bottom -- so switching into grid mode looks identical until you
  * actually drag something. minW/minH approximate the old minSizePx clamps.
  * `chart` gets a taller minH because .symbol-info-panel reserves up to 220px
- * inside ChartWidget, which would otherwise squeeze the canvas to nothing. */
-// The grid was already full at 12x12, so trading takes width from the top
-// row rather than adding a sixth row -- total height and GRID_ROWS stay put.
-// minH is higher than the other bottom-row widgets because the account
-// summary plus a table needs vertical room before it starts clipping.
+ * inside ChartWidget, which would otherwise squeeze the canvas to nothing.
+ *
+ * The grid was already full at 12x12 when "trading" was added, so it took
+ * width from the top row rather than a sixth row; "watchlist" later shared
+ * that same column instead of adding a fourth row, splitting it h:4/h:4
+ * with trading, which was oversized for a form at h:8 anyway. */
 export const DEFAULT_LAYOUT: Layout = [
   { i: "scanner", x: 0, y: 0, w: 4, h: 8, minW: 3, minH: 3 },
   { i: "chart", x: 4, y: 0, w: 5, h: 8, minW: 3, minH: 4 },
   // minW 2, not 3: the order ticket is a narrow form, and its floor is what
   // caps how wide the scanner and chart can go in the top row.
-  { i: "trading", x: 9, y: 0, w: 3, h: 8, minW: 2, minH: 5 },
+  { i: "trading", x: 9, y: 0, w: 3, h: 4, minW: 2, minH: 3 },
+  { i: "watchlist", x: 9, y: 4, w: 3, h: 4, minW: 2, minH: 2 },
   { i: "ideas", x: 0, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
   { i: "benchmark", x: 4, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
   { i: "history", x: 8, y: 8, w: 4, h: 4, minW: 2, minH: 2 },
@@ -67,7 +71,10 @@ const MODE_STORAGE_KEY = "layout:mode";
 // 4: added "trading". isValidLayout's id check would already reject a v3
 // layout on its own, so this bump is belt-and-braces -- but it keeps the
 // version honest about the geometry change to the top row.
-const LAYOUT_VERSION = 4;
+// 5: added "watchlist", reflowing the bottom row from 3 widgets to 4.
+// 6: moved "watchlist" into the trading column (stacked, sharing its height)
+// instead of the bottom row, which goes back to 3 widgets at w:4.
+const LAYOUT_VERSION = 6;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.alpaca.client import AlpacaClients
+from app.alpaca.universe import _looks_like_etf
 from app.indicators.context import build_context
 from app.indicators.loader import run_indicators
 from app.market_data.bars import (
@@ -93,14 +94,55 @@ async def _compute_indicators(
 
 @router.get("/search")
 async def search_symbols(q: str, request: Request) -> dict:
+    q_upper = q.upper()
     # The full active-equity list (includes ETFs and anything outside the
     # scanner's price/volume band, e.g. SPY, AAPL) -- see
     # list_active_equity_symbols. Falls back to the narrower scanner
-    # universe only if that startup fetch failed or credentials are missing.
-    symbols = request.app.state.all_symbols or list(request.app.state.universe)
-    q_upper = q.upper()
-    matches = sorted(s for s in symbols if s.startswith(q_upper))[:20]
-    return {"matches": matches}
+    # universe (no company name available there) only if that startup fetch
+    # failed or credentials are missing.
+    all_symbols: list = request.app.state.all_symbols
+    if all_symbols:
+        # Two passes, not one combined filter: a ticker match is what the
+        # user most likely meant (typing "AAPL" shouldn't surface every
+        # company whose *name* happens to contain those four letters), so
+        # ticker matches always sort first, filling the 20-result cap before
+        # a name match gets a chance to. The second pass's own condition
+        # excludes anything the first pass already matched, so nothing
+        # appears twice.
+        symbol_matches = sorted(
+            (s for s in all_symbols if s.symbol.startswith(q_upper)), key=lambda s: s.symbol
+        )
+        # Leveraged/inverse ETNs love restating a household name in their own
+        # ("MicroSectors...", "T-Rex 2X Long Apple...") -- searching "micro"
+        # or "apple" for the actual company would otherwise drown in them
+        # before the real one is even in the top 20. _looks_like_etf is the
+        # same name-based heuristic build_universe already excludes them by;
+        # a ticker match (above) is exempt from it, since typing the ticker
+        # of an ETF you actually want (SPY) should still find it.
+        name_matches = sorted(
+            (
+                s
+                for s in all_symbols
+                if not s.symbol.startswith(q_upper)
+                and s.name
+                and q_upper in s.name.upper()
+                and not _looks_like_etf(s.name)
+            ),
+            key=lambda s: s.symbol,
+        )
+        matches = (symbol_matches + name_matches)[:20]
+        return {
+            "matches": [
+                {"symbol": s.symbol, "name": s.name, "exchange": s.exchange} for s in matches
+            ]
+        }
+    universe = request.app.state.universe
+    matched_symbols = sorted(s for s in universe if s.startswith(q_upper))[:20]
+    return {
+        "matches": [
+            {"symbol": s, "name": None, "exchange": universe[s].exchange} for s in matched_symbols
+        ]
+    }
 
 
 @router.get("/{symbol}/info")

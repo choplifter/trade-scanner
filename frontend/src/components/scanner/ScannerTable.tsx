@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import { CopyButton } from "../common/CopyButton";
 import type { ScannerRow } from "../../types/alpaca";
+import { startSymbolDrag } from "../../utils/dragSymbol";
 import {
   formatDollarVolume,
   formatMarketCap,
@@ -211,6 +212,8 @@ export function ScannerTable({
             key={row.symbol}
             aria-selected={row.symbol === selectedSymbol}
             onClick={() => onSelectSymbol(row.symbol)}
+            draggable
+            onDragStart={(e) => startSymbolDrag(e, row.symbol)}
           >
             <td className="symbol-cell">
               {row.symbol}

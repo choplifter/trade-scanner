@@ -87,7 +87,16 @@ def _chunk(items: list[str], size: int) -> list[list[str]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
-async def list_active_equity_symbols(clients: AlpacaClients) -> list[str]:
+@dataclass(frozen=True)
+class SymbolSuggestion:
+    symbol: str
+    # None only via the narrower build_universe fallback (see
+    # routers.symbols.search_symbols) -- UniverseSymbol carries no name.
+    name: str | None
+    exchange: str
+
+
+async def list_active_equity_symbols(clients: AlpacaClients) -> list[SymbolSuggestion]:
     """All plain-ticker, major-exchange active symbols -- including ETFs and
     anything outside the scanner's price/volume band -- for the watchlist's
     add-symbol autocomplete.
@@ -99,15 +108,23 @@ async def list_active_equity_symbols(clients: AlpacaClients) -> list[str]:
     get_all_assets call rather than reusing build_universe's own -- this
     runs once at startup same as that does, and keeps autocomplete from
     being coupled to the scanner's filtering pipeline.
+
+    Carries name/exchange (not just the bare symbol) so the suggestion
+    dropdown can show "Apple Inc. -- NASDAQ" next to "AAPL" -- disambiguating
+    a ticker from memory alone is exactly what a search-as-you-type box is
+    for.
     """
     assets = await asyncio.to_thread(
         clients.trading.get_all_assets,
         GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE),
     )
     return sorted(
-        a.symbol
-        for a in assets
-        if a.tradable and a.exchange.value in _ALLOWED_EXCHANGES and _PLAIN_TICKER_RE.match(a.symbol)
+        (
+            SymbolSuggestion(symbol=a.symbol, name=a.name, exchange=a.exchange.value)
+            for a in assets
+            if a.tradable and a.exchange.value in _ALLOWED_EXCHANGES and _PLAIN_TICKER_RE.match(a.symbol)
+        ),
+        key=lambda s: s.symbol,
     )
 
 

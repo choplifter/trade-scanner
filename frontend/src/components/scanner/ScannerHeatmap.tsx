@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { ScannerRow } from "../../types/alpaca";
+import { startSymbolDrag } from "../../utils/dragSymbol";
 import { formatPct, formatPrice, formatVolume } from "../../utils/format";
 import { HEATMAP_STRONG_THRESHOLD, heatmapBlendWeight, heatmapFill } from "../../utils/heatmapColor";
 import { computeTreemap } from "../../utils/treemap";
@@ -75,6 +76,8 @@ export function ScannerHeatmap({ rows, selectedSymbol, onSelectSymbol }: Scanner
                 background: heatmapFill(tile.pct_change, maxAbsPct),
               }}
               onClick={() => onSelectSymbol(tile.symbol)}
+              draggable
+              onDragStart={(e) => startSymbolDrag(e, tile.symbol)}
               /* Shortability goes in the tooltip unconditionally, because the
                  corner glyph below only renders on tiles big enough to carry
                  a label -- and a small tile is exactly where a reader falls

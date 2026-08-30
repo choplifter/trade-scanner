@@ -12,6 +12,7 @@ import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWid
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
 import { TradingWidget } from "./components/trading/TradingWidget";
+import { WatchlistPanel } from "./components/watchlist/WatchlistPanel";
 import { TradingProvider } from "./context/TradingContext";
 import type { ChartFocus } from "./types/screener";
 import { useAlarms } from "./hooks/useAlarms";
@@ -87,6 +88,9 @@ export default function App() {
       // own consumers on a poll tick without touching this memo at all.
       trading: (
         <TradingWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+      ),
+      watchlist: (
+        <WatchlistPanel selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
     }),
     [selectedSymbol, chartFocus, selectSymbol, selectPick],
@@ -169,7 +173,19 @@ export default function App() {
               >
                 {widgets.scanner}
                 {widgets.chart}
-                {widgets.trading}
+                {/* Trading was oversized for a form at full column height --
+                    it shares the column with the watchlist instead, 50/50 by
+                    default, each still draggable further via the handle
+                    between them. */}
+                <ResizablePanels
+                  direction="column"
+                  storageKey="layout:trading-column"
+                  defaultSizes={[0.5, 0.5]}
+                  minSizePx={150}
+                >
+                  {widgets.trading}
+                  {widgets.watchlist}
+                </ResizablePanels>
               </ResizablePanels>
               <ResizablePanels
                 direction="row"
