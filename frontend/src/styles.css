@@ -189,7 +189,8 @@ body {
 
 .alarms-toggle,
 .layout-mode-toggle,
-.layout-reset-button {
+.layout-reset-button,
+.simulation-toggle {
   display: inline-flex;
   align-items: center;
   font-size: 12px;
@@ -204,7 +205,8 @@ body {
 
 .alarms-toggle:hover,
 .layout-mode-toggle:hover,
-.layout-reset-button:hover {
+.layout-reset-button:hover,
+.simulation-toggle:hover {
   background: var(--row-hover);
 }
 
@@ -212,6 +214,14 @@ body {
 .layout-mode-toggle[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Its own accent rather than --accent: this toggle's pressed state means
+   "money isn't real right now", which deserves a color distinct from every
+   other pressed pill in the header. */
+.simulation-toggle[aria-pressed="true"] {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
 }
 
 .alarms-count-badge {
@@ -1682,6 +1692,11 @@ a.symbol-news-headline {
 .trading-mode-badge.live {
   color: var(--status-critical);
   border-color: var(--status-critical);
+}
+
+.trading-mode-badge.simulation {
+  color: var(--status-warning);
+  border-color: var(--status-warning);
 }
 
 .trading-account {

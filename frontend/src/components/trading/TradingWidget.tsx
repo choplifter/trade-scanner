@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
+import type { TradingMode } from "../../api/tradingMode";
+import { resetSimAccount } from "../../api/http";
 import { useTradingContext } from "../../context/TradingContext";
 import { useBalanceHistory } from "../../hooks/useBalanceHistory";
 import { useOrderHistory } from "../../hooks/useOrderHistory";
@@ -146,12 +148,17 @@ function signedNumber(
 interface TradingWidgetProps {
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
+  /** "simulation" routes every trading call in this widget's subtree to the
+   * local sim broker instead of the real account -- see api/tradingMode.ts.
+   * Purely a display/labelling concern here; the actual routing happens
+   * transparently in api/http.ts. */
+  mode: TradingMode;
 }
 
 /** Account state for the connected Alpaca account: open positions, working
  * orders and the balance line. Read-only for now -- order entry lands in the
  * next milestone, behind TRADING_ENABLED and a paper-account check. */
-export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetProps) {
+export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingWidgetProps) {
   const {
     account,
     paper,
@@ -196,6 +203,27 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
   // visible after the modal is gone -- re-running the modal would sell
   // again, so the warning lives on the panel instead.
   const [stopLostWarning, setStopLostWarning] = useState<string | null>(null);
+
+  // Simulation Mode's own destructive action -- kept as a separate confirm
+  // rather than folded into PendingAction/runPending above, since those are
+  // built around a position/order id this has neither of.
+  const [resetConfirming, setResetConfirming] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  const runReset = async () => {
+    setResetBusy(true);
+    setResetError(null);
+    try {
+      await resetSimAccount();
+      setResetConfirming(false);
+      afterAction();
+    } catch (err: unknown) {
+      setResetError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResetBusy(false);
+    }
+  };
 
   // Instant-fire position/order hotkeys: F flattens the selected symbol's
   // position, C cancels every working order, 0 moves its stop to
@@ -356,9 +384,13 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
       <div className="widget-header">
         <h2>Trading</h2>
         {/* The single most important thing on this panel is whether the money
-            is real. Shown always, not only when it is live. */}
-        <span className={paper ? "trading-mode-badge paper" : "trading-mode-badge live"}>
-          {paper ? "PAPER" : "LIVE"}
+            is real. Shown always, not only when it is live. Simulation is a
+            client-known state layered on top -- paper/live still describes
+            whichever real account the backend's credentials point at. */}
+        <span
+          className={`trading-mode-badge ${mode === "simulation" ? "simulation" : paper ? "paper" : "live"}`}
+        >
+          {mode === "simulation" ? "SIMULATION" : paper ? "PAPER" : "LIVE"}
         </span>
         <div className="timeframe-selector">
           {TABS.map((t) => (
@@ -465,6 +497,8 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             position={positions.find((p) => p.symbol === selectedSymbol) ?? null}
             orders={orders}
             onSubmitted={afterAction}
+            mode={mode}
+            paper={paper}
           />
         ) : tab === "positions" ? (
           <>
@@ -506,7 +540,13 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
             error={balance.error}
           />
         ) : (
-          <AccountPanel account={account} paper={paper} tradingEnabled={tradingEnabled} />
+          <AccountPanel
+            account={account}
+            paper={paper}
+            tradingEnabled={tradingEnabled}
+            mode={mode}
+            onRequestReset={() => setResetConfirming(true)}
+          />
         )}
       </div>
 
@@ -615,7 +655,13 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
               )}
             </>
           )}
-          <p className="order-confirm-mode">PAPER &mdash; simulated account</p>
+          <p className="order-confirm-mode">
+            {mode === "simulation"
+              ? "SIMULATION — practice action, no real order placed"
+              : paper
+                ? "PAPER — simulated account"
+                : "LIVE — real money"}
+          </p>
           {actionError && <p className="order-rejection">{actionError}</p>}
           <div className="order-confirm-actions">
             <button
@@ -643,6 +689,44 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol }: TradingWidgetP
                     : pending?.kind === "partial"
                       ? "Sell shares"
                       : "Close position"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={resetConfirming}
+        title="Reset simulation"
+        onClose={() => {
+          setResetConfirming(false);
+          setResetError(null);
+        }}
+      >
+        <div className="order-confirm">
+          <p className="order-confirm-line">
+            Clear every simulated position, working order and trade, and reset cash back to the
+            starting balance?
+          </p>
+          <p className="order-confirm-line order-confirm-note">This cannot be undone.</p>
+          {resetError && <p className="order-rejection">{resetError}</p>}
+          <div className="order-confirm-actions">
+            <button
+              type="button"
+              className="timeframe-button"
+              onClick={() => {
+                setResetConfirming(false);
+                setResetError(null);
+              }}
+            >
+              Keep it
+            </button>
+            <button
+              type="button"
+              className="generate-button"
+              disabled={resetBusy}
+              onClick={() => void runReset()}
+            >
+              {resetBusy ? "Working" : "Reset simulation"}
             </button>
           </div>
         </div>
@@ -1310,10 +1394,14 @@ function AccountPanel({
   account,
   paper,
   tradingEnabled,
+  mode,
+  onRequestReset,
 }: {
   account: Account | null;
   paper: boolean;
   tradingEnabled: boolean;
+  mode: TradingMode;
+  onRequestReset: () => void;
 }) {
   if (!account) return <div className="widget-empty">No account data.</div>;
 
@@ -1359,11 +1447,18 @@ function AccountPanel({
         </tbody>
       </table>
       <p className="trading-account-note">
-        {paper
-          ? "Simulated account — no real money is at risk."
-          : "LIVE account. Order placement is refused by this build."}{" "}
-        Order entry is {tradingEnabled ? "enabled" : "disabled"} (TRADING_ENABLED).
+        {mode === "simulation"
+          ? "Simulation Mode — a local practice account, priced off real live data. Never touches the real account."
+          : paper
+            ? "Simulated account — no real money is at risk."
+            : "LIVE account. Order placement is refused by this build."}{" "}
+        {mode !== "simulation" && `Order entry is ${tradingEnabled ? "enabled" : "disabled"} (TRADING_ENABLED).`}
       </p>
+      {mode === "simulation" && (
+        <button type="button" className="timeframe-button" onClick={onRequestReset}>
+          Reset simulation
+        </button>
+      )}
     </div>
   );
 }

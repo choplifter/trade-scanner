@@ -12,6 +12,7 @@ import type {
 } from "../types/screener";
 import type { SymbolInfoResponse } from "../types/symbolInfo";
 import type { SymbolSuggestion, WatchlistQuotes } from "../types/watchlist";
+import { tradingPath } from "./tradingMode";
 import type {
   AccountResponse,
   BalanceRange,
@@ -224,32 +225,43 @@ export async function backtestScreen(
 }
 
 /** Connected Alpaca account, plus which mode the backend is in. Read-only:
- * available whenever credentials exist, regardless of TRADING_ENABLED. */
+ * available whenever credentials exist, regardless of TRADING_ENABLED.
+ * Every trading-specific function below routes through tradingPath(), which
+ * transparently swaps this for Simulation Mode's local order book -- see
+ * api/tradingMode.ts. */
 export function getAccount(): Promise<AccountResponse> {
-  return getJson<AccountResponse>("/trading/account");
+  return getJson<AccountResponse>(tradingPath("/trading/account"));
 }
 
 export function getPositions(): Promise<PositionsResponse> {
-  return getJson<PositionsResponse>("/trading/positions");
+  return getJson<PositionsResponse>(tradingPath("/trading/positions"));
 }
 
 /** Working orders by default; "all" or "closed" for history. */
 export function getOrders(status = "open"): Promise<OrdersResponse> {
-  return getJson<OrdersResponse>(`/trading/orders?status=${encodeURIComponent(status)}`);
+  return getJson<OrdersResponse>(tradingPath(`/trading/orders?status=${encodeURIComponent(status)}`));
 }
 
 /** Closed round trips with realized P&L, newest first, narrowed to a
  * calendar period. Read-only; each call also has the backend record any
  * trip that closed since the last one. */
 export function getTrades(range: TradesRange = "all"): Promise<TradesResponse> {
-  return getJson<TradesResponse>(`/trading/trades?range=${encodeURIComponent(range)}`);
+  return getJson<TradesResponse>(tradingPath(`/trading/trades?range=${encodeURIComponent(range)}`));
 }
 
 /** The account equity curve for one range. Read-only, like getAccount. */
 export function getPortfolioHistory(range: BalanceRange): Promise<PortfolioHistoryResponse> {
   return getJson<PortfolioHistoryResponse>(
-    `/trading/portfolio-history?range=${encodeURIComponent(range)}`,
+    tradingPath(`/trading/portfolio-history?range=${encodeURIComponent(range)}`),
   );
+}
+
+/** Wipes Simulation Mode's positions/orders/trades and reseeds cash --
+ * see routers/trading_sim.py's /reset. No real-trading equivalent, and
+ * deliberately not routed through tradingPath(): there's nothing to rewrite
+ * from, and it should only ever be called while simulation mode is active. */
+export function resetSimAccount(): Promise<AccountResponse> {
+  return postJson<AccountResponse>("/trading/sim/reset");
 }
 
 /** Thrown when the backend refuses a ticket -- a stop on the wrong side, a
@@ -268,7 +280,7 @@ export class OrderRejectedError extends Error {
  * quote data yet), matching how the ticket already treats a missing
  * reference price -- a hotkey guard, not a hard failure. */
 export async function dayHigh(symbol: string): Promise<number | null> {
-  const res = await fetch(`${API_BASE}/trading/day-high/${encodeURIComponent(symbol)}`);
+  const res = await fetch(`${API_BASE}${tradingPath(`/trading/day-high/${encodeURIComponent(symbol)}`)}`);
   if (!res.ok) return null;
   const body = (await res.json()) as { day_high: number | null };
   return body.day_high;
@@ -278,7 +290,9 @@ export async function dayHigh(symbol: string): Promise<number | null> {
  * Target auto-suggestion sizes off before a ticket exists to preview. Same
  * null-on-failure shape as dayHigh, for the same reason. */
 export async function referencePrice(symbol: string): Promise<number | null> {
-  const res = await fetch(`${API_BASE}/trading/reference-price/${encodeURIComponent(symbol)}`);
+  const res = await fetch(
+    `${API_BASE}${tradingPath(`/trading/reference-price/${encodeURIComponent(symbol)}`)}`,
+  );
   if (!res.ok) return null;
   const body = (await res.json()) as { price: number | null };
   return body.price;
@@ -286,7 +300,7 @@ export async function referencePrice(symbol: string): Promise<number | null> {
 
 /** Size and price a ticket without placing anything. */
 export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPreview> {
-  const res = await fetch(`${API_BASE}/trading/orders/preview`, {
+  const res = await fetch(`${API_BASE}${tradingPath("/trading/orders/preview")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(ticket),
@@ -305,7 +319,7 @@ export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPre
  * ceiling, or the broker's own -- all arrive as a typed 422 so the ticket
  * renders them through one path. */
 export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: Order }> {
-  const res = await fetch(`${API_BASE}/trading/orders`, {
+  const res = await fetch(`${API_BASE}${tradingPath("/trading/orders")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(ticket),
@@ -349,7 +363,7 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 export function cancelOrder(orderId: string): Promise<{ cancelled: string }> {
-  return deleteJson<{ cancelled: string }>(`/trading/orders/${encodeURIComponent(orderId)}`);
+  return deleteJson<{ cancelled: string }>(tradingPath(`/trading/orders/${encodeURIComponent(orderId)}`));
 }
 
 /** Move a working stop order to a new price. The symbol rides along as a
@@ -359,7 +373,7 @@ export function replaceStop(
   symbol: string,
   stopPrice: number,
 ): Promise<{ order: Order }> {
-  return patchJson<{ order: Order }>(`/trading/orders/${encodeURIComponent(orderId)}`, {
+  return patchJson<{ order: Order }>(tradingPath(`/trading/orders/${encodeURIComponent(orderId)}`), {
     symbol,
     stop_price: stopPrice,
   });
@@ -373,7 +387,7 @@ export function replaceTarget(
   symbol: string,
   limitPrice: number,
 ): Promise<{ order: Order }> {
-  return patchJson<{ order: Order }>(`/trading/orders/${encodeURIComponent(orderId)}/target`, {
+  return patchJson<{ order: Order }>(tradingPath(`/trading/orders/${encodeURIComponent(orderId)}/target`), {
     symbol,
     limit_price: limitPrice,
   });
@@ -391,5 +405,5 @@ export interface CloseResult {
 
 export function closePosition(symbol: string, qty?: number): Promise<CloseResult> {
   const suffix = qty != null ? `?qty=${encodeURIComponent(qty)}` : "";
-  return deleteJson<CloseResult>(`/trading/positions/${encodeURIComponent(symbol)}${suffix}`);
+  return deleteJson<CloseResult>(tradingPath(`/trading/positions/${encodeURIComponent(symbol)}${suffix}`));
 }

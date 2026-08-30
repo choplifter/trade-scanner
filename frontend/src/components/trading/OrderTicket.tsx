@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { OrderRejectedError, dayHigh, previewOrder, referencePrice, submitOrder } from "../../api/http";
+import type { TradingMode } from "../../api/tradingMode";
 import { useTradingContext } from "../../context/TradingContext";
 import { Modal } from "../common/Modal";
 import { exitsForPosition, num } from "../../types/trading";
@@ -173,6 +174,11 @@ interface OrderTicketProps {
   /** Called after a successful submit so the positions/orders tables and the
    * account line refresh immediately rather than waiting for the next poll. */
   onSubmitted: () => void;
+  /** Which backend this ticket's submit actually reaches -- purely for the
+   * confirm dialog's own label; the routing itself happens transparently in
+   * api/http.ts (see api/tradingMode.ts). */
+  mode: TradingMode;
+  paper: boolean;
 }
 
 /** The order ticket. Sizes and prices through the server on every edit, so
@@ -190,6 +196,8 @@ export function OrderTicket({
   position,
   orders,
   onSubmitted,
+  mode,
+  paper,
 }: OrderTicketProps) {
   // For the chart's indicative (draft) lines -- see the effects near the
   // bottom of the hook section below. Not via props: ChartWidget is a
@@ -1153,7 +1161,13 @@ export function OrderTicket({
                 {order.take_profit_price !== null ? `Target ${order.take_profit_price}` : ""}
               </p>
             )}
-            <p className="order-confirm-mode">PAPER — simulated account</p>
+            <p className="order-confirm-mode">
+              {mode === "simulation"
+                ? "SIMULATION — practice fill, no real order placed"
+                : paper
+                  ? "PAPER — simulated account"
+                  : "LIVE — real money"}
+            </p>
             <div className="order-confirm-actions">
               <button type="button" className="timeframe-button" onClick={() => setConfirming(false)}>
                 Cancel

@@ -18,11 +18,23 @@ from app.dash_app.state import bind as bind_dash_state
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.news_cache import NewsCache
 from app.market_data.stream_manager import StreamManager
-from app.routers import meta, scanners, screener, strategies, symbols, trade_ideas, trading, watchlist
+from app.routers import (
+    meta,
+    scanners,
+    screener,
+    strategies,
+    symbols,
+    trade_ideas,
+    trading,
+    trading_sim,
+    watchlist,
+)
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.engine import ScannerEngine
 from app.scanners.history_store import ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
+from app.trading.sim.loop import run_sim_fill_loop
+from app.trading.sim.store import SimStore
 from app.trading.trade_store import TradeStore
 from app.ws import chart_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
@@ -67,6 +79,13 @@ async def lifespan(app: FastAPI):
     trade_store = TradeStore(settings.scanner_history_db_path)
     await trade_store.init_schema()
     app.state.trade_store = trade_store
+
+    # Simulation Mode's local order book -- same file, its own tables (see
+    # app.trading.sim.store). Independent of trading_enabled/alpaca_paper:
+    # it never touches clients.trading, so it's ready regardless of those.
+    sim_store = SimStore(settings.scanner_history_db_path)
+    await sim_store.init_schema(settings.trading_sim_starting_cash)
+    app.state.sim_store = sim_store
 
     fundamentals_client = httpx.AsyncClient(timeout=10.0)
     fundamentals = FundamentalsCache(settings, fundamentals_client)
@@ -134,11 +153,13 @@ async def lifespan(app: FastAPI):
         logger.exception("Latest-session rows backfill failed -- scanners may show empty when closed")
 
     scanner_task = asyncio.create_task(engine.run_loop())
+    sim_fill_task = asyncio.create_task(run_sim_fill_loop(clients, settings, sim_store))
 
     try:
         yield
     finally:
         scanner_task.cancel()
+        sim_fill_task.cancel()
         await clients.stop_stream()
         await fundamentals.aclose()
 
@@ -160,6 +181,7 @@ app.include_router(strategies.router)
 app.include_router(symbols.router)
 app.include_router(trade_ideas.router)
 app.include_router(trading.router)
+app.include_router(trading_sim.router)
 app.include_router(watchlist.router)
 app.include_router(scanner_ws.router)
 app.include_router(chart_ws.router)

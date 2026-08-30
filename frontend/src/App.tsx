@@ -11,14 +11,17 @@ import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
+import { SimulationToggle } from "./components/trading/SimulationToggle";
 import { TradingWidget } from "./components/trading/TradingWidget";
 import { WatchlistPanel } from "./components/watchlist/WatchlistPanel";
-import { TradingProvider } from "./context/TradingContext";
+import { TradingProvider, useTradingContext } from "./context/TradingContext";
 import type { ChartFocus } from "./types/screener";
 import { useAlarms } from "./hooks/useAlarms";
 import { useDashboardLayout, type WidgetId } from "./hooks/useDashboardLayout";
 import { useMarketConditions } from "./hooks/useMarketConditions";
 import { useMarketSession } from "./hooks/useMarketSession";
+import { useTradingMode } from "./hooks/useTradingMode";
+import type { TradingMode } from "./api/tradingMode";
 
 const SESSION_LABEL: Record<string, string> = {
   premarket: "Premarket",
@@ -33,7 +36,12 @@ const CONDITIONS_LABEL: Record<string, string> = {
   red: "Elevated Risk",
 };
 
-export default function App() {
+/** Split out of App so this can call useTradingContext() -- App itself
+ * renders <TradingProvider>, so App's own body is not a descendant of it
+ * and cannot consume the context. Being a descendant is what lets the
+ * Simulation toggle force an immediate refresh() instead of waiting for
+ * useTrading's next poll tick (up to POLL_MS) to reflect the switch. */
+function AppShell() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   // Where the chart should jump to, set only by clicking a backtest pick.
   const [chartFocus, setChartFocus] = useState<ChartFocus | null>(null);
@@ -58,6 +66,19 @@ export default function App() {
   const conditions = useMarketConditions();
   const alarms = useAlarms();
   const dashboardLayout = useDashboardLayout();
+  const tradingMode = useTradingMode();
+  const { refresh: refreshTrading } = useTradingContext();
+
+  const handleTradingModeChange = useCallback(
+    (next: TradingMode) => {
+      tradingMode.setMode(next);
+      // Without this the switch still works, but positions/orders/account
+      // would show the old mode's data until useTrading's next poll tick
+      // (up to POLL_MS) -- see the AppShell/App split above.
+      refreshTrading();
+    },
+    [tradingMode, refreshTrading],
+  );
 
   // One set of widget elements, shared by both layouts. Memoized because
   // react-grid-layout re-renders on every pointermove during a drag, and a
@@ -87,19 +108,26 @@ export default function App() {
       // positions/orders via TradingContext instead, which re-renders its
       // own consumers on a poll tick without touching this memo at all.
       trading: (
-        <TradingWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+        <TradingWidget
+          selectedSymbol={selectedSymbol}
+          onSelectSymbol={setSelectedSymbol}
+          mode={tradingMode.mode}
+        />
       ),
       watchlist: (
         <WatchlistPanel selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
     }),
-    [selectedSymbol, chartFocus, selectSymbol, selectPick],
+    // tradingMode.mode is deliberately a dependency, unlike the poll-tick
+    // state the comment above guards against: switching modes should
+    // remount the trading widget's local state, the same way a symbol
+    // change does -- it is a rare, intentional action, not a tick.
+    [selectedSymbol, chartFocus, selectSymbol, selectPick, tradingMode.mode],
   );
 
   return (
-    <TradingProvider>
-      <div className="app-shell">
-        <header className="app-header">
+    <div className="app-shell">
+      <header className="app-header">
           <h1>Stocks in Play</h1>
           <div className="header-actions">
             <a
@@ -139,6 +167,7 @@ export default function App() {
               activeCount={alarms.alarms.length}
               onClickCount={alarms.openOverlay}
             />
+            <SimulationToggle mode={tradingMode.mode} onChange={handleTradingModeChange} />
           </div>
         </header>
         <AlarmsOverlay
@@ -201,6 +230,13 @@ export default function App() {
           )}
         </main>
       </div>
+  );
+}
+
+export default function App() {
+  return (
+    <TradingProvider>
+      <AppShell />
     </TradingProvider>
   );
 }

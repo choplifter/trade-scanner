@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     # to prefill the ticket. 1% is the common day-trading convention.
     trading_default_risk_pct: float = 1.0
 
+    # Simulation Mode: a fully local, broker-free order book (app.trading.sim)
+    # that fills against real live prices without ever touching alpaca_clients
+    # .trading -- so it needs neither trading_enabled nor alpaca_paper to be
+    # on, and works even without Alpaca credentials configured at all (only
+    # its price-dependent calls degrade without them). Starting cash sized to
+    # the US PDT minimum rather than a round $100k, so sizing/risk % behavior
+    # in practice mode resembles a realistic smaller account.
+    trading_sim_starting_cash: float = 25_000.0
+    # How often the background fill loop (app.trading.sim.loop) re-checks
+    # working sim orders against a fresh live price. Its own setting, not a
+    # reuse of scanner_poll_interval_regular, because fill correctness here
+    # has nothing to do with how the scanner is tuned.
+    trading_sim_fill_check_interval: float = 5.0
+
     # Never hardcode a feed elsewhere in the app -- every Alpaca data call must
     # read this value. That held up: moving to the paid SIP subscription on
     # 2026-08-20 was a one-line .env change, no code touched.
