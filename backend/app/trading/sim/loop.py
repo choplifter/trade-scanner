@@ -49,16 +49,24 @@ async def run_sim_fill_loop(clients: AlpacaClients, settings: Settings, store: S
     """Runs unconditionally whenever the app is up -- independent of
     trading_enabled/alpaca_paper, since SimBroker never touches the real
     broker client. Idles harmlessly with no Alpaca credentials or no
-    working sim orders."""
-    broker = SimBroker(store)
+    working sim orders.
+
+    Serves every user off one shared batched price fetch: the union of
+    symbols across everyone's working orders is priced in a single
+    StockSnapshotRequest, then each user's own SimBroker checks fills
+    against that same price map -- one broker instance per user (a
+    SimBroker is cheap, just a store reference plus a user_id) rather than
+    one per-user network round trip.
+    """
     while True:
         try:
-            working = await store.working_orders_by_symbol()
-            symbols = sorted(working.keys())
+            by_user = await store.all_working_orders()
+            symbols = sorted({symbol for orders_by_symbol in by_user.values() for symbol in orders_by_symbol})
             if symbols and settings.has_credentials:
                 prices = await _batch_prices(clients, symbols)
                 if prices:
-                    await broker.check_fills(prices)
+                    for user_id in by_user:
+                        await SimBroker(store, user_id).check_fills(prices)
         except Exception:
             logger.exception("Sim fill loop tick failed")
         await asyncio.sleep(settings.trading_sim_fill_check_interval)

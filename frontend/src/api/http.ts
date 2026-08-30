@@ -40,7 +40,7 @@ async function extractErrorMessage(res: Response, fallback: string): Promise<str
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res, `GET ${path} failed: ${res.status}`));
   }
@@ -50,6 +50,7 @@ async function getJson<T>(path: string): Promise<T> {
 async function postJson<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
+    credentials: "include",
     ...(body === undefined
       ? {}
       : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
@@ -107,6 +108,21 @@ export function searchSymbols(query: string): Promise<{ matches: SymbolSuggestio
 export function getWatchlistQuotes(symbols: string[]): Promise<WatchlistQuotes> {
   if (symbols.length === 0) return Promise.resolve({});
   return getJson<WatchlistQuotes>(`/watchlist/quotes?symbols=${encodeURIComponent(symbols.join(","))}`);
+}
+
+/** The logged-in user's watchlist symbol list -- per-user backend state
+ * (see app.watchlist.store.WatchlistStore), seeded from the same default
+ * list on first use. */
+export function getWatchlistSymbols(): Promise<{ symbols: string[] }> {
+  return getJson<{ symbols: string[] }>("/watchlist/symbols");
+}
+
+export function addWatchlistSymbol(symbol: string): Promise<{ symbols: string[] }> {
+  return postJson<{ symbols: string[] }>("/watchlist/symbols", { symbol });
+}
+
+export function removeWatchlistSymbol(symbol: string): Promise<{ symbols: string[] }> {
+  return deleteJson<{ symbols: string[] }>(`/watchlist/symbols/${encodeURIComponent(symbol)}`);
 }
 
 export interface SessionResponse {
@@ -211,6 +227,7 @@ export async function backtestScreen(
 ): Promise<ScreenBacktestResponse> {
   const res = await fetch(`${API_BASE}/screener/backtest`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ screen, ...options }),
   });
@@ -280,7 +297,9 @@ export class OrderRejectedError extends Error {
  * quote data yet), matching how the ticket already treats a missing
  * reference price -- a hotkey guard, not a hard failure. */
 export async function dayHigh(symbol: string): Promise<number | null> {
-  const res = await fetch(`${API_BASE}${tradingPath(`/trading/day-high/${encodeURIComponent(symbol)}`)}`);
+  const res = await fetch(`${API_BASE}${tradingPath(`/trading/day-high/${encodeURIComponent(symbol)}`)}`, {
+    credentials: "include",
+  });
   if (!res.ok) return null;
   const body = (await res.json()) as { day_high: number | null };
   return body.day_high;
@@ -292,6 +311,7 @@ export async function dayHigh(symbol: string): Promise<number | null> {
 export async function referencePrice(symbol: string): Promise<number | null> {
   const res = await fetch(
     `${API_BASE}${tradingPath(`/trading/reference-price/${encodeURIComponent(symbol)}`)}`,
+    { credentials: "include" },
   );
   if (!res.ok) return null;
   const body = (await res.json()) as { price: number | null };
@@ -302,6 +322,7 @@ export async function referencePrice(symbol: string): Promise<number | null> {
 export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPreview> {
   const res = await fetch(`${API_BASE}${tradingPath("/trading/orders/preview")}`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(ticket),
   });
@@ -321,6 +342,7 @@ export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPre
 export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: Order }> {
   const res = await fetch(`${API_BASE}${tradingPath("/trading/orders")}`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(ticket),
   });
@@ -335,7 +357,7 @@ export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: 
 }
 
 async function deleteJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", credentials: "include" });
   if (res.status === 422) {
     const body = (await res.json()) as { detail: TradingRejection };
     throw new OrderRejectedError(body.detail);
@@ -349,6 +371,7 @@ async function deleteJson<T>(path: string): Promise<T> {
 async function patchJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "PATCH",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

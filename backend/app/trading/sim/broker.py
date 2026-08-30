@@ -183,8 +183,9 @@ def _open_fresh(
 
 
 class SimBroker:
-    def __init__(self, store: SimStore):
+    def __init__(self, store: SimStore, user_id: int):
         self._store = store
+        self._user_id = user_id
 
     async def submit(self, resolved: ResolvedOrder, *, reference_price: float | None) -> dict:
         now = datetime.now(UTC)
@@ -212,7 +213,7 @@ class SimBroker:
             "filled_at": None,
             "canceled_at": None,
         }
-        await self._store.insert_order(entry_row)
+        await self._store.insert_order(self._user_id, entry_row)
 
         oco_group = (
             str(uuid.uuid4())
@@ -222,6 +223,7 @@ class SimBroker:
         exit_side = "sell" if resolved.side == "buy" else "buy"
         if resolved.take_profit_price is not None:
             await self._store.insert_order(
+                self._user_id,
                 {
                     "id": str(uuid.uuid4()),
                     "parent_id": order_id,
@@ -246,6 +248,7 @@ class SimBroker:
             )
         if resolved.stop_loss_price is not None:
             await self._store.insert_order(
+                self._user_id,
                 {
                     "id": str(uuid.uuid4()),
                     "parent_id": order_id,
@@ -272,10 +275,11 @@ class SimBroker:
         if fills_now:
             await self._fill_order(entry_row, reference_price, now)
 
-        return await self._store.get_order(order_id)
+        return await self._store.get_order(self._user_id, order_id)
 
     async def _fill_order(self, order: dict, fill_price: float, now: datetime) -> None:
         await self._store.update_order(
+            self._user_id,
             order["id"],
             status="filled",
             filled_qty=order["qty"],
@@ -283,15 +287,15 @@ class SimBroker:
             filled_at=now.isoformat(),
         )
         if order.get("oco_group_id"):
-            await self._store.cancel_oco_siblings(order["oco_group_id"], order["id"], now)
+            await self._store.cancel_oco_siblings(self._user_id, order["oco_group_id"], order["id"], now)
 
         is_entry = order.get("leg_role") in (None, "entry")
         initial_stop = None
         if is_entry:
-            await self._store.activate_children(order["id"])
-            initial_stop = await self._store.child_stop_price(order["id"])
+            await self._store.activate_children(self._user_id, order["id"])
+            initial_stop = await self._store.child_stop_price(self._user_id, order["id"])
 
-        position = await self._store.get_position(order["symbol"])
+        position = await self._store.get_position(self._user_id, order["symbol"])
         new_position, trade_row = _apply_fill_to_position(
             position,
             symbol=order["symbol"],
@@ -304,18 +308,18 @@ class SimBroker:
         )
         if new_position is None:
             if position is not None:
-                await self._store.delete_position(order["symbol"])
+                await self._store.delete_position(self._user_id, order["symbol"])
         else:
-            await self._store.upsert_position(new_position)
+            await self._store.upsert_position(self._user_id, new_position)
         if trade_row is not None:
-            await self._store.insert_trade(trade_row)
+            await self._store.insert_trade(self._user_id, trade_row)
 
         cash_delta = order["qty"] * fill_price if order["side"] == "sell" else -(order["qty"] * fill_price)
-        await self._store.add_cash(cash_delta)
+        await self._store.add_cash(self._user_id, cash_delta)
 
     async def check_fills(self, prices: dict[str, float]) -> None:
         now = datetime.now(UTC)
-        working = await self._store.working_orders_by_symbol()
+        working = await self._store.working_orders_by_symbol(self._user_id)
         skip: set[str] = set()
         for symbol, orders in working.items():
             price = prices.get(symbol)
@@ -336,15 +340,15 @@ class SimBroker:
                     )
 
     async def cancel(self, order_id: str) -> None:
-        order = await self._store.get_order(order_id)
+        order = await self._store.get_order(self._user_id, order_id)
         if order is None or order["status"] not in ("new", "held"):
             raise OrderRejected("No such working order.", field="order_id")
         now = datetime.now(UTC)
-        await self._store.update_order(order_id, status="canceled", canceled_at=now.isoformat())
+        await self._store.update_order(self._user_id, order_id, status="canceled", canceled_at=now.isoformat())
         if order.get("oco_group_id"):
-            await self._store.cancel_oco_siblings(order["oco_group_id"], order_id, now)
+            await self._store.cancel_oco_siblings(self._user_id, order["oco_group_id"], order_id, now)
         if order.get("leg_role") in (None, "entry"):
-            await self._store.cancel_children(order_id, now)
+            await self._store.cancel_children(self._user_id, order_id, now)
 
     async def replace_price(self, order_id: str, *, stop_price: float | None, limit_price: float | None) -> dict:
         fields: dict = {}
@@ -352,19 +356,19 @@ class SimBroker:
             fields["stop_price"] = stop_price
         if limit_price is not None:
             fields["limit_price"] = limit_price
-        await self._store.update_order(order_id, **fields)
-        return await self._store.get_order(order_id)
+        await self._store.update_order(self._user_id, order_id, **fields)
+        return await self._store.get_order(self._user_id, order_id)
 
     async def close_position(self, symbol: str, qty: float | None, *, reference_price: float) -> dict:
-        position = await self._store.get_position(symbol)
+        position = await self._store.get_position(self._user_id, symbol)
         if position is None:
             raise OrderRejected(f"No open position in {symbol}.", field="symbol")
 
         now = datetime.now(UTC)
-        working = (await self._store.working_orders_by_symbol()).get(symbol, [])
+        working = (await self._store.working_orders_by_symbol(self._user_id)).get(symbol, [])
         cancelled: list[str] = []
         for order in working:
-            await self._store.update_order(order["id"], status="canceled", canceled_at=now.isoformat())
+            await self._store.update_order(self._user_id, order["id"], status="canceled", canceled_at=now.isoformat())
             cancelled.append(order["id"])
 
         position_qty = position["qty"]
@@ -395,10 +399,10 @@ class SimBroker:
             "filled_at": None,
             "canceled_at": None,
         }
-        await self._store.insert_order(order_row)
+        await self._store.insert_order(self._user_id, order_row)
         await self._fill_order(order_row, reference_price, now)
 
-        result = await self._store.get_order(order_id)
+        result = await self._store.get_order(self._user_id, order_id)
         result["cancelled_orders"] = cancelled
         # Re-arming a partial close's remaining stop/target (what the real
         # OrderService does) is out of v1 scope for the simulator -- a

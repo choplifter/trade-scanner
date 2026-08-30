@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { TradeIdeasWidget } from "./components/ai/TradeIdeasWidget";
 import { AlarmsOverlay } from "./components/alarms/AlarmsOverlay";
 import { AlarmsToggle } from "./components/alarms/AlarmsToggle";
+import { LoginPage } from "./components/auth/LoginPage";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
@@ -16,7 +17,9 @@ import { TradingWidget } from "./components/trading/TradingWidget";
 import { WatchlistPanel } from "./components/watchlist/WatchlistPanel";
 import { TradingProvider, useTradingContext } from "./context/TradingContext";
 import type { ChartFocus } from "./types/screener";
+import type { User } from "./api/auth";
 import { useAlarms } from "./hooks/useAlarms";
+import { useAuth } from "./hooks/useAuth";
 import { useDashboardLayout, type WidgetId } from "./hooks/useDashboardLayout";
 import { useMarketConditions } from "./hooks/useMarketConditions";
 import { useMarketSession } from "./hooks/useMarketSession";
@@ -41,7 +44,12 @@ const CONDITIONS_LABEL: Record<string, string> = {
  * and cannot consume the context. Being a descendant is what lets the
  * Simulation toggle force an immediate refresh() instead of waiting for
  * useTrading's next poll tick (up to POLL_MS) to reflect the switch. */
-function AppShell() {
+interface AppShellProps {
+  user: User;
+  onLogout: () => void;
+}
+
+function AppShell({ user, onLogout }: AppShellProps) {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   // Where the chart should jump to, set only by clicking a backtest pick.
   const [chartFocus, setChartFocus] = useState<ChartFocus | null>(null);
@@ -168,6 +176,12 @@ function AppShell() {
               onClickCount={alarms.openOverlay}
             />
             <SimulationToggle mode={tradingMode.mode} onChange={handleTradingModeChange} />
+            <span className="logout-link">
+              {user.display_name} ·{" "}
+              <button type="button" className="row-action" onClick={onLogout}>
+                Logout
+              </button>
+            </span>
           </div>
         </header>
         <AlarmsOverlay
@@ -234,9 +248,26 @@ function AppShell() {
 }
 
 export default function App() {
+  const auth = useAuth();
+
+  // Blank rather than a spinner for this one beat -- it's a single getMe()
+  // round trip, and a flash of "logged out" before it resolves would be
+  // worse than a brief blank frame.
+  if (auth.loading) return null;
+
+  if (!auth.user) {
+    return (
+      <LoginPage
+        onLogin={async (username, password) => {
+          await auth.login(username, password);
+        }}
+      />
+    );
+  }
+
   return (
     <TradingProvider>
-      <AppShell />
+      <AppShell user={auth.user} onLogout={() => void auth.logout()} />
     </TradingProvider>
   );
 }

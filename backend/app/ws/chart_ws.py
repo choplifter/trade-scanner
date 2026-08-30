@@ -2,6 +2,8 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.auth.dependency import get_current_user_ws
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -15,6 +17,13 @@ async def chart_ws(websocket: WebSocket) -> None:
     StreamManager and tags outgoing bar messages with symbol for the client
     to demux to the right widget.
     """
+    # Checked before accept() so an unauthenticated attempt fails the
+    # handshake cleanly instead of opening a socket just to close it --
+    # same "nobody unauthenticated sees anything" posture as every REST
+    # route (see main.py).
+    if await get_current_user_ws(websocket) is None:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     manager = websocket.app.state.connection_manager
     stream_manager = websocket.app.state.stream_manager

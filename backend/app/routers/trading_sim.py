@@ -11,13 +11,18 @@ credentials -- account/positions/orders/trades/cancel/close/reset all work
 with none configured; only the price-dependent calls (preview, submit,
 reference-price, day-high, replace-*) degrade, through resolve_ticket's own
 "no current price available" rejection.
+
+Every endpoint takes `user: dict = Depends(get_current_user)` -- Simulation
+Mode is per-user (see app.trading.sim.store), so every call needs to know
+whose account it's touching, not just that *someone* is logged in.
 """
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from app.auth.dependency import get_current_user
 from app.trading.errors import TradingError
 from app.trading.models import OrderTicket
 from app.trading.sim.service import SimOrderService
@@ -27,21 +32,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/trading/sim", tags=["trading-sim"])
 
 
-def _service(request: Request) -> SimOrderService:
+def _service(request: Request, user: dict) -> SimOrderService:
     settings = request.app.state.settings
     return SimOrderService(
         request.app.state.alpaca_clients,
         settings,
         request.app.state.sim_store,
+        user["id"],
         engine=getattr(request.app.state, "scanner_engine", None),
     )
 
 
 @router.get("/account")
-async def get_account(request: Request) -> dict:
+async def get_account(request: Request, user: dict = Depends(get_current_user)) -> dict:
     settings = request.app.state.settings
     try:
-        account = await _service(request).account()
+        account = await _service(request, user).account()
     except Exception:
         logger.exception("Sim account fetch failed")
         raise HTTPException(status_code=502, detail="Failed to read the simulated account") from None
@@ -54,9 +60,9 @@ async def get_account(request: Request) -> dict:
 
 
 @router.get("/positions")
-async def get_positions(request: Request) -> dict:
+async def get_positions(request: Request, user: dict = Depends(get_current_user)) -> dict:
     try:
-        positions = await _service(request).positions()
+        positions = await _service(request, user).positions()
     except Exception:
         logger.exception("Sim positions fetch failed")
         raise HTTPException(status_code=502, detail="Failed to read simulated positions") from None
@@ -64,9 +70,9 @@ async def get_positions(request: Request) -> dict:
 
 
 @router.get("/orders")
-async def get_orders(request: Request, status: str = "open") -> dict:
+async def get_orders(request: Request, status: str = "open", user: dict = Depends(get_current_user)) -> dict:
     try:
-        orders = await _service(request).orders(status)
+        orders = await _service(request, user).orders(status)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -76,9 +82,11 @@ async def get_orders(request: Request, status: str = "open") -> dict:
 
 
 @router.get("/trades")
-async def get_trades(request: Request, range_key: str = Query("all", alias="range")) -> dict:
+async def get_trades(
+    request: Request, range_key: str = Query("all", alias="range"), user: dict = Depends(get_current_user)
+) -> dict:
     try:
-        return await _service(request).trades(range_key)
+        return await _service(request, user).trades(range_key)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -87,9 +95,11 @@ async def get_trades(request: Request, range_key: str = Query("all", alias="rang
 
 
 @router.get("/portfolio-history")
-async def get_portfolio_history(request: Request, range_key: str = Query("1M", alias="range")) -> dict:
+async def get_portfolio_history(
+    request: Request, range_key: str = Query("1M", alias="range"), user: dict = Depends(get_current_user)
+) -> dict:
     try:
-        return await _service(request).portfolio_history(range_key)
+        return await _service(request, user).portfolio_history(range_key)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -98,9 +108,9 @@ async def get_portfolio_history(request: Request, range_key: str = Query("1M", a
 
 
 @router.get("/reference-price/{symbol}")
-async def get_reference_price(symbol: str, request: Request) -> dict:
+async def get_reference_price(symbol: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
     try:
-        price = await _service(request).reference_price(symbol.upper())
+        price = await _service(request, user).reference_price(symbol.upper())
     except Exception:
         logger.exception("Sim reference-price lookup failed for %s", symbol)
         raise HTTPException(status_code=502, detail="Failed to fetch reference price") from None
@@ -108,9 +118,9 @@ async def get_reference_price(symbol: str, request: Request) -> dict:
 
 
 @router.get("/day-high/{symbol}")
-async def get_day_high(symbol: str, request: Request) -> dict:
+async def get_day_high(symbol: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
     try:
-        high = await _service(request).day_high(symbol.upper())
+        high = await _service(request, user).day_high(symbol.upper())
     except Exception:
         logger.exception("Sim day-high lookup failed for %s", symbol)
         raise HTTPException(status_code=502, detail="Failed to fetch day high") from None
@@ -118,10 +128,10 @@ async def get_day_high(symbol: str, request: Request) -> dict:
 
 
 @router.post("/orders/preview")
-async def preview_order(ticket: OrderTicket, request: Request) -> dict:
+async def preview_order(ticket: OrderTicket, request: Request, user: dict = Depends(get_current_user)) -> dict:
     settings = request.app.state.settings
     try:
-        resolved = await _service(request).preview(ticket)
+        resolved = await _service(request, user).preview(ticket)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -143,9 +153,9 @@ async def preview_order(ticket: OrderTicket, request: Request) -> dict:
 
 
 @router.post("/orders")
-async def submit_order(ticket: OrderTicket, request: Request) -> dict:
+async def submit_order(ticket: OrderTicket, request: Request, user: dict = Depends(get_current_user)) -> dict:
     try:
-        order = await _service(request).submit(ticket)
+        order = await _service(request, user).submit(ticket)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -160,9 +170,11 @@ class ReplaceStopRequest(BaseModel):
 
 
 @router.patch("/orders/{order_id}")
-async def replace_stop(order_id: str, body: ReplaceStopRequest, request: Request) -> dict:
+async def replace_stop(
+    order_id: str, body: ReplaceStopRequest, request: Request, user: dict = Depends(get_current_user)
+) -> dict:
     try:
-        order = await _service(request).replace_stop(order_id, body.symbol, body.stop_price)
+        order = await _service(request, user).replace_stop(order_id, body.symbol, body.stop_price)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -177,9 +189,11 @@ class ReplaceTargetRequest(BaseModel):
 
 
 @router.patch("/orders/{order_id}/target")
-async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Request) -> dict:
+async def replace_target(
+    order_id: str, body: ReplaceTargetRequest, request: Request, user: dict = Depends(get_current_user)
+) -> dict:
     try:
-        order = await _service(request).replace_target(order_id, body.symbol, body.limit_price)
+        order = await _service(request, user).replace_target(order_id, body.symbol, body.limit_price)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -189,9 +203,9 @@ async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Req
 
 
 @router.delete("/orders/{order_id}")
-async def cancel_order(order_id: str, request: Request) -> dict:
+async def cancel_order(order_id: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
     try:
-        await _service(request).cancel(order_id)
+        await _service(request, user).cancel(order_id)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -205,9 +219,10 @@ async def close_position(
     symbol: str,
     request: Request,
     qty: float | None = Query(default=None, gt=0),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     try:
-        order = await _service(request).close_position(symbol, qty)
+        order = await _service(request, user).close_position(symbol, qty)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -217,13 +232,13 @@ async def close_position(
 
 
 @router.post("/reset")
-async def reset_sim_account(request: Request) -> dict:
+async def reset_sim_account(request: Request, user: dict = Depends(get_current_user)) -> dict:
     """Wipes simulated positions/orders/trades and reseeds cash back to
     settings.trading_sim_starting_cash. No real-trading equivalent --
     practice is meant to be restartable."""
     settings = request.app.state.settings
     try:
-        account = await _service(request).reset()
+        account = await _service(request, user).reset()
     except Exception:
         logger.exception("Sim account reset failed")
         raise HTTPException(status_code=502, detail="Failed to reset the simulated account") from None

@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from app.auth.dependency import get_current_user_ws
 from app.scanners import screener
 from app.scanners.screener_service import screen_live_rows
 
@@ -29,6 +30,9 @@ async def scanners_ws(websocket: WebSocket) -> None:
     Both can be active on one socket at once -- they're independent
     registries, and the client decides which it needs.
     """
+    if await get_current_user_ws(websocket) is None:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     manager = websocket.app.state.connection_manager
     engine = websocket.app.state.scanner_engine

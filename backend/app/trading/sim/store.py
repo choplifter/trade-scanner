@@ -10,6 +10,13 @@ confirms it's already on -- see ScannerHistoryStore._connect).
 This module only ever reads/writes sim_* tables. It never touches
 alpaca_clients.trading -- the whole point of Simulation Mode is a broker
 the app owns, not a proxy to Alpaca's paper account.
+
+Every table is scoped by user_id (see app.auth) -- each logged-in user gets
+their own account/positions/orders/trades, never another's. sim_account's
+PK is user_id itself (one row per user, created lazily on first touch);
+sim_orders/sim_trades keep their own globally-unique id (a uuid) as PK and
+carry user_id as an indexed column instead, since nothing about those ids
+needs to be user-scoped to stay unique.
 """
 
 import asyncio
@@ -19,7 +26,7 @@ from datetime import UTC, datetime
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sim_account (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
+    user_id INTEGER PRIMARY KEY,
     cash REAL NOT NULL,
     starting_cash REAL NOT NULL,
     created_at TEXT NOT NULL,
@@ -27,7 +34,8 @@ CREATE TABLE IF NOT EXISTS sim_account (
 );
 
 CREATE TABLE IF NOT EXISTS sim_positions (
-    symbol TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
     side TEXT NOT NULL,
     qty REAL NOT NULL,
     avg_entry_price REAL NOT NULL,
@@ -37,11 +45,13 @@ CREATE TABLE IF NOT EXISTS sim_positions (
     exit_qty REAL NOT NULL DEFAULT 0,
     exit_value REAL NOT NULL DEFAULT 0,
     exit_order_ids TEXT NOT NULL DEFAULT '[]',
-    fill_count INTEGER NOT NULL DEFAULT 1
+    fill_count INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (user_id, symbol)
 );
 
 CREATE TABLE IF NOT EXISTS sim_orders (
     id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
     parent_id TEXT,
     oco_group_id TEXT,
     leg_role TEXT,
@@ -61,12 +71,13 @@ CREATE TABLE IF NOT EXISTS sim_orders (
     filled_at TEXT,
     canceled_at TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_sim_orders_symbol_status ON sim_orders(symbol, status);
+CREATE INDEX IF NOT EXISTS idx_sim_orders_user_status ON sim_orders(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_sim_orders_parent ON sim_orders(parent_id);
 CREATE INDEX IF NOT EXISTS idx_sim_orders_oco ON sim_orders(oco_group_id);
 
 CREATE TABLE IF NOT EXISTS sim_trades (
     id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
     symbol TEXT NOT NULL,
     side TEXT NOT NULL,
     opened_at TEXT NOT NULL,
@@ -84,7 +95,7 @@ CREATE TABLE IF NOT EXISTS sim_trades (
     fill_count INTEGER NOT NULL,
     recorded_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_sim_trades_closed_at ON sim_trades(closed_at);
+CREATE INDEX IF NOT EXISTS idx_sim_trades_user_closed_at ON sim_trades(user_id, closed_at);
 """
 
 _ORDER_COLUMNS = (
@@ -123,51 +134,60 @@ class SimStore:
 
     # --- schema / lifecycle --------------------------------------------
 
-    def _init_schema_sync(self, starting_cash: float, now: datetime) -> None:
+    def _init_schema_sync(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
-            existing = conn.execute("SELECT id FROM sim_account WHERE id = 1").fetchone()
+
+    async def init_schema(self) -> None:
+        """No longer seeds a singleton account row -- each user's
+        sim_account row is created lazily on first touch (see
+        ensure_account), since users are created after the app starts."""
+        await asyncio.to_thread(self._init_schema_sync)
+
+    def _ensure_account_sync(self, user_id: int, starting_cash: float, now: datetime) -> None:
+        with self._connect() as conn:
+            existing = conn.execute("SELECT user_id FROM sim_account WHERE user_id = ?", (user_id,)).fetchone()
             if existing is None:
                 conn.execute(
-                    "INSERT INTO sim_account (id, cash, starting_cash, created_at, reset_at) "
-                    "VALUES (1, ?, ?, ?, ?)",
-                    (starting_cash, starting_cash, now.isoformat(), now.isoformat()),
+                    "INSERT INTO sim_account (user_id, cash, starting_cash, created_at, reset_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (user_id, starting_cash, starting_cash, now.isoformat(), now.isoformat()),
                 )
 
-    async def init_schema(self, starting_cash: float) -> None:
-        await asyncio.to_thread(self._init_schema_sync, starting_cash, datetime.now(UTC))
+    async def ensure_account(self, user_id: int, starting_cash: float) -> None:
+        await asyncio.to_thread(self._ensure_account_sync, user_id, starting_cash, datetime.now(UTC))
 
-    def _reset_sync(self, starting_cash: float, now: datetime) -> None:
+    def _reset_sync(self, user_id: int, starting_cash: float, now: datetime) -> None:
         with self._connect() as conn:
-            conn.execute("DELETE FROM sim_positions")
-            conn.execute("DELETE FROM sim_orders")
-            conn.execute("DELETE FROM sim_trades")
+            conn.execute("DELETE FROM sim_positions WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM sim_orders WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM sim_trades WHERE user_id = ?", (user_id,))
             conn.execute(
-                "UPDATE sim_account SET cash = ?, starting_cash = ?, reset_at = ? WHERE id = 1",
-                (starting_cash, starting_cash, now.isoformat()),
+                "UPDATE sim_account SET cash = ?, starting_cash = ?, reset_at = ? WHERE user_id = ?",
+                (starting_cash, starting_cash, now.isoformat(), user_id),
             )
 
-    async def reset(self, starting_cash: float) -> None:
-        await asyncio.to_thread(self._reset_sync, starting_cash, datetime.now(UTC))
+    async def reset(self, user_id: int, starting_cash: float) -> None:
+        await asyncio.to_thread(self._reset_sync, user_id, starting_cash, datetime.now(UTC))
 
     # --- account ---------------------------------------------------------
 
-    def _get_account_row_sync(self) -> dict:
+    def _get_account_row_sync(self, user_id: int) -> dict:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT cash, starting_cash, created_at, reset_at FROM sim_account WHERE id = 1"
+                "SELECT cash, starting_cash, created_at, reset_at FROM sim_account WHERE user_id = ?", (user_id,)
             ).fetchone()
         return dict(row)
 
-    async def get_account_row(self) -> dict:
-        return await asyncio.to_thread(self._get_account_row_sync)
+    async def get_account_row(self, user_id: int) -> dict:
+        return await asyncio.to_thread(self._get_account_row_sync, user_id)
 
-    def _add_cash_sync(self, delta: float) -> None:
+    def _add_cash_sync(self, user_id: int, delta: float) -> None:
         with self._connect() as conn:
-            conn.execute("UPDATE sim_account SET cash = cash + ? WHERE id = 1", (delta,))
+            conn.execute("UPDATE sim_account SET cash = cash + ? WHERE user_id = ?", (delta, user_id))
 
-    async def add_cash(self, delta: float) -> None:
-        await asyncio.to_thread(self._add_cash_sync, delta)
+    async def add_cash(self, user_id: int, delta: float) -> None:
+        await asyncio.to_thread(self._add_cash_sync, user_id, delta)
 
     # --- positions ---------------------------------------------------------
 
@@ -180,111 +200,120 @@ class SimStore:
             d["exit_order_ids"] = []
         return d
 
-    def _list_positions_sync(self) -> list[dict]:
+    def _list_positions_sync(self, user_id: int) -> list[dict]:
         with self._connect() as conn:
-            rows = conn.execute(f"SELECT {', '.join(_POSITION_COLUMNS)} FROM sim_positions").fetchall()
+            rows = conn.execute(
+                f"SELECT {', '.join(_POSITION_COLUMNS)} FROM sim_positions WHERE user_id = ?", (user_id,)
+            ).fetchall()
         return [self._row_to_position(r) for r in rows]
 
-    async def list_positions(self) -> list[dict]:
-        return await asyncio.to_thread(self._list_positions_sync)
+    async def list_positions(self, user_id: int) -> list[dict]:
+        return await asyncio.to_thread(self._list_positions_sync, user_id)
 
-    def _get_position_sync(self, symbol: str) -> dict | None:
+    def _get_position_sync(self, user_id: int, symbol: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
-                f"SELECT {', '.join(_POSITION_COLUMNS)} FROM sim_positions WHERE symbol = ?", (symbol,)
+                f"SELECT {', '.join(_POSITION_COLUMNS)} FROM sim_positions WHERE user_id = ? AND symbol = ?",
+                (user_id, symbol),
             ).fetchone()
         return self._row_to_position(row) if row else None
 
-    async def get_position(self, symbol: str) -> dict | None:
-        return await asyncio.to_thread(self._get_position_sync, symbol)
+    async def get_position(self, user_id: int, symbol: str) -> dict | None:
+        return await asyncio.to_thread(self._get_position_sync, user_id, symbol)
 
-    def _upsert_position_sync(self, position: dict) -> None:
+    def _upsert_position_sync(self, user_id: int, position: dict) -> None:
         d = dict(position)
         d["exit_order_ids"] = json.dumps(d.get("exit_order_ids") or [])
-        placeholders = ", ".join("?" for _ in _POSITION_COLUMNS)
+        columns = ("user_id", *_POSITION_COLUMNS)
+        placeholders = ", ".join("?" for _ in columns)
         assignments = ", ".join(f"{c} = excluded.{c}" for c in _POSITION_COLUMNS if c != "symbol")
         with self._connect() as conn:
             conn.execute(
-                f"INSERT INTO sim_positions ({', '.join(_POSITION_COLUMNS)}) VALUES ({placeholders}) "
-                f"ON CONFLICT(symbol) DO UPDATE SET {assignments}",
-                tuple(d[c] for c in _POSITION_COLUMNS),
+                f"INSERT INTO sim_positions ({', '.join(columns)}) VALUES ({placeholders}) "
+                f"ON CONFLICT(user_id, symbol) DO UPDATE SET {assignments}",
+                (user_id, *(d[c] for c in _POSITION_COLUMNS)),
             )
 
-    async def upsert_position(self, position: dict) -> None:
-        await asyncio.to_thread(self._upsert_position_sync, position)
+    async def upsert_position(self, user_id: int, position: dict) -> None:
+        await asyncio.to_thread(self._upsert_position_sync, user_id, position)
 
-    def _delete_position_sync(self, symbol: str) -> None:
+    def _delete_position_sync(self, user_id: int, symbol: str) -> None:
         with self._connect() as conn:
-            conn.execute("DELETE FROM sim_positions WHERE symbol = ?", (symbol,))
+            conn.execute("DELETE FROM sim_positions WHERE user_id = ? AND symbol = ?", (user_id, symbol))
 
-    async def delete_position(self, symbol: str) -> None:
-        await asyncio.to_thread(self._delete_position_sync, symbol)
+    async def delete_position(self, user_id: int, symbol: str) -> None:
+        await asyncio.to_thread(self._delete_position_sync, user_id, symbol)
 
     # --- orders ---------------------------------------------------------
 
-    def _insert_order_sync(self, order: dict) -> None:
-        placeholders = ", ".join("?" for _ in _ORDER_COLUMNS)
+    def _insert_order_sync(self, user_id: int, order: dict) -> None:
+        columns = ("user_id", *_ORDER_COLUMNS)
+        placeholders = ", ".join("?" for _ in columns)
         with self._connect() as conn:
             conn.execute(
-                f"INSERT INTO sim_orders ({', '.join(_ORDER_COLUMNS)}) VALUES ({placeholders})",
-                tuple(order.get(c) for c in _ORDER_COLUMNS),
+                f"INSERT INTO sim_orders ({', '.join(columns)}) VALUES ({placeholders})",
+                (user_id, *(order.get(c) for c in _ORDER_COLUMNS)),
             )
 
-    async def insert_order(self, order: dict) -> None:
-        await asyncio.to_thread(self._insert_order_sync, order)
+    async def insert_order(self, user_id: int, order: dict) -> None:
+        await asyncio.to_thread(self._insert_order_sync, user_id, order)
 
-    def _get_order_sync(self, order_id: str) -> dict | None:
+    def _get_order_sync(self, user_id: int, order_id: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
-                f"SELECT {', '.join(_ORDER_COLUMNS)} FROM sim_orders WHERE id = ?", (order_id,)
+                f"SELECT {', '.join(_ORDER_COLUMNS)} FROM sim_orders WHERE id = ? AND user_id = ?",
+                (order_id, user_id),
             ).fetchone()
         return dict(row) if row else None
 
-    async def get_order(self, order_id: str) -> dict | None:
-        return await asyncio.to_thread(self._get_order_sync, order_id)
+    async def get_order(self, user_id: int, order_id: str) -> dict | None:
+        return await asyncio.to_thread(self._get_order_sync, user_id, order_id)
 
-    def _update_order_sync(self, order_id: str, fields: dict) -> None:
+    def _update_order_sync(self, user_id: int, order_id: str, fields: dict) -> None:
         assignments = ", ".join(f"{k} = ?" for k in fields)
         with self._connect() as conn:
             conn.execute(
-                f"UPDATE sim_orders SET {assignments} WHERE id = ?",
-                (*fields.values(), order_id),
+                f"UPDATE sim_orders SET {assignments} WHERE id = ? AND user_id = ?",
+                (*fields.values(), order_id, user_id),
             )
 
-    async def update_order(self, order_id: str, **fields) -> None:
-        await asyncio.to_thread(self._update_order_sync, order_id, fields)
+    async def update_order(self, user_id: int, order_id: str, **fields) -> None:
+        await asyncio.to_thread(self._update_order_sync, user_id, order_id, fields)
 
-    def _list_orders_sync(self, status: str) -> list[dict]:
+    def _list_orders_sync(self, user_id: int, status: str) -> list[dict]:
         with self._connect() as conn:
             if status == "open":
                 placeholders = ", ".join("?" for _ in _OPEN_STATUSES)
                 rows = conn.execute(
                     f"SELECT {', '.join(_ORDER_COLUMNS)} FROM sim_orders "
-                    f"WHERE status IN ({placeholders}) ORDER BY submitted_at DESC",
-                    _OPEN_STATUSES,
+                    f"WHERE user_id = ? AND status IN ({placeholders}) ORDER BY submitted_at DESC",
+                    (user_id, *_OPEN_STATUSES),
                 ).fetchall()
             elif status == "closed":
                 placeholders = ", ".join("?" for _ in _CLOSED_STATUSES)
                 rows = conn.execute(
                     f"SELECT {', '.join(_ORDER_COLUMNS)} FROM sim_orders "
-                    f"WHERE status IN ({placeholders}) ORDER BY submitted_at DESC",
-                    _CLOSED_STATUSES,
+                    f"WHERE user_id = ? AND status IN ({placeholders}) ORDER BY submitted_at DESC",
+                    (user_id, *_CLOSED_STATUSES),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    f"SELECT {', '.join(_ORDER_COLUMNS)} FROM sim_orders ORDER BY submitted_at DESC"
+                    f"SELECT {', '.join(_ORDER_COLUMNS)} FROM sim_orders "
+                    f"WHERE user_id = ? ORDER BY submitted_at DESC",
+                    (user_id,),
                 ).fetchall()
         return [dict(r) for r in rows]
 
-    async def list_orders(self, status: str = "open") -> list[dict]:
-        return await asyncio.to_thread(self._list_orders_sync, status)
+    async def list_orders(self, user_id: int, status: str = "open") -> list[dict]:
+        return await asyncio.to_thread(self._list_orders_sync, user_id, status)
 
-    def _working_orders_by_symbol_sync(self) -> dict[str, list[dict]]:
+    def _working_orders_by_symbol_sync(self, user_id: int) -> dict[str, list[dict]]:
         with self._connect() as conn:
             placeholders = ", ".join("?" for _ in _OPEN_STATUSES)
             rows = conn.execute(
-                f"SELECT {', '.join(_ORDER_COLUMNS)} FROM sim_orders WHERE status IN ({placeholders})",
-                _OPEN_STATUSES,
+                f"SELECT {', '.join(_ORDER_COLUMNS)} FROM sim_orders "
+                f"WHERE user_id = ? AND status IN ({placeholders})",
+                (user_id, *_OPEN_STATUSES),
             ).fetchall()
         by_symbol: dict[str, list[dict]] = {}
         for row in rows:
@@ -292,73 +321,102 @@ class SimStore:
             by_symbol.setdefault(d["symbol"], []).append(d)
         return by_symbol
 
-    async def working_orders_by_symbol(self) -> dict[str, list[dict]]:
-        return await asyncio.to_thread(self._working_orders_by_symbol_sync)
+    async def working_orders_by_symbol(self, user_id: int) -> dict[str, list[dict]]:
+        """One user's working orders, grouped by symbol -- what a single
+        SimBroker instance's check_fills/close_position operate on. See
+        all_working_orders for the cross-user version the fill loop uses to
+        decide which symbols to price."""
+        return await asyncio.to_thread(self._working_orders_by_symbol_sync, user_id)
 
-    def _cancel_oco_siblings_sync(self, oco_group_id: str, exclude_order_id: str, now: str) -> None:
+    def _all_working_orders_sync(self) -> dict[int, dict[str, list[dict]]]:
+        """Every user's working orders, grouped user_id -> symbol -> orders
+        -- drives the fill loop, which needs to serve every user off one
+        shared batched price fetch rather than querying per user."""
+        with self._connect() as conn:
+            placeholders = ", ".join("?" for _ in _OPEN_STATUSES)
+            rows = conn.execute(
+                f"SELECT user_id, {', '.join(_ORDER_COLUMNS)} FROM sim_orders WHERE status IN ({placeholders})",
+                _OPEN_STATUSES,
+            ).fetchall()
+        by_user: dict[int, dict[str, list[dict]]] = {}
+        for row in rows:
+            d = dict(row)
+            user_id = d.pop("user_id")
+            by_user.setdefault(user_id, {}).setdefault(d["symbol"], []).append(d)
+        return by_user
+
+    async def all_working_orders(self) -> dict[int, dict[str, list[dict]]]:
+        return await asyncio.to_thread(self._all_working_orders_sync)
+
+    def _cancel_oco_siblings_sync(self, user_id: int, oco_group_id: str, exclude_order_id: str, now: str) -> None:
         with self._connect() as conn:
             placeholders = ", ".join("?" for _ in _OPEN_STATUSES)
             conn.execute(
                 f"UPDATE sim_orders SET status = 'canceled', canceled_at = ? "
-                f"WHERE oco_group_id = ? AND id != ? AND status IN ({placeholders})",
-                (now, oco_group_id, exclude_order_id, *_OPEN_STATUSES),
+                f"WHERE user_id = ? AND oco_group_id = ? AND id != ? AND status IN ({placeholders})",
+                (now, user_id, oco_group_id, exclude_order_id, *_OPEN_STATUSES),
             )
 
-    async def cancel_oco_siblings(self, oco_group_id: str, exclude_order_id: str, now: datetime) -> None:
-        await asyncio.to_thread(self._cancel_oco_siblings_sync, oco_group_id, exclude_order_id, now.isoformat())
+    async def cancel_oco_siblings(self, user_id: int, oco_group_id: str, exclude_order_id: str, now: datetime) -> None:
+        await asyncio.to_thread(
+            self._cancel_oco_siblings_sync, user_id, oco_group_id, exclude_order_id, now.isoformat()
+        )
 
-    def _activate_children_sync(self, parent_id: str) -> None:
+    def _activate_children_sync(self, user_id: int, parent_id: str) -> None:
         with self._connect() as conn:
             conn.execute(
-                "UPDATE sim_orders SET status = 'new' WHERE parent_id = ? AND status = 'held'",
-                (parent_id,),
+                "UPDATE sim_orders SET status = 'new' WHERE user_id = ? AND parent_id = ? AND status = 'held'",
+                (user_id, parent_id),
             )
 
-    async def activate_children(self, parent_id: str) -> None:
-        await asyncio.to_thread(self._activate_children_sync, parent_id)
+    async def activate_children(self, user_id: int, parent_id: str) -> None:
+        await asyncio.to_thread(self._activate_children_sync, user_id, parent_id)
 
-    def _cancel_children_sync(self, parent_id: str, now: str) -> None:
+    def _cancel_children_sync(self, user_id: int, parent_id: str, now: str) -> None:
         with self._connect() as conn:
             placeholders = ", ".join("?" for _ in _OPEN_STATUSES)
             conn.execute(
                 f"UPDATE sim_orders SET status = 'canceled', canceled_at = ? "
-                f"WHERE parent_id = ? AND status IN ({placeholders})",
-                (now, parent_id, *_OPEN_STATUSES),
+                f"WHERE user_id = ? AND parent_id = ? AND status IN ({placeholders})",
+                (now, user_id, parent_id, *_OPEN_STATUSES),
             )
 
-    async def cancel_children(self, parent_id: str, now: datetime) -> None:
-        await asyncio.to_thread(self._cancel_children_sync, parent_id, now.isoformat())
+    async def cancel_children(self, user_id: int, parent_id: str, now: datetime) -> None:
+        await asyncio.to_thread(self._cancel_children_sync, user_id, parent_id, now.isoformat())
 
-    def _child_stop_price_sync(self, parent_id: str) -> float | None:
+    def _child_stop_price_sync(self, user_id: int, parent_id: str) -> float | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT stop_price FROM sim_orders WHERE parent_id = ? AND leg_role = 'stop_loss'",
-                (parent_id,),
+                "SELECT stop_price FROM sim_orders WHERE user_id = ? AND parent_id = ? AND leg_role = 'stop_loss'",
+                (user_id, parent_id),
             ).fetchone()
         return float(row["stop_price"]) if row and row["stop_price"] is not None else None
 
-    async def child_stop_price(self, parent_id: str) -> float | None:
-        return await asyncio.to_thread(self._child_stop_price_sync, parent_id)
+    async def child_stop_price(self, user_id: int, parent_id: str) -> float | None:
+        return await asyncio.to_thread(self._child_stop_price_sync, user_id, parent_id)
 
     # --- trades ---------------------------------------------------------
 
-    def _insert_trade_sync(self, trade: dict, now: str) -> None:
+    def _insert_trade_sync(self, user_id: int, trade: dict, now: str) -> None:
         d = dict(trade)
         d["exit_order_ids"] = json.dumps(d.get("exit_order_ids") or [])
+        columns = ("user_id", *_TRADE_COLUMNS)
         with self._connect() as conn:
             conn.execute(
-                f"INSERT INTO sim_trades ({', '.join(_TRADE_COLUMNS)}, recorded_at) "
-                f"VALUES ({', '.join('?' for _ in _TRADE_COLUMNS)}, ?)",
-                (*(d[c] for c in _TRADE_COLUMNS), now),
+                f"INSERT INTO sim_trades ({', '.join(columns)}, recorded_at) "
+                f"VALUES ({', '.join('?' for _ in columns)}, ?)",
+                (user_id, *(d[c] for c in _TRADE_COLUMNS), now),
             )
 
-    async def insert_trade(self, trade: dict) -> None:
-        await asyncio.to_thread(self._insert_trade_sync, trade, datetime.now(UTC).isoformat())
+    async def insert_trade(self, user_id: int, trade: dict) -> None:
+        await asyncio.to_thread(self._insert_trade_sync, user_id, trade, datetime.now(UTC).isoformat())
 
-    def _list_trades_sync(self) -> list[dict]:
+    def _list_trades_sync(self, user_id: int) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT {', '.join(_TRADE_COLUMNS)} FROM sim_trades ORDER BY closed_at DESC, id"
+                f"SELECT {', '.join(_TRADE_COLUMNS)} FROM sim_trades WHERE user_id = ? "
+                f"ORDER BY closed_at DESC, id",
+                (user_id,),
             ).fetchall()
         out = []
         for row in rows:
@@ -370,5 +428,5 @@ class SimStore:
             out.append(d)
         return out
 
-    async def list_trades(self) -> list[dict]:
-        return await asyncio.to_thread(self._list_trades_sync)
+    async def list_trades(self, user_id: int) -> list[dict]:
+        return await asyncio.to_thread(self._list_trades_sync, user_id)

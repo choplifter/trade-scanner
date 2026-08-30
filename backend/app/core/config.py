@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     alpaca_api_secret_key: str = ""
     alpaca_paper: bool = True
 
+    # Signs the session cookie (Starlette's SessionMiddleware) that every
+    # login relies on. Empty by default so a fresh clone fails loudly at
+    # startup (see main.py's lifespan) instead of silently signing sessions
+    # with a guessable default -- generate one with e.g.
+    # `python -c "import secrets; print(secrets.token_hex(32))"`.
+    session_secret_key: str = ""
+
     # Master switch for the trading panel's *write* paths. Off by default and
     # deliberately separate from alpaca_paper: shipping order placement should
     # not change how anyone's dashboard behaves until they opt in, and the two

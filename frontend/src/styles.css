@@ -2020,3 +2020,56 @@ a.symbol-news-headline {
   font-size: 11px;
   line-height: 1.45;
 }
+
+/* The only screen reachable without a session -- see App.tsx/LoginPage. */
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--page);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(320px, 90vw);
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.login-form h1 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.login-field input {
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.login-form .generate-button {
+  width: 100%;
+  padding: 8px;
+}
+
+.logout-link {
+  font-size: 12px;
+  color: var(--text-secondary);
+}

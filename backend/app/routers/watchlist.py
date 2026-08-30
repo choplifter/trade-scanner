@@ -1,9 +1,13 @@
 import asyncio
+import re
 
 from alpaca.data.requests import StockSnapshotRequest
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
+from app.auth.dependency import get_current_user
 from app.scanners.formulas import pct_change, resolve_last_price
+from app.watchlist.defaults import DEFAULT_WATCHLIST_SYMBOLS
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
@@ -12,9 +16,44 @@ router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 # guard on the request itself, not a real usage limit.
 _MAX_SYMBOLS = 200
 
+# Loose on purpose, matching the frontend's own TICKER_RE (dragSymbol.ts) --
+# a watchlist symbol can be anything Alpaca trades, not just what the
+# scanner's universe ranks. Allows a "." for share classes like BRK.B.
+_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+
+
+@router.get("/symbols")
+async def get_watchlist_symbols(request: Request, user: dict = Depends(get_current_user)) -> dict:
+    store = request.app.state.watchlist_store
+    await store.seed_if_empty(user["id"], DEFAULT_WATCHLIST_SYMBOLS)
+    return {"symbols": await store.list_symbols(user["id"])}
+
+
+class AddSymbolRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=12)
+
+
+@router.post("/symbols")
+async def add_watchlist_symbol(
+    body: AddSymbolRequest, request: Request, user: dict = Depends(get_current_user)
+) -> dict:
+    symbol = body.symbol.strip().upper()
+    if not _TICKER_RE.match(symbol):
+        raise HTTPException(status_code=422, detail=f"{body.symbol!r} doesn't look like a ticker.")
+    store = request.app.state.watchlist_store
+    await store.add_symbol(user["id"], symbol)
+    return {"symbols": await store.list_symbols(user["id"])}
+
+
+@router.delete("/symbols/{symbol}")
+async def remove_watchlist_symbol(symbol: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    store = request.app.state.watchlist_store
+    await store.remove_symbol(user["id"], symbol.strip().upper())
+    return {"symbols": await store.list_symbols(user["id"])}
+
 
 @router.get("/quotes")
-async def get_watchlist_quotes(symbols: str, request: Request) -> dict:
+async def get_watchlist_quotes(symbols: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
     """Last price / % change for an arbitrary symbol list, independent of the
     scanner's momentum universe (which excludes ETFs and anything outside
     the price/volume band -- see app.alpaca.universe.build_universe) and of

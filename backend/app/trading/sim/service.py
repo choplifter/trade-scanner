@@ -78,18 +78,24 @@ def _public_order(row: dict) -> dict:
 
 
 class SimOrderService:
-    def __init__(self, clients: AlpacaClients, settings: Settings, store: SimStore, engine=None) -> None:
+    def __init__(
+        self, clients: AlpacaClients, settings: Settings, store: SimStore, user_id: int, engine=None
+    ) -> None:
         self._clients = clients
         self._settings = settings
         self._store = store
+        self._user_id = user_id
         self._engine = engine
-        self._broker = SimBroker(store)
+        self._broker = SimBroker(store, user_id)
 
     # --- read paths ---------------------------------------------------
 
     async def account(self) -> dict:
-        row = await self._store.get_account_row()
-        positions = await self._store.list_positions()
+        # Lazily created on first touch -- users are created after the app
+        # starts, so there's no startup moment to seed every account at once.
+        await self._store.ensure_account(self._user_id, self._settings.trading_sim_starting_cash)
+        row = await self._store.get_account_row(self._user_id)
+        positions = await self._store.list_positions(self._user_id)
         cash = row["cash"]
         equity = cash
         long_value = 0.0
@@ -125,7 +131,7 @@ class SimOrderService:
         }
 
     async def positions(self) -> list[dict]:
-        rows = await self._store.list_positions()
+        rows = await self._store.list_positions(self._user_id)
         out = []
         for p in rows:
             price = await self.reference_price(p["symbol"])
@@ -161,7 +167,7 @@ class SimOrderService:
         return out
 
     async def orders(self, status: str = "open") -> list[dict]:
-        rows = await self._store.list_orders(status)
+        rows = await self._store.list_orders(self._user_id, status)
         return [_public_order(r) for r in rows]
 
     async def trades(self, range_key: str = "all") -> dict:
@@ -169,9 +175,9 @@ class SimOrderService:
             start = period_start(range_key)
         except ValueError as exc:
             raise OrderRejected(str(exc), field="range") from None
-        all_trades = await self._store.list_trades()
+        all_trades = await self._store.list_trades(self._user_id)
         selected = in_period(all_trades, start)
-        positions = await self._store.list_positions()
+        positions = await self._store.list_positions(self._user_id)
         return {
             "range": (range_key or "all").lower(),
             "period_start": start.isoformat() if start else None,
@@ -185,7 +191,7 @@ class SimOrderService:
         """A minimal 2-point curve (reset -> now) rather than a logged
         equity-history table -- see the plan's v1 scope trims. Upgrading to
         real periodic snapshots is an isolated follow-up if wanted later."""
-        account_row = await self._store.get_account_row()
+        account_row = await self._store.get_account_row(self._user_id)
         acct = await self.account()
         end_equity = _number(acct["equity"])
         start_equity = account_row["starting_cash"]
@@ -281,7 +287,7 @@ class SimOrderService:
 
     async def replace_stop(self, order_id: str, symbol: str, stop_price: float) -> dict:
         symbol = symbol.upper()
-        order = await self._store.get_order(order_id)
+        order = await self._store.get_order(self._user_id, order_id)
         if order is None:
             raise OrderRejected("No such order.", field="order_id")
         price = await self.reference_price(symbol)
@@ -290,7 +296,7 @@ class SimOrderService:
 
     async def replace_target(self, order_id: str, symbol: str, limit_price: float) -> dict:
         symbol = symbol.upper()
-        order = await self._store.get_order(order_id)
+        order = await self._store.get_order(self._user_id, order_id)
         if order is None:
             raise OrderRejected("No such order.", field="order_id")
         price = await self.reference_price(symbol)
@@ -310,5 +316,5 @@ class SimOrderService:
         return public
 
     async def reset(self) -> dict:
-        await self._store.reset(self._settings.trading_sim_starting_cash)
+        await self._store.reset(self._user_id, self._settings.trading_sim_starting_cash)
         return await self.account()

@@ -5,12 +5,15 @@ from contextlib import asynccontextmanager
 import anthropic
 import httpx
 from a2wsgi import WSGIMiddleware
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.ai.trade_idea_tracker import TradeIdeaTracker
 from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import build_universe, list_active_equity_symbols
+from app.auth.dependency import get_current_user
+from app.auth.store import UserStore
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.dash_app import dash_app
@@ -19,6 +22,7 @@ from app.fundamentals.cache import FundamentalsCache
 from app.market_data.news_cache import NewsCache
 from app.market_data.stream_manager import StreamManager
 from app.routers import (
+    auth,
     meta,
     scanners,
     screener,
@@ -36,6 +40,7 @@ from app.scanners.momentum_cache import MomentumCache
 from app.trading.sim.loop import run_sim_fill_loop
 from app.trading.sim.store import SimStore
 from app.trading.trade_store import TradeStore
+from app.watchlist.store import WatchlistStore
 from app.ws import chart_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
 from app.ws.screen_subscriptions import ScreenSubscriptions
@@ -47,7 +52,16 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     setup_logging()
     settings = get_settings()
+    if not settings.session_secret_key:
+        raise RuntimeError(
+            "SESSION_SECRET_KEY is not set. Generate one with "
+            "`python -c \"import secrets; print(secrets.token_hex(32))\"` and set it in backend/.env."
+        )
     app.state.settings = settings
+
+    user_store = UserStore(settings.scanner_history_db_path)
+    await user_store.init_schema()
+    app.state.user_store = user_store
 
     clients = AlpacaClients(settings)
     app.state.alpaca_clients = clients
@@ -84,8 +98,13 @@ async def lifespan(app: FastAPI):
     # app.trading.sim.store). Independent of trading_enabled/alpaca_paper:
     # it never touches clients.trading, so it's ready regardless of those.
     sim_store = SimStore(settings.scanner_history_db_path)
-    await sim_store.init_schema(settings.trading_sim_starting_cash)
+    await sim_store.init_schema()
     app.state.sim_store = sim_store
+
+    # Per-user watchlist -- was localStorage-only before real users existed.
+    watchlist_store = WatchlistStore(settings.scanner_history_db_path)
+    await watchlist_store.init_schema()
+    app.state.watchlist_store = watchlist_store
 
     fundamentals_client = httpx.AsyncClient(timeout=10.0)
     fundamentals = FundamentalsCache(settings, fundamentals_client)
@@ -173,14 +192,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Signed-cookie sessions -- no server-side session store needed. Backs
+# get_current_user (app.auth.dependency) below, which gates every router
+# except auth.router itself.
+app.add_middleware(SessionMiddleware, secret_key=get_settings().session_secret_key)
 
-app.include_router(meta.router)
-app.include_router(scanners.router)
-app.include_router(screener.router)
-app.include_router(strategies.router)
-app.include_router(symbols.router)
-app.include_router(trade_ideas.router)
-app.include_router(trading.router)
+# Unauthenticated: login has to be reachable before there's a session.
+app.include_router(auth.router)
+
+# Everything else requires a logged-in session -- a small trusted group, but
+# nobody unauthenticated should see even read-only data (the real account's
+# positions included). trading_sim/watchlist need the user's own id inside
+# their handlers (not just a gate), so they take Depends(get_current_user)
+# per-endpoint instead of here -- see those routers.
+_auth_gate = [Depends(get_current_user)]
+app.include_router(meta.router, dependencies=_auth_gate)
+app.include_router(scanners.router, dependencies=_auth_gate)
+app.include_router(screener.router, dependencies=_auth_gate)
+app.include_router(strategies.router, dependencies=_auth_gate)
+app.include_router(symbols.router, dependencies=_auth_gate)
+app.include_router(trade_ideas.router, dependencies=_auth_gate)
+app.include_router(trading.router, dependencies=_auth_gate)
 app.include_router(trading_sim.router)
 app.include_router(watchlist.router)
 app.include_router(scanner_ws.router)
