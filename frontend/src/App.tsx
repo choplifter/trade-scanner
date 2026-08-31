@@ -177,7 +177,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
       minSizePx={[220, 220, 150]}
     >
       {widgets.scanner}
-      {/* News feed and symbol info sit directly under their own chart --
+      {/* Symbol info and news feed sit directly under their own chart --
           click a headline, the chart right above updates to that symbol,
           no need to look elsewhere on the page. Symbol info used to be
           embedded inside ChartWidget itself; it's a stacked panel here
@@ -190,8 +190,8 @@ function AppShell({ user, onLogout }: AppShellProps) {
         minSizePx={120}
       >
         {widgets.chart}
-        {widgets.news_feed}
         {widgets.symbol_info}
+        {widgets.news_feed}
       </ResizablePanels>
       {/* Trading was oversized for a form at full column height --
           it shares the column with the watchlist instead, 50/50 by

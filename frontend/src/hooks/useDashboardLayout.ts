@@ -78,18 +78,19 @@ export const DEFAULT_LAYOUT: Layout = [
   // is part of the active session (see ChartWidget's isReplaySymbol), so
   // this widget stays table-height rather than chart-height.
   { i: "replay", x: 0, y: 12, w: 12, h: 5, minW: 4, minH: 3 },
-  // Own full-width row below replay, same reasoning -- a live wire needs
-  // more than a quarter-width column, and unlike replay this one doesn't
-  // idle-collapse (there's always something to show whenever the market's
-  // active), so it always claims this row's space. Narrowed from w:12 to
-  // w:8 to share the row with "symbol_info" -- both are "about the symbol
-  // on screen" content, same as they already sit stacked together in
-  // panels mode's chart-column.
-  { i: "news_feed", x: 0, y: 17, w: 8, h: 4, minW: 4, minH: 3 },
   // Split out of ChartWidget (see the comment on `chart` above) -- shares
-  // news_feed's row rather than adding a 4th, since a company-info panel
-  // doesn't need a whole row to itself.
-  { i: "symbol_info", x: 8, y: 17, w: 4, h: 4, minW: 2, minH: 3 },
+  // "news_feed"'s row rather than adding a 4th, since both are "about the
+  // symbol on screen" content, same as they already sit stacked together
+  // in panels mode's chart-column. Given the wider left slot: a company
+  // profile + news list reads better with more horizontal room than the
+  // one-line-per-story news feed needs.
+  { i: "symbol_info", x: 0, y: 17, w: 8, h: 4, minW: 2, minH: 3 },
+  // Narrower right slot alongside "symbol_info" -- a live wire still
+  // needs more than the original quarter-width column would give it, but
+  // less than symbol_info's profile+news content does. Unlike replay,
+  // this one doesn't idle-collapse (there's always something to show
+  // whenever the market's active), so it always claims this row's space.
+  { i: "news_feed", x: 8, y: 17, w: 4, h: 4, minW: 4, minH: 3 },
 ];
 
 const LAYOUT_STORAGE_KEY = "layout:grid";
@@ -115,7 +116,10 @@ const MODE_STORAGE_KEY = "layout:mode";
 // 11: added "symbol_info" (split out of ChartWidget), sharing "news_feed"'s
 // row (narrowed from w:12 to w:8) instead of a new one; shrank "chart"'s
 // minH now that it's candles-only.
-const LAYOUT_VERSION = 11;
+// 12: swapped "symbol_info" and "news_feed"'s slots on their shared row --
+// symbol_info now the wider left one (w:8), news_feed the narrower right
+// one (w:4).
+const LAYOUT_VERSION = 12;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */
