@@ -63,8 +63,18 @@ class NewsFeedTracker:
 
     def recent(self, limit: int | None = None) -> list[NewsFeedItem]:
         """Newest first -- what GET /api/news-feed/recent returns to seed
-        a freshly mounted widget."""
-        items = list(reversed(self._items))
+        a freshly mounted widget.
+
+        Sorted explicitly by published_at rather than trusting insertion
+        (ring-buffer) order: poll()'s within-poll sort only guarantees
+        articles discovered in the *same* poll come out in publish order.
+        Across poll cycles that's not guaranteed -- Alpaca can surface an
+        article on a later poll whose published_at predates something an
+        earlier poll already recorded (syndication/backfill lag), and
+        _record always appends to the end regardless. Sorting here is the
+        one place that has to hold regardless of discovery order.
+        """
+        items = sorted(self._items, key=lambda item: item.published_at, reverse=True)
         return items[:limit] if limit is not None else items
 
     def _record(self, item: NewsFeedItem) -> None:

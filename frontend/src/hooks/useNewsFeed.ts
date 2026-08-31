@@ -16,7 +16,17 @@ export interface NewsFeedState {
  * ws/news_feed_ws.py's own docstring for why there's no snapshot-on-
  * subscribe to reconcile against). Deduped by id in case the REST
  * response and an early WS push briefly overlap.
+ *
+ * Each push is merged in by published_at, not unshifted onto the front --
+ * a later poll can surface an article whose published_at predates one
+ * already in the list (syndication/backfill lag on Alpaca's side; see
+ * NewsFeedTracker.recent()'s docstring for the same issue server-side),
+ * so discovery order isn't a reliable stand-in for display order here.
  */
+function byPublishedAtDesc(a: NewsFeedItem, b: NewsFeedItem): number {
+  return new Date(b.published_at).getTime() - new Date(a.published_at).getTime();
+}
+
 export function useNewsFeed(limit = 50): NewsFeedState {
   const [items, setItems] = useState<NewsFeedItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,9 +46,10 @@ export function useNewsFeed(limit = 50): NewsFeedState {
       });
 
     const unsubscribe = newsFeedSocket.subscribe("feed", (msg) => {
-      setItems((prev) =>
-        prev.some((i) => i.id === msg.item.id) ? prev : [msg.item, ...prev].slice(0, limit),
-      );
+      setItems((prev) => {
+        if (prev.some((i) => i.id === msg.item.id)) return prev;
+        return [...prev, msg.item].sort(byPublishedAtDesc).slice(0, limit);
+      });
     });
 
     return () => {

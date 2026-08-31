@@ -151,6 +151,29 @@ def test_ordering_holds_across_batches_not_just_within_one():
     assert len(tracker.recent()) == 2
 
 
+def test_recent_stays_sorted_across_separate_poll_cycles():
+    """poll()'s own sort only guarantees order *within* one poll. A later
+    poll can discover an article whose published_at predates something an
+    earlier poll already recorded (e.g. syndication/backfill lag) --
+    recent() must still return true newest-first, not discovery order."""
+    tracker = NewsFeedTracker(ring_buffer_size=100)
+
+    first_poll_clients = _Clients(
+        [_article(article_id=1, symbols=["AAA"], created_at=_NOW)]
+    )
+    asyncio.run(tracker.poll(first_poll_clients, ["AAA"]))
+
+    # Second poll, later in wall-clock time, surfaces an article Alpaca
+    # published *before* the one already recorded above.
+    second_poll_clients = _Clients(
+        [_article(article_id=2, symbols=["AAA"], created_at=_NOW.replace(hour=6))]
+    )
+    asyncio.run(tracker.poll(second_poll_clients, ["AAA"]))
+
+    ids = [i.article_id for i in tracker.recent()]
+    assert ids == ["1", "2"]
+
+
 def test_recent_respects_limit():
     tracker = NewsFeedTracker(ring_buffer_size=100)
     clients = _Clients(
