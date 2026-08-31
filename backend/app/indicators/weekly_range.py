@@ -29,7 +29,7 @@ _EMPTY = {"High": None, "Low": None, "Close": None}
 
 
 def compute(ctx) -> dict:
-    bar = prior_completed_period(ctx.weekly_bars, lambda ts: ts + pd.Timedelta(days=7))
+    bar = prior_completed_period(ctx.weekly_bars, lambda ts: ts + pd.Timedelta(days=7), now=ctx.as_of)
     if bar is None:
         return _EMPTY
     return {

@@ -8,7 +8,7 @@ This module itself is excluded from the indicator loader's directory scan
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -56,6 +56,13 @@ class IndicatorContext:
     # this themselves -- the loader uses it to decide which of them run at
     # all, so an indicator's compute() never has to think about zoom.
     timeframe: str = "1Min"
+    # "Now", from this request's point of view. Real wall-clock time for a
+    # live chart (the default); a replay's `as_of` when this context was
+    # built for a replayed session, so period-completion checks (see
+    # prior_completed_period below) answer "as of the moment being
+    # replayed" rather than leaking the real current week/month into a
+    # past session's chart.
+    as_of: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 _COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "vwap"]
@@ -90,7 +97,9 @@ def build_context(
     monthly_bars: list,
     timeframe: str = "1Min",
     hourly_bars: list | None = None,
+    as_of: datetime | None = None,
 ) -> IndicatorContext:
+    kwargs = {"as_of": as_of} if as_of is not None else {}
     return IndicatorContext(
         symbol=symbol,
         minute_bars=_bars_to_df(minute_bars),
@@ -98,11 +107,12 @@ def build_context(
         monthly_bars=_bars_to_df(monthly_bars),
         timeframe=timeframe,
         hourly_bars=_bars_to_df(hourly_bars or []),
+        **kwargs,
     )
 
 
-def prior_completed_period(df: pd.DataFrame, period_end) -> pd.Series | None:
-    """The most recent bar whose own period has fully elapsed as of now.
+def prior_completed_period(df: pd.DataFrame, period_end, now: datetime | None = None) -> pd.Series | None:
+    """The most recent bar whose own period has fully elapsed as of `now`.
 
     Alpaca's native weekly/monthly bars are keyed by period *start*, and the
     most recent bar in a lookback window is often still in progress (e.g.
@@ -113,13 +123,20 @@ def prior_completed_period(df: pd.DataFrame, period_end) -> pd.Series | None:
     valid one. Checking each bar's own end (period_end(bar_start)) against
     now avoids that off-by-one regardless of market/session state.
 
+    `now` defaults to real wall-clock time, correct for a live chart. A
+    caller building this from a replay's `as_of` must pass it explicitly --
+    otherwise a replay of a past date would compare against real "now" and
+    could report the *actual* current week/month as complete even while the
+    replayed session is still mid-week, leaking a future period onto a past
+    chart. See IndicatorContext.as_of and its callers here.
+
     period_end: bar timestamp -> that bar's period end, e.g.
     `lambda ts: ts + pd.Timedelta(days=7)` for weekly,
     `lambda ts: ts + pd.DateOffset(months=1)` for monthly.
     """
     if df.empty:
         return None
-    now = pd.Timestamp(datetime.now(timezone.utc))
+    now = pd.Timestamp(now if now is not None else datetime.now(timezone.utc))
     ends = df["timestamp"].apply(period_end)
     completed = df[ends <= now]
     if completed.empty:

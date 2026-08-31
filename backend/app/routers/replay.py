@@ -8,13 +8,19 @@ every endpoint that touches an engine (start/state) -- there is no
 "degraded but working" mode without historical bars to replay.
 """
 
+import asyncio
 import logging
+from bisect import bisect_right
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.auth.dependency import get_current_user
+from app.indicators.context import build_context
+from app.indicators.loader import run_indicators
+from app.market_data.bars import get_historical_bars
+from app.market_data.vwap import SessionVwapState
 from app.replay.engine import load_replay_engine
 from app.routers.symbols import _bar_to_dict
 
@@ -198,6 +204,82 @@ async def get_replay_bars(symbol: str, request: Request, user: dict = Depends(ge
     as_of = datetime.fromisoformat(session["as_of"])
     bars = engine.bars_up_to(symbol.upper(), as_of)
     return {"symbol": symbol.upper(), "bars": [_bar_to_dict(b) for b in bars]}
+
+
+def _clip_to_as_of(bars: list, as_of: datetime) -> list:
+    """`bars` (chronological, like every Alpaca bar list here) truncated to
+    what was already knowable at `as_of` -- the same bisect_right approach
+    ReplayEngine.bars_up_to uses for its own 5-minute bars, applied here to
+    the weekly/monthly/hourly bars fetched fresh below. Without this, a
+    weekly/monthly/hourly bar dated after the replayed moment (they're
+    fetched live, unbounded by the replay clock) would leak into an
+    indicator as something already known."""
+    times = [b.timestamp for b in bars]
+    return bars[: bisect_right(times, as_of)]
+
+
+@router.get("/indicators/{symbol}")
+async def get_replay_indicators(symbol: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """VWAP + the same reference-line/overlay indicators the live chart
+    draws (see app.indicators.loader.run_indicators), computed against this
+    replay session's bars instead of a live poll.
+
+    Kept separate from /bars/{symbol}: that endpoint is a cheap in-memory
+    slice refetched every clock tick during playback, while this one needs
+    real Alpaca calls for weekly/monthly/hourly bars that don't need
+    refreshing nearly that often.
+
+    Every indicator file runs completely unmodified -- see build_context's
+    `as_of` and app.indicators.context.prior_completed_period for why the
+    weekly/monthly bars fetched here are clipped to the replayed moment
+    before reaching them, rather than trusting real wall-clock "now".
+    """
+    session = _session_or_404(await request.app.state.replay_store.get(user["id"]))
+    engine = request.app.state.replay_engines.get(user["id"])
+    if engine is None:
+        return {"symbol": symbol.upper(), "vwap": [], "vwap_premarket": [], "indicators": []}
+
+    symbol = symbol.upper()
+    as_of = datetime.fromisoformat(session["as_of"])
+    minute_bars = engine.bars_up_to(symbol, as_of)
+
+    clients = request.app.state.alpaca_clients
+    weekly_bars, monthly_bars, hourly_bars = await asyncio.gather(
+        get_historical_bars(clients, symbol, "1Week"),
+        get_historical_bars(clients, symbol, "1Month"),
+        get_historical_bars(clients, symbol, "1Hour"),
+    )
+    weekly_bars = _clip_to_as_of(weekly_bars, as_of)
+    monthly_bars = _clip_to_as_of(monthly_bars, as_of)
+    hourly_bars = _clip_to_as_of(hourly_bars, as_of)
+
+    ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars, "1Min", hourly_bars, as_of=as_of)
+    indicators = await asyncio.to_thread(run_indicators, ctx)
+
+    # Same accumulator/loop symbols.py's live /bars endpoint runs -- no
+    # stream-manager sync afterwards, since that continuation only matters
+    # for a live websocket picking up where a backfill left off.
+    vwap_state = SessionVwapState(symbol=symbol)
+    vwap_series = []
+    vwap_premarket_series = []
+    for bar in minute_bars:
+        vwap = vwap_state.update(
+            timestamp=bar.timestamp,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            volume=bar.volume,
+            bar_vwap=getattr(bar, "vwap", None),
+        )
+        vwap_series.append(vwap)
+        vwap_premarket_series.append(vwap_state.premarket_anchored_vwap)
+
+    return {
+        "symbol": symbol,
+        "vwap": vwap_series,
+        "vwap_premarket": vwap_premarket_series,
+        "indicators": indicators,
+    }
 
 
 @router.delete("/stop")

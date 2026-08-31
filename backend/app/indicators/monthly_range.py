@@ -20,7 +20,7 @@ MAX_TIMEFRAME = "1Month"
 
 
 def compute(ctx) -> dict:
-    bar = prior_completed_period(ctx.monthly_bars, lambda ts: ts + pd.DateOffset(months=1))
+    bar = prior_completed_period(ctx.monthly_bars, lambda ts: ts + pd.DateOffset(months=1), now=ctx.as_of)
     if bar is None:
         return {"High": None, "Low": None}
     return {"High": float(bar["high"]), "Low": float(bar["low"])}

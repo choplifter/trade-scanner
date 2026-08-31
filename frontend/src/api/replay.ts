@@ -6,7 +6,7 @@
 
 import { deleteJson, getJson, patchJson, postJson } from "./http";
 import { setReplaySession } from "./replayMode";
-import type { Bar } from "../types/alpaca";
+import type { Bar, IndicatorResult } from "../types/alpaca";
 import type { ReplayStateResponse } from "../types/replay";
 
 function sync(res: ReplayStateResponse): ReplayStateResponse {
@@ -68,6 +68,23 @@ export function setReplaySpeed(speed: number): Promise<ReplayStateResponse> {
  * there's nothing here to slice a "future" bar off of even transiently. */
 export function getReplayBars(symbol: string): Promise<{ symbol: string; bars: Bar[] }> {
   return getJson<{ symbol: string; bars: Bar[] }>(`/replay/bars/${encodeURIComponent(symbol)}`);
+}
+
+export interface ReplayIndicatorsResponse {
+  symbol: string;
+  vwap: (number | null)[];
+  vwap_premarket: (number | null)[];
+  indicators: IndicatorResult[];
+}
+
+/** VWAP + the same reference-line/overlay indicators the live chart draws,
+ * computed against this replay session's bars -- see
+ * backend/app/routers/replay.py's /indicators/{symbol}. Kept as its own
+ * call rather than folded into getReplayBars: this one costs real Alpaca
+ * calls for weekly/monthly/hourly bars, so it doesn't need to be refetched
+ * on every clock tick as eagerly as the candles themselves. */
+export function getReplayIndicators(symbol: string): Promise<ReplayIndicatorsResponse> {
+  return getJson<ReplayIndicatorsResponse>(`/replay/indicators/${encodeURIComponent(symbol)}`);
 }
 
 export function stopReplay(): Promise<{ stopped: boolean }> {

@@ -6,6 +6,7 @@ import { useChartFeed } from "../../hooks/useChartFeed";
 import type { ChartFocus } from "../../types/screener";
 import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { useReplayBars } from "../../hooks/useReplayBars";
+import { useReplayIndicators } from "../../hooks/useReplayIndicators";
 import { useReplaySession } from "../../hooks/useReplaySession";
 import { useSymbolInfo } from "../../hooks/useSymbolInfo";
 import { exitsForPosition, num } from "../../types/trading";
@@ -236,6 +237,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   const isReplaySymbol = !!symbol && !!replaySession && replaySession.symbols.includes(symbol);
   const usingReplayBars = isReplaySymbol && option.kind === "intraday";
   const replay = useReplayBars(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
+  const replayIndicators = useReplayIndicators(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
   // Fetched here rather than inside SymbolInfoPanel: the chart marks the
   // same news on its timeline, and two hook callers would double-fetch.
   const symbolInfo = useSymbolInfo(symbol);
@@ -344,10 +346,19 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   const displayed = useMemo(() => {
     if (option.kind === "intraday") {
       if (usingReplayBars) {
-        // No VWAP/indicators here -- see app.replay.engine's module
-        // docstring for why (no historical NBBO quotes, no cached minute
-        // bars for a strategy indicator to read).
-        return aggregateBars(replay.bars, [], option.minutes ?? 1, []);
+        // VWAP/indicators come from a separate fetch (useReplayIndicators)
+        // rather than replay.bars itself -- see
+        // routers/replay.py's /indicators/{symbol}. They're computed at
+        // 5-minute resolution (replay's native bar size, not live's
+        // 1-minute), so an EMA here reads slower than its live counterpart
+        // at the same nominal length; still no historical NBBO quotes, so
+        // spread-derived indicators remain unavailable either way.
+        return aggregateBars(
+          replay.bars,
+          vwapFromPremarket ? replayIndicators.vwapPremarket : replayIndicators.vwap,
+          option.minutes ?? 1,
+          replayIndicators.indicators,
+        );
       }
       return aggregateBars(
         intraday.bars,
@@ -377,6 +388,9 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     option,
     usingReplayBars,
     replay.bars,
+    replayIndicators.vwap,
+    replayIndicators.vwapPremarket,
+    replayIndicators.indicators,
     intraday.bars,
     intraday.vwap,
     intraday.vwapPremarket,
