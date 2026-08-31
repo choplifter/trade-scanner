@@ -21,7 +21,8 @@ export type WidgetId =
   | "trading"
   | "watchlist"
   | "replay"
-  | "news_feed";
+  | "news_feed"
+  | "symbol_info";
 
 /** Render order of grid cells. Deliberately constant and independent of
  * `layout` -- position comes from the layout item's x/y, never from DOM
@@ -36,6 +37,7 @@ export const WIDGET_IDS: readonly WidgetId[] = [
   "watchlist",
   "replay",
   "news_feed",
+  "symbol_info",
 ];
 
 export const GRID_COLS = 12;
@@ -51,8 +53,8 @@ export const GRID_MARGIN = 8;
  * stacked in the same right-hand column, the three analytics widgets across
  * the bottom -- so switching into grid mode looks identical until you
  * actually drag something. minW/minH approximate the old minSizePx clamps.
- * `chart` gets a taller minH because .symbol-info-panel reserves up to 220px
- * inside ChartWidget, which would otherwise squeeze the canvas to nothing.
+ * `chart` is candles-only (SymbolInfoPanel is its own "symbol_info" widget
+ * below, not embedded here), so its minH only needs to fit the canvas.
  *
  * The grid was already full at 12x12 when "trading" was added, so it took
  * width from the top row rather than a sixth row; "watchlist" later shared
@@ -60,7 +62,7 @@ export const GRID_MARGIN = 8;
  * with trading, which was oversized for a form at h:8 anyway. */
 export const DEFAULT_LAYOUT: Layout = [
   { i: "scanner", x: 0, y: 0, w: 4, h: 8, minW: 3, minH: 3 },
-  { i: "chart", x: 4, y: 0, w: 5, h: 8, minW: 3, minH: 4 },
+  { i: "chart", x: 4, y: 0, w: 5, h: 8, minW: 3, minH: 3 },
   // minW 2, not 3: the order ticket is a narrow form, and its floor is what
   // caps how wide the scanner and chart can go in the top row.
   { i: "trading", x: 9, y: 0, w: 3, h: 4, minW: 2, minH: 3 },
@@ -79,8 +81,15 @@ export const DEFAULT_LAYOUT: Layout = [
   // Own full-width row below replay, same reasoning -- a live wire needs
   // more than a quarter-width column, and unlike replay this one doesn't
   // idle-collapse (there's always something to show whenever the market's
-  // active), so it always claims this row's space.
-  { i: "news_feed", x: 0, y: 17, w: 12, h: 4, minW: 4, minH: 3 },
+  // active), so it always claims this row's space. Narrowed from w:12 to
+  // w:8 to share the row with "symbol_info" -- both are "about the symbol
+  // on screen" content, same as they already sit stacked together in
+  // panels mode's chart-column.
+  { i: "news_feed", x: 0, y: 17, w: 8, h: 4, minW: 4, minH: 3 },
+  // Split out of ChartWidget (see the comment on `chart` above) -- shares
+  // news_feed's row rather than adding a 4th, since a company-info panel
+  // doesn't need a whole row to itself.
+  { i: "symbol_info", x: 8, y: 17, w: 4, h: 4, minW: 2, minH: 3 },
 ];
 
 const LAYOUT_STORAGE_KEY = "layout:grid";
@@ -103,7 +112,10 @@ const MODE_STORAGE_KEY = "layout:mode";
 // 9: reverted to h:5 -- the chart moved into the main ChartWidget instead
 // (see ChartWidget's isReplaySymbol), so replay stays table-height.
 // 10: added "news_feed" as a new full-width row below "replay".
-const LAYOUT_VERSION = 10;
+// 11: added "symbol_info" (split out of ChartWidget), sharing "news_feed"'s
+// row (narrowed from w:12 to w:8) instead of a new one; shrank "chart"'s
+// minH now that it's candles-only.
+const LAYOUT_VERSION = 11;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */

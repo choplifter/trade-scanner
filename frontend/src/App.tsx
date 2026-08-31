@@ -6,6 +6,7 @@ import { AlarmsOverlay } from "./components/alarms/AlarmsOverlay";
 import { AlarmsToggle } from "./components/alarms/AlarmsToggle";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ChartWidget } from "./components/chart/ChartWidget";
+import { SymbolInfoWidget } from "./components/chart/SymbolInfoWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
@@ -17,6 +18,7 @@ import { ScannerWidget } from "./components/scanner/ScannerWidget";
 import { SimulationToggle } from "./components/trading/SimulationToggle";
 import { TradingWidget } from "./components/trading/TradingWidget";
 import { WatchlistPanel } from "./components/watchlist/WatchlistPanel";
+import { SymbolInfoProvider } from "./context/SymbolInfoContext";
 import { TradingProvider, useTradingContext } from "./context/TradingContext";
 import type { ChartFocus } from "./types/screener";
 import type { User } from "./api/auth";
@@ -111,6 +113,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
         />
       ),
       chart: <ChartWidget symbol={selectedSymbol} focus={chartFocus} />,
+      symbol_info: <SymbolInfoWidget symbol={selectedSymbol} />,
       ideas: <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />,
       benchmark: (
         <ScannerBenchmarkWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
@@ -174,17 +177,21 @@ function AppShell({ user, onLogout }: AppShellProps) {
       minSizePx={[220, 220, 150]}
     >
       {widgets.scanner}
-      {/* News feed sits directly under its own chart -- click a headline,
-          the chart right above updates to that symbol, no need to look
-          elsewhere on the page. */}
+      {/* News feed and symbol info sit directly under their own chart --
+          click a headline, the chart right above updates to that symbol,
+          no need to look elsewhere on the page. Symbol info used to be
+          embedded inside ChartWidget itself; it's a stacked panel here
+          instead now, same as news_feed, so the chart's own box is
+          candles-only. */}
       <ResizablePanels
         direction="column"
         storageKey="layout:chart-column"
-        defaultSizes={[0.65, 0.35]}
-        minSizePx={150}
+        defaultSizes={[0.55, 0.25, 0.2]}
+        minSizePx={120}
       >
         {widgets.chart}
         {widgets.news_feed}
+        {widgets.symbol_info}
       </ResizablePanels>
       {/* Trading was oversized for a form at full column height --
           it shares the column with the watchlist instead, 50/50 by
@@ -214,6 +221,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
   ];
 
   return (
+    <SymbolInfoProvider symbol={selectedSymbol}>
     <div className="app-shell">
       <header className="app-header">
           <h1>Stocks in Play</h1>
@@ -321,6 +329,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
           )}
         </main>
       </div>
+    </SymbolInfoProvider>
   );
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
 import { useTradingContext } from "../../context/TradingContext";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import type { ChartFocus } from "../../types/screener";
@@ -8,13 +9,11 @@ import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { useReplayBars } from "../../hooks/useReplayBars";
 import { useReplayIndicators } from "../../hooks/useReplayIndicators";
 import { useReplaySession } from "../../hooks/useReplaySession";
-import { useSymbolInfo } from "../../hooks/useSymbolInfo";
 import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
 import { CandleChart, POSITION_ENTRY_COLOR, POSITION_STOP_COLOR, POSITION_TARGET_COLOR } from "./CandleChart";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
-import { SymbolInfoPanel } from "./SymbolInfoPanel";
 
 interface ChartWidgetProps {
   symbol: string | null;
@@ -200,6 +199,20 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   // Kept across symbol and timeframe changes: how someone wants price drawn
   // is a preference, not a property of what they are looking at.
   const [chartType, setChartType] = useState<ChartType>("candles");
+  // Portals the whole widget to document.body and sizes it to the viewport
+  // (see the return statement below) rather than rendering a second chart
+  // instance in an overlay -- one CandleChart, one WS subscription, just
+  // relocated in the DOM. Not persisted: fullscreen is a per-session action,
+  // not a layout preference.
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    if (!isFullscreen) return;
+    function handleFullscreenKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setIsFullscreen(false);
+    }
+    document.addEventListener("keydown", handleFullscreenKeyDown);
+    return () => document.removeEventListener("keydown", handleFullscreenKeyDown);
+  }, [isFullscreen]);
   // Magnet by default: the chart's main job here is checking whether a
   // strategy's line sits on the level it claims, and that needs an exact
   // read rather than a free-floating one.
@@ -238,14 +251,12 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   const usingReplayBars = isReplaySymbol && option.kind === "intraday";
   const replay = useReplayBars(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
   const replayIndicators = useReplayIndicators(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
-  // Fetched here rather than inside SymbolInfoPanel: the chart marks the
-  // same news on its timeline, and two hook callers would double-fetch.
-  const symbolInfo = useSymbolInfo(symbol);
-  // Publish times of the stories whose 📰 pin was clicked -- the panel
-  // scrolls to and highlights them. Cleared on symbol change so a stale
-  // highlight cannot mark a different stock's story.
-  const [highlightedNews, setHighlightedNews] = useState<number[] | null>(null);
-  useEffect(() => setHighlightedNews(null), [symbol]);
+  // Shared with SymbolInfoWidget via context rather than a second
+  // useSymbolInfo(symbol) call here -- the chart marks the same news on its
+  // timeline (newsMarkers below), and two hook callers would double-fetch.
+  // See SymbolInfoContext for why this can't just be threaded through
+  // App.tsx's memoized `widgets` object instead.
+  const { symbolInfo, setHighlightedNews } = useSymbolInfoContext();
   // A rejected drag (wrong side of market, order already filled, trading
   // switched off, ...) needs somewhere to surface without switching to the
   // Positions tab -- same .order-rejection + Dismiss pattern TradingWidget's
@@ -420,8 +431,12 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     historical.bars.length === 0 &&
     !historical.error;
 
-  return (
-    <div className="widget chart-widget">
+  // Built as a value rather than returned directly, so fullscreen can
+  // portal this exact tree to document.body instead of mounting a second
+  // copy of it (see the return statement below) -- one CandleChart, one WS
+  // subscription, regardless of where in the DOM it currently renders.
+  const content = (
+    <div className={isFullscreen ? "widget chart-widget chart-widget-fullscreen" : "widget chart-widget"}>
       <div className="widget-header">
         <div className="chart-toolbar">
           <span className="symbol">{symbol ?? "Select a symbol"}</span>
@@ -564,6 +579,15 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
               </div>,
               document.body,
             )}
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={isFullscreen}
+            onClick={() => setIsFullscreen((v) => !v)}
+            title={isFullscreen ? "Exit fullscreen (Esc)" : "Fullscreen (Esc to exit)"}
+          >
+            {isFullscreen ? "⤡" : "⤢"}
+          </button>
         </div>
       </div>
       {dragError && (
@@ -615,9 +639,10 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
           />
         )}
       </div>
-      {symbol && (
-        <SymbolInfoPanel symbol={symbol} state={symbolInfo} highlightTimes={highlightedNews} />
-      )}
     </div>
   );
+
+  return isFullscreen
+    ? createPortal(<div className="chart-fullscreen-backdrop">{content}</div>, document.body)
+    : content;
 }

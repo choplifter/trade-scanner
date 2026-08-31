@@ -1036,13 +1036,20 @@ body {
   padding: 3px 6px;
 }
 
+/* Its own scroll container (not .widget-body -- see the JS effect in
+   SymbolInfoPanel.tsx that scrolls a clicked news item into view via
+   `.closest(".symbol-info-panel")`), sized to fill SymbolInfoWidget's body
+   -- see .symbol-info-widget .widget-body below, which turns off its own
+   scrolling so there's exactly one scrollable region, not two nested ones. */
 .symbol-info-panel {
-  flex-shrink: 0;
-  max-height: 220px;
+  height: 100%;
   overflow-y: auto;
   padding: 10px 14px;
-  border-top: 1px solid var(--border);
   font-size: 12px;
+}
+
+.symbol-info-widget .widget-body {
+  overflow: hidden;
 }
 
 .symbol-info-header {
@@ -2009,6 +2016,26 @@ a.symbol-news-headline {
   line-height: 1;
   cursor: pointer;
   color: var(--text-secondary);
+}
+
+/* Same portal-to-body reasoning as .modal-backdrop (see Modal.tsx's own
+   comment): react-grid-layout's transform makes the widget its own
+   containing block, and .widget clips overflow, so a fullscreen chart has
+   to render outside that tree entirely. Below .modal-backdrop/.levels-menu's
+   z-index (1000) on purpose -- a confirmation dialog or the Levels dropdown
+   opened while the chart is fullscreen must still land on top of it. */
+.chart-fullscreen-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: var(--page);
+  display: flex;
+  padding: 12px;
+}
+
+.chart-widget-fullscreen {
+  width: 100%;
+  height: 100%;
 }
 
 .order-confirm {
