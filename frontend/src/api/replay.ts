@@ -59,6 +59,14 @@ export function seekReplay(asOf: string): Promise<ReplayStateResponse> {
   return postJson<ReplayStateResponse>("/replay/seek", { as_of: asOf }).then(sync);
 }
 
+/** Moves the replay clock by exactly one bar -- the manual counterpart to
+ * one pacing-loop tick (see BAR_STEP in backend/app/replay/loop.py) --
+ * and pauses, so the pacing loop doesn't immediately overwrite a step the
+ * user just took. See routers/replay.py's /step. */
+export function stepReplay(direction: "forward" | "backward" = "forward"): Promise<ReplayStateResponse> {
+  return postJson<ReplayStateResponse>("/replay/step", { direction }).then(sync);
+}
+
 export function setReplaySpeed(speed: number): Promise<ReplayStateResponse> {
   return patchJson<ReplayStateResponse>("/replay/speed", { speed }).then(sync);
 }

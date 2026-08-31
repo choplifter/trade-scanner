@@ -7,6 +7,7 @@ import {
   seekReplay,
   setReplaySpeed,
   startReplay,
+  stepReplay,
   stopReplay,
 } from "../../api/replay";
 import { useReplayFeed } from "../../hooks/useReplayFeed";
@@ -130,6 +131,32 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
 
   const symbols = parseSymbols(symbolsInput);
 
+  // Left/Right steps the replay clock one bar at a time -- same
+  // not-while-typing guard TradingWidget.tsx's own hotkeys use, which as a
+  // side effect also excludes the focused seek slider above (an <input>
+  // itself), so its own native arrow-key nudging never double-fires
+  // alongside this.
+  useEffect(() => {
+    if (!session) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = document.activeElement;
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (isTyping || busy) return;
+
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        void run(() => stepReplay("forward"));
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        void run(() => stepReplay("backward"));
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [session, busy]);
+
   return (
     <div className={session ? "widget replay-widget" : "widget replay-widget replay-collapsed"}>
       <div className="widget-header">
@@ -185,9 +212,27 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
               type="button"
               className="tab"
               disabled={busy}
+              title="Step back one bar (←)"
+              onClick={() => run(() => stepReplay("backward"))}
+            >
+              ◀ Step
+            </button>
+            <button
+              type="button"
+              className="tab"
+              disabled={busy}
               onClick={() => run(session.playing ? pauseReplay : playReplay)}
             >
               {session.playing ? "Pause" : "Play"}
+            </button>
+            <button
+              type="button"
+              className="tab"
+              disabled={busy}
+              title="Step forward one bar (→)"
+              onClick={() => run(() => stepReplay("forward"))}
+            >
+              Step ▶
             </button>
             <select
               value={session.speed}

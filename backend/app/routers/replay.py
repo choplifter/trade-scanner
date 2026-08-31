@@ -12,6 +12,7 @@ import asyncio
 import logging
 from bisect import bisect_right
 from datetime import UTC, date, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -22,6 +23,7 @@ from app.indicators.loader import run_indicators
 from app.market_data.bars import get_historical_bars
 from app.market_data.vwap import SessionVwapState
 from app.replay.engine import load_replay_engine
+from app.replay.loop import BAR_STEP
 from app.routers.symbols import _bar_to_dict
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,10 @@ class StartRequest(BaseModel):
 
 class SeekRequest(BaseModel):
     as_of: datetime
+
+
+class StepRequest(BaseModel):
+    direction: Literal["forward", "backward"] = "forward"
 
 
 class SpeedRequest(BaseModel):
@@ -172,6 +178,45 @@ async def seek_replay(body: SeekRequest, request: Request, user: dict = Depends(
     _session_or_404(await request.app.state.replay_store.get(user["id"]))
     as_of = body.as_of if body.as_of.tzinfo else body.as_of.replace(tzinfo=UTC)
     session = await request.app.state.replay_store.update(user["id"], as_of=as_of.isoformat())
+    return await _state_payload(request, session)
+
+
+def _stepped_as_of(
+    as_of: datetime, direction: Literal["forward", "backward"], start: datetime | None, end: datetime | None
+) -> datetime:
+    """One BAR_STEP forward or backward from `as_of`, clamped to
+    [start, end] -- the fetched range's own bounds, past which there is
+    nothing to show. `start`/`end` of None (engine not resident, e.g. right
+    after a server restart -- see get_replay_bars) skips clamping on that
+    side; a subsequent request rebuilds the engine and read paths reconcile
+    normally, same graceful fallback used elsewhere in this router.
+    """
+    stepped = as_of + (BAR_STEP if direction == "forward" else -BAR_STEP)
+    if start is not None and stepped < start:
+        return start
+    if end is not None and stepped > end:
+        return end
+    return stepped
+
+
+@router.post("/step")
+async def step_replay(body: StepRequest, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """Move the replay clock by exactly one bar -- the manual counterpart to
+    one pacing-loop tick (see BAR_STEP's docstring in app.replay.loop), for
+    studying a session bar-by-bar instead of watching it auto-play.
+
+    Always pauses (playing=0) in the same update as the new as_of: a step is
+    a deliberate manual placement, and should not be immediately overwritten
+    by the pacing loop on its next tick if the session happened to be
+    playing when the user stepped.
+    """
+    session = _session_or_404(await request.app.state.replay_store.get(user["id"]))
+    engine = request.app.state.replay_engines.get(user["id"])
+    as_of = datetime.fromisoformat(session["as_of"])
+    new_as_of = _stepped_as_of(
+        as_of, body.direction, engine.start if engine else None, engine.end if engine else None
+    )
+    session = await request.app.state.replay_store.update(user["id"], as_of=new_as_of.isoformat(), playing=0)
     return await _state_payload(request, session)
 
 

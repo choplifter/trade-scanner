@@ -33,7 +33,10 @@ from app.ws.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
-_BAR_STEP = timedelta(minutes=5)
+# Public: also the increment routers/replay.py's manual /step endpoint
+# applies -- one step is defined as exactly one pacing-loop tick, whether
+# the loop or the user triggers it.
+BAR_STEP = timedelta(minutes=5)
 
 
 def topic_for(user_id: int, scanner: str) -> str:
@@ -69,7 +72,7 @@ async def _advance_one(
         engine = await load_replay_engine(clients, session["symbols"], session["lookback_days"])
         engines.put(user_id, engine)
 
-    as_of = datetime.fromisoformat(session["as_of"]) + _BAR_STEP
+    as_of = datetime.fromisoformat(session["as_of"]) + BAR_STEP
     if engine.end is not None and as_of > engine.end:
         # Ran off the end of the fetched range -- stop rather than freeze
         # silently on the last bar, so the UI can tell the difference.
