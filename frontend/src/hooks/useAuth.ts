@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getMe, login as apiLogin, logout as apiLogout, type User } from "../api/auth";
+import { onUnauthorized } from "../api/http";
 
 export interface AuthState {
   user: User | null;
@@ -29,6 +30,12 @@ export function useAuth(): AuthState {
       cancelled = true;
     };
   }, []);
+
+  // A 401 from any authenticated call means the session the browser is
+  // sending is no longer valid -- clearing `user` sends App back to
+  // LoginPage instead of leaving widgets stuck retrying against a session
+  // that will never come back on its own (see api/http.ts's onUnauthorized).
+  useEffect(() => onUnauthorized(() => setUser(null)), []);
 
   const login = useCallback(async (username: string, password: string) => {
     const found = await apiLogin(username, password);

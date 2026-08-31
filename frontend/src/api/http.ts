@@ -31,6 +31,28 @@ import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types
 
 const API_BASE = "/api";
 
+/** Fires when any call below gets a 401 -- the session cookie the browser
+ * sent was missing or no longer validated server-side, regardless of why
+ * (expired, a `.env` secret rotation, a proxy dropping it). Widgets don't
+ * each detect this on their own -- polling loops swallow their own errors
+ * and just retry -- so without a shared signal the dashboard was staying
+ * on a half-populated, silently-broken screen instead of prompting a fresh
+ * login. useAuth subscribes and clears `user`, which sends App back to
+ * LoginPage the same way an explicit logout does. */
+type UnauthorizedListener = () => void;
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+export function onUnauthorized(listener: UnauthorizedListener): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
+function checkUnauthorized(res: Response): void {
+  if (res.status === 401) {
+    unauthorizedListeners.forEach((fn) => fn());
+  }
+}
+
 async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const body = (await res.json()) as { detail?: string };
@@ -42,6 +64,7 @@ async function extractErrorMessage(res: Response, fallback: string): Promise<str
 
 export async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
+  checkUnauthorized(res);
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res, `GET ${path} failed: ${res.status}`));
   }
@@ -56,6 +79,7 @@ export async function postJson<T>(path: string, body?: unknown): Promise<T> {
       ? {}
       : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   });
+  checkUnauthorized(res);
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res, `POST ${path} failed: ${res.status}`));
   }
@@ -239,6 +263,7 @@ export async function backtestScreen(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ screen, ...options }),
   });
+  checkUnauthorized(res);
   if (res.status === 422) {
     const body = (await res.json()) as { detail: BacktestRefusal };
     throw new BacktestRefusedError(body.detail);
@@ -308,6 +333,7 @@ export async function dayHigh(symbol: string): Promise<number | null> {
   const res = await fetch(`${API_BASE}${tradingPath(`/trading/day-high/${encodeURIComponent(symbol)}`)}`, {
     credentials: "include",
   });
+  checkUnauthorized(res);
   if (!res.ok) return null;
   const body = (await res.json()) as { day_high: number | null };
   return body.day_high;
@@ -321,6 +347,7 @@ export async function referencePrice(symbol: string): Promise<number | null> {
     `${API_BASE}${tradingPath(`/trading/reference-price/${encodeURIComponent(symbol)}`)}`,
     { credentials: "include" },
   );
+  checkUnauthorized(res);
   if (!res.ok) return null;
   const body = (await res.json()) as { price: number | null };
   return body.price;
@@ -334,6 +361,7 @@ export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPre
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(ticket),
   });
+  checkUnauthorized(res);
   if (res.status === 422) {
     const body = (await res.json()) as { detail: TradingRejection };
     throw new OrderRejectedError(body.detail);
@@ -354,6 +382,7 @@ export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(ticket),
   });
+  checkUnauthorized(res);
   if (res.status === 422) {
     const body = (await res.json()) as { detail: TradingRejection };
     throw new OrderRejectedError(body.detail);
@@ -366,6 +395,7 @@ export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: 
 
 export async function deleteJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", credentials: "include" });
+  checkUnauthorized(res);
   if (res.status === 422) {
     const body = (await res.json()) as { detail: TradingRejection };
     throw new OrderRejectedError(body.detail);
@@ -383,6 +413,7 @@ export async function patchJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  checkUnauthorized(res);
   if (res.status === 422) {
     const detail = (await res.json()) as { detail: TradingRejection };
     throw new OrderRejectedError(detail.detail);
