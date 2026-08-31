@@ -20,7 +20,8 @@ export type WidgetId =
   | "history"
   | "trading"
   | "watchlist"
-  | "replay";
+  | "replay"
+  | "news_feed";
 
 /** Render order of grid cells. Deliberately constant and independent of
  * `layout` -- position comes from the layout item's x/y, never from DOM
@@ -34,6 +35,7 @@ export const WIDGET_IDS: readonly WidgetId[] = [
   "trading",
   "watchlist",
   "replay",
+  "news_feed",
 ];
 
 export const GRID_COLS = 12;
@@ -74,6 +76,11 @@ export const DEFAULT_LAYOUT: Layout = [
   // is part of the active session (see ChartWidget's isReplaySymbol), so
   // this widget stays table-height rather than chart-height.
   { i: "replay", x: 0, y: 12, w: 12, h: 5, minW: 4, minH: 3 },
+  // Own full-width row below replay, same reasoning -- a live wire needs
+  // more than a quarter-width column, and unlike replay this one doesn't
+  // idle-collapse (there's always something to show whenever the market's
+  // active), so it always claims this row's space.
+  { i: "news_feed", x: 0, y: 17, w: 12, h: 4, minW: 4, minH: 3 },
 ];
 
 const LAYOUT_STORAGE_KEY = "layout:grid";
@@ -95,7 +102,8 @@ const MODE_STORAGE_KEY = "layout:mode";
 // 8: briefly gave "replay" h:8 for a chart pane of its own.
 // 9: reverted to h:5 -- the chart moved into the main ChartWidget instead
 // (see ChartWidget's isReplaySymbol), so replay stays table-height.
-const LAYOUT_VERSION = 9;
+// 10: added "news_feed" as a new full-width row below "replay".
+const LAYOUT_VERSION = 10;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */

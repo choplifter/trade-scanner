@@ -1,6 +1,19 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
+
+
+class MergerActionRow(BaseModel):
+    """One target symbol's active merger corporate action -- see
+    app.alpaca.universe.MergerAction, which this mirrors field-for-field.
+    Structured (Alpaca-confirmed), not inferred from a headline's wording.
+    """
+
+    acquirer_symbol: str | None = None
+    sub_type: str = ""
+    cash_consideration: float | None = None
+    announced_date: date | None = None
+    effective_date: date | None = None
 
 
 class StrategySignalRow(BaseModel):
@@ -53,6 +66,10 @@ class ScannerRow(BaseModel):
     short_interest_pct: float | None = None
     country: str | None = None
     company_name: str | None = None
+    # FMP's company logo image URL, off the same profile fundamentals
+    # above come from -- ranked-only for the same reason. None = no
+    # FMP_API_KEY, no profile found, or the profile simply has no logo.
+    logo_url: str | None = None
     # The company's sector, off the same FMP profile the fields above come
     # from -- carried so the sector-attribution page can work as a pure
     # function over rows rather than reaching into FundamentalsCache while
@@ -138,6 +155,12 @@ class ScannerRow(BaseModel):
     # symbol whose status never arrived. It is the broker's static flag, not
     # a live locate -- a borrow can still fail when the order is placed.
     shortable: bool = False
+    # An active merger corporate action on this symbol, if any -- like
+    # shortable above, known for the whole universe (a cheap market-wide
+    # Alpaca query, see app.alpaca.universe.fetch_merger_actions) rather
+    # than only for ranked rows. None = no active merger action, not
+    # "unknown."
+    merger_action: MergerActionRow | None = None
     # What share of today's consolidated-tape volume our own feed actually
     # saw, in % (see FundamentalsCache.tape_coverage_pct). None = unknown.
     # A health figure for volume levels -- volume_today, rvol, volume_surge --

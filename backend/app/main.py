@@ -20,6 +20,7 @@ from app.dash_app import dash_app
 from app.dash_app.state import bind as bind_dash_state
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.news_cache import NewsCache
+from app.market_data.news_feed import NewsFeedTracker
 from app.market_data.stream_manager import StreamManager
 from app.replay.engine import ReplayEngineCache
 from app.replay.loop import run_replay_pacing_loop
@@ -27,6 +28,7 @@ from app.replay.store import ReplayStore
 from app.routers import (
     auth,
     meta,
+    news_feed,
     replay,
     scanners,
     screener,
@@ -45,7 +47,7 @@ from app.trading.sim.loop import run_sim_fill_loop
 from app.trading.sim.store import SimStore
 from app.trading.trade_store import TradeStore
 from app.watchlist.store import WatchlistStore
-from app.ws import chart_ws, replay_ws, scanner_ws
+from app.ws import chart_ws, news_feed_ws, replay_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
 from app.ws.screen_subscriptions import ScreenSubscriptions
 
@@ -131,6 +133,9 @@ async def lifespan(app: FastAPI):
     momentum_cache = MomentumCache(settings, clients)
     app.state.momentum_cache = momentum_cache
 
+    news_feed_tracker = NewsFeedTracker(ring_buffer_size=settings.news_feed_ring_buffer_size)
+    app.state.news_feed_tracker = news_feed_tracker
+
     if settings.has_credentials:
         try:
             universe = await build_universe(clients, settings)
@@ -166,6 +171,7 @@ async def lifespan(app: FastAPI):
         news_cache,
         momentum_cache,
         fundamentals_client,
+        news_feed_tracker,
     )
     engine.screen_subscriptions = screen_subscriptions
     app.state.scanner_engine = engine
@@ -232,9 +238,11 @@ app.include_router(trade_ideas.router, dependencies=_auth_gate)
 app.include_router(trading.router, dependencies=_auth_gate)
 app.include_router(trading_sim.router)
 app.include_router(replay.router)
+app.include_router(news_feed.router)
 app.include_router(watchlist.router)
 app.include_router(scanner_ws.router)
 app.include_router(chart_ws.router)
 app.include_router(replay_ws.router)
+app.include_router(news_feed_ws.router)
 
 app.mount("/analytics", WSGIMiddleware(dash_app.server))

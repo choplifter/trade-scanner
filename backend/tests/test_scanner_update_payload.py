@@ -51,6 +51,7 @@ def _engine(**settings_overrides):
         news_cache=None,  # type: ignore[arg-type]
         momentum_cache=None,  # type: ignore[arg-type]
         http_client=None,  # type: ignore[arg-type]
+        news_feed_tracker=None,  # type: ignore[arg-type]
     )
 
 

@@ -216,6 +216,16 @@ export function ScannerTable({
             onDragStart={(e) => startSymbolDrag(e, row.symbol)}
           >
             <td className="symbol-cell">
+              {row.logo_url && (
+                <img
+                  src={row.logo_url}
+                  alt=""
+                  className="symbol-logo"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              )}
               {row.symbol}
               <CopyButton
                 value={tradingViewSymbol(row.symbol, row.exchange)}
@@ -244,6 +254,25 @@ export function ScannerTable({
                   title="RVol >15x -- historically more often a blow-off/exhaustion move than a continuation (this app's own scanner history shows a lower win rate at this RVol range)"
                 >
                   FADE RISK
+                </span>
+              )}
+              {row.merger_action && (
+                <span
+                  className="badge-merger"
+                  title={
+                    "Active merger corporate action" +
+                    (row.merger_action.acquirer_symbol
+                      ? ` -- acquirer ${row.merger_action.acquirer_symbol}`
+                      : "") +
+                    (row.merger_action.cash_consideration != null
+                      ? `, $${row.merger_action.cash_consideration}/share cash`
+                      : "") +
+                    (row.merger_action.sub_type
+                      ? ` (${row.merger_action.sub_type.replace("_", " ")})`
+                      : "")
+                  }
+                >
+                  M&A
                 </span>
               )}
               {row.is_momentum_alert && (

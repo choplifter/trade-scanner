@@ -8,7 +8,13 @@ from alpaca.data.requests import StockBarsRequest, StockSnapshotRequest
 from alpaca.data.timeframe import TimeFrame
 
 from app.alpaca.client import AlpacaClients
-from app.alpaca.universe import UniverseSymbol, fetch_movers_backstop, fetch_split_ratios
+from app.alpaca.universe import (
+    MergerAction,
+    UniverseSymbol,
+    fetch_merger_actions,
+    fetch_movers_backstop,
+    fetch_split_ratios,
+)
 from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
@@ -22,6 +28,7 @@ from app.market_data.news import fetch_headlines, is_roundup_headline
 from app.market_data import news_cache as news_cache_mod
 from app.market_data.fmp_news import fetch_fmp_headlines
 from app.market_data.news_cache import NewsCache
+from app.market_data.news_feed import NewsFeedTracker
 from app.market_data import volume_surge
 from app.market_data import session_marks
 from app.market_data.momentum import MOMENTUM_WINDOW_MINUTES
@@ -33,7 +40,7 @@ from app.scanners.momentum_cache import MomentumCache
 from app.strategies import runner as strategy_runner
 from app.strategies.loader import load_strategies
 from app.scanners.latest_session import compute_latest_session_rows
-from app.scanners.schemas import ScannerRow, StrategySignalRow
+from app.scanners.schemas import MergerActionRow, ScannerRow, StrategySignalRow
 from app.scanners.sector_attribution import SECTOR_ETFS
 from app.services.market_clock import ET, current_session, trading_hours_for
 from app.ws.connection_manager import ConnectionManager
@@ -214,6 +221,7 @@ class ScannerEngine:
         news_cache: NewsCache,
         momentum_cache: MomentumCache,
         http_client: httpx.AsyncClient,
+        news_feed_tracker: NewsFeedTracker,
     ):
         self.clients = clients
         self.settings = settings
@@ -225,6 +233,7 @@ class ScannerEngine:
         self.news_cache = news_cache
         self.momentum_cache = momentum_cache
         self.http_client = http_client
+        self.news_feed_tracker = news_feed_tracker
         # Live user-defined screens, one per connected socket. Set by main.py
         # after construction (the WS layer owns it) -- None when the engine is
         # built without a websocket layer at all, e.g. in tests.
@@ -253,6 +262,9 @@ class ScannerEngine:
         self._last_history_snapshot: float = 0.0
         self._split_ratios: dict[str, tuple[float, date]] = {}
         self._last_split_refresh: float = 0.0
+        self._merger_actions: dict[str, MergerAction] = {}
+        self._last_merger_refresh: float = 0.0
+        self._last_news_feed_refresh: float = 0.0
 
     def _session_volume_fraction(self, at: datetime) -> float | None:
         """Time-of-day RVOL denominator, or None to leave RVOL un-normalized.
@@ -366,6 +378,7 @@ class ScannerEngine:
                 ),
                 is_fade_risk=formulas.is_fade_risk(row_rvol),
                 shortable=uni.shortable,
+                merger_action=self._merger_action_row(symbol),
                 updated_at=now,
             )
 
@@ -586,6 +599,72 @@ class ScannerEngine:
 
         self._split_ratios = await fetch_split_ratios(self.clients)
 
+    async def _refresh_merger_actions(self) -> None:
+        """Refresh active merger corporate actions (see fetch_merger_actions)
+        on the same slow, not-gated-on-can_poll shape as
+        _refresh_split_ratios above -- a merger situation doesn't change
+        status minute to minute, and staying warm across a poll pause means
+        a symbol's M&A badge doesn't flicker off just because polling did.
+        """
+        now = time.monotonic()
+        if now - self._last_merger_refresh < self.settings.merger_refresh_interval:
+            return
+        self._last_merger_refresh = now
+
+        self._merger_actions = await fetch_merger_actions(
+            self.clients, lookback_days=self.settings.merger_lookback_days
+        )
+
+    def _merger_action_row(self, symbol: str) -> MergerActionRow | None:
+        action = self._merger_actions.get(symbol)
+        if action is None:
+            return None
+        return MergerActionRow(
+            acquirer_symbol=action.acquirer_symbol,
+            sub_type=action.sub_type,
+            cash_consideration=action.cash_consideration,
+            announced_date=action.announced_date,
+            effective_date=action.effective_date,
+        )
+
+    async def _refresh_news_feed(self, views: dict[str, list[ScannerRow]]) -> None:
+        """Poll for newly-published articles across the same canonical-view
+        symbol scope _record_new_appearances uses below (not ad hoc user
+        screens), broadcasting each new one over the "news:feed" WS topic
+        -- see app.market_data.news_feed.NewsFeedTracker. Its own, much
+        faster cadence (settings.news_feed_refresh_interval) than the
+        per-symbol NewsCache headline refresh above: that cache only needs
+        "the latest headline," this needs to actually notice a new article
+        arriving -- a real, accepted increase in API calls over the same
+        ~150 symbols, for a genuinely live feed.
+        """
+        now = time.monotonic()
+        if now - self._last_news_feed_refresh < self.settings.news_feed_refresh_interval:
+            return
+        self._last_news_feed_refresh = now
+
+        if not self.clients.settings.has_credentials:
+            return
+
+        symbols = {
+            row.symbol
+            for view_name in ("gainers", "losers", "most_active", "moderate_movers")
+            for row in views.get(view_name, [])
+        }
+        if not symbols:
+            return
+
+        try:
+            new_items = await self.news_feed_tracker.poll(self.clients, sorted(symbols))
+        except Exception:
+            logger.exception("News feed poll failed")
+            return
+
+        for item in new_items:
+            await self.manager.broadcast(
+                "news:feed", {"type": "news_feed_item", "item": item.model_dump(mode="json")}
+            )
+
     async def _refresh_market_conditions(self) -> None:
         """Refresh the red/yellow/green market-conditions readout (VIX,
         today's high-impact global economic events, scanner breadth) on a
@@ -676,6 +755,7 @@ class ScannerEngine:
                     row.country = data.profile.country if data.profile else None
                     row.company_name = data.profile.name if data.profile else None
                     row.sector = data.profile.sector if data.profile else None
+                    row.logo_url = data.profile.logo_url if data.profile else None
 
     async def _attach_news(self, views: dict[str, list[ScannerRow]]) -> None:
         """Fill in each row's most recent news headline for whatever's
@@ -1142,6 +1222,7 @@ class ScannerEngine:
                 await self._refresh_movers_backstop() if has_backstop_data else {}
             )
             await self._refresh_split_ratios()
+            await self._refresh_merger_actions()
             await self._refresh_market_conditions()
 
             if can_poll:
@@ -1168,6 +1249,7 @@ class ScannerEngine:
             # the next live poll, instead of the fallback's real fundamentals.
             views = self._build_views()
             await self._record_new_appearances(views)
+            await self._refresh_news_feed(views)
             await self._write_periodic_snapshots()
 
             # History recording above deliberately runs first and only over the

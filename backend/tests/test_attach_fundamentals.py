@@ -38,7 +38,7 @@ def _entry(sector="Healthcare", country="US", name="A Corp", **overrides):
         "float_shares": 1_000_000.0,
         "market_cap": 5_000_000.0,
         "short_interest_pct": 3.5,
-        "profile": SimpleNamespace(sector=sector, country=country, name=name),
+        "profile": SimpleNamespace(sector=sector, country=country, name=name, logo_url="https://example.com/logo.png"),
     }
     data.update(overrides)
     return SimpleNamespace(**data)
@@ -56,6 +56,7 @@ def _engine(fundamentals):
         news_cache=None,  # type: ignore[arg-type]
         momentum_cache=None,  # type: ignore[arg-type]
         http_client=None,  # type: ignore[arg-type]
+        news_feed_tracker=None,  # type: ignore[arg-type]
     )
 
 

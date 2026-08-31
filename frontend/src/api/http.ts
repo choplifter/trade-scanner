@@ -1,5 +1,6 @@
 import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
 import type { MarketConditionsResponse } from "../types/marketConditions";
+import type { NewsFeedItem } from "../types/newsFeed";
 import type { ScannerBenchmarkResponse } from "../types/scannerBenchmark";
 import type { ScannerHistoryResponse } from "../types/scannerHistory";
 import type {
@@ -83,6 +84,13 @@ export function getScannerBenchmarkPerformance(): Promise<ScannerBenchmarkRespon
 
 export function getScannerHistoryPerformance(days = 7): Promise<ScannerHistoryResponse> {
   return getJson<ScannerHistoryResponse>(`/scanners/history/performance?days=${days}`);
+}
+
+/** The live cross-symbol news feed's current buffer, newest first --
+ * seeds a freshly mounted NewsFeedWidget; new items after that arrive
+ * over /ws/news-feed instead (see api/ws.ts's newsFeedSocket). */
+export function getRecentNewsFeed(limit = 50): Promise<{ items: NewsFeedItem[] }> {
+  return getJson<{ items: NewsFeedItem[] }>(`/news-feed/recent?limit=${limit}`);
 }
 
 export function getSymbolBars(symbol: string, timeframe = "1Min"): Promise<SymbolBarsResponse> {

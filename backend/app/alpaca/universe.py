@@ -372,3 +372,68 @@ async def fetch_split_ratios(clients: AlpacaClients, lookback_days: int = 7) -> 
     if ratios:
         logger.info("Split adjustments (last %d days): %s", lookback_days, ratios)
     return ratios
+
+
+@dataclass(frozen=True)
+class MergerAction:
+    """One target symbol's active merger corporate action, structured
+    (Alpaca-confirmed) rather than inferred from a headline's wording --
+    see app.ai.trade_ideas' merger_activity payload field for why that
+    distinction matters to the trade-ideas prompt.
+    """
+
+    acquirer_symbol: str | None
+    # "merger_update" | "merger_completion" | "cash" | "stock" | "" (unset)
+    sub_type: str
+    # Per-share cash terms; None for a stock-for-stock deal.
+    cash_consideration: float | None
+    announced_date: date | None
+    effective_date: date | None
+
+
+async def fetch_merger_actions(clients: AlpacaClients, lookback_days: int = 90) -> dict[str, MergerAction]:
+    """Symbol -> its most recent merger corporate action announced in the
+    last `lookback_days` days -- independent from fetch_split_ratios above
+    rather than a generalization of it: a merger situation can stay live
+    for months between announcement and completion, a much wider window
+    than the 7-day one that function needs to bound a prev_close rescale,
+    and coupling the two would force a single shared lookback for two
+    unrelated concerns.
+
+    One market-wide query, same reasoning as fetch_split_ratios: mergers
+    are rare enough across the whole market that this is cheap regardless
+    of universe size. When a symbol has more than one announcement in the
+    window (e.g. an update following the original announcement), the most
+    recently declared one wins -- iteration order is whatever Alpaca
+    returns, so this doesn't assume it's chronological.
+    """
+    today = datetime.now(timezone.utc).date()
+    try:
+        request = GetCorporateAnnouncementsRequest(
+            ca_types=[CorporateActionType.MERGER],
+            since=today - timedelta(days=lookback_days),
+            until=today,
+        )
+        announcements = await asyncio.to_thread(clients.trading.get_corporate_announcements, request)
+    except Exception:
+        logger.exception("Corporate announcements (merger) fetch failed")
+        return {}
+
+    actions: dict[str, MergerAction] = {}
+    for a in announcements:
+        if not a.target_symbol:
+            continue
+        existing = actions.get(a.target_symbol)
+        if existing and existing.announced_date and a.declaration_date and a.declaration_date < existing.announced_date:
+            continue
+        actions[a.target_symbol] = MergerAction(
+            acquirer_symbol=a.initiating_symbol,
+            sub_type=a.ca_sub_type.value if a.ca_sub_type else "",
+            cash_consideration=a.cash,
+            announced_date=a.declaration_date,
+            effective_date=a.ex_date,
+        )
+
+    if actions:
+        logger.info("Merger actions (last %d days): %s", lookback_days, sorted(actions))
+    return actions

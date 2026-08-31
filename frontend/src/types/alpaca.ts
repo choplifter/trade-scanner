@@ -24,6 +24,19 @@ export interface StrategySignal {
   fired_at: string;
 }
 
+/** One target symbol's active merger corporate action -- structured,
+ * Alpaca-confirmed (not inferred from a headline's wording). See backend
+ * app.alpaca.universe.MergerAction. */
+export interface MergerAction {
+  acquirer_symbol: string | null;
+  /** "merger_update" | "merger_completion" | "cash" | "stock" | "" (unset) */
+  sub_type: string;
+  /** Per-share cash terms; null for a stock-for-stock deal. */
+  cash_consideration: number | null;
+  announced_date: string | null;
+  effective_date: string | null;
+}
+
 export interface ScannerRow {
   symbol: string;
   exchange: string;
@@ -48,6 +61,10 @@ export interface ScannerRow {
    * most of the universe would silently match nothing. */
   sector: string | null;
   company_name: string | null;
+  /** FMP's company logo image URL, from the same profile as company_name --
+   * ranked rows only. Null covers no FMP_API_KEY, no profile found, or the
+   * profile simply having no logo. */
+  logo_url: string | null;
   recent_headline: string | null;
   /** % price change over just the momentum window -- distinct from
    * pct_change (since prior close): a symbol can carry a huge pct_change
@@ -93,6 +110,10 @@ export interface ScannerRow {
    * only the absence of one. The broker's static flag, not a live locate:
    * a borrow can still fail when the order is placed. */
   shortable: boolean;
+  /** An active merger corporate action on this symbol, if any -- known for
+   * the whole universe, like shortable above, not just ranked rows. Null
+   * means no active merger action, not "unknown." */
+  merger_action: MergerAction | null;
   updated_at: string;
 }
 

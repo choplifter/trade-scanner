@@ -9,6 +9,7 @@ import { ChartWidget } from "./components/chart/ChartWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
+import { NewsFeedWidget } from "./components/newsFeed/NewsFeedWidget";
 import { ReplayPanel } from "./components/replay/ReplayPanel";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
@@ -140,6 +141,12 @@ function AppShell({ user, onLogout }: AppShellProps) {
       replay: (
         <ReplayPanel key="replay" selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
+      // Same key requirement as replay above -- also placed inside a
+      // constructed children array in panels mode, not as a literal JSX
+      // child.
+      news_feed: (
+        <NewsFeedWidget key="news_feed" selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+      ),
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
     // state the comment above guards against: switching modes should
@@ -167,7 +174,18 @@ function AppShell({ user, onLogout }: AppShellProps) {
       minSizePx={[220, 220, 150]}
     >
       {widgets.scanner}
-      {widgets.chart}
+      {/* News feed sits directly under its own chart -- click a headline,
+          the chart right above updates to that symbol, no need to look
+          elsewhere on the page. */}
+      <ResizablePanels
+        direction="column"
+        storageKey="layout:chart-column"
+        defaultSizes={[0.65, 0.35]}
+        minSizePx={150}
+      >
+        {widgets.chart}
+        {widgets.news_feed}
+      </ResizablePanels>
       {/* Trading was oversized for a form at full column height --
           it shares the column with the watchlist instead, 50/50 by
           default, each still draggable further via the handle
@@ -262,12 +280,14 @@ function AppShell({ user, onLogout }: AppShellProps) {
             />
           ) : replaySession ? (
             // A session is running -- replay gets its own resizable third
-            // row, same as it always has. One array expression as the sole
-            // child (not {topAndBottomRows}{widgets.replay} as two separate
-            // ones) -- see topAndBottomRows' own comment for why: two
-            // expressions here would nest the 2-element array inside a
-            // 2-element children array ([[top,bottom], replay], length 2),
-            // not flatten to the 3 panels defaultSizes expects.
+            // row, same as it always has. news_feed no longer lives here --
+            // it's nested under widgets.chart instead (see topAndBottomRows'
+            // top-row). One array expression as the sole child (not
+            // {topAndBottomRows}{widgets.replay} as two separate ones) --
+            // see topAndBottomRows' own comment for why: two expressions
+            // here would nest the 2-element array inside a 2-element
+            // children array ([[top,bottom], replay], length 2), not
+            // flatten to the 3 panels defaultSizes expects.
             <ResizablePanels
               direction="column"
               storageKey="layout:main-rows"

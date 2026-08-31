@@ -583,6 +583,15 @@ body {
   font-weight: 600;
 }
 
+.symbol-logo {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  margin-right: 4px;
+  vertical-align: middle;
+  border-radius: 2px;
+}
+
 .copy-symbol-button {
   display: inline-flex;
   align-items: center;
@@ -765,6 +774,22 @@ body {
   border-radius: 3px;
   color: var(--status-critical);
   border: 1px solid var(--status-critical);
+  vertical-align: middle;
+  cursor: default;
+}
+
+/* Structured, Alpaca-confirmed merger corporate action -- a violet
+   hardcoded locally rather than a new root palette variable, same one-off
+   approach .badge-strategy already takes below. */
+.badge-merger {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #7c3aed;
+  border: 1px solid #7c3aed;
   vertical-align: middle;
   cursor: default;
 }
@@ -1022,6 +1047,20 @@ body {
 
 .symbol-info-header {
   margin-bottom: 8px;
+}
+
+.symbol-info-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.symbol-info-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .symbol-info-tags {
@@ -2193,4 +2232,63 @@ a.symbol-news-headline {
 .logout-link {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+/* Live cross-symbol news feed -- backend/app/market_data/news_feed.py +
+   components/newsFeed/NewsFeedWidget. */
+.news-feed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.news-feed-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.news-feed-item:hover {
+  background: var(--row-hover);
+}
+
+.news-feed-item[aria-selected="true"] {
+  background: var(--row-selected);
+}
+
+.news-feed-symbol {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 12px;
+  width: 56px;
+}
+
+.news-feed-headline {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.news-feed-headline {
+  text-decoration: none;
+}
+
+a.news-feed-headline:hover {
+  text-decoration: underline;
+}
+
+.news-feed-meta {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }

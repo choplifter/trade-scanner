@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { SymbolInfoState } from "../../hooks/useSymbolInfo";
+import { newsAge } from "../../utils/format";
 
 interface SymbolInfoPanelProps {
   symbol: string | null;
@@ -15,19 +16,6 @@ interface SymbolInfoPanelProps {
 
 function publishTime(publishedAt: string): number {
   return Math.floor(Date.parse(publishedAt) / 1000);
-}
-
-/** Relative age of a story. The panel is headed "Recent News" but the FMP
- * feed carries a symbol's whole history, so an item can easily be weeks old
- * — without a date, a stale headline reads as an explanation for today's
- * move. Shown per item rather than filtering them out: older context is
- * still useful here, it just must not masquerade as fresh. */
-function newsAge(publishedAt: string): string {
-  const minutes = Math.max(0, Math.round((Date.now() - new Date(publishedAt).getTime()) / 60000));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
 }
 
 export function SymbolInfoPanel({ symbol, state, highlightTimes }: SymbolInfoPanelProps) {
@@ -60,13 +48,25 @@ export function SymbolInfoPanel({ symbol, state, highlightTimes }: SymbolInfoPan
   if (!info) return null;
 
   const headerBits = [info.company_name, info.sector, info.industry].filter(Boolean);
-  const hasProfile = headerBits.length > 0 || !!info.description;
+  const hasProfile = headerBits.length > 0 || !!info.description || !!info.logo_url;
 
   return (
     <div className="symbol-info-panel">
       {hasProfile && (
         <div className="symbol-info-header">
-          {headerBits.length > 0 && <span className="symbol-info-tags">{headerBits.join(" · ")}</span>}
+          <div className="symbol-info-title-row">
+            {info.logo_url && (
+              <img
+                src={info.logo_url}
+                alt=""
+                className="symbol-info-logo"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            )}
+            {headerBits.length > 0 && <span className="symbol-info-tags">{headerBits.join(" · ")}</span>}
+          </div>
           {info.description && <p className="symbol-info-description">{info.description}</p>}
           {info.website && (
             <a href={info.website} target="_blank" rel="noreferrer" className="symbol-info-website">

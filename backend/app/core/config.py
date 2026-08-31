@@ -212,11 +212,34 @@ class Settings(BaseSettings):
     # one that posts intraday against not hammering the endpoint.
     split_ratio_refresh_interval: float = 1800.0
 
+    # How often to re-check for active merger corporate actions (see
+    # fetch_merger_actions in app.alpaca.universe) -- same cadence
+    # rationale as split_ratio_refresh_interval above, a merger situation
+    # doesn't change status minute to minute.
+    merger_refresh_interval: float = 1800.0
+    # How far back to look for a merger announcement still worth flagging
+    # -- much wider than fetch_split_ratios' 7-day window, since a merger
+    # can stay live for months between announcement and completion rather
+    # than resolving the next session.
+    merger_lookback_days: int = 90
+
     # How often a symbol's news headline is refreshed while it stays in a
     # ranked scanner view -- see app.market_data.news_cache.NewsCache. Kept
     # well above the poll interval so live scanning doesn't hammer the news
     # endpoint on every 5-10s tick for the same ~150 ranked symbols.
     scanner_news_refresh_interval: float = 900.0
+
+    # How often the live cross-symbol News Feed widget's tracker re-polls
+    # Alpaca News for symbols currently in a ranked view -- see
+    # app.market_data.news_feed.NewsFeedTracker. Deliberately its own,
+    # much faster cadence than scanner_news_refresh_interval above (that
+    # cache only needs "the latest headline," this needs to actually
+    # notice a new article arriving) -- a real, accepted increase in API
+    # calls over the same ~150 symbols, chosen for a genuinely live feed.
+    news_feed_refresh_interval: float = 60.0
+    # How many recent items the feed keeps in memory (not persisted --
+    # see NewsFeedTracker's own docstring).
+    news_feed_ring_buffer_size: int = 200
 
     # How often a symbol's trailing-window momentum (momentum_pct)
     # is refreshed while it stays in a ranked scanner view -- see

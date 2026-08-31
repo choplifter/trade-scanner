@@ -50,3 +50,16 @@ export function formatShortInterestPct(value: number): string {
 export function tradingViewSymbol(symbol: string, exchange: string | undefined | null): string {
   return exchange ? `${exchange}:${symbol}` : symbol;
 }
+
+/** Relative age of a news item -- shared by SymbolInfoPanel (a symbol's own
+ * news history can span weeks) and NewsFeedWidget (a live wire, where this
+ * is normally seconds/minutes but should still read sensibly for an older
+ * item still sitting in the buffer). Without a date, a stale headline reads
+ * as an explanation for something happening right now. */
+export function newsAge(publishedAt: string): string {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(publishedAt).getTime()) / 60000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}

@@ -1,6 +1,7 @@
 import ReconnectingWebSocket from "reconnecting-websocket";
 
 import type { ChartSocketMessage, ScannerUpdateMessage } from "../types/alpaca";
+import type { NewsFeedItemMessage } from "../types/newsFeed";
 import type { ReplayUpdateMessage } from "../types/replay";
 import type { Screen, ScreenUpdateMessage } from "../types/screener";
 
@@ -165,4 +166,13 @@ export const replaySocket = new TopicSocket<ReplayUpdateMessage>(
   "/ws/replay",
   (msg) => msg.scanner,
   "scanner",
+);
+
+/** The live cross-symbol news feed -- a single fixed topic (the server has
+ * only one, see ws/news_feed_ws.py), so the topic key/subscribe param
+ * value here is arbitrary; TopicSocket is reused unmodified. */
+export const newsFeedSocket = new TopicSocket<NewsFeedItemMessage>(
+  "/ws/news-feed",
+  () => "feed",
+  "topic",
 );
