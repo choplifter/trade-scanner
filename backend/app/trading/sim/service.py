@@ -133,8 +133,11 @@ class SimOrderService:
             "cash": _money(cash),
             "equity": _money(equity),
             "last_equity": _money(equity),
-            # No margin modeled -- buying power is exactly the cash on hand.
-            "buying_power": _money(max(cash, 0.0)),
+            # trading_sim_margin_multiplier (default 1.0 -- a plain cash
+            # account) scales cash into a simulated margin buying power.
+            # Only this number widens: equity, and every ceiling derived
+            # from it, are untouched -- see resolve_ticket's max_notional_pct.
+            "buying_power": _money(max(cash, 0.0) * self._settings.trading_sim_margin_multiplier),
             "portfolio_value": _money(equity),
             "long_market_value": _money(long_value),
             "short_market_value": _money(-short_value),

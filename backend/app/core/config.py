@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # the US PDT minimum rather than a round $100k, so sizing/risk % behavior
     # in practice mode resembles a realistic smaller account.
     trading_sim_starting_cash: float = 25_000.0
+    # Flat multiplier applied to cash to report simulated buying_power --
+    # 1.0 (default) means no margin, matching a real cash account. Set to
+    # e.g. 4.0 to approximate Alpaca's day-trade margin buying power. Only
+    # widens buying_power itself: the equity-based order ceilings
+    # (trading_max_order_notional_pct/_notional) are untouched, so this
+    # can't be used to size past the existing fat-finger guards.
+    trading_sim_margin_multiplier: float = 1.0
     # How often the background fill loop (app.trading.sim.loop) re-checks
     # working sim orders against a fresh live price. Its own setting, not a
     # reuse of scanner_poll_interval_regular, because fill correctness here
