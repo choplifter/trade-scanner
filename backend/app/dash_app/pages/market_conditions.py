@@ -14,14 +14,19 @@ color.
 from datetime import datetime
 
 import dash
+import plotly.graph_objects as go
 from dash import Input, Output, callback, dcc, html
 
 from app.dash_app.state import backend_state
 from app.dash_app.theme import (
+    DELTA_DOWN,
+    DELTA_UP,
     MARKET_CONDITIONS_LEVEL_COLOR,
     MARKET_CONDITIONS_LEVEL_LABEL,
     TEXT_MUTED,
 )
+from app.market_data.gamma_exposure import SYMBOLS as GEX_SYMBOLS
+from app.market_data.gamma_exposure import _EXPIRATION_DAYS_AHEAD, _STRIKE_PCT_RANGE
 from app.market_data.market_conditions import (
     _BREADTH_RED,
     _BREADTH_YELLOW,
@@ -84,15 +89,20 @@ def layout(**_kwargs):
     )
 
 
-def _unavailable() -> html.Div:
+def _unavailable(gex: dict) -> html.Div:
+    # GEX rides on Alpaca, not FMP, so it can be available even when the
+    # FMP-backed VIX/events/breadth section below can't be -- shown here too
+    # rather than hidden behind the FMP-specific message.
     return html.Div(
         [
             _as_of_line(),
             html.P(
-                "Not available -- FMP_API_KEY isn't configured, or the first refresh "
-                "hasn't landed yet. Add FMP_API_KEY to backend/.env to enable this "
-                "(the same key that powers float/market cap/short interest)."
+                "VIX/events/breadth not available -- FMP_API_KEY isn't configured, or "
+                "the first refresh hasn't landed yet. Add FMP_API_KEY to backend/.env "
+                "to enable this (the same key that powers float/market cap/short "
+                "interest)."
             ),
+            _gex_section(gex),
         ]
     )
 
@@ -210,12 +220,95 @@ def _breadth_section(breadth_pct) -> html.Div:
     return _section("Scanner Breadth", [value, intro, thresholds])
 
 
+def _gex_wall_figure(reading) -> go.Figure:
+    """The gamma-wall profile: net dollar gamma exposure per strike, colored
+    by sign (DELTA_UP/DELTA_DOWN -- the same up/down mapping this page's
+    other figures would use), with a marker at the current spot price for
+    context. Scaled to millions rather than GexReading's raw dollars -- a
+    single strike's exposure is naturally much smaller than the SPY/QQQ-wide
+    total shown in the summary line above it.
+    """
+    strikes = [row.strike for row in reading.by_strike]
+    values_m = [row.net_gex / 1e6 for row in reading.by_strike]
+    colors = [DELTA_UP if row.net_gex >= 0 else DELTA_DOWN for row in reading.by_strike]
+
+    figure = go.Figure([go.Bar(x=strikes, y=values_m, marker_color=colors)])
+    figure.add_vline(
+        x=reading.spot_price,
+        line_dash="dot",
+        line_color=TEXT_MUTED,
+        annotation_text="Spot",
+        annotation_position="top",
+    )
+    figure.update_layout(
+        height=260,
+        margin={"l": 60, "r": 20, "t": 20, "b": 40},
+        xaxis_title="Strike",
+        yaxis_title="Net GEX ($M)",
+        showlegend=False,
+    )
+    return figure
+
+
+def _gex_section(gex: dict) -> html.Div:
+    intro = html.P(
+        "Net dealer gamma exposure (GEX) for SPY and QQQ -- a rough gauge of how "
+        "options-market positioning tends to affect moves in the underlying. "
+        "Positive means dealers are estimated net long gamma and tend to dampen "
+        "moves (buy dips, sell rips); negative means dealers are estimated net "
+        "short gamma and tend to amplify them (sell into drops, buy into rallies). "
+        f"Computed from strikes within {_STRIKE_PCT_RANGE:.0%} of spot, expiring "
+        f"within {_EXPIRATION_DAYS_AHEAD} days (today's 0DTE contracts are excluded "
+        "-- Alpaca cannot compute greeks for a contract expiring the same day), "
+        "using Alpaca's own Black-Scholes-modeled greeks rather than exchange-"
+        "published Greeks -- treat the number as directional, not precise, and as "
+        "one widely-used sign convention among traders who track this, not a "
+        "settled industry standard."
+    )
+    rows = []
+    for symbol in GEX_SYMBOLS:
+        reading = gex.get(symbol)
+        if reading is None:
+            rows.append(
+                html.P(f"{symbol}: no current reading.", style={"color": TEXT_MUTED})
+            )
+            continue
+        rows.append(
+            html.P(
+                [
+                    html.Span(symbol, style={"fontWeight": "700", "marginRight": "8px"}),
+                    html.Span(
+                        f"{reading.net_gex / 1e9:+.2f}B",
+                        style={"fontSize": "20px", "fontWeight": "700"},
+                    ),
+                    html.Span(
+                        f"  (calls {reading.call_gex / 1e9:+.2f}B · puts {reading.put_gex / 1e9:+.2f}B · "
+                        f"{reading.contracts_used} contracts · spot {reading.spot_price:.2f} · "
+                        f"as of {reading.as_of.astimezone().strftime('%H:%M')})",
+                        style={"color": TEXT_MUTED, "marginLeft": "8px"},
+                    ),
+                ]
+            )
+        )
+        if reading.by_strike:
+            wall = max(reading.by_strike, key=lambda row: abs(row.net_gex))
+            rows.append(
+                html.P(
+                    f"Largest concentration: {wall.strike:g} strike ({wall.net_gex / 1e9:+.2f}B)",
+                    style={"color": TEXT_MUTED, "marginBottom": "4px"},
+                )
+            )
+            rows.append(dcc.Graph(figure=_gex_wall_figure(reading), style={"marginBottom": "16px"}))
+    return _section("Gamma Exposure (GEX)", [*rows, intro])
+
+
 @callback(Output("mc-page-body", "children"), Input("mc-page-interval", "n_intervals"))
 def update_market_conditions_page(_n_intervals):
     engine = backend_state.scanner_engine
     conditions = engine.market_conditions if engine is not None else None
+    gex = engine.gex if engine is not None else {}
     if conditions is None:
-        return _unavailable()
+        return _unavailable(gex)
 
     return html.Div(
         [
@@ -237,5 +330,6 @@ def update_market_conditions_page(_n_intervals):
                 ]
             ),
             _breadth_section(conditions.breadth_pct),
+            _gex_section(gex),
         ]
     )

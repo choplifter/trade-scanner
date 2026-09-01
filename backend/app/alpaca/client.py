@@ -3,6 +3,7 @@ import logging
 
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical.news import NewsClient
+from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.screener import ScreenerClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.live.stock import StockDataStream
@@ -38,6 +39,10 @@ class AlpacaClients:
             secret_key=settings.alpaca_api_secret_key,
         )
         self.screener = ScreenerClient(
+            api_key=settings.alpaca_api_key_id,
+            secret_key=settings.alpaca_api_secret_key,
+        )
+        self.options = OptionHistoricalDataClient(
             api_key=settings.alpaca_api_key_id,
             secret_key=settings.alpaca_api_secret_key,
         )

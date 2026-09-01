@@ -18,6 +18,8 @@ from app.alpaca.universe import (
 from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
+from app.market_data.gamma_exposure import SYMBOLS as GEX_SYMBOLS
+from app.market_data.gamma_exposure import GexReading, fetch_gex
 from app.market_data.market_conditions import (
     MarketConditions,
     compute_market_conditions,
@@ -244,6 +246,8 @@ class ScannerEngine:
         self.volume_profile = VolumeProfileCache(clients)
         self.market_conditions: MarketConditions | None = None
         self._last_market_conditions_refresh: float = 0.0
+        self.gex: dict[str, GexReading] = {}
+        self._last_gex_refresh: float = 0.0
         self.benchmark_symbol = "SPY"
         self.benchmark_price: float | None = None
         self.rows: dict[str, ScannerRow] = {}
@@ -701,6 +705,28 @@ class ScannerEngine:
             breadth_pct = up / len(self.rows) * 100
 
         self.market_conditions = compute_market_conditions(vix, events, breadth_pct)
+
+    async def _refresh_gex(self) -> None:
+        """Refresh net dealer gamma exposure for SPY/QQQ -- see
+        app.market_data.gamma_exposure. Same not-gated-on-can_poll, slow-
+        cadence reasoning as _refresh_market_conditions; gated on
+        has_credentials (Alpaca, not FMP) since this rides entirely on
+        Alpaca's options endpoints.
+        """
+        if not self.settings.has_credentials:
+            return
+        now = time.monotonic()
+        if now - self._last_gex_refresh < self.settings.gex_refresh_interval:
+            return
+        self._last_gex_refresh = now
+
+        # fetch_gex is itself best-effort (catches and logs internally,
+        # returns None rather than raising), so one symbol's failure can't
+        # take the other down -- no return_exceptions needed here.
+        readings = await asyncio.gather(*(fetch_gex(self.clients, symbol) for symbol in GEX_SYMBOLS))
+        for symbol, reading in zip(GEX_SYMBOLS, readings):
+            if reading is not None:
+                self.gex[symbol] = reading
 
     async def _merge_backstop_into_fallback(self, new_symbols: dict[str, UniverseSymbol]) -> None:
         """Fold freshly backstop-admitted symbols into the closed-market
@@ -1224,6 +1250,7 @@ class ScannerEngine:
             await self._refresh_split_ratios()
             await self._refresh_merger_actions()
             await self._refresh_market_conditions()
+            await self._refresh_gex()
 
             if can_poll:
                 interval = (
