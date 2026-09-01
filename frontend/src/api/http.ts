@@ -1,5 +1,5 @@
 import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
-import type { GexResponse } from "../types/gex";
+import type { GexPlanResponse, GexResponse } from "../types/gex";
 import type { MarketConditionsResponse } from "../types/marketConditions";
 import type { NewsFeedItem } from "../types/newsFeed";
 import type { ScannerBenchmarkResponse } from "../types/scannerBenchmark";
@@ -173,6 +173,10 @@ export function getMarketConditions(): Promise<MarketConditionsResponse> {
 
 export function getGex(): Promise<GexResponse> {
   return getJson<GexResponse>("/meta/gex");
+}
+
+export function getGexPlan(): Promise<GexPlanResponse> {
+  return getJson<GexPlanResponse>("/meta/gex-plan");
 }
 
 export interface StrategySwitch {

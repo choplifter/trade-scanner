@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 
-from app.market_data.gamma_exposure import top_walls
+from app.market_data.gamma_exposure import call_wall, gamma_flip_strike, put_wall, top_walls
+from app.market_data.gex_plan import compute_gex_plan
 from app.services.market_clock import current_session
 
 router = APIRouter(prefix="/api/meta", tags=["meta"])
@@ -64,26 +65,63 @@ async def market_conditions(request: Request) -> dict:
 
 @router.get("/gex")
 async def gex(request: Request) -> dict:
-    """Net dealer gamma exposure for SPY/QQQ plus each symbol's top-3
-    gamma-wall strikes by |net_gex| -- see app.market_data.gamma_exposure.
-    Feeds the main chart's "GEX Wall" level indicator (frontend only draws
-    it when the charted symbol is SPY or QQQ, the only two this covers).
-    `available: false` before the first refresh has completed, same framing
-    as /market-conditions.
+    """Net dealer gamma exposure for each covered symbol (see
+    app.market_data.gamma_exposure.SYMBOLS) plus each symbol's top-5
+    gamma-wall strikes by |net_gex|, explicit call/put wall strikes, and the
+    approximate gamma-flip strike. Feeds the main chart's "GEX" level
+    indicator (frontend only draws it when the charted symbol is one of the
+    covered ones). `available: false` before the first refresh has
+    completed, same framing as /market-conditions.
     """
     engine = request.app.state.scanner_engine
     readings = engine.gex if engine is not None else {}
+
+    def _wall(row) -> dict | None:
+        return {"strike": row.strike, "net_gex": row.net_gex} if row is not None else None
+
     return {
         "available": bool(readings),
         "symbols": {
             symbol: {
                 "spot_price": reading.spot_price,
                 "as_of": reading.as_of.isoformat(),
+                "net_gex": reading.net_gex,
+                "call_gex": reading.call_gex,
+                "put_gex": reading.put_gex,
                 "top_walls": [
                     {"strike": row.strike, "net_gex": row.net_gex}
-                    for row in top_walls(reading.by_strike, n=3)
+                    for row in top_walls(reading.by_strike, n=5)
                 ],
+                "call_wall": _wall(call_wall(reading.by_strike)),
+                "put_wall": _wall(put_wall(reading.by_strike)),
+                "gamma_flip_strike": gamma_flip_strike(reading.by_strike),
             }
             for symbol, reading in readings.items()
         },
     }
+
+
+@router.get("/gex-plan")
+async def gex_plan(request: Request) -> dict:
+    """Rule-based GEX playbook per symbol -- see app.market_data.gex_plan.
+    Same source data and `available: false` framing as /gex, just shaped
+    into a regime + plain-language playbook instead of chart levels.
+    """
+    engine = request.app.state.scanner_engine
+    readings = engine.gex if engine is not None else {}
+
+    def _wall(row) -> dict | None:
+        return {"strike": row.strike, "net_gex": row.net_gex} if row is not None else None
+
+    symbols: dict = {}
+    for symbol, reading in readings.items():
+        plan = compute_gex_plan(reading)
+        symbols[symbol] = {
+            "regime": plan.regime,
+            "near_flip": plan.near_flip,
+            "gamma_flip_strike": plan.gamma_flip_strike,
+            "call_wall": _wall(plan.call_wall),
+            "put_wall": _wall(plan.put_wall),
+            "playbook": plan.playbook,
+        }
+    return {"available": bool(readings), "symbols": symbols}

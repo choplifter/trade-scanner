@@ -7,6 +7,7 @@ import { AlarmsToggle } from "./components/alarms/AlarmsToggle";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { SymbolInfoWidget } from "./components/chart/SymbolInfoWidget";
+import { GexPlanWidget } from "./components/gex/GexPlanWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
@@ -150,6 +151,10 @@ function AppShell({ user, onLogout }: AppShellProps) {
       news_feed: (
         <NewsFeedWidget key="news_feed" selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
       ),
+      // Same key requirement as replay/news_feed above -- placed outside
+      // the resizable splits entirely in panels mode (see the
+      // dashboard-active-column/dashboard-idle-column render sites below).
+      gex_plan: <GexPlanWidget key="gex_plan" symbol={selectedSymbol} />,
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
     // state the comment above guards against: switching modes should
@@ -296,14 +301,17 @@ function AppShell({ user, onLogout }: AppShellProps) {
             // here would nest the 2-element array inside a 2-element
             // children array ([[top,bottom], replay], length 2), not
             // flatten to the 3 panels defaultSizes expects.
-            <ResizablePanels
-              direction="column"
-              storageKey="layout:main-rows"
-              defaultSizes={[0.55, 0.25, 0.2]}
-              minSizePx={140}
-            >
-              {[...topAndBottomRows, widgets.replay]}
-            </ResizablePanels>
+            <div className="dashboard-active-column">
+              <ResizablePanels
+                direction="column"
+                storageKey="layout:main-rows"
+                defaultSizes={[0.55, 0.25, 0.2]}
+                minSizePx={140}
+              >
+                {[...topAndBottomRows, widgets.replay]}
+              </ResizablePanels>
+              {widgets.gex_plan}
+            </div>
           ) : (
             // No session -- replay collapses to its own content-sized strip
             // (see ReplayPanel's .replay-collapsed) outside the resizable
@@ -325,6 +333,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
                 {topAndBottomRows}
               </ResizablePanels>
               {widgets.replay}
+              {widgets.gex_plan}
             </div>
           )}
         </main>

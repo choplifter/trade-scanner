@@ -181,6 +181,108 @@ body {
   background: var(--status-critical);
 }
 
+/* GexPlanWidget -- SPY/QQQ side by side, each with a regime badge (same
+   dot-in-pill shape as .market-conditions-badge, "positive"/"negative"
+   instead of green/yellow/red since GEX regime isn't itself a risk level)
+   plus a short rule-based playbook. */
+.gex-plan-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.gex-plan-symbol {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.gex-plan-symbol-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.gex-plan-symbol-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gex-plan-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.gex-plan-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.gex-plan-badge[data-level="positive"] .gex-plan-dot {
+  background: var(--status-good);
+}
+
+.gex-plan-badge[data-level="negative"] .gex-plan-dot {
+  background: var(--status-critical);
+}
+
+.gex-plan-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.gex-plan-playbook {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Panels mode places this widget outside the resizable splits (like
+   .replay-collapsed) rather than inline .widget's flex:1, which needs a
+   bounded parent height it doesn't have there. */
+.dashboard-idle-column > .gex-plan-widget,
+.dashboard-active-column > .gex-plan-widget {
+  flex: 0 0 auto;
+  max-height: 260px;
+}
+
+/* Active-replay-session sibling of .dashboard-idle-column -- same flex
+   column shape (the inner ResizablePanels takes the remaining space, this
+   widget takes its content height) but for the branch where replay sits
+   inside the resizable 3-panel split instead of collapsed outside it. */
+.dashboard-active-column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
+
+.dashboard-active-column > .resizable-panels {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+
 .alarms-toggle-group {
   display: inline-flex;
   align-items: center;
@@ -975,6 +1077,16 @@ body {
   width: 10px;
   height: 2px;
   display: inline-block;
+}
+
+/* Static readout, not a toggle -- same sizing as .vwap-legend so it sits
+   evenly in the same toolbar row, but no hover/pressed states. */
+.gex-net-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 4px;
 }
 
 .levels-dropdown {

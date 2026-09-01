@@ -9,7 +9,15 @@ from datetime import date, datetime, timezone
 
 from alpaca.trading.enums import ContractType
 
-from app.market_data.gamma_exposure import StrikeGex, _fetch_contracts, compute_gex, top_walls
+from app.market_data.gamma_exposure import (
+    StrikeGex,
+    _fetch_contracts,
+    call_wall,
+    compute_gex,
+    gamma_flip_strike,
+    put_wall,
+    top_walls,
+)
 
 _CALL = ContractType.CALL
 _PUT = ContractType.PUT
@@ -100,6 +108,45 @@ def test_top_walls_picks_largest_magnitude_and_sorts_by_strike():
 def test_top_walls_n_larger_than_input_returns_everything():
     rows = [StrikeGex(strike=100.0, net_gex=1.0, call_gex=1.0, put_gex=0.0)]
     assert top_walls(rows, n=3) == rows
+
+
+def test_call_wall_and_put_wall_pick_largest_by_side():
+    rows = [
+        StrikeGex(strike=90.0, net_gex=-1000.0, call_gex=500.0, put_gex=-1500.0),
+        StrikeGex(strike=100.0, net_gex=3000.0, call_gex=3000.0, put_gex=0.0),
+        StrikeGex(strike=110.0, net_gex=-4000.0, call_gex=0.0, put_gex=-4000.0),
+    ]
+    assert call_wall(rows).strike == 100.0
+    assert put_wall(rows).strike == 110.0
+
+
+def test_call_wall_and_put_wall_none_for_empty_profile():
+    assert call_wall([]) is None
+    assert put_wall([]) is None
+
+
+def test_gamma_flip_strike_interpolates_the_zero_crossing():
+    # Cumulative net_gex ascending: -1000, then -1000+3000=2000 -- crosses
+    # zero between strike 90 and strike 100, 1/3 of the way across.
+    rows = [
+        StrikeGex(strike=90.0, net_gex=-1000.0, call_gex=0.0, put_gex=-1000.0),
+        StrikeGex(strike=100.0, net_gex=3000.0, call_gex=3000.0, put_gex=0.0),
+    ]
+    flip = gamma_flip_strike(rows)
+    assert flip == 90.0 + (1000.0 / 3000.0) * (100.0 - 90.0)
+
+
+def test_gamma_flip_strike_none_when_no_crossing():
+    rows = [
+        StrikeGex(strike=90.0, net_gex=1000.0, call_gex=1000.0, put_gex=0.0),
+        StrikeGex(strike=100.0, net_gex=2000.0, call_gex=2000.0, put_gex=0.0),
+    ]
+    assert gamma_flip_strike(rows) is None
+
+
+def test_gamma_flip_strike_none_with_fewer_than_two_strikes():
+    assert gamma_flip_strike([]) is None
+    assert gamma_flip_strike([StrikeGex(strike=100.0, net_gex=1.0, call_gex=1.0, put_gex=0.0)]) is None
 
 
 @dataclass

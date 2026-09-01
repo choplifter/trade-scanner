@@ -707,8 +707,8 @@ class ScannerEngine:
         self.market_conditions = compute_market_conditions(vix, events, breadth_pct)
 
     async def _refresh_gex(self) -> None:
-        """Refresh net dealer gamma exposure for SPY/QQQ -- see
-        app.market_data.gamma_exposure. Same not-gated-on-can_poll, slow-
+        """Refresh net dealer gamma exposure for each covered symbol -- see
+        app.market_data.gamma_exposure.SYMBOLS. Same not-gated-on-can_poll, slow-
         cadence reasoning as _refresh_market_conditions; gated on
         has_credentials (Alpaca, not FMP) since this rides entirely on
         Alpaca's options endpoints.

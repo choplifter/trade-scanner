@@ -4,7 +4,13 @@ import { createPortal } from "react-dom";
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
 import { useTradingContext } from "../../context/TradingContext";
 import { useChartFeed } from "../../hooks/useChartFeed";
-import { useGexLevels } from "../../hooks/useGexLevels";
+import {
+  isGexSymbol,
+  NEGATIVE_COLOR,
+  POSITIVE_COLOR,
+  useGexLevels,
+  useGexReading,
+} from "../../hooks/useGexLevels";
 import type { ChartFocus } from "../../types/screener";
 import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { useReplayBars } from "../../hooks/useReplayBars";
@@ -252,11 +258,12 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   const usingReplayBars = isReplaySymbol && option.kind === "intraday";
   const replay = useReplayBars(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
   const replayIndicators = useReplayIndicators(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
-  // GEX is only computed backend-side for these two symbols (see
+  // GEX is only computed backend-side for a fixed symbol list (see
   // app.market_data.gamma_exposure.SYMBOLS) -- same conditional-fetch shape
   // as isReplaySymbol/usingReplayBars just above.
-  const isGexSymbol = symbol === "SPY" || symbol === "QQQ";
-  const gexLevels = useGexLevels(isGexSymbol ? symbol : null);
+  const symbolHasGex = isGexSymbol(symbol);
+  const gexLevels = useGexLevels(symbolHasGex ? symbol : null);
+  const gexReading = useGexReading(symbolHasGex ? symbol : null);
   // Shared with SymbolInfoWidget via context rather than a second
   // useSymbolInfo(symbol) call here -- the chart marks the same news on its
   // timeline (newsMarkers below), and two hook callers would double-fetch.
@@ -520,6 +527,15 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             >
               <span className="vwap-swatch" /> VWAP {vwapFromPremarket ? "(pre)" : "(session)"}
             </button>
+          )}
+          {gexReading && (
+            <span
+              className="gex-net-badge"
+              style={{ color: gexReading.net_gex >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR }}
+              title="Net dealer gamma exposure -- see the GEX Plan widget for what this regime tends to mean"
+            >
+              Net GEX {gexReading.net_gex >= 0 ? "+" : "-"}${(Math.abs(gexReading.net_gex) / 1e9).toFixed(2)}B
+            </span>
           )}
           <div className="levels-dropdown" ref={levelsButtonRef}>
             <button

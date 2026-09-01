@@ -225,7 +225,7 @@ def _gex_wall_figure(reading) -> go.Figure:
     by sign (DELTA_UP/DELTA_DOWN -- the same up/down mapping this page's
     other figures would use), with a marker at the current spot price for
     context. Scaled to millions rather than GexReading's raw dollars -- a
-    single strike's exposure is naturally much smaller than the SPY/QQQ-wide
+    single strike's exposure is naturally much smaller than the symbol-wide
     total shown in the summary line above it.
     """
     strikes = [row.strike for row in reading.by_strike]
@@ -252,7 +252,7 @@ def _gex_wall_figure(reading) -> go.Figure:
 
 def _gex_section(gex: dict) -> html.Div:
     intro = html.P(
-        "Net dealer gamma exposure (GEX) for SPY and QQQ -- a rough gauge of how "
+        "Net dealer gamma exposure (GEX) for SPY, QQQ, TSLA, NVDA, and PLTR -- a rough gauge of how "
         "options-market positioning tends to affect moves in the underlying. "
         "Positive means dealers are estimated net long gamma and tend to dampen "
         "moves (buy dips, sell rips); negative means dealers are estimated net "

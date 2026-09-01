@@ -1,5 +1,8 @@
-"""Net dealer gamma exposure (GEX) for SPY/QQQ -- a market-wide risk gauge
-that complements app.market_data.market_conditions' VIX/breadth read.
+"""Net dealer gamma exposure (GEX) for SPY/QQQ plus a handful of the most
+actively-optioned single names (TSLA, NVDA, PLTR) -- SPY/QQQ read as a
+market-wide risk gauge that complements app.market_data.market_conditions'
+VIX/breadth read, while the single names are a per-symbol version of the
+same idea for tickers whose own options chain is liquid enough to matter.
 Strongly negative GEX means dealers are net short gamma and tend to amplify
 moves (sell into drops, buy into rallies); strongly positive GEX means
 dealers are net long gamma and dampen volatility. Shown only on the Dash
@@ -38,10 +41,11 @@ from app.alpaca.client import AlpacaClients
 
 logger = logging.getLogger(__name__)
 
-# SPY and QQQ only -- the two most liquid, most-tracked index ETFs. Most
-# scanner symbols have no liquid options chain at all, so this isn't
-# generalized per-symbol the way e.g. merger actions are.
-SYMBOLS = ("SPY", "QQQ")
+# SPY/QQQ -- the two most liquid, most-tracked index ETFs -- plus TSLA,
+# NVDA, and PLTR, three single names whose own options chains are liquid
+# enough for a per-symbol GEX read to mean something. Not generalized to
+# every scanner symbol: most have no liquid options chain at all.
+SYMBOLS = ("SPY", "QQQ", "TSLA", "NVDA", "PLTR")
 
 # Near-dated window: excludes 0DTE (see module docstring) through 45 days
 # out. A handful of far-dated LEAPS strikes are deliberately left out -- see
@@ -136,6 +140,53 @@ def top_walls(by_strike: list[StrikeGex], n: int = 3) -> list[StrikeGex]:
     """
     biggest = sorted(by_strike, key=lambda row: abs(row.net_gex), reverse=True)[:n]
     return sorted(biggest, key=lambda row: row.strike)
+
+
+def call_wall(by_strike: list[StrikeGex]) -> StrikeGex | None:
+    """The strike with the largest call_gex -- the concentration of positive
+    (call-side) dealer gamma, conventionally read as the nearest overhead
+    resistance/profit-take level. `None` for an empty profile."""
+    return max(by_strike, key=lambda row: row.call_gex, default=None)
+
+
+def put_wall(by_strike: list[StrikeGex]) -> StrikeGex | None:
+    """The strike with the most negative put_gex (largest |put_gex|) -- the
+    concentration of put-side dealer gamma, conventionally read as the
+    nearest support level. `None` for an empty profile."""
+    return min(by_strike, key=lambda row: row.put_gex, default=None)
+
+
+def gamma_flip_strike(by_strike: list[StrikeGex]) -> float | None:
+    """Approximate "zero gamma" level: the strike where the running
+    cumulative net_gex -- summed ascending by strike -- crosses zero,
+    linearly interpolated between the two bracketing strikes.
+
+    This is a proxy, not the rigorous zero-gamma level the well-known GEX
+    trackers (SqueezeMetrics/GammaLab-style) compute -- that requires
+    repricing the whole chain's gamma at a range of hypothetical spot
+    prices, which needs a vol surface this app doesn't have. All this app
+    has is real greeks at the *actual* spot (see the module docstring on why
+    0DTE is excluded), so this cumulative-sum crossing is a cheaper stand-in
+    for "where dealer gamma flips sign," not a claim of precision.
+
+    Returns `None` when there are fewer than 2 strikes or the cumulative
+    total never crosses zero across the profile.
+    """
+    if len(by_strike) < 2:
+        return None
+    cumulative = 0.0
+    prev_strike: float | None = None
+    prev_cumulative: float | None = None
+    for row in by_strike:  # already ascending by strike
+        cumulative += row.net_gex
+        if prev_cumulative is not None and (prev_cumulative < 0) != (cumulative < 0):
+            span = cumulative - prev_cumulative
+            if span != 0:
+                assert prev_strike is not None
+                t = -prev_cumulative / span
+                return prev_strike + t * (row.strike - prev_strike)
+        prev_strike, prev_cumulative = row.strike, cumulative
+    return None
 
 
 async def _spot_price(clients: AlpacaClients, symbol: str) -> float | None:

@@ -22,7 +22,8 @@ export type WidgetId =
   | "watchlist"
   | "replay"
   | "news_feed"
-  | "symbol_info";
+  | "symbol_info"
+  | "gex_plan";
 
 /** Render order of grid cells. Deliberately constant and independent of
  * `layout` -- position comes from the layout item's x/y, never from DOM
@@ -38,6 +39,7 @@ export const WIDGET_IDS: readonly WidgetId[] = [
   "replay",
   "news_feed",
   "symbol_info",
+  "gex_plan",
 ];
 
 export const GRID_COLS = 12;
@@ -91,6 +93,10 @@ export const DEFAULT_LAYOUT: Layout = [
   // this one doesn't idle-collapse (there's always something to show
   // whenever the market's active), so it always claims this row's space.
   { i: "news_feed", x: 8, y: 17, w: 4, h: 4, minW: 4, minH: 3 },
+  // New full-width row below symbol_info/news_feed's -- the active symbol's
+  // name + badge + wall values + a few playbook lines need more width than
+  // sharing that row's leftover space would give.
+  { i: "gex_plan", x: 0, y: 21, w: 12, h: 5, minW: 4, minH: 3 },
 ];
 
 const LAYOUT_STORAGE_KEY = "layout:grid";
@@ -119,7 +125,8 @@ const MODE_STORAGE_KEY = "layout:mode";
 // 12: swapped "symbol_info" and "news_feed"'s slots on their shared row --
 // symbol_info now the wider left one (w:8), news_feed the narrower right
 // one (w:4).
-const LAYOUT_VERSION = 12;
+// 13: added "gex_plan" as a new full-width row below "symbol_info"/"news_feed".
+const LAYOUT_VERSION = 13;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */
