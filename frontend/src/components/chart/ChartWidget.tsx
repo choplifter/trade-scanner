@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
 import { useTradingContext } from "../../context/TradingContext";
 import { useChartFeed } from "../../hooks/useChartFeed";
+import { useGexLevels } from "../../hooks/useGexLevels";
 import type { ChartFocus } from "../../types/screener";
 import { useHistoricalBars } from "../../hooks/useHistoricalBars";
 import { useReplayBars } from "../../hooks/useReplayBars";
@@ -251,6 +252,11 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
   const usingReplayBars = isReplaySymbol && option.kind === "intraday";
   const replay = useReplayBars(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
   const replayIndicators = useReplayIndicators(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
+  // GEX is only computed backend-side for these two symbols (see
+  // app.market_data.gamma_exposure.SYMBOLS) -- same conditional-fetch shape
+  // as isReplaySymbol/usingReplayBars just above.
+  const isGexSymbol = symbol === "SPY" || symbol === "QQQ";
+  const gexLevels = useGexLevels(isGexSymbol ? symbol : null);
   // Shared with SymbolInfoWidget via context rather than a second
   // useSymbolInfo(symbol) call here -- the chart marks the same news on its
   // timeline (newsMarkers below), and two hook callers would double-fetch.
@@ -412,6 +418,14 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
     historical.indicators,
   ]);
 
+  // gexLevels folded in here, not just at the CandleChart prop, so the
+  // Levels-checklist below (which also maps over this same list) can offer
+  // it as a toggle -- both call sites have to see one consistent array.
+  const indicatorsWithGex = useMemo(
+    () => (gexLevels ? [...displayed.indicators, gexLevels] : displayed.indicators),
+    [displayed.indicators, gexLevels],
+  );
+
   // Prefers the finer-grained live feed's own latest tick over the
   // (possibly coarser-aggregated) displayed series, same as before replay
   // existed -- except while replaying, where there is no finer-grained
@@ -534,10 +548,10 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
                 ref={levelsMenuRef}
                 style={{ top: levelsMenuPos.top, left: levelsMenuPos.left }}
               >
-                {displayed.indicators.length === 0 && !position && !visibleIndicativeLevels && (
+                {indicatorsWithGex.length === 0 && !position && !visibleIndicativeLevels && (
                   <div className="levels-menu-empty">No levels available</div>
                 )}
-                {displayed.indicators.map((indicator) => (
+                {indicatorsWithGex.map((indicator) => (
                   <label
                     key={indicator.name}
                     className={indicator.error ? "levels-menu-item failed" : "levels-menu-item"}
@@ -618,7 +632,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             bars={displayed.bars}
             chartType={chartType}
             vwap={displayed.vwap}
-            indicators={displayed.indicators.filter((i) => visibleIndicators.has(i.name))}
+            indicators={indicatorsWithGex.filter((i) => visibleIndicators.has(i.name))}
             positionLevels={visiblePositionLevels}
             indicativeLevels={visibleIndicativeLevels}
             onMovePositionLevel={onMovePositionLevel}

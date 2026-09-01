@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 
 from alpaca.trading.enums import ContractType
 
-from app.market_data.gamma_exposure import _fetch_contracts, compute_gex
+from app.market_data.gamma_exposure import StrikeGex, _fetch_contracts, compute_gex, top_walls
 
 _CALL = ContractType.CALL
 _PUT = ContractType.PUT
@@ -79,6 +79,27 @@ def test_by_strike_aggregates_same_strike_and_sorts_ascending():
     # The two views (aggregate vs. per-strike) are derived from the exact
     # same per-contract values, so they must always agree.
     assert sum(row.net_gex for row in reading.by_strike) == reading.net_gex
+
+
+def test_top_walls_picks_largest_magnitude_and_sorts_by_strike():
+    rows = [
+        StrikeGex(strike=100.0, net_gex=-500.0, call_gex=0.0, put_gex=-500.0),
+        StrikeGex(strike=110.0, net_gex=2000.0, call_gex=2000.0, put_gex=0.0),
+        StrikeGex(strike=90.0, net_gex=-3000.0, call_gex=0.0, put_gex=-3000.0),
+        StrikeGex(strike=120.0, net_gex=100.0, call_gex=100.0, put_gex=0.0),
+    ]
+
+    walls = top_walls(rows, n=3)
+
+    # -3000 (strike 90), 2000 (strike 110), -500 (strike 100) are the three
+    # largest by |net_gex| -- the +100 at strike 120 must be excluded --
+    # returned strike-ascending, not magnitude-ascending.
+    assert [w.strike for w in walls] == [90.0, 100.0, 110.0]
+
+
+def test_top_walls_n_larger_than_input_returns_everything():
+    rows = [StrikeGex(strike=100.0, net_gex=1.0, call_gex=1.0, put_gex=0.0)]
+    assert top_walls(rows, n=3) == rows
 
 
 @dataclass

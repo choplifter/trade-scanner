@@ -127,6 +127,17 @@ def compute_gex(
     )
 
 
+def top_walls(by_strike: list[StrikeGex], n: int = 3) -> list[StrikeGex]:
+    """The n strikes with the largest |net_gex|, returned strike-ascending
+    for stable left-to-right display -- selection and display order are
+    deliberately different sorts. Shared by both the Dash page's callout and
+    the /api/meta/gex REST endpoint so "biggest by magnitude" is defined in
+    exactly one place.
+    """
+    biggest = sorted(by_strike, key=lambda row: abs(row.net_gex), reverse=True)[:n]
+    return sorted(biggest, key=lambda row: row.strike)
+
+
 async def _spot_price(clients: AlpacaClients, symbol: str) -> float | None:
     try:
         request = StockLatestTradeRequest(symbol_or_symbols=symbol, feed=clients.feed)

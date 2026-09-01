@@ -26,7 +26,7 @@ from app.dash_app.theme import (
     TEXT_MUTED,
 )
 from app.market_data.gamma_exposure import SYMBOLS as GEX_SYMBOLS
-from app.market_data.gamma_exposure import _EXPIRATION_DAYS_AHEAD, _STRIKE_PCT_RANGE
+from app.market_data.gamma_exposure import _EXPIRATION_DAYS_AHEAD, _STRIKE_PCT_RANGE, top_walls
 from app.market_data.market_conditions import (
     _BREADTH_RED,
     _BREADTH_YELLOW,
@@ -291,7 +291,7 @@ def _gex_section(gex: dict) -> html.Div:
             )
         )
         if reading.by_strike:
-            wall = max(reading.by_strike, key=lambda row: abs(row.net_gex))
+            wall = top_walls(reading.by_strike, n=1)[0]
             rows.append(
                 html.P(
                     f"Largest concentration: {wall.strike:g} strike ({wall.net_gex / 1e9:+.2f}B)",
