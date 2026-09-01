@@ -302,10 +302,11 @@ class Settings(BaseSettings):
     # signals need poll-tick freshness, so this is deliberately slow.
     market_conditions_refresh_interval: float = 1800.0
 
-    # Same cadence as market_conditions_refresh_interval -- see
-    # app.market_data.gamma_exposure. Open interest typically only updates
-    # once a day, so there is no benefit to polling faster.
-    gex_refresh_interval: float = 1800.0
+    # Matches the frontend's own poll rate (useGexLevels.ts's REFRESH_MS) --
+    # see app.market_data.gamma_exposure. Open interest itself only updates
+    # once a day, but spot price and greeks move all session, so this stays
+    # faster than market_conditions_refresh_interval rather than sharing it.
+    gex_refresh_interval: float = 300.0
 
     # Persistent SQLite log of scanner appearances + periodic follow-up price
     # snapshots (see app.scanners.history_store), so "which scanner matches
