@@ -36,6 +36,7 @@ from app.routers import (
     symbols,
     trade_ideas,
     trading,
+    trading_options,
     trading_sim,
     watchlist,
 )
@@ -43,6 +44,9 @@ from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.engine import ScannerEngine
 from app.scanners.history_store import ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
+from app.options.chain_fetch import ChainCache
+from app.options.monitor import run_options_trigger_loop
+from app.options.trigger_store import TriggerStore
 from app.trading.journal_store import JournalStore
 from app.trading.sim.loop import run_sim_fill_loop
 from app.trading.sim.store import SimStore
@@ -185,6 +189,19 @@ async def lifespan(app: FastAPI):
     app.state.scanner_engine = engine
     bind_dash_state(app)
 
+    # Options: one chain cache for every widget (market data, so it is
+    # account-agnostic) and the persisted underlying-price triggers the
+    # loop below watches. Spot prices come from the same lookup the
+    # equity ticket uses (engine row first, then Alpaca).
+    from app.options.service import OptionsService
+
+    app.state.options_chain_cache = ChainCache(
+        clients, OptionsService(clients, settings, engine=engine).spot
+    )
+    options_trigger_store = TriggerStore(settings.scanner_history_db_path)
+    await options_trigger_store.init_schema()
+    app.state.options_trigger_store = options_trigger_store
+
     try:
         # So a same-day restart (or a first-ever start after the open)
         # still gets a real "premarket gainers" snapshot instead of it
@@ -200,6 +217,11 @@ async def lifespan(app: FastAPI):
 
     scanner_task = asyncio.create_task(engine.run_loop())
     sim_fill_task = asyncio.create_task(run_sim_fill_loop(clients, settings, sim_store))
+    options_trigger_task = asyncio.create_task(
+        run_options_trigger_loop(
+            clients, settings, options_trigger_store, app.state.options_chain_cache, engine
+        )
+    )
     replay_task = asyncio.create_task(
         run_replay_pacing_loop(replay_store, sim_store, app.state.replay_engines, manager, clients, settings)
     )
@@ -209,6 +231,7 @@ async def lifespan(app: FastAPI):
     finally:
         scanner_task.cancel()
         sim_fill_task.cancel()
+        options_trigger_task.cancel()
         replay_task.cancel()
         await clients.stop_stream()
         await fundamentals.aclose()
@@ -250,6 +273,12 @@ app.include_router(trading.router, prefix="/api/trading", dependencies=_auth_gat
 app.include_router(
     trading.router,
     prefix="/api/trading/live",
+    dependencies=[*_auth_gate, Depends(trading.mark_live_account)],
+)
+app.include_router(trading_options.router, prefix="/api/trading/options", dependencies=_auth_gate)
+app.include_router(
+    trading_options.router,
+    prefix="/api/trading/live/options",
     dependencies=[*_auth_gate, Depends(trading.mark_live_account)],
 )
 app.include_router(trading_sim.router)
