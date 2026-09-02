@@ -87,6 +87,17 @@ function persistLevelSet(key: string, values: Set<string>) {
 }
 
 const CURSOR_KEY = "chart:cursorMode";
+const AUTO_SCROLL_KEY = "chart:autoScroll";
+
+function loadAutoScroll(): boolean {
+  try {
+    // On unless someone switched it off: following the live edge is the
+    // default a trading chart is expected to have.
+    return localStorage.getItem(AUTO_SCROLL_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
 
 const CURSOR_MODES: { key: CursorMode; label: string; title: string }[] = [
   {
@@ -228,6 +239,17 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
   // strategy's line sits on the level it claims, and that needs an exact
   // read rather than a free-floating one.
   const [cursorMode, setCursorModeState] = useState<CursorMode>(loadCursorMode);
+  // TradingView's auto-scroll: on, every new candle snaps the chart back to
+  // the newest bar; off, the chart stays wherever it was dragged.
+  const [autoScroll, setAutoScrollState] = useState<boolean>(loadAutoScroll);
+  function setAutoScroll(on: boolean) {
+    setAutoScrollState(on);
+    try {
+      localStorage.setItem(AUTO_SCROLL_KEY, on ? "on" : "off");
+    } catch {
+      // Works for this session, just not remembered next time.
+    }
+  }
 
   function setCursorMode(mode: CursorMode) {
     setCursorModeState(mode);
@@ -536,6 +558,21 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
               </button>
             ))}
           </div>
+          <div className="chart-type-toggle">
+            <button
+              type="button"
+              className="timeframe-button"
+              aria-pressed={autoScroll}
+              onClick={() => setAutoScroll(!autoScroll)}
+              title={
+                autoScroll
+                  ? "Auto-scroll on: every new candle brings the chart back to the newest bar. Click to switch off and scroll freely."
+                  : "Auto-scroll off: the chart stays wherever you drag it. Click to jump back to the newest bar and follow it again."
+              }
+            >
+              Auto
+            </button>
+          </div>
           {option.kind === "intraday" && (
             <button
               type="button"
@@ -677,6 +714,7 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
             onMovePositionLevel={onMovePositionLevel}
             onMoveIndicativeLevel={onMoveIndicativeLevel}
             cursorMode={cursorMode}
+            autoScroll={autoScroll}
             // Session tinting only where a bar sits inside one session --
             // on daily and coarser charts the distinction does not exist.
             shadeSessions={option.kind === "intraday"}

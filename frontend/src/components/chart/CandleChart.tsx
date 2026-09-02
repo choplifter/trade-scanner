@@ -84,6 +84,11 @@ interface CandleChartProps {
    * onDragStop/onDragTarget, which is what ChartWidget wires this to). */
   onMoveIndicativeLevel?: (field: "stop" | "target", price: number) => void;
   cursorMode: CursorMode;
+  /** TradingView's auto-scroll. On: every new candle snaps the viewport
+   * back to the newest bar (own zoom kept), wherever the viewer had
+   * dragged it. Off: the chart only follows while already at the right
+   * edge, and stays put anywhere else. */
+  autoScroll: boolean;
   /** Unix seconds to scroll into view — a backtest pick's entry time, or a
    * journal trade's entry time when focusTrade is set. Null leaves the
    * chart wherever the user left it. */
@@ -393,6 +398,7 @@ export function CandleChart({
   onMovePositionLevel,
   onMoveIndicativeLevel,
   cursorMode,
+  autoScroll,
   focusTime,
   focusTrade,
   news = [],
@@ -440,6 +446,34 @@ export function CandleChart({
   // by every test, and a reassert there scrolls them straight back to the
   // default margin, on every tick. That was the remaining spring-back.
   const appliedClearanceRef = useRef<boolean | null>(null);
+  // Set whenever an effect in the current commit asks the time scale for a
+  // new viewport. setVisibleLogicalRange is deferred to the next frame while
+  // getVisibleLogicalRange reads the current state -- so an effect that runs
+  // later in the same commit and "preserves and restores" the range it
+  // reads (the indicators effect) would queue the *old* range behind the
+  // requested one and silently cancel it. The data effect clears this at
+  // the top of each run; the indicators effect skips its restore while it is
+  // set.
+  const rangeRequestedRef = useRef(false);
+  // Read via a ref inside the data effect so toggling it doesn't re-run
+  // that effect's setData calls; the toggle has its own effect below.
+  const autoScrollRef = useRef(autoScroll);
+  autoScrollRef.current = autoScroll;
+
+  /** Newest bar back at the right edge with the default label margin,
+   * keeping the viewer's own zoom (the logical width of the current
+   * view). What TradingView's "go to realtime" does, and what auto-scroll
+   * does on every new candle. */
+  function snapToNewestBar(chart: IChartApi, barCount: number) {
+    if (barCount <= 0) return;
+    const current = chart.timeScale().getVisibleLogicalRange();
+    const fallback = visibleLogicalRange(containerRef.current?.clientWidth || 1, barCount);
+    const width = current ? current.to - current.from : fallback ? fallback.to - fallback.from : barCount - 1;
+    rangeRequestedRef.current = true;
+    chart.timeScale().setVisibleLogicalRange({ from: barCount - 1 - width, to: barCount - 1 });
+    applyLabelClearance(chart, hasLevelsRef.current);
+    appliedClearanceRef.current = hasLevelsRef.current;
+  }
   // Applying a range can itself change the time scale's width (different
   // visible bars -> different price labels -> a wider/narrower price scale),
   // which fires subscribeSizeChange again. This swallows that echo.
@@ -892,6 +926,10 @@ export function CandleChart({
 
     const previousBarCount = barCountRef.current;
     barCountRef.current = bars.length;
+    // Anything requested by an earlier run has long been applied (commits
+    // are frames apart); only a request made in *this* run should make the
+    // indicators effect stand back.
+    rangeRequestedRef.current = false;
 
     // Appended-to or replaced? A live tick appends (or updates the last
     // bar) and leaves the first bar alone; a symbol or timeframe change
@@ -913,6 +951,7 @@ export function CandleChart({
       // Same stretch of chart, drawn the other way.
       const chart = chartRef.current;
       if (chart) {
+        rangeRequestedRef.current = true;
         chart.timeScale().setVisibleRange(pendingRange);
         applyLabelClearance(chart, hasLevelsRef.current);
         appliedClearanceRef.current = hasLevelsRef.current;
@@ -930,6 +969,15 @@ export function CandleChart({
       const liveChart = chartRef.current;
       const current = liveChart?.timeScale().getVisibleLogicalRange();
       const atRightEdge = !liveChart || viewportAtRightEdge(liveChart, previousBarCount);
+      const newBars = bars.length - previousBarCount;
+      // Auto-scroll: a new candle brings the viewport back to the newest
+      // bar no matter where the viewer dragged it -- the one deliberate
+      // "spring back", and only on a new bar, never on a tick that merely
+      // reshapes the forming one (that would be several times a second).
+      if (newBars > 0 && autoScrollRef.current && liveChart) {
+        snapToNewestBar(liveChart, bars.length);
+        return;
+      }
       if (!atRightEdge) return;
 
       // At the edge with new bars to follow: slide the *current* window
@@ -942,7 +990,6 @@ export function CandleChart({
       // the moment the next tick's effect run reasserted it. A translation
       // keeps the viewer's own zoom and just advances it, which is what
       // "still following" should look like.
-      const newBars = bars.length - previousBarCount;
       // Same bar count, new shape: a trade tick reshaping the forming
       // candle, a 1-minute bar folded into a 5-minute bucket that already
       // existed, or a chart-type/session-shading toggle. The bars' indices
@@ -958,6 +1005,7 @@ export function CandleChart({
       if (current && newBars > 0) {
         const chart = chartRef.current;
         if (chart) {
+          rangeRequestedRef.current = true;
           chart.timeScale().setVisibleLogicalRange({ from: current.from + newBars, to: current.to + newBars });
         }
         return;
@@ -969,6 +1017,7 @@ export function CandleChart({
       const range = visibleLogicalRange(container.clientWidth || 1, bars.length);
       const chart = chartRef.current;
       if (range && chart) {
+        rangeRequestedRef.current = true;
         chart.timeScale().setVisibleLogicalRange(range);
         applyLabelClearance(chart, hasLevelsRef.current);
         appliedClearanceRef.current = hasLevelsRef.current;
@@ -1211,7 +1260,14 @@ export function CandleChart({
     // unchanged content-wise (ChartWidget filters it inline into a fresh
     // array each render), so that resolution ran far more often than a
     // toggle in the Levels dropdown alone would suggest.
-    const preservedRange = chart.timeScale().getVisibleLogicalRange();
+    //
+    // And not at all when the data effect has just asked for a viewport in
+    // this same commit (rangeRequestedRef): that request is still queued
+    // for the next frame, so what getVisibleLogicalRange returns here is
+    // the range it is about to replace -- restoring it would queue the old
+    // range behind the new one and cancel the snap/follow the viewer was
+    // meant to get.
+    const preservedRange = rangeRequestedRef.current ? null : chart.timeScale().getVisibleLogicalRange();
 
     priceLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
     priceLinesRef.current = [];
@@ -1440,6 +1496,19 @@ export function CandleChart({
   useEffect(() => {
     chartRef.current?.applyOptions({ crosshair: { mode: CROSSHAIR_MODES[cursorMode] } });
   }, [cursorMode]);
+
+  // Switching auto-scroll on jumps to the newest bar straight away, the way
+  // TradingView's realtime button does -- someone who turns it on while
+  // scrolled into history wants to be back at the live edge now, not at
+  // the next candle. A focus keeps owning the viewport either way.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!autoScroll || !chart || focusTime != null) return;
+    snapToNewestBar(chart, barCountRef.current);
+    // Only the toggle should trigger this; focusTime and the bar count
+    // are read for the snap itself, not watched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoScroll]);
 
   // The class drives the CSS cursor. Hiding the crosshair does not change the
   // pointer the library draws, so the two have to be set together or

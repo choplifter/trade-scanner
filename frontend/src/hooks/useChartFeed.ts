@@ -21,10 +21,6 @@ export interface ChartFeedState {
   loading: boolean;
 }
 
-function sameMinute(a: string, b: string): boolean {
-  return Date.parse(a) === Date.parse(b);
-}
-
 const EMPTY_STATE: ChartFeedState = {
   bars: [],
   vwap: [],
@@ -82,27 +78,39 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
           const bars = [...s.bars];
           const vwap = [...s.vwap];
           const vwapPremarket = [...s.vwapPremarket];
-          const last = bars[bars.length - 1];
-          // Compared as instants, not strings: the last bar may be one this
-          // hook synthesised from trades, whose timestamp is formatted by
-          // the trade path rather than the bar path. A string mismatch
-          // would append a second bar for the same minute, which
-          // lightweight-charts rejects as out-of-order data.
-          if (last && sameMinute(last.t, msg.bar.t)) {
-            bars[bars.length - 1] = msg.bar;
-            vwap[vwap.length - 1] = msg.vwap;
-            vwapPremarket[vwapPremarket.length - 1] = msg.vwap_premarket ?? null;
+          // Alpaca closes minute M a few seconds after M+1 has begun, by
+          // which time the trade path below has usually already opened the
+          // M+1 candle -- so the closed bar mostly belongs one slot *before*
+          // the newest bar, not at the end. Matched by minute (as instants,
+          // not strings: the synthesised bar's timestamp is formatted by the
+          // trade path) searching back from the end; a bar for a minute no
+          // one has seen yet is inserted at its sorted position. Appending
+          // blindly put M after M+1, and lightweight-charts rejects
+          // out-of-order data outright.
+          const barMs = Date.parse(msg.bar.t);
+          let index = bars.length - 1;
+          while (index >= 0 && Date.parse(bars[index].t) > barMs) index -= 1;
+          if (index >= 0 && Date.parse(bars[index].t) === barMs) {
+            bars[index] = msg.bar;
+            vwap[index] = msg.vwap;
+            vwapPremarket[index] = msg.vwap_premarket ?? null;
+            // Candles synthesised after this one carried its provisional
+            // VWAP forward; hand them the settled value.
+            for (let j = index + 1; j < bars.length; j++) {
+              vwap[j] = msg.vwap;
+              vwapPremarket[j] = msg.vwap_premarket ?? null;
+            }
           } else {
-            bars.push(msg.bar);
-            vwap.push(msg.vwap);
-            vwapPremarket.push(msg.vwap_premarket ?? null);
+            bars.splice(index + 1, 0, msg.bar);
+            vwap.splice(index + 1, 0, msg.vwap);
+            vwapPremarket.splice(index + 1, 0, msg.vwap_premarket ?? null);
           }
           return { ...s, bars, vwap, vwapPremarket, error: null };
         });
       } else if (msg.type === "trade") {
         // Shapes the forming candle between two closed bars. The closed bar
         // for the same minute, when it arrives, replaces whatever was built
-        // here (the sameMinute branch above), so any drift between this
+        // here (matched by minute in the bar branch above), so any drift between this
         // running estimate and Alpaca's own aggregation lasts a minute at
         // most. Prints older than the newest bar are ignored: a late report
         // for a minute that already closed must not reshape a final candle.
