@@ -206,8 +206,13 @@ function barToVolume(bar: Bar): HistogramData {
   };
 }
 
-const MIN_SPACING = 3;
-const MAX_SPACING = 10;
+// Pixels per bar for the default view. 6 is TradingView's own default bar
+// spacing; at 3 (the previous value) a 1400px pane opened on ~470 5-minute
+// bars -- two and a half sessions of extended-hours tape -- and the price
+// axis, autoscaled over all of it, flattened every candle to a sliver.
+// minBarSpacing on the time scale still lets a viewer zoom out past this.
+const MIN_SPACING = 6;
+const MAX_SPACING = 12;
 
 // Empty chart kept to the right of the newest bar while level lines are
 // shown, so their labels have somewhere to sit that is not on top of the
@@ -228,10 +233,30 @@ const LEVEL_LABEL_CLEARANCE_PX = 150;
 // was applied, then immediately cancelled by the next range set -- including
 // the one the indicators effect does itself, restoring the range it saved
 // before adding the lines.
+//
+// The converse holds too, and it is the sharper edge: applying
+// rightOffsetPixels is itself a scroll. lightweight-charts turns the option
+// straight into setRightOffset(px / barSpacing), which puts the newest bar
+// that many pixels from the right edge wherever the viewer currently is.
+// Called on a chart someone has dragged back into history, it yanks them to
+// the newest bar. That was the "chart springs back when I scroll left" bug:
+// the indicators effect re-ran on every live tick and re-asserted the margin
+// each time. Only call this when the viewport is (about to be) at the right
+// edge -- viewportAtRightEdge below -- where the margin is the only thing
+// it changes.
 function applyLabelClearance(chart: IChartApi, needsClearance: boolean) {
   chart.timeScale().applyOptions({
     rightOffsetPixels: needsClearance ? LEVEL_LABEL_CLEARANCE_PX : 0,
   });
+}
+
+// Whether the viewer is following the newest bar (or has never scrolled).
+// Slack of 1.5 bars so a viewport that sits a hair short of the last index
+// -- as it does after a sub-bar drag, or with the label margin pushing the
+// range's `to` past the data -- still counts as "at the edge".
+function viewportAtRightEdge(chart: IChartApi, barCount: number): boolean {
+  const current = chart.timeScale().getVisibleLogicalRange();
+  return !current || current.to >= barCount - 1.5;
 }
 
 function hasAnyLevel(levels: PositionLevels | null): boolean {
@@ -559,7 +584,11 @@ export function CandleChart({
       priceScaleId: "volume",
       priceFormat: { type: "volume" },
     });
-    chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.75, bottom: 0 } });
+    // Bottom fifth of the pane, as an overlay under the candles -- the
+    // TradingView proportion. It was a quarter, with the candles stopping
+    // at 70% of the height; together with the 3px bar spacing that made
+    // intraday candles read as far flatter than the same bars elsewhere.
+    chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
     // VWAP overlays the same right-hand price scale as the candles -- it
     // is the day-trading reference line, not a secondary measure.
@@ -777,8 +806,9 @@ export function CandleChart({
             wickUpColor: "#0ca30c",
             wickDownColor: "#d03b3b",
           });
-    // Leaves the bottom third to the volume histogram, as before.
-    series.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.3 } });
+    // Leaves the bottom fifth to the volume histogram (see the volume
+    // scale's own margins above).
+    series.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.2 } });
     priceSeriesRef.current = series;
 
     return () => {
@@ -873,8 +903,9 @@ export function CandleChart({
     // stomp the resize handler had. Following the newest bar is only for
     // viewers already at (or near) the right edge.
     if (!dataReplaced && previousBarCount > 0) {
-      const current = chartRef.current?.timeScale().getVisibleLogicalRange();
-      const atRightEdge = !current || current.to >= previousBarCount - 1.5;
+      const liveChart = chartRef.current;
+      const current = liveChart?.timeScale().getVisibleLogicalRange();
+      const atRightEdge = !liveChart || viewportAtRightEdge(liveChart, previousBarCount);
       if (!atRightEdge) return;
 
       // At the edge with new bars to follow: slide the *current* window
@@ -888,6 +919,14 @@ export function CandleChart({
       // keeps the viewer's own zoom and just advances it, which is what
       // "still following" should look like.
       const newBars = bars.length - previousBarCount;
+      // Same bar count, new shape: a trade tick reshaping the forming
+      // candle, a 1-minute bar folded into a 5-minute bucket that already
+      // existed, or a chart-type/session-shading toggle. The bars' indices
+      // are what they were, so the viewport stays what it was -- falling
+      // through to the default-range recompute below would reset the
+      // viewer's zoom, and with trade ticks that would be several times a
+      // second.
+      if (newBars === 0) return;
       if (current && newBars > 0) {
         const chart = chartRef.current;
         if (chart) {
@@ -1195,8 +1234,14 @@ export function CandleChart({
       chart.timeScale().setVisibleLogicalRange(preservedRange);
     }
     // After the restore, never before: setVisibleLogicalRange repositions
-    // the content and drops the margin.
-    applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels, indicativeLevels));
+    // the content and drops the margin. And only for a viewer at the right
+    // edge: for anyone scrolled back into history the margin is invisible,
+    // and asserting it would scroll them to the newest bar (see
+    // applyLabelClearance). A viewer who scrolls back to the edge later
+    // picks the margin up from the data effect's follow path.
+    if (focusTime == null && viewportAtRightEdge(chart, barCountRef.current)) {
+      applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels, indicativeLevels));
+    }
     // chartType, because the price lines live on the price series and the
     // swap disposes them along with it. positionLevels/indicativeLevels,
     // because they also feed the margin call above.

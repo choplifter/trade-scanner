@@ -21,6 +21,10 @@ export interface ChartFeedState {
   loading: boolean;
 }
 
+function sameMinute(a: string, b: string): boolean {
+  return Date.parse(a) === Date.parse(b);
+}
+
 const EMPTY_STATE: ChartFeedState = {
   bars: [],
   vwap: [],
@@ -79,7 +83,12 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
           const vwap = [...s.vwap];
           const vwapPremarket = [...s.vwapPremarket];
           const last = bars[bars.length - 1];
-          if (last && last.t === msg.bar.t) {
+          // Compared as instants, not strings: the last bar may be one this
+          // hook synthesised from trades, whose timestamp is formatted by
+          // the trade path rather than the bar path. A string mismatch
+          // would append a second bar for the same minute, which
+          // lightweight-charts rejects as out-of-order data.
+          if (last && sameMinute(last.t, msg.bar.t)) {
             bars[bars.length - 1] = msg.bar;
             vwap[vwap.length - 1] = msg.vwap;
             vwapPremarket[vwapPremarket.length - 1] = msg.vwap_premarket ?? null;
@@ -89,6 +98,41 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
             vwapPremarket.push(msg.vwap_premarket ?? null);
           }
           return { ...s, bars, vwap, vwapPremarket, error: null };
+        });
+      } else if (msg.type === "trade") {
+        // Shapes the forming candle between two closed bars. The closed bar
+        // for the same minute, when it arrives, replaces whatever was built
+        // here (the sameMinute branch above), so any drift between this
+        // running estimate and Alpaca's own aggregation lasts a minute at
+        // most. Prints older than the newest bar are ignored: a late report
+        // for a minute that already closed must not reshape a final candle.
+        setState((s) => {
+          const last = s.bars[s.bars.length - 1];
+          if (!last) return s;
+          const lastMs = Date.parse(last.t);
+          const tradeMs = Date.parse(msg.t);
+          if (!Number.isFinite(tradeMs) || tradeMs < lastMs) return s;
+          const bars = [...s.bars];
+          const vwap = [...s.vwap];
+          const vwapPremarket = [...s.vwapPremarket];
+          if (tradeMs === lastMs) {
+            bars[bars.length - 1] = {
+              ...last,
+              h: Math.max(last.h, msg.h),
+              l: Math.min(last.l, msg.l),
+              c: msg.c,
+              v: last.v + msg.v,
+            };
+          } else {
+            bars.push({ t: msg.t, o: msg.o, h: msg.h, l: msg.l, c: msg.c, v: msg.v });
+            // VWAP is only re-derived server-side per closed bar; carrying
+            // the last value forward keeps the arrays aligned with `bars`
+            // (aggregateBars indexes them together) without inventing a
+            // number.
+            vwap.push(vwap[vwap.length - 1] ?? null);
+            vwapPremarket.push(vwapPremarket[vwapPremarket.length - 1] ?? null);
+          }
+          return { ...s, bars, vwap, vwapPremarket };
         });
       } else {
         setState((s) => ({ ...s, error: msg.message }));

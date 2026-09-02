@@ -436,6 +436,16 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
     () => (gexLevels ? [...displayed.indicators, gexLevels] : displayed.indicators),
     [displayed.indicators, gexLevels],
   );
+  // Memoized rather than filtered inline at the prop: CandleChart's
+  // indicators effect tears down and rebuilds every price line whenever
+  // this reference changes, and this component re-renders on every trade
+  // tick -- several times a second -- so an inline filter had it rebuilding
+  // the lines that often, with a drag in progress liable to be interrupted
+  // by the rebuild.
+  const chartIndicators = useMemo(
+    () => indicatorsWithGex.filter((i) => visibleIndicators.has(i.name)),
+    [indicatorsWithGex, visibleIndicators],
+  );
 
   // Prefers the finer-grained live feed's own latest tick over the
   // (possibly coarser-aggregated) displayed series, same as before replay
@@ -661,7 +671,7 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
             bars={displayed.bars}
             chartType={chartType}
             vwap={displayed.vwap}
-            indicators={indicatorsWithGex.filter((i) => visibleIndicators.has(i.name))}
+            indicators={chartIndicators}
             positionLevels={visiblePositionLevels}
             indicativeLevels={visibleIndicativeLevels}
             onMovePositionLevel={onMovePositionLevel}

@@ -151,13 +151,28 @@ export interface ChartBarMessage {
   vwap_premarket: number | null;
 }
 
+/** The prints of the last ~250ms folded into one OHLCV, tagged with the
+ * minute they fall in (`t`, the same bucket key the closed bar for that
+ * minute will later carry). Shapes the candle that is still forming
+ * between two closed bars -- see useChartFeed for how it is merged. */
+export interface ChartTradeMessage {
+  type: "trade";
+  symbol: string;
+  t: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
 export interface ChartErrorMessage {
   type: "error";
   symbol: string;
   message: string;
 }
 
-export type ChartSocketMessage = ChartBarMessage | ChartErrorMessage;
+export type ChartSocketMessage = ChartBarMessage | ChartTradeMessage | ChartErrorMessage;
 
 /** One named indicator's computed result -- "level" is a static horizontal
  * reference price per sub-series (e.g. {High, Low}), "series" is a

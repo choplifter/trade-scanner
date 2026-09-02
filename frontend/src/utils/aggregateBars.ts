@@ -98,8 +98,14 @@ export function aggregateBars(
     }
   }
 
+  // With no "series"-kind indicator there is nothing to rebucket, and the
+  // caller's own array can go back out unchanged. Identity matters here:
+  // CandleChart's indicators effect tears down and rebuilds every price
+  // line whenever this reference changes, and with trade ticks reshaping
+  // the forming candle several times a second, a fresh array per call
+  // would have it doing that several times a second too.
   const slotsByKey = new Map(slots.map((s) => [s.key, s]));
-  const outIndicators: IndicatorResult[] = indicators.map((indicator, i) => {
+  const outIndicators: IndicatorResult[] = slots.length === 0 ? indicators : indicators.map((indicator, i) => {
     if (indicator.kind !== "series") return indicator;
     const newSeries: IndicatorResult["series"] = {};
     Object.keys(indicator.series).forEach((subName) => {
