@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS trades (
     entry_order_id TEXT NOT NULL,
     exit_order_ids TEXT NOT NULL,
     fill_count INTEGER NOT NULL,
-    recorded_at TEXT NOT NULL
+    recorded_at TEXT NOT NULL,
+    account TEXT NOT NULL DEFAULT 'paper'
 );
 CREATE INDEX IF NOT EXISTS idx_trades_closed_at ON trades(closed_at);
 """
@@ -55,6 +56,7 @@ _COLUMNS = (
     "entry_order_id",
     "exit_order_ids",
     "fill_count",
+    "account",
 )
 
 
@@ -68,11 +70,20 @@ class TradeStore:
     def _init_schema_sync(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # Databases from before the live account: the column is added
+            # in place and every existing trip reads as paper, which is the
+            # only account that existed then.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(trades)")}
+            if "account" not in columns:
+                conn.execute("ALTER TABLE trades ADD COLUMN account TEXT NOT NULL DEFAULT 'paper'")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_trades_account_closed_at ON trades(account, closed_at)"
+            )
 
     async def init_schema(self) -> None:
         await asyncio.to_thread(self._init_schema_sync)
 
-    def _upsert_sync(self, trades: list[Trade], now: datetime) -> None:
+    def _upsert_sync(self, trades: list[Trade], account: str, now: datetime) -> None:
         # Upsert rather than insert-or-ignore: the closed-orders window
         # slides, and a trip first seen with only some of its fills (a
         # partial exit at the window's edge) is corrected on the next pass.
@@ -80,6 +91,7 @@ class TradeStore:
         for t in trades:
             d = t.to_dict()
             d["exit_order_ids"] = json.dumps(d["exit_order_ids"])
+            d["account"] = account
             rows.append(tuple(d[c] for c in _COLUMNS) + (now.isoformat(),))
         assignments = ", ".join(f"{c} = excluded.{c}" for c in _COLUMNS if c != "id")
         with self._connect() as conn:
@@ -90,16 +102,20 @@ class TradeStore:
                 rows,
             )
 
-    async def upsert(self, trades: list[Trade], now: datetime | None = None) -> None:
+    async def upsert(
+        self, trades: list[Trade], now: datetime | None = None, *, account: str = "paper"
+    ) -> None:
         if not trades:
             return
-        await asyncio.to_thread(self._upsert_sync, trades, now or datetime.now(UTC))
+        await asyncio.to_thread(self._upsert_sync, trades, account, now or datetime.now(UTC))
 
-    def _all_sync(self) -> list[dict]:
+    def _all_sync(self, account: str) -> list[dict]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                f"SELECT {', '.join(_COLUMNS)} FROM trades ORDER BY closed_at DESC, id"
+                f"SELECT {', '.join(_COLUMNS)} FROM trades WHERE account = ? "
+                "ORDER BY closed_at DESC, id",
+                (account,),
             ).fetchall()
         out = []
         for row in rows:
@@ -111,6 +127,6 @@ class TradeStore:
             out.append(d)
         return out
 
-    async def all(self) -> list[dict]:
-        """Every recorded trip, newest close first."""
-        return await asyncio.to_thread(self._all_sync)
+    async def all(self, account: str = "paper") -> list[dict]:
+        """Every recorded trip of one account, newest close first."""
+        return await asyncio.to_thread(self._all_sync, account)

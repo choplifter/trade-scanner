@@ -17,22 +17,45 @@ from pydantic import BaseModel, Field
 
 from app.auth.dependency import get_current_user
 from app.trading.errors import TradingError
+from app.trading.guards import LIVE_CONFIRM_HEADER, Account, can_submit, limits_for
 from app.trading.models import OrderTicket
 from app.trading.service import OrderService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/trading", tags=["trading"])
+# No prefix of its own: main.py mounts this router twice, under /api/trading
+# for the paper account and under /api/trading/live for the real one, with
+# mark_live_account as the only difference. Every handler asks _account()
+# which one it is serving.
+router = APIRouter(tags=["trading"])
+
+
+def mark_live_account(request: Request) -> None:
+    """Dependency on the /api/trading/live mount."""
+    request.state.trading_account = "live"
+
+
+def _account(request: Request) -> Account:
+    return getattr(request.state, "trading_account", "paper")
+
+
+def _confirm(request: Request) -> str | None:
+    """The typed LIVE from a live-mode dialog. Ignored for paper."""
+    return request.headers.get(LIVE_CONFIRM_HEADER)
 
 
 def _service(request: Request) -> OrderService:
     settings = request.app.state.settings
     if not settings.has_credentials:
         raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
+    account = _account(request)
+    if account == "live" and not settings.has_live_credentials:
+        raise HTTPException(status_code=503, detail="Live account not configured")
     return OrderService(
         request.app.state.alpaca_clients,
         settings,
         engine=getattr(request.app.state, "scanner_engine", None),
+        account=account,
     )
 
 
@@ -52,9 +75,14 @@ async def get_account(request: Request) -> dict:
     except Exception:
         logger.exception("Alpaca account fetch failed")
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
+    which = _account(request)
     return {
         "account": account,
-        "paper": settings.alpaca_paper,
+        "trading_account": which,
+        "paper": settings.alpaca_paper and which == "paper",
+        "live_available": settings.has_live_credentials,
+        "live_allowed": settings.trading_allow_live,
+        "limits": limits_for(settings, which).to_dict(),
         "trading_enabled": settings.trading_enabled,
         # Prefills the ticket, so changing the setting is reflected in the UI
         # rather than the two drifting apart.
@@ -233,12 +261,14 @@ async def preview_order(ticket: OrderTicket, request: Request) -> dict:
         logger.exception("Order preview failed for %s", ticket.symbol)
         raise HTTPException(status_code=502, detail="Failed to price the order")
 
+    limits = limits_for(settings, _account(request))
     return {
         "order": resolved.model_dump(mode="json"),
-        "can_submit": settings.trading_enabled and settings.alpaca_paper,
+        "can_submit": can_submit(settings, _account(request)),
         "limits": {
-            "max_order_qty": settings.trading_max_order_qty,
-            "max_order_notional": settings.trading_max_order_notional,
+            "account": limits.account,
+            "max_order_qty": limits.max_order_qty,
+            "max_order_notional": limits.max_order_notional,
             "default_risk_pct": settings.trading_default_risk_pct,
         },
     }
@@ -253,7 +283,7 @@ async def submit_order(ticket: OrderTicket, request: Request) -> dict:
     the preview uses, so the ticket renders them all through one path.
     """
     try:
-        order = await _service(request).submit(ticket)
+        order = await _service(request).submit(ticket, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -277,7 +307,7 @@ class ReplaceStopRequest(BaseModel):
 async def replace_stop(order_id: str, body: ReplaceStopRequest, request: Request) -> dict:
     """Move a working stop -- the edited SL cell and the break-even button."""
     try:
-        order = await _service(request).replace_stop(order_id, body.symbol, body.stop_price)
+        order = await _service(request).replace_stop(order_id, body.symbol, body.stop_price, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -302,7 +332,7 @@ async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Req
     route above since the two need different body shapes for the same
     underlying resource."""
     try:
-        order = await _service(request).replace_target(order_id, body.symbol, body.limit_price)
+        order = await _service(request).replace_target(order_id, body.symbol, body.limit_price, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -316,7 +346,7 @@ async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Req
 @router.delete("/orders/{order_id}")
 async def cancel_order(order_id: str, request: Request) -> dict:
     try:
-        await _service(request).cancel(order_id)
+        await _service(request).cancel(order_id, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -344,7 +374,7 @@ async def close_position(
     """Flatten one position, or sell part of it. There is deliberately no
     close-all endpoint."""
     try:
-        order = await _service(request).close_position(symbol, qty)
+        order = await _service(request).close_position(symbol, qty, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:

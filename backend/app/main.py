@@ -243,7 +243,15 @@ app.include_router(screener.router, dependencies=_auth_gate)
 app.include_router(strategies.router, dependencies=_auth_gate)
 app.include_router(symbols.router, dependencies=_auth_gate)
 app.include_router(trade_ideas.router, dependencies=_auth_gate)
-app.include_router(trading.router, dependencies=_auth_gate)
+# The trading router twice: the paper account, and the real one under /live
+# with request.state.trading_account set so every handler knows. What may be
+# *written* to the live account is decided in app.trading.guards, not here.
+app.include_router(trading.router, prefix="/api/trading", dependencies=_auth_gate)
+app.include_router(
+    trading.router,
+    prefix="/api/trading/live",
+    dependencies=[*_auth_gate, Depends(trading.mark_live_account)],
+)
 app.include_router(trading_sim.router)
 app.include_router(replay.router)
 app.include_router(news_feed.router)

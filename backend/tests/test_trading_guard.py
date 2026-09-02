@@ -67,3 +67,63 @@ def test_alpaca_decimal_strings_survive_serialisation():
     assert _plain({"equity": Decimal("100000.00")}) == {"equity": "100000.00"}
     assert _plain(None) is None
     assert _plain([Decimal("1.5"), None]) == ["1.5", None]
+
+
+# --- the live account -----------------------------------------------------
+# A second gate on top of the two above: the live prefix needs its own keys,
+# TRADING_ALLOW_LIVE, and the typed confirmation on every write.
+
+from app.trading.errors import LiveConfirmationRequired  # noqa: E402
+from app.trading.guards import limits_for  # noqa: E402
+
+
+def _live_service(**overrides) -> OrderService:
+    settings = Settings(
+        alpaca_api_key_id="k",
+        alpaca_api_secret_key="s",
+        trading_enabled=True,
+        alpaca_paper=True,
+        **overrides,
+    )
+    return OrderService(clients=None, settings=settings, account="live")  # type: ignore[arg-type]
+
+
+def test_live_refuses_without_live_keys():
+    with pytest.raises(LiveTradingRefused):
+        _live_service(trading_allow_live=True)._assert_can_trade("LIVE")
+
+
+def test_live_refuses_without_the_allow_switch():
+    with pytest.raises(LiveTradingRefused):
+        _live_service(
+            alpaca_live_api_key_id="lk", alpaca_live_api_secret_key="ls"
+        )._assert_can_trade("LIVE")
+
+
+def test_live_refuses_without_the_typed_confirmation():
+    service = _live_service(
+        alpaca_live_api_key_id="lk", alpaca_live_api_secret_key="ls", trading_allow_live=True
+    )
+    with pytest.raises(LiveConfirmationRequired):
+        service._assert_can_trade(None)
+    with pytest.raises(LiveConfirmationRequired):
+        service._assert_can_trade("live")  # exact word, upper case
+
+
+def test_live_passes_with_keys_switch_and_confirmation():
+    _live_service(
+        alpaca_live_api_key_id="lk", alpaca_live_api_secret_key="ls", trading_allow_live=True
+    )._assert_can_trade("LIVE")
+
+
+def test_paper_ignores_the_confirmation_entirely():
+    _service(trading_enabled=True, alpaca_paper=True)._assert_can_trade(None)
+
+
+def test_live_ceilings_are_the_smaller_ones():
+    settings = Settings(alpaca_api_key_id="k", alpaca_api_secret_key="s")
+    paper, live = limits_for(settings, "paper"), limits_for(settings, "live")
+    assert live.max_order_notional < paper.max_order_notional
+    assert live.max_order_qty < paper.max_order_qty
+    assert live.max_option_contracts < paper.max_option_contracts
+    assert live.account == "live" and paper.account == "paper"

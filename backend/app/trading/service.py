@@ -25,6 +25,7 @@ from app.trading.errors import (
     rejection_from_api_error,
 )
 from app.trading.models import OrderTicket, ResolvedOrder, resolve_ticket
+from app.trading.guards import Account, assert_can_trade, limits_for
 from app.trading.trade_store import TradeStore
 from app.trading.trades import (
     bucket_by_day,
@@ -115,21 +116,40 @@ def _plain(obj: Any) -> Any:
 class OrderService:
     """Everything the dashboard needs from the trading side of Alpaca."""
 
-    def __init__(self, clients: AlpacaClients, settings: Settings, engine=None) -> None:
+    def __init__(
+        self, clients: AlpacaClients, settings: Settings, engine=None, account: Account = "paper"
+    ) -> None:
         self._clients = clients
         self._settings = settings
         # The scanner engine already holds a live last price for every ranked
         # symbol, refreshed every poll tick. Reusing it costs nothing; the
         # Alpaca fallback below covers symbols outside the ranked views.
         self._engine = engine
+        # Which Alpaca account this instance talks to. The router picks it
+        # per request from the URL prefix (app.routers.trading); everything
+        # below goes through self._trading so the choice is made in exactly
+        # one place.
+        self._account: Account = account
+
+    @property
+    def account_name(self) -> Account:
+        return self._account
+
+    @property
+    def _trading(self):
+        """Resolved lazily rather than in __init__: tests build this service
+        with clients=None to prove the guard fires before the SDK is touched."""
+        if self._account == "paper":
+            return self._clients.trading
+        return self._clients.trading_for(self._account)
 
     # --- read paths ---------------------------------------------------
 
     async def account(self) -> dict:
-        return _plain(await asyncio.to_thread(self._clients.trading.get_account))
+        return _plain(await asyncio.to_thread(self._trading.get_account))
 
     async def positions(self) -> list[dict]:
-        return _plain(await asyncio.to_thread(self._clients.trading.get_all_positions))
+        return _plain(await asyncio.to_thread(self._trading.get_all_positions))
 
     async def orders(self, status: str = "open") -> list[dict]:
         """Orders by status. Defaults to open, which is what a working-orders
@@ -157,11 +177,11 @@ class OrderService:
 
         if query is QueryOrderStatus.OPEN:
             request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=_ORDER_FETCH_LIMIT)
-            rows = _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
+            rows = _plain(await asyncio.to_thread(self._trading.get_orders, request))
             return [o for o in rows if str(o.get("status", "")).lower() in _WORKING_STATUSES]
 
         request = GetOrdersRequest(status=query, limit=_ORDER_FETCH_LIMIT)
-        return _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
+        return _plain(await asyncio.to_thread(self._trading.get_orders, request))
 
     async def sync_trades(self, store: TradeStore, range_key: str = "all") -> dict:
         """Closed round trips -- which position made or lost what.
@@ -195,10 +215,10 @@ class OrderService:
         request = GetOrdersRequest(
             status=QueryOrderStatus.CLOSED, limit=_ORDER_FETCH_LIMIT, nested=True
         )
-        orders = _plain(await asyncio.to_thread(self._clients.trading.get_orders, request))
+        orders = _plain(await asyncio.to_thread(self._trading.get_orders, request))
         closed, still_open = round_trips(fills_from_orders(orders or []))
-        await store.upsert(closed)
-        selected = in_period(await store.all(), start)
+        await store.upsert(closed, account=self._account)
+        selected = in_period(await store.all(account=self._account), start)
         return {
             "range": (range_key or "all").lower(),
             "period_start": start.isoformat() if start else None,
@@ -241,7 +261,7 @@ class OrderService:
             ) from None
 
         request = GetPortfolioHistoryRequest(period=period, timeframe=timeframe)
-        history = await asyncio.to_thread(self._clients.trading.get_portfolio_history, request)
+        history = await asyncio.to_thread(self._trading.get_portfolio_history, request)
         points = _curve_points(history)
 
         if timeframe in _DAILY_TIMEFRAMES:
@@ -268,25 +288,11 @@ class OrderService:
 
     # --- guards -------------------------------------------------------
 
-    def _assert_can_trade(self) -> None:
-        """Every write path starts here.
-
-        Two independent switches, both of which must be on. trading_enabled
-        exists so that merging this feature changes nothing until someone
-        deliberately turns it on; the paper check exists so that turning it on
-        still cannot reach real money.
-        """
-        if not self._settings.trading_enabled:
-            raise TradingDisabled(
-                "Trading is switched off. Set TRADING_ENABLED=true in backend/.env to enable it."
-            )
-        if not self._settings.alpaca_paper:
-            raise LiveTradingRefused(
-                "Refusing to place an order against a live account. This build is "
-                "paper-only: ALPACA_PAPER must be true."
-            )
-
-    # --- pricing ------------------------------------------------------
+    def _assert_can_trade(self, confirm: str | None = None) -> None:
+        """Every write path starts here -- see app.trading.guards for the
+        switches, and for what `confirm` (the typed LIVE, from the
+        X-Live-Confirm header) is required for."""
+        assert_can_trade(self._settings, self._account, confirm)
 
     async def reference_price(self, symbol: str) -> float | None:
         """The price a market order should be sized and bounds-checked at.
@@ -346,30 +352,31 @@ class OrderService:
         """
         account = await self.account()
         price = await self.reference_price(ticket.symbol.upper())
+        limits = limits_for(self._settings, self._account)
         return resolve_ticket(
             ticket,
             reference_price=price,
             equity=_number(account.get("equity")),
             buying_power=_number(account.get("buying_power")),
-            max_qty=self._settings.trading_max_order_qty,
-            max_notional=self._settings.trading_max_order_notional,
-            max_notional_pct=self._settings.trading_max_order_notional_pct,
+            max_qty=limits.max_order_qty,
+            max_notional=limits.max_order_notional,
+            max_notional_pct=limits.max_order_notional_pct,
         )
 
     # --- write path ---------------------------------------------------
 
-    async def submit(self, ticket: OrderTicket) -> dict:
+    async def submit(self, ticket: OrderTicket, confirm: str | None = None) -> dict:
         """Place an order. The only function here that can lose money.
 
         Guard first, before anything is built or fetched, so a refusal costs
         nothing and cannot be reached by a caller that skipped the route.
         """
-        self._assert_can_trade()
+        self._assert_can_trade(confirm)
         resolved = await self.preview(ticket)
         request = _build_request(resolved)
 
         try:
-            order = await asyncio.to_thread(self._clients.trading.submit_order, request)
+            order = await asyncio.to_thread(self._trading.submit_order, request)
         except Exception as exc:
             rejection = rejection_from_api_error(exc)
             if rejection is not None:
@@ -387,17 +394,19 @@ class OrderService:
         )
         return _plain(order)
 
-    async def cancel(self, order_id: str) -> None:
-        self._assert_can_trade()
+    async def cancel(self, order_id: str, confirm: str | None = None) -> None:
+        self._assert_can_trade(confirm)
         try:
-            await asyncio.to_thread(self._clients.trading.cancel_order_by_id, order_id)
+            await asyncio.to_thread(self._trading.cancel_order_by_id, order_id)
         except Exception as exc:
             rejection = rejection_from_api_error(exc)
             if rejection is not None:
                 raise rejection from exc
             raise
 
-    async def replace_stop(self, order_id: str, symbol: str, stop_price: float) -> dict:
+    async def replace_stop(
+        self, order_id: str, symbol: str, stop_price: float, confirm: str | None = None
+    ) -> dict:
         """Move one working stop order to a new price -- the edited SL cell
         and the break-even button, which is this with stop_price set to the
         position's entry.
@@ -409,12 +418,12 @@ class OrderService:
         to a new stop applies here: for the sell-stop of a long, the price
         must sit below the market, or Alpaca would trigger it instantly.
         """
-        self._assert_can_trade()
+        self._assert_can_trade(confirm)
         symbol = symbol.upper()
 
         try:
             order = _plain(
-                await asyncio.to_thread(self._clients.trading.get_order_by_id, order_id)
+                await asyncio.to_thread(self._trading.get_order_by_id, order_id)
             )
         except Exception as exc:
             # Any 4xx here means the id names nothing on this account --
@@ -439,7 +448,7 @@ class OrderService:
 
         try:
             replaced = await asyncio.to_thread(
-                self._clients.trading.replace_order_by_id,
+                self._trading.replace_order_by_id,
                 order_id,
                 ReplaceOrderRequest(stop_price=stop_price),
             )
@@ -452,7 +461,9 @@ class OrderService:
         logger.info("Replaced stop %s on %s -> %.4f", order_id, symbol, stop_price)
         return _plain(replaced)
 
-    async def replace_target(self, order_id: str, symbol: str, limit_price: float) -> dict:
+    async def replace_target(
+        self, order_id: str, symbol: str, limit_price: float, confirm: str | None = None
+    ) -> dict:
         """Move one working take-profit order to a new price -- same shape
         as replace_stop, for the other exit leg.
 
@@ -461,12 +472,12 @@ class OrderService:
         only real differences from replace_stop are the order-type check and
         which SDK field carries the new price.
         """
-        self._assert_can_trade()
+        self._assert_can_trade(confirm)
         symbol = symbol.upper()
 
         try:
             order = _plain(
-                await asyncio.to_thread(self._clients.trading.get_order_by_id, order_id)
+                await asyncio.to_thread(self._trading.get_order_by_id, order_id)
             )
         except Exception as exc:
             # See replace_stop's identical block for why both spellings of
@@ -486,7 +497,7 @@ class OrderService:
 
         try:
             replaced = await asyncio.to_thread(
-                self._clients.trading.replace_order_by_id,
+                self._trading.replace_order_by_id,
                 order_id,
                 ReplaceOrderRequest(limit_price=limit_price),
             )
@@ -499,7 +510,9 @@ class OrderService:
         logger.info("Replaced target %s on %s -> %.4f", order_id, symbol, limit_price)
         return _plain(replaced)
 
-    async def close_position(self, symbol: str, qty: float | None = None) -> dict:
+    async def close_position(
+        self, symbol: str, qty: float | None = None, confirm: str | None = None
+    ) -> dict:
         """Flatten one position at market -- or, with qty, sell part of it
         and re-arm its exits for the remainder.
 
@@ -521,7 +534,7 @@ class OrderService:
         (stop_lost) rather than leaving the reader to notice a missing row
         in the orders table.
         """
-        self._assert_can_trade()
+        self._assert_can_trade(confirm)
         symbol = symbol.upper()
 
         exits = await self._working_orders_for(symbol)
@@ -546,12 +559,12 @@ class OrderService:
 
         try:
             if qty is None:
-                order = await asyncio.to_thread(self._clients.trading.close_position, symbol)
+                order = await asyncio.to_thread(self._trading.close_position, symbol)
             else:
                 from alpaca.trading.requests import ClosePositionRequest
 
                 order = await asyncio.to_thread(
-                    self._clients.trading.close_position,
+                    self._trading.close_position,
                     symbol,
                     ClosePositionRequest(qty=str(qty)),
                 )
@@ -584,7 +597,7 @@ class OrderService:
     async def _position_qty(self, symbol: str) -> float | None:
         try:
             position = await asyncio.to_thread(
-                self._clients.trading.get_open_position, symbol
+                self._trading.get_open_position, symbol
             )
         except Exception:
             return None
@@ -612,7 +625,7 @@ class OrderService:
                 or getattr(request, "stop_loss", None) is not None
             )
             try:
-                order = await asyncio.to_thread(self._clients.trading.submit_order, request)
+                order = await asyncio.to_thread(self._trading.submit_order, request)
                 rearmed.append(_plain(order))
                 if carries_stop:
                     stop_armed = True
@@ -647,7 +660,7 @@ class OrderService:
             request = GetOrdersRequest(
                 status=QueryOrderStatus.ALL, symbols=[symbol], limit=_ORDER_FETCH_LIMIT
             )
-            orders = await asyncio.to_thread(self._clients.trading.get_orders, request)
+            orders = await asyncio.to_thread(self._trading.get_orders, request)
         except Exception:
             logger.exception("Could not list working orders for %s before closing", symbol)
             return []
@@ -675,7 +688,7 @@ class OrderService:
             if not order_id:
                 continue
             try:
-                await asyncio.to_thread(self._clients.trading.cancel_order_by_id, order_id)
+                await asyncio.to_thread(self._trading.cancel_order_by_id, order_id)
                 cancelled.append(order_id)
             except Exception:
                 logger.warning(

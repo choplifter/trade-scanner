@@ -47,6 +47,93 @@ class Settings(BaseSettings):
     # to prefill the ticket. 1% is the common day-trading convention.
     trading_default_risk_pct: float = 1.0
 
+    # --- Live account ------------------------------------------------------
+    # A second key pair for the real-money account. The primary pair above
+    # stays the paper account and is also what every market-data client
+    # uses; only the TradingClient is chosen per request (see
+    # AlpacaClients.trading_for and app.trading.guards). Keys alone arm
+    # nothing: trading_allow_live must be on too, and every live write has
+    # to carry the typed confirmation the UI collects.
+    alpaca_live_api_key_id: str = ""
+    alpaca_live_api_secret_key: str = ""
+    trading_allow_live: bool = False
+    # Live ceilings, deliberately far below the paper ones: a fat-finger on
+    # paper costs nothing, on the real account it costs exactly the ceiling.
+    trading_live_max_order_notional_pct: float = 10.0
+    trading_live_max_order_notional: float = 5_000.0
+    trading_live_max_order_qty: int = 500
+    trading_live_max_option_contracts: int = 5
+
+    # --- Options -----------------------------------------------------------
+    # "opra" needs the paid options data subscription; "indicative" is the
+    # free, delayed fallback. Applies to the chain picker and to GEX.
+    alpaca_options_feed: Literal["opra", "indicative"] = "opra"
+    # Spreads (multi-leg contracts) per order on the paper account.
+    trading_max_option_contracts: int = 20
+    # The underlying-price trigger loop (app.options.monitor): how often it
+    # re-checks armed stops/targets, and how far past the mid, toward the
+    # natural price, a fired close is priced so it actually fills.
+    trading_options_trigger_check_interval: float = 2.0
+    trading_options_trigger_slippage: float = 0.05
+
+    # --- Live account ------------------------------------------------------
+    # A second key pair for the real-money account. The primary pair above
+    # stays the paper account and is also what every market-data client
+    # uses; only the TradingClient is chosen per request (see
+    # AlpacaClients.trading_for and app.trading.guards). Keys alone arm
+    # nothing: trading_allow_live must be on too, and every live write has
+    # to carry the typed confirmation the UI collects.
+    alpaca_live_api_key_id: str = ""
+    alpaca_live_api_secret_key: str = ""
+    trading_allow_live: bool = False
+    # Live ceilings, deliberately far below the paper ones: a fat-finger on
+    # paper costs nothing, on the real account it costs exactly the ceiling.
+    trading_live_max_order_notional_pct: float = 10.0
+    trading_live_max_order_notional: float = 5_000.0
+    trading_live_max_order_qty: int = 500
+    trading_live_max_option_contracts: int = 5
+
+    # --- Options -----------------------------------------------------------
+    # "opra" needs the paid options data subscription; "indicative" is the
+    # free, delayed fallback. Applies to the chain picker and to GEX.
+    alpaca_options_feed: Literal["opra", "indicative"] = "opra"
+    # Spreads (multi-leg contracts) per order on the paper account.
+    trading_max_option_contracts: int = 20
+    # The underlying-price trigger loop (app.options.monitor): how often it
+    # re-checks armed stops/targets, and how far past the mid, toward the
+    # natural price, a fired close is priced so it actually fills.
+    trading_options_trigger_check_interval: float = 2.0
+    trading_options_trigger_slippage: float = 0.05
+
+    # --- Live account ------------------------------------------------------
+    # A second key pair for the real-money account. The primary pair above
+    # stays the paper account and is also what every market-data client
+    # uses; only the TradingClient is chosen per request (see
+    # AlpacaClients.trading_for and app.trading.guards). Keys alone arm
+    # nothing: trading_allow_live must be on too, and every live write has
+    # to carry the typed confirmation the UI collects.
+    alpaca_live_api_key_id: str = ""
+    alpaca_live_api_secret_key: str = ""
+    trading_allow_live: bool = False
+    # Live ceilings, deliberately far below the paper ones: a fat-finger on
+    # paper costs nothing, on the real account it costs exactly the ceiling.
+    trading_live_max_order_notional_pct: float = 10.0
+    trading_live_max_order_notional: float = 5_000.0
+    trading_live_max_order_qty: int = 500
+    trading_live_max_option_contracts: int = 5
+
+    # --- Options -----------------------------------------------------------
+    # "opra" needs the paid options data subscription; "indicative" is the
+    # free, delayed fallback. Applies to the chain picker and to GEX.
+    alpaca_options_feed: Literal["opra", "indicative"] = "opra"
+    # Spreads (multi-leg contracts) per order on the paper account.
+    trading_max_option_contracts: int = 20
+    # The underlying-price trigger loop (app.options.monitor): how often it
+    # re-checks armed stops/targets, and how far past the mid, toward the
+    # natural price, a fired close is priced so it actually fills.
+    trading_options_trigger_check_interval: float = 2.0
+    trading_options_trigger_slippage: float = 0.05
+
     # Simulation Mode: a fully local, broker-free order book (app.trading.sim)
     # that fills against real live prices without ever touching alpaca_clients
     # .trading -- so it needs neither trading_enabled nor alpaca_paper to be
@@ -343,6 +430,18 @@ class Settings(BaseSettings):
     @property
     def has_credentials(self) -> bool:
         return bool(self.alpaca_api_key_id and self.alpaca_api_secret_key)
+
+    @property
+    def has_live_credentials(self) -> bool:
+        return bool(self.alpaca_live_api_key_id and self.alpaca_live_api_secret_key)
+
+    @property
+    def has_live_credentials(self) -> bool:
+        return bool(self.alpaca_live_api_key_id and self.alpaca_live_api_secret_key)
+
+    @property
+    def has_live_credentials(self) -> bool:
+        return bool(self.alpaca_live_api_key_id and self.alpaca_live_api_secret_key)
 
     @property
     def has_anthropic_credentials(self) -> bool:

@@ -35,6 +35,60 @@ class LiveTradingRefused(TradingError):
     code = "live_trading_refused"
 
 
+class LiveConfirmationRequired(TradingError):
+    """A real-money write arrived without the typed confirmation.
+
+    The UI asks for the word LIVE on every live dialog and sends it as the
+    X-Live-Confirm header (app.trading.guards); a request without it is
+    refused even when every switch is on, so nothing that merely reached
+    the live prefix by accident can place a real order.
+    """
+
+    code = "live_confirmation_required"
+
+
+class OptionsNotApproved(TradingError):
+    """The account's options trading level is below what the strategy needs."""
+
+    code = "options_not_approved"
+
+
+class LiveConfirmationRequired(TradingError):
+    """A real-money write arrived without the typed confirmation.
+
+    The UI asks for the word LIVE on every live dialog and sends it as the
+    X-Live-Confirm header (app.trading.guards); a request without it is
+    refused even when every switch is on, so nothing that merely reached
+    the live prefix by accident can place a real order.
+    """
+
+    code = "live_confirmation_required"
+
+
+class OptionsNotApproved(TradingError):
+    """The account's options trading level is below what the strategy needs."""
+
+    code = "options_not_approved"
+
+
+class LiveConfirmationRequired(TradingError):
+    """A real-money write arrived without the typed confirmation.
+
+    The UI asks for the word LIVE on every live dialog and sends it as the
+    X-Live-Confirm header (app.trading.guards); a request without it is
+    refused even when every switch is on, so nothing that merely reached
+    the live prefix by accident can place a real order.
+    """
+
+    code = "live_confirmation_required"
+
+
+class OptionsNotApproved(TradingError):
+    """The account's options trading level is below what the strategy needs."""
+
+    code = "options_not_approved"
+
+
 class OrderRejected(TradingError):
     """The broker, or our own pre-flight limits, said no."""
 
