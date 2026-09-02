@@ -11,7 +11,7 @@ green/yellow/red level.
 
 Verified live against this project's own Alpaca account before writing this
 module (not assumed from docs): TradingClient.get_option_contracts() returns
-real open_interest, and OptionHistoricalDataClient.get_option_chain() (OPRA
+real open_interest, and OptionHistoricalDataClient.get_option_chain() (the configured options
 feed) returns real greeks (including gamma) -- but only for contracts that
 are not 0DTE. Alpaca computes greeks itself via Black-Scholes and structurally
 cannot for a contract expiring today (division by zero in the time-to-expiry
@@ -32,7 +32,6 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from alpaca.data.enums import OptionsFeed
 from alpaca.data.requests import OptionChainRequest, StockLatestTradeRequest
 from alpaca.trading.enums import ContractType
 from alpaca.trading.requests import GetOptionContractsRequest
@@ -260,7 +259,7 @@ async def _fetch_gammas(
     """
     request = OptionChainRequest(
         underlying_symbol=symbol,
-        feed=OptionsFeed.OPRA,
+        feed=clients.options_feed,
         expiration_date_gte=expiration_gte.isoformat(),
         expiration_date_lte=expiration_lte.isoformat(),
         strike_price_gte=strike_gte,
