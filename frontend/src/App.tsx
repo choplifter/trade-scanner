@@ -18,6 +18,7 @@ import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWid
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
 import { SimulationToggle } from "./components/trading/SimulationToggle";
+import { TradeJournalWidget } from "./components/trading/TradeJournalWidget";
 import { TradingWidget } from "./components/trading/TradingWidget";
 import { WatchlistPanel } from "./components/watchlist/WatchlistPanel";
 import { SymbolInfoProvider } from "./context/SymbolInfoContext";
@@ -114,7 +115,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
           onSelectPick={selectPick}
         />
       ),
-      chart: <ChartWidget symbol={selectedSymbol} focus={chartFocus} />,
+      chart: <ChartWidget symbol={selectedSymbol} focus={chartFocus} onClearFocus={() => setChartFocus(null)} />,
       symbol_info: <SymbolInfoWidget symbol={selectedSymbol} />,
       ideas: <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />,
       benchmark: (
@@ -156,6 +157,9 @@ function AppShell({ user, onLogout }: AppShellProps) {
       // the resizable splits entirely in panels mode (see the
       // dashboard-active-column/dashboard-idle-column render sites below).
       gex_plan: <GexPlanWidget key="gex_plan" symbol={selectedSymbol} />,
+      // Same key requirement as gex_plan above -- also placed outside the
+      // resizable splits in panels mode.
+      trade_journal: <TradeJournalWidget key="trade_journal" onSelectPick={selectPick} />,
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
     // state the comment above guards against: switching modes should
@@ -314,6 +318,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
                 {[...topAndBottomRows, widgets.replay]}
               </ResizablePanels>
               {widgets.gex_plan}
+              {widgets.trade_journal}
             </div>
           ) : (
             // No session -- replay collapses to its own content-sized strip
@@ -337,6 +342,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               </ResizablePanels>
               {widgets.replay}
               {widgets.gex_plan}
+              {widgets.trade_journal}
             </div>
           )}
         </main>

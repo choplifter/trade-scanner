@@ -24,9 +24,13 @@ import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
 
 interface ChartWidgetProps {
   symbol: string | null;
-  /** Set when a backtest pick is clicked: jump to this entry and show it at
-   * a resolution where it's visible. */
+  /** Set when a backtest pick or a journal trade is clicked: jump to this
+   * entry (and exit, for a trade) and show it at a resolution where it's
+   * visible. */
   focus?: ChartFocus | null;
+  /** Called when the user takes manual control of the timeframe while a
+   * focus is active -- see the timeframe buttons' onClick for why. */
+  onClearFocus?: () => void;
 }
 
 const DEFAULT_TIMEFRAME_KEY = "5m";
@@ -121,7 +125,7 @@ const CHART_TYPES: { key: ChartType; label: string; title: string }[] = [
   },
 ];
 
-export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
+export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
   const [timeframeKey, setTimeframeKey] = useState(DEFAULT_TIMEFRAME_KEY);
 
   // A pick carries the resolution that makes it legible -- a 10:35 intraday
@@ -479,7 +483,16 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
                 type="button"
                 className="timeframe-button"
                 aria-pressed={timeframeKey === opt.key}
-                onClick={() => setTimeframeKey(opt.key)}
+                onClick={() => {
+                  setTimeframeKey(opt.key);
+                  // A focused pick/trade otherwise keeps re-scrolling back to
+                  // itself on every live tick once the new timeframe's bars
+                  // start arriving (see CandleChart's focus-scroll effect) --
+                  // picking a timeframe here is manual control the same way
+                  // selectSymbol's own comment already treats picking a
+                  // symbol another way, so it lets go of the focus too.
+                  onClearFocus?.();
+                }}
               >
                 {opt.label}
               </button>
@@ -661,6 +674,7 @@ export function ChartWidget({ symbol, focus }: ChartWidgetProps) {
             // screen; a stale one would drag the chart to an unrelated time
             // after the user clicks a different row.
             focusTime={focus && focus.symbol === symbol ? focus.time : null}
+            focusTrade={focus && focus.symbol === symbol ? (focus.trade ?? null) : null}
             // News markers only where a bar is finer than a session: the
             // list covers the last few days, so on daily+ charts every
             // story would pile onto the newest one or two candles.

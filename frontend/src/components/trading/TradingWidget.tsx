@@ -132,8 +132,10 @@ function signedMoney(value: string | null | undefined): { text: string; cls: str
 }
 
 /** Like signedMoney/signedPct, but for the numbers the trades endpoint
- * returns -- already numbers, already in the unit shown. */
-function signedNumber(
+ * returns -- already numbers, already in the unit shown. Exported for
+ * TradeJournalWidget, which shows the same P&L/R figures against the same
+ * trade list. */
+export function signedNumber(
   value: number | null,
   digits: number,
   suffix = "",
@@ -1141,7 +1143,9 @@ function FillsTable({
   );
 }
 
-function tradeTime(stamp: string): string {
+/** Exported for TradeJournalWidget -- same closed_at/opened_at timestamps,
+ * same display convention. */
+export function tradeTime(stamp: string): string {
   const parsed = Date.parse(stamp);
   return Number.isFinite(parsed) ? FILL_TIME_FORMAT.format(new Date(parsed)) : "—";
 }

@@ -43,6 +43,7 @@ from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
 from app.scanners.engine import ScannerEngine
 from app.scanners.history_store import ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
+from app.trading.journal_store import JournalStore
 from app.trading.sim.loop import run_sim_fill_loop
 from app.trading.sim.store import SimStore
 from app.trading.trade_store import TradeStore
@@ -120,6 +121,13 @@ async def lifespan(app: FastAPI):
     watchlist_store = WatchlistStore(settings.scanner_history_db_path)
     await watchlist_store.init_schema()
     app.state.watchlist_store = watchlist_store
+
+    # Per-user notes on closed trades -- same file, own table. See
+    # app.trading.journal_store; trade_id alone (real or Simulation Mode) is
+    # the join key, so this store is independent of trade_store/sim_store.
+    journal_store = JournalStore(settings.scanner_history_db_path)
+    await journal_store.init_schema()
+    app.state.journal_store = journal_store
 
     fundamentals_client = httpx.AsyncClient(timeout=10.0)
     fundamentals = FundamentalsCache(settings, fundamentals_client)

@@ -12,9 +12,10 @@ detail off a 422 -- see BacktestRefusedError in frontend/src/api/http.ts.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from app.auth.dependency import get_current_user
 from app.trading.errors import TradingError
 from app.trading.models import OrderTicket
 from app.trading.service import OrderService
@@ -115,6 +116,39 @@ async def get_trades(
     except Exception:
         logger.exception("Trade sync failed")
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
+
+
+@router.get("/journal")
+async def get_journal(request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """This user's notes on closed trades -- see app.trading.journal_store.
+    Keyed by trade_id; a trade with no entry simply isn't in the dict.
+    trade_id works for both a real Trade.id and a Simulation Mode trade's id
+    (see JournalStore's own docstring), so this endpoint doesn't distinguish
+    between them -- the frontend fetches whichever trade list the current
+    trading mode implies (see api/tradingMode.ts) and matches by id.
+    """
+    store = request.app.state.journal_store
+    entries = await store.list_entries(user["id"])
+    return {"entries": {trade_id: entry.to_dict() for trade_id, entry in entries.items()}}
+
+
+class JournalEntryRequest(BaseModel):
+    note: str = Field(max_length=2000)
+    rating: int | None = Field(default=None, ge=1, le=5)
+    tags: list[str] = Field(default_factory=list, max_length=10)
+
+
+@router.post("/journal/{trade_id}")
+async def save_journal_entry(
+    trade_id: str, body: JournalEntryRequest, request: Request, user: dict = Depends(get_current_user)
+) -> dict:
+    tags = [t.strip() for t in body.tags if t.strip()][:10]
+    for tag in tags:
+        if len(tag) > 30:
+            raise HTTPException(status_code=422, detail=f"Tag {tag!r} is too long (max 30 characters)")
+    store = request.app.state.journal_store
+    entry = await store.upsert_entry(user["id"], trade_id, body.note, body.rating, tags)
+    return {"entry": entry.to_dict()}
 
 
 @router.get("/portfolio-history")

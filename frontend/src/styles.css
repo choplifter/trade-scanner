@@ -260,9 +260,121 @@ body {
    .replay-collapsed) rather than inline .widget's flex:1, which needs a
    bounded parent height it doesn't have there. */
 .dashboard-idle-column > .gex-plan-widget,
-.dashboard-active-column > .gex-plan-widget {
+.dashboard-active-column > .gex-plan-widget,
+.dashboard-idle-column > .trade-journal-widget,
+.dashboard-active-column > .trade-journal-widget {
   flex: 0 0 auto;
   max-height: 260px;
+}
+
+/* TradeJournalWidget */
+.journal-mode-hint {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.performance-table td.journal-note-preview,
+.performance-table td.journal-tags-preview {
+  text-align: left;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.journal-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 4px;
+  cursor: default;
+  white-space: normal;
+}
+
+.journal-note-input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  resize: vertical;
+}
+
+.journal-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.journal-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.journal-stars {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.journal-star {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.journal-star[aria-pressed="true"] {
+  color: var(--status-warning);
+}
+
+.journal-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.journal-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.journal-tag-chip button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.journal-tags input {
+  width: 90px;
+  padding: 2px 5px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
 }
 
 /* Active-replay-session sibling of .dashboard-idle-column -- same flex

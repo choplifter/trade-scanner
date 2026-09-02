@@ -52,6 +52,7 @@ const WIDGET_TITLES: Record<WidgetId, string> = {
   news_feed: "News Feed",
   symbol_info: "Symbol Info",
   gex_plan: "GEX Plan",
+  trade_journal: "Trading Journal",
 };
 
 /** Rendered once per group's tab strip (top-right) -- dockview-react has no
@@ -102,7 +103,8 @@ const DOCK_LAYOUT_KEY = "layout:dock";
  * discard-rather-than-migrate convention as useDashboardLayout's
  * LAYOUT_VERSION, for the same reason: a saved layout missing a newly
  * added widget (or referencing a removed one) is worse than starting over. */
-const DOCK_LAYOUT_VERSION = 1;
+// 2: added "trade_journal".
+const DOCK_LAYOUT_VERSION = 2;
 const DOCK_WRITE_DEBOUNCE_MS = 200;
 
 interface StoredDockLayout {
@@ -149,6 +151,7 @@ function buildDefaultLayout(api: DockviewApi) {
   addWidgetPanel(api, "history", { referencePanel: "ideas", direction: "within" });
   addWidgetPanel(api, "gex_plan", { referencePanel: "ideas", direction: "within" });
   addWidgetPanel(api, "replay", { referencePanel: "ideas", direction: "within" });
+  addWidgetPanel(api, "trade_journal", { referencePanel: "ideas", direction: "within" });
 }
 
 /**

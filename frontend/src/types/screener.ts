@@ -184,11 +184,22 @@ export interface BacktestPick {
 /** What the chart should jump to when a pick is clicked. */
 export interface ChartFocus {
   symbol: string;
-  /** Unix seconds. */
+  /** Unix seconds -- a backtest pick's entry time, or a journal trade's
+   * entry time when `trade` is set. */
   time: number;
   /** Which chart timeframe makes the pick visible: a 10:35 entry is
    * meaningless on a daily chart, and a daily pick is lost on a 5m one. */
   timeframeKey: string;
+  /** Set when this focus is a closed trade (TradeJournalWidget), not a
+   * backtest pick -- the chart draws "Entry"/"Exit" arrows spanning the
+   * whole trade instead of a single "Pick" arrow at `time`. */
+  trade?: {
+    /** Unix seconds. */
+    exitTime: number;
+    /** Whether the trade closed profitable -- which color the exit arrow
+     * gets (see CandleChart's POSITION_TARGET_COLOR/POSITION_STOP_COLOR). */
+    won: boolean;
+  };
 }
 
 /** 422 body when a screen filters on something daily bars can't

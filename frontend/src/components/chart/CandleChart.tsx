@@ -84,9 +84,16 @@ interface CandleChartProps {
    * onDragStop/onDragTarget, which is what ChartWidget wires this to). */
   onMoveIndicativeLevel?: (field: "stop" | "target", price: number) => void;
   cursorMode: CursorMode;
-  /** Unix seconds to scroll into view — a backtest pick's entry time. Null
-   * leaves the chart wherever the user left it. */
+  /** Unix seconds to scroll into view — a backtest pick's entry time, or a
+   * journal trade's entry time when focusTrade is set. Null leaves the
+   * chart wherever the user left it. */
   focusTime?: number | null;
+  /** Set alongside focusTime when the focus is a closed trade
+   * (TradeJournalWidget), not a backtest pick -- draws "Entry" (at
+   * focusTime) and "Exit" arrows spanning the trade, and scrolls to show
+   * the whole trade rather than padding around one point. Null/undefined
+   * means focusTime (if any) is a plain backtest pick, drawn as "Pick". */
+  focusTrade?: { exitTime: number; won: boolean } | null;
   /** Recent headlines to pin on the timeline, each at the bar nearest its
    * publish time. Same items the info panel lists — the marker answers
    * "when", the panel answers "what". */
@@ -100,10 +107,12 @@ interface CandleChartProps {
   shadeSessions?: boolean;
 }
 
-/** How much history/future to show either side of a focused pick. Wide
- * enough to see what led into the entry and what happened after, narrow
- * enough that the bar in question is still identifiable. */
-const FOCUS_PADDING_SECONDS = 90 * 60;
+/** How many bars of history/future to show either side of a focused pick
+ * (or a journal trade's entry/exit) -- bar count rather than a fixed time
+ * span so it means the same thing on any timeframe: wide enough to see what
+ * led into the entry and what happened after, narrow enough that the bar in
+ * question is still identifiable. */
+const FOCUS_PADDING_BARS = 12;
 
 /** Same pin the Dash backtest page drops on a clicked pick (see
  * dash_app/assets/lightweight_chart.html's markPick), so the two surfaces
@@ -149,6 +158,28 @@ function nearestBarTime(bars: Bar[], time: number): UTCTimestamp | null {
     if (diff < bestDiff) {
       bestDiff = diff;
       nearest = barTime;
+    }
+  }
+  return nearest;
+}
+
+/** The index of the bar closest to `time` -- for setVisibleLogicalRange,
+ * which (unlike setVisibleRange) is the mechanism this file's default view
+ * and resize handling already rely on. A time-based setVisibleRange call
+ * was tried first for the focus-scroll effect below and found to be
+ * silently overridden back to the default right-anchored view on this
+ * chart (confirmed live: the exact requested {from, to} read back
+ * unchanged as the *default* range immediately after the call, with
+ * shiftVisibleRangeOnNewBar -- a chart default this file doesn't turn off
+ * -- the likely cause). Logical/index-based ranging doesn't hit that path. */
+function nearestBarIndex(bars: Bar[], time: number): number | null {
+  let nearest: number | null = null;
+  let bestDiff = Infinity;
+  for (let i = 0; i < bars.length; i++) {
+    const diff = Math.abs(toUnixSeconds(bars[i].t) - time);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      nearest = i;
     }
   }
   return nearest;
@@ -338,6 +369,7 @@ export function CandleChart({
   onMoveIndicativeLevel,
   cursorMode,
   focusTime,
+  focusTrade,
   news = [],
   onNewsClick,
   shadeSessions = false,
@@ -379,6 +411,22 @@ export function CandleChart({
   // visible bars -> different price labels -> a wider/narrower price scale),
   // which fires subscribeSizeChange again. This swallows that echo.
   const applyingRangeRef = useRef(false);
+  // Pending setTimeout id from the focus-scroll effect's reassert loop (see
+  // that effect) -- cancelled and restarted on every run so a stale chain
+  // from a previous focus (an old trade/pick, or the same one before bars
+  // changed again) can't fire a late setVisibleLogicalRange for a viewport
+  // that's no longer current.
+  const reassertTimeoutRef = useRef<number | null>(null);
+  // The logical range the focus-scroll effect below last asked for, or null
+  // when no focus is active. Read by the resize handler, which is built once
+  // at mount and (like every other resize-handler ref here) can't close over
+  // per-render props -- without this, a live tick's own layout reflow (the
+  // price/order-ticket panel's numbers changing width, nudging the chart
+  // container by a pixel) fires subscribeSizeChange, and the handler's
+  // unconditional default-range computation stomped a focused pick/trade
+  // right back to the unfocused right-anchored view, over and over as long
+  // as the symbol kept ticking -- the flicker this ref exists to stop.
+  const focusRangeRef = useRef<{ from: number; to: number } | null>(null);
   // The container width the resize handler last acted on. The same
   // labels-resize-the-axis mechanism fires on the user's own horizontal
   // scroll (new visible bars -> new price labels -> the axis gains or loses
@@ -478,6 +526,15 @@ export function CandleChart({
         secondsVisible: false,
         minBarSpacing: 3,
         tickMarkFormatter,
+        // Off: the library's own default here unconditionally snaps the
+        // view to the newest bar on every live tick, wherever the viewer
+        // currently is -- fighting both a focused pick/trade (whose whole
+        // point is to stay put on a historical window while new bars keep
+        // arriving elsewhere) and this file's own hand-rolled "follow only
+        // if already at the right edge" logic a few lines down (the
+        // atRightEdge check), which is the one actual mechanism meant to
+        // own that decision.
+        shiftVisibleRangeOnNewBar: false,
       },
       localization: { timeFormatter: crosshairTimeFormatter },
       autoSize: true,
@@ -537,7 +594,10 @@ export function CandleChart({
       const width = container.clientWidth || 1;
       if (width === lastContainerWidthRef.current) return;
       lastContainerWidthRef.current = width;
-      const range = visibleLogicalRange(width, barCountRef.current);
+      // A focused pick/trade owns the viewport the same way it does in the
+      // data effect above -- recompute its own window rather than the
+      // default one, so a resize (real or reflow-triggered) can't undo it.
+      const range = focusRangeRef.current ?? visibleLogicalRange(width, barCountRef.current);
       if (!range) return;
       applyingRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange(range);
@@ -889,13 +949,35 @@ export function CandleChart({
 
     const markerTime = focusTime == null ? null : nearestBarTime(bars, focusTime);
     if (markerTime != null) {
-      markers.push({
-        time: markerTime,
-        position: "aboveBar",
-        color: PICK_MARKER_COLOR,
-        shape: "arrowDown",
-        text: "Pick",
-      });
+      if (focusTrade) {
+        // Entry reuses the same blue positionLevels already uses for a real
+        // position's entry line -- same meaning, "this is where it started".
+        markers.push({
+          time: markerTime,
+          position: "belowBar",
+          color: POSITION_ENTRY_COLOR,
+          shape: "arrowUp",
+          text: "Entry",
+        });
+        const exitTime = nearestBarTime(bars, focusTrade.exitTime);
+        if (exitTime != null) {
+          markers.push({
+            time: exitTime,
+            position: "aboveBar",
+            color: focusTrade.won ? POSITION_TARGET_COLOR : POSITION_STOP_COLOR,
+            shape: "arrowDown",
+            text: "Exit",
+          });
+        }
+      } else {
+        markers.push({
+          time: markerTime,
+          position: "aboveBar",
+          color: PICK_MARKER_COLOR,
+          shape: "arrowDown",
+          text: "Pick",
+        });
+      }
     }
 
     // indicators is already filtered down to whatever the Levels dropdown
@@ -958,20 +1040,64 @@ export function CandleChart({
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     markersRef.current.setMarkers(markers);
 
-    if (focusTime == null || bars.length === 0) return;
+    if (focusTime == null || bars.length === 0) {
+      focusRangeRef.current = null;
+      return;
+    }
 
-    const first = toUnixSeconds(bars[0].t);
-    const last = toUnixSeconds(bars[bars.length - 1].t);
-    // Silently doing nothing would look like a broken click. Clamping keeps
-    // the chart pointed at the nearest end of what it actually has, which at
-    // least shows the user the pick is outside the loaded window.
-    const target = Math.min(Math.max(focusTime, first), last);
+    // Index-based, not time-based -- see nearestBarIndex's own comment for
+    // why setVisibleRange (time-based) doesn't reliably stick on this chart.
+    const lastIndex = bars.length - 1;
+    const clamp = (index: number) => Math.min(Math.max(index, 0), lastIndex);
+    const entryIndex = clamp(nearestBarIndex(bars, focusTime) ?? 0);
+    // Without a trade, this collapses to entryIndex on both ends -- same
+    // single-point-plus-padding window a backtest pick always got.
+    const exitIndex = focusTrade ? clamp(nearestBarIndex(bars, focusTrade.exitTime) ?? entryIndex) : entryIndex;
+    const rangeStart = Math.min(entryIndex, exitIndex);
+    const rangeEnd = Math.max(entryIndex, exitIndex);
 
-    chart.timeScale().setVisibleRange({
-      from: Math.max(first, target - FOCUS_PADDING_SECONDS) as UTCTimestamp,
-      to: Math.min(last, target + FOCUS_PADDING_SECONDS) as UTCTimestamp,
-    });
-  }, [focusTime, bars, chartType, indicators, news]);
+    const req = {
+      from: Math.max(0, rangeStart - FOCUS_PADDING_BARS),
+      to: Math.min(lastIndex, rangeEnd + FOCUS_PADDING_BARS),
+    };
+    focusRangeRef.current = req;
+    const ts = chart.timeScale();
+
+    // A single call here isn't reliable on a symbol with bars still
+    // actively arriving (confirmed live: on an actively-updating intraday
+    // chart, something -- not shiftVisibleRangeOnNewBar, already off above,
+    // and not reproducible on a symbol whose bars have stopped changing --
+    // repeatedly snaps the range back to the default right-anchored view
+    // within a couple hundred ms of this call, self-resolving only once
+    // updates settle down; a live symbol's updates don't reliably do that
+    // inside a human-perceptible window). Reasserting a few times over the
+    // next second outlasts that without a visible fight: each call is
+    // idempotent once it's already the current range, so once it sticks the
+    // remaining calls are no-ops.
+    if (reassertTimeoutRef.current != null) {
+      window.clearTimeout(reassertTimeoutRef.current);
+      reassertTimeoutRef.current = null;
+    }
+    applyingRangeRef.current = true;
+    let attempt = 0;
+    const reassert = () => {
+      ts.setVisibleLogicalRange(req);
+      attempt += 1;
+      if (attempt < 6) {
+        reassertTimeoutRef.current = window.setTimeout(reassert, attempt * 80);
+      } else {
+        reassertTimeoutRef.current = null;
+        applyingRangeRef.current = false;
+      }
+    };
+    reassert();
+    return () => {
+      if (reassertTimeoutRef.current != null) {
+        window.clearTimeout(reassertTimeoutRef.current);
+        reassertTimeoutRef.current = null;
+      }
+    };
+  }, [focusTime, focusTrade, bars, chartType, indicators, news]);
 
   // Separate from the bars/vwap effect above: indicators only change when
   // the symbol changes or the toggle flips, not on every live tick, and
@@ -1056,7 +1182,16 @@ export function CandleChart({
       });
     });
 
-    if (preservedRange) {
+    // Skipped while a focus (backtest pick or journal trade) is driving the
+    // viewport: capturing right after the focus effect's own setVisibleRange
+    // (same commit, effects run in declaration order, this one after that
+    // one) can read back a logical range the library hasn't finished
+    // recomputing yet for the new time-based range -- restoring that stale
+    // read would silently undo the scroll-to-focus the user just triggered.
+    // The unfocused case (this guard's normal path) is unaffected: nothing
+    // upstream just moved the viewport, so the preserved/restored range is
+    // always a faithful echo of wherever the user actually left it.
+    if (preservedRange && focusTime == null) {
       chart.timeScale().setVisibleLogicalRange(preservedRange);
     }
     // After the restore, never before: setVisibleLogicalRange repositions

@@ -1,5 +1,6 @@
 import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
 import type { GexPlanResponse, GexResponse } from "../types/gex";
+import type { JournalEntry, JournalResponse } from "../types/journal";
 import type { MarketConditionsResponse } from "../types/marketConditions";
 import type { NewsFeedItem } from "../types/newsFeed";
 import type { ScannerBenchmarkResponse } from "../types/scannerBenchmark";
@@ -306,6 +307,21 @@ export function getOrders(status = "open"): Promise<OrdersResponse> {
  * trip that closed since the last one. */
 export function getTrades(range: TradesRange = "all"): Promise<TradesResponse> {
   return getJson<TradesResponse>(tradingPath(`/trading/trades?range=${encodeURIComponent(range)}`));
+}
+
+/** This user's notes on closed trades -- see routers/trading.py's /journal.
+ * Not routed through tradingPath(): trade_id alone is already unambiguous
+ * across real and Simulation Mode trades (see JournalStore's docstring), so
+ * the journal endpoints don't distinguish between the two trading modes. */
+export function getJournalEntries(): Promise<JournalResponse> {
+  return getJson<JournalResponse>("/trading/journal");
+}
+
+export function saveJournalEntry(
+  tradeId: string,
+  body: { note: string; rating: number | null; tags: string[] },
+): Promise<{ entry: JournalEntry }> {
+  return postJson<{ entry: JournalEntry }>(`/trading/journal/${encodeURIComponent(tradeId)}`, body);
 }
 
 /** The account equity curve for one range. Read-only, like getAccount. */
