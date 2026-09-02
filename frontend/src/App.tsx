@@ -9,6 +9,7 @@ import { ChartWidget } from "./components/chart/ChartWidget";
 import { SymbolInfoWidget } from "./components/chart/SymbolInfoWidget";
 import { GexPlanWidget } from "./components/gex/GexPlanWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
+import { DockviewDashboard } from "./components/layout/DockviewDashboard";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { NewsFeedWidget } from "./components/newsFeed/NewsFeedWidget";
@@ -291,6 +292,8 @@ function AppShell({ user, onLogout }: AppShellProps) {
               onLayoutChange={dashboardLayout.setLayout}
               widgets={widgets}
             />
+          ) : dashboardLayout.mode === "dock" ? (
+            <DockviewDashboard widgets={widgets} />
           ) : replaySession ? (
             // A session is running -- replay gets its own resizable third
             // row, same as it always has. news_feed no longer lives here --

@@ -3,8 +3,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Layout } from "react-grid-layout";
 
 /** Which layout the dashboard is rendering: the fixed nested splitters
- * (ResizablePanels) or the freely repositionable grid (DashboardGrid). */
-export type LayoutMode = "panels" | "grid";
+ * (ResizablePanels), the freely repositionable grid (DashboardGrid), or the
+ * VS-Code-style docking layout (DockviewDashboard -- prototype, see its own
+ * docstring). Unlike "grid", "dock" has no persisted arrangement of its own
+ * (see loadMode/DashboardLayoutState below) -- it always starts from
+ * DockviewDashboard's built-in default tree. */
+export type LayoutMode = "panels" | "grid" | "dock";
 
 /** Stable per-widget identity. These strings are the react-grid-layout item
  * ids *and* the React keys for the grid cells, which is the whole point:
@@ -182,7 +186,8 @@ function loadLayout(): Layout {
 
 function loadMode(): LayoutMode {
   try {
-    return localStorage.getItem(MODE_STORAGE_KEY) === "grid" ? "grid" : "panels";
+    const raw = localStorage.getItem(MODE_STORAGE_KEY);
+    return raw === "grid" || raw === "dock" ? raw : "panels";
   } catch {
     return "panels";
   }

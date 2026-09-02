@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "dockview-react": "^8.2.0",
     "lightweight-charts": "^5.2.0",
     "luxon": "^3.7.2",
     "react": "^19.2.8",
