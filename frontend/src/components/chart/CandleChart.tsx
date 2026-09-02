@@ -432,6 +432,14 @@ export function CandleChart({
   // Same reason as positionLevelsRef -- read by the resize handler.
   const hasLevelsRef = useRef(false);
   hasLevelsRef.current = hasAnyVisibleLevel(indicators, positionLevels, indicativeLevels);
+  // The clearance last handed to applyLabelClearance. Applying it is a
+  // scroll (see that function), so it must only happen when the value
+  // changes or when the viewport is being (re)set anyway -- never as a
+  // per-render or per-tick reassert. Someone who drags the newest bar
+  // leftward to look at the empty space beside it is "at the right edge"
+  // by every test, and a reassert there scrolls them straight back to the
+  // default margin, on every tick. That was the remaining spring-back.
+  const appliedClearanceRef = useRef<boolean | null>(null);
   // Applying a range can itself change the time scale's width (different
   // visible bars -> different price labels -> a wider/narrower price scale),
   // which fires subscribeSizeChange again. This swallows that echo.
@@ -442,6 +450,13 @@ export function CandleChart({
   // changed again) can't fire a late setVisibleLogicalRange for a viewport
   // that's no longer current.
   const reassertTimeoutRef = useRef<number | null>(null);
+  function stopFocusReassert() {
+    if (reassertTimeoutRef.current != null) {
+      window.clearTimeout(reassertTimeoutRef.current);
+      reassertTimeoutRef.current = null;
+    }
+    applyingRangeRef.current = false;
+  }
   // The logical range the focus-scroll effect below last asked for, or null
   // when no focus is active. Read by the resize handler, which is built once
   // at mount and (like every other resize-handler ref here) can't close over
@@ -452,6 +467,13 @@ export function CandleChart({
   // right back to the unfocused right-anchored view, over and over as long
   // as the symbol kept ticking -- the flicker this ref exists to stop.
   const focusRangeRef = useRef<{ from: number; to: number } | null>(null);
+  // Which focus the viewport was last scrolled to -- focus target plus the
+  // identity of the bar set it was resolved against. The focus effect runs
+  // on every bars change (its markers have to), but scrolling is only for a
+  // *new* focus: re-scrolling on each change is what pinned a focused chart
+  // to its window against every drag, once a minute before trade ticks
+  // and several times a second after.
+  const appliedFocusKeyRef = useRef<string | null>(null);
   // The container width the resize handler last acted on. The same
   // labels-resize-the-axis mechanism fires on the user's own horizontal
   // scroll (new visible bars -> new price labels -> the axis gains or loses
@@ -631,6 +653,7 @@ export function CandleChart({
       applyingRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange(range);
       applyLabelClearance(chart, hasLevelsRef.current);
+      appliedClearanceRef.current = hasLevelsRef.current;
       requestAnimationFrame(() => {
         applyingRangeRef.current = false;
       });
@@ -892,6 +915,7 @@ export function CandleChart({
       if (chart) {
         chart.timeScale().setVisibleRange(pendingRange);
         applyLabelClearance(chart, hasLevelsRef.current);
+        appliedClearanceRef.current = hasLevelsRef.current;
       }
       return;
     }
@@ -927,11 +951,14 @@ export function CandleChart({
       // viewer's zoom, and with trade ticks that would be several times a
       // second.
       if (newBars === 0) return;
+      // A pure translation keeps whatever right-hand margin the viewer
+      // has -- the default clearance, or the empty space they dragged into
+      // -- so no clearance reassert here: that would put the newest bar
+      // back at exactly the default margin on every new bar.
       if (current && newBars > 0) {
         const chart = chartRef.current;
         if (chart) {
           chart.timeScale().setVisibleLogicalRange({ from: current.from + newBars, to: current.to + newBars });
-          applyLabelClearance(chart, hasLevelsRef.current);
         }
         return;
       }
@@ -944,6 +971,7 @@ export function CandleChart({
       if (range && chart) {
         chart.timeScale().setVisibleLogicalRange(range);
         applyLabelClearance(chart, hasLevelsRef.current);
+        appliedClearanceRef.current = hasLevelsRef.current;
       }
     }
     // Deliberately NOT dependent on `indicators`: that array gets a fresh
@@ -1081,6 +1109,8 @@ export function CandleChart({
 
     if (focusTime == null || bars.length === 0) {
       focusRangeRef.current = null;
+      appliedFocusKeyRef.current = null;
+      stopFocusReassert();
       return;
     }
 
@@ -1100,26 +1130,38 @@ export function CandleChart({
       to: Math.min(lastIndex, rangeEnd + FOCUS_PADDING_BARS),
     };
     focusRangeRef.current = req;
+
+    // Scroll only for a focus the viewport hasn't been taken to yet: a new
+    // pick/trade, the same one on a different symbol's or timeframe's bars
+    // (first bar time changes), or a fresh series after a chart-type swap.
+    // A live tick reshaping the newest bar changes none of these, so the
+    // viewer's own scrolling survives it -- the whole "chart springs back
+    // when I scroll left" problem in the focused case. (The earlier
+    // per-tick re-scroll also made the timeframe buttons drop the focus as
+    // a workaround; that stays, it is still the right call for a viewer
+    // who changes resolution.)
+    const focusKey = [focusTime, focusTrade?.exitTime ?? "", chartType, toUnixSeconds(bars[0].t)].join("|");
+    if (appliedFocusKeyRef.current === focusKey) return;
+    appliedFocusKeyRef.current = focusKey;
     const ts = chart.timeScale();
 
-    // A single call here isn't reliable on a symbol with bars still
-    // actively arriving (confirmed live: on an actively-updating intraday
-    // chart, something -- not shiftVisibleRangeOnNewBar, already off above,
-    // and not reproducible on a symbol whose bars have stopped changing --
-    // repeatedly snaps the range back to the default right-anchored view
-    // within a couple hundred ms of this call, self-resolving only once
-    // updates settle down; a live symbol's updates don't reliably do that
-    // inside a human-perceptible window). Reasserting a few times over the
-    // next second outlasts that without a visible fight: each call is
-    // idempotent once it's already the current range, so once it sticks the
-    // remaining calls are no-ops.
-    if (reassertTimeoutRef.current != null) {
-      window.clearTimeout(reassertTimeoutRef.current);
-      reassertTimeoutRef.current = null;
-    }
+    // Reasserted a few times over the next second rather than once. This
+    // was first added against a snap-back that turned out to be the label
+    // margin being re-applied on every tick (see applyLabelClearance) and
+    // is fixed at the source, but a call is idempotent once the range is
+    // current, so the retries cost nothing and cover any late range reset
+    // the library itself does while data is still settling.
+    stopFocusReassert();
     applyingRangeRef.current = true;
     let attempt = 0;
     const reassert = () => {
+      // The chart may have been torn down (symbol change, unmount) between
+      // two attempts; the disposed instance would throw.
+      if (chartRef.current !== chart) {
+        reassertTimeoutRef.current = null;
+        applyingRangeRef.current = false;
+        return;
+      }
       ts.setVisibleLogicalRange(req);
       attempt += 1;
       if (attempt < 6) {
@@ -1130,12 +1172,11 @@ export function CandleChart({
       }
     };
     reassert();
-    return () => {
-      if (reassertTimeoutRef.current != null) {
-        window.clearTimeout(reassertTimeoutRef.current);
-        reassertTimeoutRef.current = null;
-      }
-    };
+    // No cleanup: this effect re-runs on every bars change for the markers,
+    // and a cleanup here would cancel the retry chain (and leave
+    // applyingRangeRef stuck true) on the very next tick. The chain guards
+    // itself against a disposed chart above and is stopped explicitly when
+    // the focus is cleared or replaced.
   }, [focusTime, focusTrade, bars, chartType, indicators, news]);
 
   // Separate from the bars/vwap effect above: indicators only change when
@@ -1234,13 +1275,20 @@ export function CandleChart({
       chart.timeScale().setVisibleLogicalRange(preservedRange);
     }
     // After the restore, never before: setVisibleLogicalRange repositions
-    // the content and drops the margin. And only for a viewer at the right
-    // edge: for anyone scrolled back into history the margin is invisible,
-    // and asserting it would scroll them to the newest bar (see
-    // applyLabelClearance). A viewer who scrolls back to the edge later
-    // picks the margin up from the data effect's follow path.
-    if (focusTime == null && viewportAtRightEdge(chart, barCountRef.current)) {
-      applyLabelClearance(chart, hasAnyVisibleLevel(indicators, positionLevels, indicativeLevels));
+    // the content and drops the margin. Only when the need for clearance
+    // actually flips (a Levels toggle, a position opening or closing) --
+    // this effect also runs whenever the draft entry line follows the last
+    // price, i.e. on every trade tick, and applying the option is a scroll
+    // (see applyLabelClearance), so an unconditional call here pinned the
+    // newest bar to the default margin several times a second. And only for
+    // a viewer following the right edge; anyone scrolled into history picks
+    // the new margin up the next time the viewport is set from scratch.
+    const needsClearance = hasAnyVisibleLevel(indicators, positionLevels, indicativeLevels);
+    if (needsClearance !== appliedClearanceRef.current && focusTime == null) {
+      if (viewportAtRightEdge(chart, barCountRef.current)) {
+        applyLabelClearance(chart, needsClearance);
+        appliedClearanceRef.current = needsClearance;
+      }
     }
     // chartType, because the price lines live on the price series and the
     // swap disposes them along with it. positionLevels/indicativeLevels,
