@@ -10,7 +10,7 @@ import {
   replaceTarget,
   type CloseResult,
 } from "../api/http";
-import type { Account, Order, Position } from "../types/trading";
+import type { Account, AccountLimits, Order, Position, TradingAccount } from "../types/trading";
 
 /** Positions and orders change when *you* act, not on every tick, so this
  * polls rather than holding a socket open. Same setInterval + pollRef
@@ -59,8 +59,13 @@ export interface IndicativeLevels {
 
 export interface TradingState {
   account: Account | null;
+  /** Which Alpaca account the current poll answered for. */
+  tradingAccount: TradingAccount;
   /** Whether the backend is talking to the simulated account. */
   paper: boolean;
+  liveAvailable: boolean;
+  liveAllowed: boolean;
+  limits: AccountLimits | null;
   /** Whether write paths are switched on server-side. */
   tradingEnabled: boolean;
   defaultRiskPct: number;
@@ -72,7 +77,11 @@ export interface TradingState {
 
 const EMPTY_STATE: TradingState = {
   account: null,
+  tradingAccount: "paper",
   paper: true,
+  liveAvailable: false,
+  liveAllowed: false,
+  limits: null,
   tradingEnabled: false,
   defaultRiskPct: 1,
   positions: [],
@@ -86,13 +95,14 @@ export interface TradingActions {
   /** Refetch now and poll harder for a short window -- call after any
    * mutation so the tables do not lag the fill. */
   afterAction: () => void;
-  cancel: (orderId: string) => Promise<void>;
+  /** `confirm` is the typed LIVE from a live-mode dialog; ignored on paper. */
+  cancel: (orderId: string, confirm?: string) => Promise<void>;
   /** With qty, sells part of the position and re-arms its exits for the
    * remainder; the result is returned so the caller can surface stop_lost. */
-  close: (symbol: string, qty?: number) => Promise<CloseResult>;
-  moveStop: (orderId: string, symbol: string, stopPrice: number) => Promise<void>;
+  close: (symbol: string, qty?: number, confirm?: string) => Promise<CloseResult>;
+  moveStop: (orderId: string, symbol: string, stopPrice: number, confirm?: string) => Promise<void>;
   /** Same as moveStop, for the take-profit leg (see OrderService.replace_target). */
-  moveTarget: (orderId: string, symbol: string, limitPrice: number) => Promise<void>;
+  moveTarget: (orderId: string, symbol: string, limitPrice: number, confirm?: string) => Promise<void>;
   /** See IndicativeLevels. Kept out of TradingState/EMPTY_STATE on purpose:
    * that object is fully replaced by every poll tick's setState in
    * refresh(), which would silently wipe this out unless every such call
@@ -123,7 +133,11 @@ export function useTrading(): TradingState & TradingActions {
       failureCountRef.current = 0;
       setState({
         account: account.account,
+        tradingAccount: account.trading_account ?? "paper",
         paper: account.paper,
+        liveAvailable: account.live_available ?? false,
+        liveAllowed: account.live_allowed ?? false,
+        limits: account.limits ?? null,
         tradingEnabled: account.trading_enabled,
         defaultRiskPct: account.default_risk_pct ?? 1,
         positions: positions.positions,
@@ -175,21 +189,21 @@ export function useTrading(): TradingState & TradingActions {
     ...state,
     refresh: () => void refresh(),
     afterAction,
-    cancel: async (orderId: string) => {
-      await cancelOrder(orderId);
+    cancel: async (orderId: string, confirm?: string) => {
+      await cancelOrder(orderId, confirm);
       afterAction();
     },
-    close: async (symbol: string, qty?: number) => {
-      const result = await closePosition(symbol, qty);
+    close: async (symbol: string, qty?: number, confirm?: string) => {
+      const result = await closePosition(symbol, qty, confirm);
       afterAction();
       return result;
     },
-    moveStop: async (orderId: string, symbol: string, stopPrice: number) => {
-      await replaceStop(orderId, symbol, stopPrice);
+    moveStop: async (orderId: string, symbol: string, stopPrice: number, confirm?: string) => {
+      await replaceStop(orderId, symbol, stopPrice, confirm);
       afterAction();
     },
-    moveTarget: async (orderId: string, symbol: string, limitPrice: number) => {
-      await replaceTarget(orderId, symbol, limitPrice);
+    moveTarget: async (orderId: string, symbol: string, limitPrice: number, confirm?: string) => {
+      await replaceTarget(orderId, symbol, limitPrice, confirm);
       afterAction();
     },
     indicativeLevels,

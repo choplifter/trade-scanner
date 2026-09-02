@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react";
 
-import { useTradingContext } from "../../context/TradingContext";
 import { useJournal, type JournaledTrade } from "../../hooks/useJournal";
+import { modeBadge } from "../../api/tradingMode";
 import { useTradingMode } from "../../hooks/useTradingMode";
 import type { ChartFocus } from "../../types/screener";
 import { formatPrice } from "../../utils/format";
@@ -158,11 +158,9 @@ function JournalEditor({
 export function TradeJournalWidget({ onSelectPick }: { onSelectPick: (focus: ChartFocus) => void }) {
   const { rows, loading, error, saveEntry } = useJournal();
   const { mode } = useTradingMode();
-  const { paper } = useTradingContext();
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const badgeClass = mode === "simulation" ? "simulation" : paper ? "paper" : "live";
-  const badgeLabel = mode === "simulation" ? "SIMULATION" : paper ? "PAPER" : "LIVE";
+  const { className: badgeClass, label: badgeLabel } = modeBadge(mode);
 
   return (
     <div className="widget trade-journal-widget">

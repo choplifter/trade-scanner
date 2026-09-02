@@ -17,7 +17,7 @@ import { ReplayPanel } from "./components/replay/ReplayPanel";
 import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWidget";
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
-import { SimulationToggle } from "./components/trading/SimulationToggle";
+import { TradingModeSwitch } from "./components/trading/TradingModeSwitch";
 import { TradeJournalWidget } from "./components/trading/TradeJournalWidget";
 import { TradingWidget } from "./components/trading/TradingWidget";
 import { WatchlistPanel } from "./components/watchlist/WatchlistPanel";
@@ -273,7 +273,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               activeCount={alarms.alarms.length}
               onClickCount={alarms.openOverlay}
             />
-            <SimulationToggle mode={tradingMode.mode} onChange={handleTradingModeChange} />
+            <TradingModeSwitch mode={tradingMode.mode} onChange={handleTradingModeChange} />
             <span className="logout-link">
               {user.display_name} ·{" "}
               <button type="button" className="row-action" onClick={onLogout}>

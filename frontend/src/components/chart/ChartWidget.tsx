@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
 import { useTradingContext } from "../../context/TradingContext";
+import { useTradingMode } from "../../hooks/useTradingMode";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import {
   isGexSymbol,
@@ -303,6 +304,7 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
   // here: there's no order to reject, just a ticket field to overwrite.
   // Cleared on symbol change for the same reason as highlightedNews above.
   const [dragError, setDragError] = useState<string | null>(null);
+  const tradingMode = useTradingMode();
   useEffect(() => setDragError(null), [symbol]);
 
   // Entry/stop/target lines for whatever position is open on the symbol on
@@ -360,6 +362,12 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
   // rebuild the chart's price lines on every poll tick.
   const onMovePositionLevel = symbol
     ? (field: "stop" | "target", price: number) => {
+        // A drag is a one-gesture write. Real money asks for the typed
+        // confirmation instead -- the Positions tab has it.
+        if (tradingMode.mode === "live") {
+          setDragError("Live mode: move stops and targets from the Positions tab, with confirmation.");
+          return;
+        }
         const orderId = field === "stop" ? exits?.stopOrderId : exits?.targetOrderId;
         if (!orderId) return;
         const move = field === "stop" ? moveStop : moveTarget;

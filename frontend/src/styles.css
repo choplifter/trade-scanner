@@ -424,6 +424,74 @@ body {
   background: var(--row-hover);
 }
 
+/* Simulation / Paper / Live, one pill group. The pressed colour says what
+   the money is: amber for practice, plain for paper, red for real. The
+   Live button is disabled until the backend offers it (keys + switch). */
+.trading-mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.trading-mode-toggle {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.trading-mode-toggle + .trading-mode-toggle {
+  border-left: 1px solid var(--border);
+}
+
+.trading-mode-toggle:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+
+.trading-mode-toggle:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.trading-mode-toggle.simulation[aria-pressed="true"] {
+  color: var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 14%, transparent);
+}
+
+.trading-mode-toggle.paper[aria-pressed="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.trading-mode-toggle.live[aria-pressed="true"] {
+  color: #fff;
+  background: var(--status-critical);
+}
+
+/* Real money on screen: the whole widget gets a red frame, and the action
+   button in its dialogs turns red too. */
+.widget.live-frame {
+  outline: 2px solid var(--status-critical);
+  outline-offset: -2px;
+}
+
+.generate-button.live-action:not(:disabled) {
+  background: var(--status-critical);
+  border-color: var(--status-critical);
+  color: #fff;
+}
+
+.live-confirm-field input {
+  width: 90px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .alarms-toggle[aria-pressed="true"],
 .layout-mode-toggle[aria-pressed="true"] {
   border-color: var(--accent);

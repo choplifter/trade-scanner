@@ -24,11 +24,30 @@ export interface Account {
   shorting_enabled: boolean;
 }
 
+export type TradingAccount = "paper" | "live";
+
+export interface AccountLimits {
+  account: TradingAccount;
+  max_order_qty: number;
+  max_order_notional: number;
+  max_order_notional_pct: number;
+  max_option_contracts: number;
+}
+
 export interface AccountResponse {
   account: Account;
+  /** Which Alpaca account answered: the paper one, or the real one behind
+   * the /live prefix. */
+  trading_account: TradingAccount;
   /** Whether this is the simulated account. Surfaced so the UI can label
    * itself rather than relying on the user remembering their .env. */
   paper: boolean;
+  /** A live key pair is configured server-side. */
+  live_available: boolean;
+  /** TRADING_ALLOW_LIVE is on. Both must hold before Live is offered. */
+  live_allowed: boolean;
+  /** The fat-finger ceilings for this account. */
+  limits: AccountLimits;
   /** Whether write paths are switched on server-side (TRADING_ENABLED). */
   trading_enabled: boolean;
   /** Prefills the ticket's risk field. */
@@ -313,6 +332,7 @@ export interface OrderPreview {
    * by TRADING_ENABLED and the paper check, never inferred client-side. */
   can_submit: boolean;
   limits: {
+    account: TradingAccount;
     max_order_qty: number;
     max_order_notional: number;
     default_risk_pct: number;

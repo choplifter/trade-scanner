@@ -343,6 +343,12 @@ export function resetSimAccount(): Promise<AccountResponse> {
  * size past a ceiling, trading switched off. Carries the structured reason
  * so the ticket can point at the offending field instead of showing a
  * generic failure. Same pattern as BacktestRefusedError above. */
+/** The typed LIVE from a live-mode dialog, as the header the backend
+ * checks (app/trading/guards.py). Empty outside Live mode. */
+function liveConfirmHeaders(confirm?: string): Record<string, string> {
+  return confirm ? { "X-Live-Confirm": confirm } : {};
+}
+
 export class OrderRejectedError extends Error {
   constructor(readonly detail: TradingRejection) {
     super(detail.message);
@@ -400,11 +406,14 @@ export async function previewOrder(ticket: OrderTicketRequest): Promise<OrderPre
 /** Place an order. Refusals -- switched off, live account, bad stop, past a
  * ceiling, or the broker's own -- all arrive as a typed 422 so the ticket
  * renders them through one path. */
-export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: Order }> {
+export async function submitOrder(
+  ticket: OrderTicketRequest,
+  confirm?: string,
+): Promise<{ order: Order }> {
   const res = await fetch(`${API_BASE}${tradingPath("/trading/orders")}`, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...liveConfirmHeaders(confirm) },
     body: JSON.stringify(ticket),
   });
   checkUnauthorized(res);
@@ -418,8 +427,12 @@ export async function submitOrder(ticket: OrderTicketRequest): Promise<{ order: 
   return (await res.json()) as { order: Order };
 }
 
-export async function deleteJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", credentials: "include" });
+export async function deleteJson<T>(path: string, confirm?: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: liveConfirmHeaders(confirm),
+  });
   checkUnauthorized(res);
   if (res.status === 422) {
     const body = (await res.json()) as { detail: TradingRejection };
@@ -431,11 +444,11 @@ export async function deleteJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+export async function patchJson<T>(path: string, body: unknown, confirm?: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "PATCH",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...liveConfirmHeaders(confirm) },
     body: JSON.stringify(body),
   });
   checkUnauthorized(res);
@@ -449,8 +462,11 @@ export async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function cancelOrder(orderId: string): Promise<{ cancelled: string }> {
-  return deleteJson<{ cancelled: string }>(tradingPath(`/trading/orders/${encodeURIComponent(orderId)}`));
+export function cancelOrder(orderId: string, confirm?: string): Promise<{ cancelled: string }> {
+  return deleteJson<{ cancelled: string }>(
+    tradingPath(`/trading/orders/${encodeURIComponent(orderId)}`),
+    confirm,
+  );
 }
 
 /** Move a working stop order to a new price. The symbol rides along as a
@@ -459,11 +475,13 @@ export function replaceStop(
   orderId: string,
   symbol: string,
   stopPrice: number,
+  confirm?: string,
 ): Promise<{ order: Order }> {
-  return patchJson<{ order: Order }>(tradingPath(`/trading/orders/${encodeURIComponent(orderId)}`), {
-    symbol,
-    stop_price: stopPrice,
-  });
+  return patchJson<{ order: Order }>(
+    tradingPath(`/trading/orders/${encodeURIComponent(orderId)}`),
+    { symbol, stop_price: stopPrice },
+    confirm,
+  );
 }
 
 /** Move a working take-profit order to a new price. Same cross-check
@@ -473,11 +491,13 @@ export function replaceTarget(
   orderId: string,
   symbol: string,
   limitPrice: number,
+  confirm?: string,
 ): Promise<{ order: Order }> {
-  return patchJson<{ order: Order }>(tradingPath(`/trading/orders/${encodeURIComponent(orderId)}/target`), {
-    symbol,
-    limit_price: limitPrice,
-  });
+  return patchJson<{ order: Order }>(
+    tradingPath(`/trading/orders/${encodeURIComponent(orderId)}/target`),
+    { symbol, limit_price: limitPrice },
+    confirm,
+  );
 }
 
 /** The close response, which for a partial close also reports what happened
@@ -490,7 +510,10 @@ export interface CloseResult {
   };
 }
 
-export function closePosition(symbol: string, qty?: number): Promise<CloseResult> {
+export function closePosition(symbol: string, qty?: number, confirm?: string): Promise<CloseResult> {
   const suffix = qty != null ? `?qty=${encodeURIComponent(qty)}` : "";
-  return deleteJson<CloseResult>(tradingPath(`/trading/positions/${encodeURIComponent(symbol)}${suffix}`));
+  return deleteJson<CloseResult>(
+    tradingPath(`/trading/positions/${encodeURIComponent(symbol)}${suffix}`),
+    confirm,
+  );
 }

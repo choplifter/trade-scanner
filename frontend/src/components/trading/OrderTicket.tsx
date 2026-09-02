@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
 import { OrderRejectedError, dayHigh, previewOrder, referencePrice, submitOrder } from "../../api/http";
-import type { TradingMode } from "../../api/tradingMode";
+import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useTradingContext } from "../../context/TradingContext";
 import { Modal } from "../common/Modal";
+import { LiveConfirmField } from "./LiveConfirmField";
 import { exitsForPosition, num } from "../../types/trading";
 import type {
   Account,
@@ -178,7 +179,6 @@ interface OrderTicketProps {
    * confirm dialog's own label; the routing itself happens transparently in
    * api/http.ts (see api/tradingMode.ts). */
   mode: TradingMode;
-  paper: boolean;
 }
 
 /** The order ticket. Sizes and prices through the server on every edit, so
@@ -197,7 +197,6 @@ export function OrderTicket({
   orders,
   onSubmitted,
   mode,
-  paper,
 }: OrderTicketProps) {
   // For the chart's indicative (draft) lines -- see the effects near the
   // bottom of the hook section below. Not via props: ChartWidget is a
@@ -228,6 +227,8 @@ export function OrderTicket({
   const [error, setError] = useState<string | null>(null);
 
   const [confirming, setConfirming] = useState(false);
+  // The typed LIVE for the confirm dialog; reset whenever it opens.
+  const [liveTyped, setLiveTyped] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [placed, setPlaced] = useState<string | null>(null);
   // Guards the instant-fire hotkeys below against a double-submit from key
@@ -552,15 +553,20 @@ export function OrderTicket({
       // alone while it's open rather than risk double-handling one of these.
       if (isTyping || confirming) return;
 
+      // No one-keypress orders against real money: the instant-fire and
+      // breakout keys are simply inert in Live mode (the buttons are
+      // disabled too), and Enter still goes through the confirm dialog.
       const instantIndex = INSTANT_FIRE_KEYS.indexOf(e.key.toLowerCase());
       if (instantIndex !== -1) {
         e.preventDefault();
-        void fireInstant(e.shiftKey ? "sell" : "buy", INSTANT_FIRE_RISK_PCTS[instantIndex]);
+        if (mode !== "live") {
+          void fireInstant(e.shiftKey ? "sell" : "buy", INSTANT_FIRE_RISK_PCTS[instantIndex]);
+        }
         return;
       }
       if (e.key === "t" || e.key === "T") {
         e.preventDefault();
-        void fireBreakout();
+        if (mode !== "live") void fireBreakout();
         return;
       }
 
@@ -580,7 +586,7 @@ export function OrderTicket({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirming, preview, submitting, symbol, firing, fireInstant, fireBreakout]);
+  }, [confirming, preview, submitting, symbol, firing, fireInstant, fireBreakout, mode]);
 
   // Sanity bound for Risk %, not a hard broker limit -- the backend enforces
   // only gt=0 (no ceiling exists server-side), so this exists purely to
@@ -741,11 +747,16 @@ export function OrderTicket({
   const openConfirm = () => {
     clientOrderIdRef.current = randomUUID();
     setPlaced(null);
+    setLiveTyped("");
     setConfirming(true);
   };
 
   const doSubmit = async () => {
     if (!order) return;
+    if (!liveConfirmed(mode, liveTyped)) {
+      setError("Type LIVE to confirm a real-money order.");
+      return;
+    }
     setSubmitting(true);
     try {
       const ticket: OrderTicketRequest = {
@@ -768,7 +779,7 @@ export function OrderTicket({
         ...(order.stop_loss_price !== null ? { stop_loss_price: order.stop_loss_price } : {}),
         client_order_id: clientOrderIdRef.current ?? undefined,
       };
-      const result = await submitOrder(ticket);
+      const result = await submitOrder(ticket, mode === "live" ? liveTyped.trim() : undefined);
       setPlaced(result.order?.id ?? "submitted");
       setRejection(null);
       setError(null);
@@ -833,7 +844,7 @@ export function OrderTicket({
               key={`buy-${pct}`}
               type="button"
               className="timeframe-button instant-fire-buy"
-              disabled={!symbol || firing || !hasInstantStop}
+              disabled={!symbol || firing || !hasInstantStop || mode === "live"}
               onClick={() => void fireInstant("buy", pct)}
               title={`Hotkey: ${INSTANT_FIRE_KEYS[i].toUpperCase()}`}
             >
@@ -847,7 +858,7 @@ export function OrderTicket({
               key={`sell-${pct}`}
               type="button"
               className="timeframe-button instant-fire-sell"
-              disabled={!symbol || firing || !hasInstantStop}
+              disabled={!symbol || firing || !hasInstantStop || mode === "live"}
               onClick={() => void fireInstant("sell", pct)}
               title={`Hotkey: Shift+${INSTANT_FIRE_KEYS[i].toUpperCase()}`}
             >
@@ -859,7 +870,7 @@ export function OrderTicket({
           <button
             type="button"
             className="timeframe-button instant-fire-buy"
-            disabled={!symbol || firing}
+            disabled={!symbol || firing || mode === "live"}
             onClick={() => void fireBreakout()}
             title="Hotkey: T -- buy stop above today's high, risk-sized, stop-loss attached."
           >
@@ -1161,21 +1172,16 @@ export function OrderTicket({
                 {order.take_profit_price !== null ? `Target ${order.take_profit_price}` : ""}
               </p>
             )}
-            <p className="order-confirm-mode">
-              {mode === "simulation"
-                ? "SIMULATION — practice fill, no real order placed"
-                : paper
-                  ? "PAPER — simulated account"
-                  : "LIVE — real money"}
-            </p>
+            <p className="order-confirm-mode">{modeBadge(mode).confirmLine}</p>
+            <LiveConfirmField mode={mode} value={liveTyped} onChange={setLiveTyped} />
             <div className="order-confirm-actions">
               <button type="button" className="timeframe-button" onClick={() => setConfirming(false)}>
                 Cancel
               </button>
               <button
                 type="button"
-                className="generate-button"
-                disabled={submitting}
+                className={`generate-button${mode === "live" ? " live-action" : ""}`}
+                disabled={submitting || !liveConfirmed(mode, liveTyped)}
                 onClick={() => void doSubmit()}
               >
                 {submitting ? "Submitting…" : "Place order"}

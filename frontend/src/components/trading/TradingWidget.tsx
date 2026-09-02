@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { TradingMode } from "../../api/tradingMode";
+import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { resetSimAccount } from "../../api/http";
 import { useTradingContext } from "../../context/TradingContext";
 import { useBalanceHistory } from "../../hooks/useBalanceHistory";
@@ -21,6 +21,7 @@ import type {
 import { exitsForPosition, num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
 import { Modal } from "../common/Modal";
+import { LiveConfirmField } from "./LiveConfirmField";
 import { BalanceChart } from "./BalanceChart";
 import { OrderTicket } from "./OrderTicket";
 
@@ -176,6 +177,9 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
     moveStop,
   } = useTradingContext();
   const [tab, setTab] = useState<Tab>("ticket");
+  // The typed LIVE for the confirm dialog below; cleared with the dialog.
+  const [liveTyped, setLiveTyped] = useState("");
+  const badge = modeBadge(mode);
   const [ordersView, setOrdersView] = useState<OrdersView>("working");
   const [balanceRange, setBalanceRange] = useState<BalanceRange>("1M");
   // Both hooks are held here rather than inside their panels so the header
@@ -246,6 +250,12 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
     kind: "flatten" | "cancel-all" | "breakeven" | "breakeven-offset" | "scale-out",
   ) => {
     if (instantBusy) return;
+    // Real money never moves on a single keypress: every live action goes
+    // through a dialog that asks for the typed confirmation.
+    if (mode === "live") {
+      setInstantError("Instant actions are off in Live mode -- use the row actions and confirm.");
+      return;
+    }
     setInstantBusy(true);
     setInstantError(null);
     try {
@@ -330,16 +340,21 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
         return;
       }
     }
+    if (!liveConfirmed(mode, liveTyped)) {
+      setActionError("Type LIVE to confirm a real-money action.");
+      return;
+    }
+    const confirm = mode === "live" ? liveTyped.trim() : undefined;
     setBusy(true);
     try {
       if (pending.kind === "cancel") {
-        await cancel(pending.id);
+        await cancel(pending.id, confirm);
       } else if (pending.kind === "close") {
-        await close(pending.symbol);
+        await close(pending.symbol, undefined, confirm);
       } else if (pending.kind === "move-stop") {
-        await moveStop(pending.id, pending.symbol, Number(pending.stopPrice));
+        await moveStop(pending.id, pending.symbol, Number(pending.stopPrice), confirm);
       } else {
-        const result = await close(pending.symbol, Math.floor(Number(pending.qty)));
+        const result = await close(pending.symbol, Math.floor(Number(pending.qty)), confirm);
         setStopLostWarning(
           result.order.stop_lost
             ? `${pending.symbol}: part sold, but the stop for the remainder could NOT be re-armed. ` +
@@ -349,6 +364,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
       }
       setPending(null);
       setActionError(null);
+      setLiveTyped("");
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -382,18 +398,14 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
   const selectedExits = selectedPosition ? exitsForPosition(selectedPosition, orders) : null;
 
   return (
-    <div className="widget trading-widget">
+    <div className={`widget trading-widget${mode === "live" ? " live-frame" : ""}`}>
       <div className="widget-header">
         <h2>Trading</h2>
         {/* The single most important thing on this panel is whether the money
             is real. Shown always, not only when it is live. Simulation is a
             client-known state layered on top -- paper/live still describes
             whichever real account the backend's credentials point at. */}
-        <span
-          className={`trading-mode-badge ${mode === "simulation" ? "simulation" : paper ? "paper" : "live"}`}
-        >
-          {mode === "simulation" ? "SIMULATION" : paper ? "PAPER" : "LIVE"}
-        </span>
+        <span className={`trading-mode-badge ${badge.className}`}>{badge.label}</span>
         <div className="timeframe-selector">
           {TABS.map((t) => (
             <button
@@ -500,7 +512,6 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
             orders={orders}
             onSubmitted={afterAction}
             mode={mode}
-            paper={paper}
           />
         ) : tab === "positions" ? (
           <>
@@ -568,6 +579,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
         onClose={() => {
           setPending(null);
           setActionError(null);
+          setLiveTyped("");
         }}
       >
         <div className="order-confirm">
@@ -657,13 +669,8 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
               )}
             </>
           )}
-          <p className="order-confirm-mode">
-            {mode === "simulation"
-              ? "SIMULATION — practice action, no real order placed"
-              : paper
-                ? "PAPER — simulated account"
-                : "LIVE — real money"}
-          </p>
+          <p className="order-confirm-mode">{badge.confirmLine}</p>
+          <LiveConfirmField mode={mode} value={liveTyped} onChange={setLiveTyped} />
           {actionError && <p className="order-rejection">{actionError}</p>}
           <div className="order-confirm-actions">
             <button
@@ -678,8 +685,8 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
             </button>
             <button
               type="button"
-              className="generate-button"
-              disabled={busy}
+              className={`generate-button${mode === "live" ? " live-action" : ""}`}
+              disabled={busy || !liveConfirmed(mode, liveTyped)}
               onClick={() => void runPending()}
             >
               {busy
