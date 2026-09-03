@@ -594,7 +594,7 @@ past dates.
   `scanner_history.sqlite3` (`trades` table), so the record survives a
   paper-account reset and the broker's 500-order history cap.
 
-- **Options widget** (Paper and Live; Simulation shows a "not available"
+- **Options widget** (full guide: [Options](#options) below. Paper and Live; Simulation shows a "not available"
   banner because there is no simulated options book). Pick a symbol
   anywhere and the widget loads its expiries (next 60 days, with DTE) and
   the **option chain** for the selected one — calls left, puts right, OI /
@@ -808,6 +808,309 @@ past dates.
   borderline, green only if all three are calm. Hover for the specific
   reasons. Purely descriptive market weather, not a trade signal -- same
   non-advisory framing as AI Trade Ideas.
+
+## Options
+
+Everything the dashboard does with options, in one place. The short
+version lives in the Options-widget bullet above; this is the long one.
+
+### Accounts, approval levels and what runs where
+
+- Options trade on the **Paper** and **Live** accounts only. **Simulation**
+  has no options book, so the Options widget shows a banner there and no
+  option request is made at all.
+- Alpaca approves options per account in **levels**: level 2 buys calls
+  and puts outright, level 3 is needed for every spread here. The widget
+  header shows the account's level (`L3`), the ticket refuses a strategy
+  the account is not approved for and says which level it needs. Paper
+  accounts come with level 3; a live account has whatever Alpaca granted.
+- Market data (chain, snapshots, streams) always comes from the paper /
+  market-data key pair, whichever account an order goes to. The
+  `ALPACA_OPTIONS_FEED` decides the quality: `opra` is the paid
+  consolidated options feed with real bid/ask, greeks and open interest;
+  `indicative` is Alpaca's free approximation.
+- Live orders need the same three things as live equity orders: the live
+  key pair, `TRADING_ALLOW_LIVE=true`, and the word `LIVE` typed in every
+  confirm dialog. Instant-fire hotkeys and the widget's own hotkeys are off
+  in Live.
+
+### The widget
+
+Header: the mode badge, the **Chain | Open spreads** tabs (the count of
+open positions in brackets), and on the right the account's options
+buying power, level and feed. Pick a symbol anywhere (scanner, watchlist,
+news feed, a dropped row) and the widget loads that underlying.
+
+The **expiry strip** lists every expiration within the next 60 days with
+its days-to-expiry (`0d`, `1d`, `5d` …) and, on hover, the number of
+contracts. The first expiry with at least one day left is preselected, so a
+0DTE is a deliberate click. Contracts are fetched once per underlying and
+cached for five minutes; the selected expiry's quotes refresh every 15 s
+(server-side cache of 15 s, so two viewers share one fetch).
+
+Hotkeys inside the widget (not in Live): `[` / `]` previous / next expiry,
+`5`–`9` the five spread strategies in button order, `+` / `−` width. The
+two outright longs have no key because `0`–`4` belong to the equity
+ticket.
+
+### Reading the chain
+
+One row per strike, calls on the left, puts on the right, strikes ±10%
+around the spot. Columns, from the outside in:
+
+| Column | Meaning |
+|---|---|
+| **OI** | Open interest: contracts outstanding. Liquidity and where the crowd is positioned; `61.0k` style shorthand. |
+| **IV** | Implied volatility, annualised, backed out of the contract's own price. Higher IV = dearer premium; the smile across strikes is visible top to bottom. |
+| **Δ** | Delta: how much the premium moves per $1 of the underlying, and roughly the probability of expiring in the money. Calls 0 to 1, puts 0 to −1. |
+| **Bid / Mid / Ask** | The market. Mid is what the ticket prices from; the bid/ask width is the cost of getting in and out. |
+
+Shaded cells are **in the money** (calls below spot, puts above); the
+grey **spot** divider row marks the current price and the table scrolls to
+it when the chain loads. A "—" means Alpaca returned no value: no greeks
+or IV for contracts expiring today (its Black-Scholes cannot divide by a
+zero time to expiry), and no market for an untraded strike. A hover shows
+the OCC symbol of the contract (`SPY260904C00765000`: root, `yymmdd`,
+`C`/`P`, strike × 1000).
+
+Cells of the kind the current strategy trades are clickable and carry a
+pointer; the other side is shown but inert (an iron condor picks both).
+The selected legs are outlined: **green = long** (bought), **red = short**
+(sold). Any cell can also be **dragged onto a chart** to open that
+contract's premium chart (see below).
+
+### Strategies
+
+All defined-risk. Every spread uses one expiry; the ticket sends a spread
+as one multi-leg (MLEG) order, a long call/put as a plain option order.
+Money figures below are per share; multiply by 100 per contract and by
+the quantity. `W` is the distance between the strikes, `D` a debit paid,
+`C` a credit received.
+
+| Strategy | Legs | Direction | Max profit | Max loss | Breakeven | Collateral | Level |
+|---|---|---|---|---|---|---|---|
+| **Long call** | buy 1 call | debit | unlimited | premium | strike + premium | premium | 2 |
+| **Long put** | buy 1 put | debit | strike − premium | premium | strike − premium | premium | 2 |
+| **Bull call** | buy lower call, sell higher call | debit `D` | `W − D` | `D` | long strike + `D` | `D` | 3 |
+| **Bear put** | buy higher put, sell lower put | debit `D` | `W − D` | `D` | long strike − `D` | `D` | 3 |
+| **Bull put** | sell higher put, buy lower put | credit `C` | `C` | `W − C` | short strike − `C` | `W − C` | 3 |
+| **Bear call** | sell lower call, buy higher call | credit `C` | `C` | `W − C` | short strike + `C` | `W − C` | 3 |
+| **Iron condor** | bull put + bear call, same expiry | credit `C` | `C` | `max(put W, call W) − C` | put short − `C` and call short + `C` | `max W − C` | 3 |
+
+When to reach for which: a **long call/put** is the directional bet with
+the most delta and the most theta bleed. The **debit verticals** (bull
+call, bear put) buy direction with a capped cost. The **credit verticals**
+(bull put, bear call) sell a level you expect to hold -- they win on time
+and on the underlying staying on your side of the short strike, and the
+typical loss-to-profit ratio is 2–3 : 1. The **iron condor** sells both
+sides for a range-bound day. A 0DTE credit spread at a level is the
+common day-trading shape; the ticket warns because Alpaca force-closes
+same-day-expiry positions around 15:15 ET.
+
+The preview refuses a price that makes no sense: a net price at or above
+the width (`Net price 0.55 is not below the spread width (0.5)`), a long
+put priced above its strike, a credit spread the market actually quotes
+as a debit ("the market quotes this credit spread the other way round --
+check the legs").
+
+### Auto-pick and clicking strikes
+
+**Auto-pick** (on load, on a new expiry / strategy / width, and the button
+of that name) chooses the legs like this:
+
+- **Credit vertical:** the short leg is the out-of-the-money contract
+  whose |delta| is nearest **0.30** (roughly a one-standard-deviation
+  strike, ~30% chance of finishing in the money); the long leg is
+  **Width** strikes further out. Without greeks (0DTE) the short goes
+  ~3% out of the money.
+- **Debit vertical:** the long leg is the strike nearest the spot, the
+  short leg Width strikes out of the money.
+- **Iron condor:** both short legs at ~**0.20** delta, wings Width strikes
+  out.
+- **Long call / put:** the strike nearest the spot.
+
+**Width** is a strike count, not a dollar amount: 2 means "two rows
+apart", so it follows whatever strike spacing the chain has ($1 on SPY, $5
+on a high-priced name).
+
+**Clicking** a strike moves the leg that keeps the spread's shape. For a
+bullish pair (bull call, bull put) the long leg sits below the short one;
+for a bearish pair above. A click on the far side of the short leg moves
+the long leg, a click on the short's side moves the short -- and if that
+would collapse the spread, the long leg is pushed one strike out. For an
+iron condor the put wing's higher strike is its short and the call
+wing's lower strike its short; clicking beyond a short sets that wing's
+long. A manual pick switches auto-pick off until the symbol, expiry or
+strategy changes.
+
+### The ticket
+
+- **Spreads / Contracts:** quantity. Per-order ceilings:
+  `TRADING_MAX_OPTION_CONTRACTS` (20) on paper,
+  `TRADING_LIVE_MAX_OPTION_CONTRACTS` (5) live; the collateral must also
+  fit under the account's order-notional ceiling and its options buying
+  power.
+- **Max debit / Min credit / Max premium:** the limit per spread (or per
+  contract), prefilled with the current **mid** and re-derived on every
+  change until you type; **Back to mid** returns to it. Alpaca's MLEG
+  limit is signed -- positive for a debit, negative for a credit -- and
+  the confirm dialog shows that signed value.
+- **Preview** (300 ms after any change, server-side): pay/receive × 100 ×
+  qty, the **mid** and the **natural** price (buy legs at the ask, sell
+  legs at the bid: the worst fill a marketable order gets), spot and DTE,
+  max profit / max loss / breakeven(s), collateral against the account's
+  options buying power, the ceilings, and each leg with its mid and delta.
+  Clicking a leg opens its premium chart; legs can also be dragged onto a
+  chart.
+- **Warnings** appear for: expiring today; missing greeks on a leg; a
+  wide market (bid/ask more than a quarter of the mid apart -- a mid
+  limit may not fill); and a spread the market quotes the other way
+  round.
+- **Confirm** lists every leg, the signed limit, the risk figures and the
+  warnings again; in Live it demands `LIVE`. Orders are day orders (the
+  only kind Alpaca allows for options). A rejection from the broker comes
+  back with its reason.
+
+Contract symbols always come from the live chain rather than being
+composed, so an adjusted root (`SPY1` after a corporate action) or a
+non-tradable contract is handled by the data.
+
+### Open spreads
+
+Alpaca reports option positions one contract at a time; the tab groups
+them back into spreads by underlying and expiry and classifies them by
+shape: two legs of one kind with opposite sides → a vertical, four legs
+with the right ordering → an iron condor, one long contract → long
+call/put, anything else → **custom**. A lone short contract or unequal
+quantities are flagged **broken** (the remains of a spread closed one leg
+at a time); **expires today** flags a 0DTE position.
+
+Columns: account, expiry with DTE, strategy, quantity, **net entry** (per
+share, positive was paid, negative received), mark, P&L. Click a row for
+its legs (each draggable to a chart, each a link to the premium chart)
+and the controls:
+
+- **Close** reverses every leg in one MLEG order at the current mid
+  (editable; a single remaining leg closes with a plain order). The
+  preview shows mid and natural for the closing package.
+- **Triggers**: exits the dashboard keeps itself, because Alpaca accepts
+  no stop orders on options. Two kinds of bound, combinable in one
+  trigger:
+  - **below / above** on the **underlying's** last price ("close if SPY
+    trades below 740");
+  - **premium ≤ / ≥** on the position's own **mark** -- the mid of closing
+    the package, per share. For a long call `≤` is a stop and `≥` a
+    target; for a credit spread the mark is the cost to buy it back, so
+    `≤` is the take-profit and `≥` the stop.
+  A backend loop checks every 2 s during the regular session (one batched
+  stock-price fetch and one option-snapshot fetch per tick) and closes the
+  position with a limit stepped 0.05 toward the natural price so it fills
+  rather than rests (`TRADING_OPTIONS_TRIGGER_SLIPPAGE`). Triggers are
+  stored in `scanner_history.sqlite3` per user and account, survive a
+  restart, and show their status: **active**, **fired** (with the price
+  that fired it and the order id), **failed** (three attempts without an
+  order out), **orphaned** (the legs are no longer held), **cancelled**.
+  Arming a live trigger asks for `LIVE` once; the loop does not ask again
+  when it fires. Triggers only fire while the backend runs and the
+  session is regular.
+
+The same triggers are listed under the position row and, for a single
+contract, in the premium chart's own editor.
+
+### The premium chart
+
+A chart of an option contract's own price. Open it by clicking a leg in
+the ticket summary or under Open spreads, by clicking a single option
+order in the Orders tab, by dragging any contract cell/leg onto a chart,
+or by typing the OCC symbol into a pinned chart copy's header.
+
+- **Data:** the contract's minute bars (1m/5m/15m) or native hourly /
+  daily / weekly bars from Alpaca's option bars endpoint; **live trades**
+  from Alpaca's option websocket shape the forming candle tick by tick,
+  the newest **quote** shows as `bid / ask` in the header; closed candles
+  are re-fetched every 5 s (Alpaca streams no option bars), higher
+  timeframes every 30 s. An illiquid contract moves only when someone
+  trades it -- the bid/ask keeps updating regardless.
+- **Header:** `SPY 4 Sep 765C`, a PREMIUM badge, the last price, bid /
+  ask, and a `SPY ↗` button back to the underlying's chart. Every other
+  widget keeps working on the underlying (ticket, chain, news, info).
+- **Contract ticket** under the header: Contracts, **Buy** (to open: the
+  long call/put path with its preview, ceilings and confirm dialog) and
+  **Sell** (to close what is held -- never a naked write). The dialog
+  shows mid, natural, spot, DTE and an editable limit. Held quantity,
+  entry, P&L and any working order are printed beside it; working orders
+  draw as dashed lines at their limits, the held entry as a solid line.
+  For a held contract a second row arms a **premium trigger** (`≤` / `≥`)
+  and lists active ones with Cancel; their bounds draw as dashed
+  stop/target-coloured lines.
+- **Levels** (Levels menu; each starts visible the first time it can be
+  shown):
+  - **Quote** -- bid and ask lines, live.
+  - **Session** -- today's high and low of the premium and the previous
+    session's close.
+  - **Entry ±** -- +50%, +100% and −50% of a held contract's entry, the
+    usual "close at 50% profit / cut at 50% loss" marks.
+  - **Intrinsic** -- `max(S − K, 0)` for a call, `max(K − S, 0)` for a
+    put, from the underlying's price (polled every 5 s). The premium
+    trades above it; the gap is the time value. Hidden while zero.
+  - **Expected move** -- where the premium lands on a ±1σ move of the
+    underlying: `move = S × IV × √T` with `T` the shorter of the rest of
+    today and the time to expiry, then `premium ± Δ·move + ½·Γ·move²`
+    (a second-order estimate, not a repricing). The labels carry the
+    underlying prices behind them.
+  - **Theta** -- the premium in an hour and at the close if the
+    underlying stands still, from the snapshot's daily theta.
+  - **EMA (premium)** -- EMA 9 and 20 of the premium on the displayed
+    bars.
+  - **VWAP** -- session-anchored VWAP of the premium from the contract's
+    bars (the legend button; no premarket anchor, options only trade in
+    the regular session).
+  - The underlying's levels (daily range, GEX walls, its EMAs) are
+    deliberately absent: they live on another price axis.
+- Greeks and IV come from a contract snapshot polled every 30 s; near
+  expiry Alpaca returns none, so Expected move and Theta disappear on a
+  0DTE.
+- On a cheap contract the axis can show values below zero: the bottom
+  fifth of the pane is reserved for volume and the library extends the
+  scale linearly.
+
+### Options elsewhere
+
+- **Orders tab:** option orders show as `SPY 4 Sep 765C`; a multi-leg
+  order lists its legs. Clicking a single option order opens its premium
+  chart, an MLEG parent the underlying. Cancel works as for stocks.
+- **Positions tab** shows stocks only and says where the option positions
+  are.
+- **Trading Journal / Trades:** closed option round trips appear with the
+  contract symbol and their P&L, per account.
+- The **Options widget follows the chart**: with a contract on the chart
+  it selects that expiry and marks the strike as a long call/put.
+
+### Configuration
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `ALPACA_OPTIONS_FEED` | `opra` | Options data feed for chain, snapshots, stream and GEX. |
+| `TRADING_MAX_OPTION_CONTRACTS` | 20 | Spreads or contracts per order, paper. |
+| `TRADING_LIVE_MAX_OPTION_CONTRACTS` | 5 | Same, live. |
+| `TRADING_MAX_ORDER_NOTIONAL` / `TRADING_LIVE_MAX_ORDER_NOTIONAL` | 30 000 / 5 000 | Ceiling on a spread's collateral (max loss). |
+| `TRADING_OPTIONS_TRIGGER_CHECK_INTERVAL` | 2.0 s | Trigger loop cadence. |
+| `TRADING_OPTIONS_TRIGGER_SLIPPAGE` | 0.05 | How far a trigger's closing limit steps from the mid toward the natural price. |
+
+### Limits worth knowing
+
+- No simulated options book; Simulation mode is equities only.
+- Paper fills of an MLEG at the mid can rest a while; the trigger loop
+  compensates with its stepped limit, manual closes do not.
+- Triggers are not broker-side orders: they fire only while the backend
+  runs, and only in the regular session.
+- Alpaca force-closes 0DTE positions around 15:15 ET and computes no
+  greeks for them.
+- FINRA's pattern-day-trader rule (three day trades per five sessions
+  under $25k equity on a margin account) applies to Alpaca accounts
+  regardless of the holder's country, and option round trips count.
+- Naked writing is not offered anywhere (it needs level 4 and carries
+  unbounded risk).
 
 ## Known limitations
 
