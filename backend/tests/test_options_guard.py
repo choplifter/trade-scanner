@@ -67,3 +67,12 @@ def test_live_submit_needs_switch_and_confirmation():
                 alpaca_live_api_secret_key="ls",
             ).submit(_ticket())
         )
+
+
+def test_single_leg_needs_level_two_and_spreads_level_three():
+    from app.options.models import options_level_required
+
+    assert options_level_required("long_call") == 2
+    assert options_level_required("long_put") == 2
+    assert options_level_required("bull_put") == 3
+    assert options_level_required("iron_condor") == 3

@@ -16,13 +16,13 @@ from app.options.chain import Chain
 from app.options.chain_fetch import ChainCache, fetch_leg_quotes
 from app.options.guards import assert_options_level
 from app.options.models import (
-    OPTIONS_LEVEL_REQUIRED,
     STRATEGY_LABELS,
     CloseSpreadRequest,
     ResolvedSpread,
     SpreadLeg,
     SpreadTicket,
     closing_legs,
+    options_level_required,
     resolve_legs,
 )
 from app.options.positions import SpreadGroup, group_spreads
@@ -75,8 +75,9 @@ def build_mleg_request(legs: list[SpreadLeg], qty: int, alpaca_limit_price: floa
 
 
 def build_single_leg_request(leg: SpreadLeg, qty: int, limit_price: float, client_order_id: str | None):
-    """A broken spread down to one contract closes with a plain option
-    order -- the SDK refuses MLEG with fewer than two legs."""
+    """A plain option order: a long call/put opened outright, or a broken
+    spread down to one contract being closed -- the SDK refuses MLEG with
+    fewer than two legs."""
     from alpaca.trading.enums import OrderSide, PositionIntent, TimeInForce
     from alpaca.trading.requests import LimitOrderRequest
 
@@ -277,8 +278,17 @@ class OptionsService:
     async def submit(self, ticket: SpreadTicket, confirm: str | None = None) -> dict:
         assert_can_trade(self._settings, self._account, confirm)
         resolved = await self.preview(ticket)
-        assert_options_level(resolved.options_level, OPTIONS_LEVEL_REQUIRED, STRATEGY_LABELS[ticket.strategy])
-        request = build_mleg_request(resolved.legs, resolved.qty, resolved.alpaca_limit_price, resolved.client_order_id)
+        assert_options_level(
+            resolved.options_level, options_level_required(ticket.strategy), STRATEGY_LABELS[ticket.strategy]
+        )
+        if len(resolved.legs) == 1:
+            request = build_single_leg_request(
+                resolved.legs[0], resolved.qty, resolved.limit_price, resolved.client_order_id
+            )
+        else:
+            request = build_mleg_request(
+                resolved.legs, resolved.qty, resolved.alpaca_limit_price, resolved.client_order_id
+            )
         try:
             order = await asyncio.to_thread(self._trading.submit_order, request)
         except Exception as exc:

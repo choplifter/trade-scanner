@@ -3,7 +3,14 @@
  * reshapes the selection. Pure, so the widget's state logic is testable
  * by reading rather than clicking. */
 
-import { DEBIT_STRATEGIES, type ChainResponse, type OptionKind, type StrikeRow, type Strategy } from "../../types/options";
+import {
+  DEBIT_STRATEGIES,
+  SINGLE_LEG_STRATEGIES,
+  type ChainResponse,
+  type OptionKind,
+  type StrikeRow,
+  type Strategy,
+} from "../../types/options";
 import { legKey, type LegSelection } from "./ChainTable";
 
 export interface VerticalLegs {
@@ -18,10 +25,19 @@ export interface CondorLegs {
   call_long: number;
 }
 
-export type Legs = VerticalLegs | CondorLegs;
+/** A long call or put: one bought contract. */
+export interface SingleLegs {
+  strike: number;
+}
+
+export type Legs = VerticalLegs | CondorLegs | SingleLegs;
 
 export function isCondor(legs: Legs): legs is CondorLegs {
   return "put_short" in legs;
+}
+
+export function isSingle(legs: Legs): legs is SingleLegs {
+  return "strike" in legs;
 }
 
 /** Delta the default short leg aims for. ~0.30 is the usual "one standard
@@ -33,7 +49,7 @@ const FALLBACK_OTM_PCT = 0.03;
 
 export function strategyKind(strategy: Strategy): OptionKind | "both" {
   if (strategy === "iron_condor") return "both";
-  return strategy === "bull_call" || strategy === "bear_call" ? "call" : "put";
+  return strategy === "long_call" || strategy === "bull_call" || strategy === "bear_call" ? "call" : "put";
 }
 
 function quoted(rows: StrikeRow[], kind: OptionKind): StrikeRow[] {
@@ -95,6 +111,10 @@ export function defaultLegs(strategy: Strategy, chain: ChainResponse, width: num
   }
   const kind = strategyKind(strategy) as OptionKind;
   const rows = quoted(chain.rows, kind);
+  if (SINGLE_LEG_STRATEGIES.has(strategy)) {
+    // An outright long starts at the money.
+    return rows.length > 0 ? { strike: rows[nearestIndex(rows, chain.spot)].strike } : null;
+  }
   if (rows.length < w + 1) return null;
   if (DEBIT_STRATEGIES.has(strategy)) {
     // Long the at-the-money contract, short `width` strikes out-of-the-money.
@@ -142,8 +162,9 @@ export function applyPick(
   }
 
   if (kind !== strategyKind(strategy)) return legs;
+  if (SINGLE_LEG_STRATEGIES.has(strategy)) return { strike };
   const longBelow = strategy === "bull_call" || strategy === "bull_put";
-  const current = legs && !isCondor(legs) ? legs : null;
+  const current = legs && !isCondor(legs) && !isSingle(legs) ? legs : null;
   if (!current) {
     // First pick: treat it as the short leg and put the long one strike out.
     const long = step(longBelow ? idx - 1 : idx + 1);
@@ -168,6 +189,10 @@ export function selectionOf(strategy: Strategy, legs: Legs | null): LegSelection
     return map;
   }
   const kind = strategyKind(strategy) as OptionKind;
+  if (isSingle(legs)) {
+    map.set(legKey(kind, legs.strike), "long");
+    return map;
+  }
   map.set(legKey(kind, legs.long), "long");
   map.set(legKey(kind, legs.short), "short");
   return map;

@@ -57,7 +57,7 @@ class SpreadGroup:
     root: str
     expiry: date
     dte: int
-    strategy: str  # bull_call | bear_put | bull_put | bear_call | iron_condor | custom | broken
+    strategy: str  # long_call | long_put | bull_call | bear_put | bull_put | bear_call | iron_condor | custom | broken
     qty: int  # spreads held; for a broken group, what the smallest leg supports
     legs: list[SpreadPositionLeg] = field(default_factory=list)
     # Per-share net entry, signed like a ticket price: positive was paid
@@ -94,7 +94,14 @@ def classify(legs: list[SpreadPositionLeg]) -> tuple[str, int, bool]:
     sizes = [abs(leg.qty) for leg in legs]
     qty = min(sizes)
     balanced = len(set(sizes)) == 1
-    if len(legs) == 1 or not balanced:
+    if len(legs) == 1:
+        # One long contract is a position in its own right; one short
+        # contract is the remains of a spread.
+        leg = legs[0]
+        if leg.qty > 0:
+            return ("long_call" if leg.kind == "call" else "long_put"), qty, False
+        return "broken", qty, True
+    if not balanced:
         return "broken", qty, True
     if len(legs) == 2:
         lo, hi = legs

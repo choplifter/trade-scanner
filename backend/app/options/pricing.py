@@ -18,8 +18,10 @@ Direction = Literal["debit", "credit"]
 @dataclass(frozen=True)
 class SpreadRisk:
     direction: Direction
+    # 0 for a single leg, which has no spread width.
     width: float
-    max_profit: float
+    # None is unlimited (a long call).
+    max_profit: float | None
     max_loss: float
     breakevens: list[float]
     # What the broker holds against the position: the debit paid, or the
@@ -52,11 +54,30 @@ def net_price(legs, use: Literal["mid", "natural"] = "mid") -> float | None:
 
 def spread_risk(strategy: str, strikes: tuple[float, ...], price: float, qty: int) -> SpreadRisk:
     """Max profit / max loss / breakevens / collateral for a defined-risk
-    spread at a given positive net price per spread. `strikes` are in the
-    ticket's canonical order (see SpreadTicket.strikes)."""
+    position at a given positive net price per spread (or per contract for
+    a single leg). `strikes` are in the ticket's canonical order (see
+    SpreadTicket.strikes)."""
     if price <= 0:
         raise OrderRejected("The net price must be positive", field="limit_price")
     money = CONTRACT_MULTIPLIER * qty
+
+    if strategy in ("long_call", "long_put"):
+        # An outright long: the premium is the whole risk and the collateral.
+        (strike,) = strikes
+        if strategy == "long_put" and price >= strike:
+            raise OrderRejected(
+                f"Premium {price:.2f} is not below the strike ({strike:g}) -- check the leg",
+                field="limit_price",
+            )
+        call = strategy == "long_call"
+        return SpreadRisk(
+            direction="debit",
+            width=0.0,
+            max_profit=None if call else round((strike - price) * money, 2),
+            max_loss=round(price * money, 2),
+            breakevens=[round(strike + price if call else strike - price, 2)],
+            collateral=round(price * money, 2),
+        )
 
     if strategy == "iron_condor":
         put_long, put_short, call_short, call_long = strikes

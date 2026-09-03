@@ -127,3 +127,19 @@ def test_limits_refuse_contracts_notional_and_buying_power():
     with pytest.raises(OrderRejected):
         assert_spread_within_limits(**{**ok, "options_buying_power": 500.0})
     assert_spread_within_limits(**{**ok, "options_buying_power": None})
+
+
+def test_long_call_has_unlimited_profit_and_premium_at_risk():
+    r = spread_risk("long_call", (750,), 2.5, 2)
+    assert r.direction == "debit" and r.width == 0.0
+    assert r.max_profit is None
+    assert r.max_loss == 500.0 and r.collateral == 500.0
+    assert r.breakevens == [752.5]
+
+
+def test_long_put_profit_is_capped_at_the_strike():
+    r = spread_risk("long_put", (740,), 3.0, 1)
+    assert r.max_profit == 73700.0 and r.max_loss == 300.0
+    assert r.breakevens == [737.0]
+    with pytest.raises(OrderRejected):
+        spread_risk("long_put", (740,), 740.0, 1)

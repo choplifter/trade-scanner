@@ -83,3 +83,11 @@ def test_adjusted_root_groups_under_the_underlying_and_groups_split_by_expiry():
 def test_account_is_carried_and_equities_ignored():
     assert group_spreads([_pos("AAPL", 10, "150", asset_class="us_equity")], today=TODAY) == []
     assert group_spreads([_pos("SPY260918P00745000", -1, "2")], account="live", today=TODAY)[0].account == "live"
+
+
+def test_a_lone_long_contract_is_a_long_call_or_put_not_broken():
+    call = group_spreads([_pos("SPY260918C00750000", 3, "2.50")], today=TODAY)[0]
+    assert call.strategy == "long_call" and not call.broken and call.qty == 3
+    assert call.net_entry == 2.5
+    put = group_spreads([_pos("SPY260918P00740000", 1, "3")], today=TODAY)[0]
+    assert put.strategy == "long_put" and not put.broken

@@ -7,9 +7,9 @@ per spread, not a price per share. Widening OrderTicket to carry both
 would have every equity validator learn about legs; this file owns them
 instead.
 
-Strategies are the ones a level-3 options account can hold: defined-risk
-verticals and the iron condor. Leg order is canonical per strategy (see
-leg_specs) so the pricing math can index strikes by position.
+Strategies are the defined-risk ones: a single long call or put (level 2),
+verticals and the iron condor (level 3). Leg order is canonical per strategy
+(see leg_specs) so the pricing math can index strikes by position.
 """
 
 from datetime import date
@@ -21,15 +21,18 @@ from app.options.chain import Chain, LegQuote
 from app.options.occ import Kind, try_parse_occ
 from app.trading.errors import OrderRejected
 
-Strategy = Literal["bull_call", "bear_put", "bull_put", "bear_call", "iron_condor"]
+Strategy = Literal["long_call", "long_put", "bull_call", "bear_put", "bull_put", "bear_call", "iron_condor"]
 Direction = Literal["debit", "credit"]
 Side = Literal["buy", "sell"]
 Intent = Literal["buy_to_open", "sell_to_open", "buy_to_close", "sell_to_close"]
 
-DEBIT_STRATEGIES: frozenset[str] = frozenset({"bull_call", "bear_put"})
+SINGLE_LEG_STRATEGIES: frozenset[str] = frozenset({"long_call", "long_put"})
+DEBIT_STRATEGIES: frozenset[str] = frozenset({"long_call", "long_put", "bull_call", "bear_put"})
 CREDIT_STRATEGIES: frozenset[str] = frozenset({"bull_put", "bear_call", "iron_condor"})
 
 STRATEGY_LABELS: dict[str, str] = {
+    "long_call": "Long call",
+    "long_put": "Long put",
     "bull_call": "Bull call spread",
     "bear_put": "Bear put spread",
     "bull_put": "Bull put spread",
@@ -46,9 +49,16 @@ _VERTICAL_KIND: dict[str, Kind] = {
     "bear_call": "call",
 }
 _LONG_BELOW_SHORT: frozenset[str] = frozenset({"bull_call", "bull_put"})
+_SINGLE_KIND: dict[str, Kind] = {"long_call": "call", "long_put": "put"}
 
-# What Alpaca requires for these: level 3 across the board.
+# What Alpaca requires: level 2 buys a call or a put outright, level 3 is
+# needed for every spread.
 OPTIONS_LEVEL_REQUIRED = 3
+SINGLE_LEG_LEVEL_REQUIRED = 2
+
+
+def options_level_required(strategy: str) -> int:
+    return SINGLE_LEG_LEVEL_REQUIRED if strategy in SINGLE_LEG_STRATEGIES else OPTIONS_LEVEL_REQUIRED
 
 
 class SpreadTicket(BaseModel):
@@ -56,7 +66,7 @@ class SpreadTicket(BaseModel):
     strategy: Strategy
     expiry: date
     qty: int = Field(gt=0)
-    # Verticals.
+    # Verticals; a long call/put uses long_strike alone.
     long_strike: float | None = Field(default=None, gt=0)
     short_strike: float | None = Field(default=None, gt=0)
     # Iron condor: put wing below, call wing above.
@@ -81,7 +91,12 @@ class SpreadTicket(BaseModel):
             self.call_short_strike,
             self.call_long_strike,
         )
-        if self.strategy == "iron_condor":
+        if self.strategy in SINGLE_LEG_STRATEGIES:
+            if self.long_strike is None:
+                raise ValueError(f"{label}: long_strike is required")
+            if self.short_strike is not None or any(v is not None for v in condor):
+                raise ValueError(f"{label}: only long_strike is used")
+        elif self.strategy == "iron_condor":
             if any(v is None for v in condor):
                 raise ValueError(f"{label}: put_long/put_short/call_short/call_long strikes are required")
             if any(v is not None for v in vertical):
@@ -111,8 +126,11 @@ class SpreadTicket(BaseModel):
 
     @property
     def strikes(self) -> tuple[float, ...]:
-        """Canonical strike order for pricing.spread_risk: (long, short) for
-        a vertical, (put_long, put_short, call_short, call_long) for a condor."""
+        """Canonical strike order for pricing.spread_risk: (long,) for a
+        single leg, (long, short) for a vertical, (put_long, put_short,
+        call_short, call_long) for a condor."""
+        if self.strategy in SINGLE_LEG_STRATEGIES:
+            return (self.long_strike,)  # type: ignore[return-value]
         if self.strategy == "iron_condor":
             return (
                 self.put_long_strike,  # type: ignore[return-value]
@@ -124,6 +142,8 @@ class SpreadTicket(BaseModel):
 
     def leg_specs(self) -> list[tuple[Kind, float, Side]]:
         """(kind, strike, side) per leg, in canonical order."""
+        if self.strategy in SINGLE_LEG_STRATEGIES:
+            return [(_SINGLE_KIND[self.strategy], self.strikes[0], "buy")]
         if self.strategy == "iron_condor":
             pl, ps, cs, cl = self.strikes
             return [("put", pl, "buy"), ("put", ps, "sell"), ("call", cs, "sell"), ("call", cl, "buy")]
@@ -163,7 +183,8 @@ class ResolvedSpread(BaseModel):
     limit_price: float
     # Signed the way Alpaca's MLEG limit wants it: +debit / -credit.
     alpaca_limit_price: float
-    max_profit: float
+    # None means unlimited (a long call).
+    max_profit: float | None
     max_loss: float
     breakevens: list[float]
     collateral: float

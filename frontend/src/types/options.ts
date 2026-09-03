@@ -4,11 +4,13 @@
 
 import type { Order, TradingAccount } from "./trading";
 
-export type Strategy = "bull_call" | "bear_put" | "bull_put" | "bear_call" | "iron_condor";
+export type Strategy = "long_call" | "long_put" | "bull_call" | "bear_put" | "bull_put" | "bear_call" | "iron_condor";
 export type OptionKind = "call" | "put";
 export type SpreadDirection = "debit" | "credit";
 
 export const STRATEGY_LABELS: Record<Strategy, string> = {
+  long_call: "Long call",
+  long_put: "Long put",
   bull_call: "Bull call",
   bear_put: "Bear put",
   bull_put: "Bull put",
@@ -16,7 +18,17 @@ export const STRATEGY_LABELS: Record<Strategy, string> = {
   iron_condor: "Iron condor",
 };
 
-export const DEBIT_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>(["bull_call", "bear_put"]);
+export const SINGLE_LEG_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>(["long_call", "long_put"]);
+export const DEBIT_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>([
+  "long_call",
+  "long_put",
+  "bull_call",
+  "bear_put",
+]);
+/** Alpaca's options level: 2 buys a call or put outright, 3 for spreads. */
+export function optionsLevelRequired(strategy: Strategy): number {
+  return SINGLE_LEG_STRATEGIES.has(strategy) ? 2 : 3;
+}
 
 export interface OptionsAccountResponse {
   account: TradingAccount;
@@ -120,7 +132,8 @@ export interface ResolvedSpread {
   limit_price: number;
   /** +debit / -credit, what the MLEG order carries. */
   alpaca_limit_price: number;
-  max_profit: number;
+  /** null = unlimited (a long call). */
+  max_profit: number | null;
   max_loss: number;
   breakevens: number[];
   collateral: number;

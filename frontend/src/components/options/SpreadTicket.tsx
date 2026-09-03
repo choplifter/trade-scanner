@@ -6,7 +6,9 @@ import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMod
 import { useSpreadLevelsContext } from "../../context/SpreadLevelsContext";
 import {
   DEBIT_STRATEGIES,
+  SINGLE_LEG_STRATEGIES,
   STRATEGY_LABELS,
+  optionsLevelRequired,
   type ChainResponse,
   type OptionsAccountResponse,
   type SpreadPreview,
@@ -17,9 +19,18 @@ import type { TradingRejection } from "../../types/trading";
 import { formatLeg, formatStrike } from "../../utils/occ";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
-import { isCondor, type Legs } from "./legPicker";
+import { isCondor, isSingle, type Legs } from "./legPicker";
 
-const STRATEGIES: Strategy[] = ["bull_call", "bear_put", "bull_put", "bear_call", "iron_condor"];
+const STRATEGIES: Strategy[] = ["long_call", "long_put", "bull_call", "bear_put", "bull_put", "bear_call", "iron_condor"];
+/** Widget-local hotkeys (see OptionsWidget); the outright longs have none
+ * because 0-4 are taken by the equity ticket. */
+const STRATEGY_HOTKEY: Partial<Record<Strategy, number>> = {
+  bull_call: 5,
+  bear_put: 6,
+  bull_put: 7,
+  bear_call: 8,
+  iron_condor: 9,
+};
 const PREVIEW_DEBOUNCE_MS = 300;
 
 interface SpreadTicketProps {
@@ -46,6 +57,7 @@ function money(value: number): string {
 }
 
 function legsLabel(strategy: Strategy, legs: Legs): string {
+  if (isSingle(legs)) return `${formatStrike(legs.strike)}${strategy === "long_call" ? "C" : "P"}`;
   if (isCondor(legs)) {
     return `${formatStrike(legs.put_long)}/${formatStrike(legs.put_short)}P · ${formatStrike(legs.call_short)}/${formatStrike(legs.call_long)}C`;
   }
@@ -55,6 +67,7 @@ function legsLabel(strategy: Strategy, legs: Legs): string {
 
 function ticketFor(symbol: string, strategy: Strategy, expiry: string, qty: number, legs: Legs): SpreadTicketRequest {
   const base = { underlying: symbol, strategy, expiry, qty };
+  if (isSingle(legs)) return { ...base, long_strike: legs.strike };
   if (isCondor(legs)) return { ...base, ...legs };
   return { ...base, long_strike: legs.long, short_strike: legs.short };
 }
@@ -92,6 +105,8 @@ export function SpreadTicket({
   const { setLevels } = useSpreadLevelsContext();
 
   const direction = DEBIT_STRATEGIES.has(strategy) ? "debit" : "credit";
+  const single = SINGLE_LEG_STRATEGIES.has(strategy);
+  const unit = single ? "contract" : "spread";
   const qtyNum = Math.floor(Number(qty));
   const qtyOk = Number.isFinite(qtyNum) && qtyNum > 0;
 
@@ -146,7 +161,9 @@ export function SpreadTicket({
       setLevels(null);
       return;
     }
-    const strikes = isCondor(legs)
+    const strikes = isSingle(legs)
+      ? [{ label: `Long ${formatStrike(legs.strike)}`, price: legs.strike, role: "long" as const }]
+      : isCondor(legs)
       ? [
           { label: `Put long ${formatStrike(legs.put_long)}`, price: legs.put_long, role: "long" as const },
           { label: `Put short ${formatStrike(legs.put_short)}`, price: legs.put_short, role: "short" as const },
@@ -196,20 +213,27 @@ export function SpreadTicket({
   };
 
   const level = account?.options_trading_level ?? account?.options_approved_level ?? null;
+  const levelNeeded = optionsLevelRequired(strategy);
   const levelWarning =
-    level != null && level < 3 ? `This account has options level ${level}; spreads need level 3.` : null;
+    level != null && level < levelNeeded
+      ? `This account has options level ${level}; ${STRATEGY_LABELS[strategy].toLowerCase()} needs level ${levelNeeded}.`
+      : null;
 
   return (
     <div className="spread-ticket">
       <div className="timeframe-selector spread-strategies">
-        {STRATEGIES.map((s, i) => (
+        {STRATEGIES.map((s) => (
           <button
             key={s}
             type="button"
             className="timeframe-button"
             aria-pressed={strategy === s}
             onClick={() => onStrategy(s)}
-            title={mode === "live" ? STRATEGY_LABELS[s] : `${STRATEGY_LABELS[s]} (hotkey ${5 + i})`}
+            title={
+              mode === "live" || STRATEGY_HOTKEY[s] == null
+                ? STRATEGY_LABELS[s]
+                : `${STRATEGY_LABELS[s]} (hotkey ${STRATEGY_HOTKEY[s]})`
+            }
           >
             {STRATEGY_LABELS[s]}
           </button>
@@ -218,31 +242,33 @@ export function SpreadTicket({
       <div className="order-ticket-row spread-legs-row">
         <span className="order-ticket-symbol">
           {symbol} {expiry}
-          {legs ? ` · ${legsLabel(strategy, legs)}` : " · pick strikes in the chain"}
+          {legs ? ` · ${legsLabel(strategy, legs)}` : single ? " · pick a strike in the chain" : " · pick strikes in the chain"}
         </span>
-        <label>
-          Width{" "}
-          <input
-            type="number"
-            min={1}
-            max={20}
-            step={1}
-            value={width}
-            onChange={(e) => onWidth(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
-            title="Strikes between the long and the short leg for the default pick"
-          />
-        </label>
+        {!single && (
+          <label>
+            Width{" "}
+            <input
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              value={width}
+              onChange={(e) => onWidth(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+              title="Strikes between the long and the short leg for the default pick"
+            />
+          </label>
+        )}
         <button type="button" className="row-action" onClick={onResetLegs} disabled={!chain}>
           Auto-pick
         </button>
       </div>
       <div className="order-ticket-row">
         <label>
-          Spreads{" "}
+          {single ? "Contracts" : "Spreads"}{" "}
           <input type="number" min={1} step={1} value={qty} onChange={(e) => setQty(e.target.value)} />
         </label>
         <label>
-          {direction === "debit" ? "Max debit" : "Min credit"}{" "}
+          {single ? "Max premium" : direction === "debit" ? "Max debit" : "Min credit"}{" "}
           <input
             type="number"
             min={0.01}
@@ -294,13 +320,13 @@ export function SpreadTicket({
             {spread.spot.toFixed(2)} · {spread.dte}d
           </span>
           <span>
-            Max profit {money(spread.max_profit)} · max loss {money(spread.max_loss)} · breakeven{" "}
-            {spread.breakevens.map((b) => b.toFixed(2)).join(" / ")}
+            Max profit {spread.max_profit == null ? "unlimited" : money(spread.max_profit)} · max loss{" "}
+            {money(spread.max_loss)} · breakeven {spread.breakevens.map((b) => b.toFixed(2)).join(" / ")}
           </span>
           <span>
-            Collateral {money(spread.collateral)}
+            {single ? "Premium" : "Collateral"} {money(spread.collateral)}
             {spread.options_buying_power != null ? ` of ${money(spread.options_buying_power)} options BP` : ""} · ceilings{" "}
-            {preview!.limits.max_contracts} spreads / {money(preview!.limits.max_order_notional)}
+            {preview!.limits.max_contracts} {single ? "contracts" : "spreads"} / {money(preview!.limits.max_order_notional)}
           </span>
           <span className="spread-legs">
             {spread.legs.map((leg) => (
@@ -325,17 +351,23 @@ export function SpreadTicket({
         onClick={openConfirm}
         title={!preview?.can_submit && spread ? "Submitting is switched off server-side (TRADING_ENABLED / live switch)" : undefined}
       >
-        {spread ? `${spread.direction === "debit" ? "Buy" : "Sell"} ${STRATEGY_LABELS[strategy].toLowerCase()} on ${symbol}` : "Place spread"}
+        {spread
+          ? single
+            ? `Buy ${strategy === "long_call" ? "call" : "put"} on ${symbol}`
+            : `${spread.direction === "debit" ? "Buy" : "Sell"} ${STRATEGY_LABELS[strategy].toLowerCase()} on ${symbol}`
+          : single
+            ? "Buy option"
+            : "Place spread"}
       </button>
 
-      <Modal open={confirming} title="Confirm spread" onClose={() => setConfirming(false)}>
+      <Modal open={confirming} title={single ? "Confirm order" : "Confirm spread"} onClose={() => setConfirming(false)}>
         {spread && (
           <div className="order-confirm">
             <p className="order-confirm-line">
               <strong>
                 {STRATEGY_LABELS[strategy]} {symbol} {expiry} × {spread.qty}
               </strong>{" "}
-              {spread.direction} {money(spread.limit_price)} per spread (limit {spread.alpaca_limit_price.toFixed(2)}, day)
+              {spread.direction} {money(spread.limit_price)} per {unit} (limit {spread.alpaca_limit_price.toFixed(2)}, day)
             </p>
             <ul className="spread-legs">
               {spread.legs.map((leg) => (
@@ -345,7 +377,8 @@ export function SpreadTicket({
               ))}
             </ul>
             <p className="order-confirm-line">
-              Max profit {money(spread.max_profit)} · max loss {money(spread.max_loss)} · collateral {money(spread.collateral)}
+              Max profit {spread.max_profit == null ? "unlimited" : money(spread.max_profit)} · max loss{" "}
+              {money(spread.max_loss)} · {single ? "premium" : "collateral"} {money(spread.collateral)}
             </p>
             {spread.warnings.map((w) => (
               <p key={w} className="order-warning">
@@ -364,7 +397,7 @@ export function SpreadTicket({
                 disabled={submitting || !liveConfirmed(mode, liveTyped)}
                 onClick={() => void doSubmit()}
               >
-                {submitting ? "Submitting…" : "Place spread"}
+                {submitting ? "Submitting…" : single ? "Buy option" : "Place spread"}
               </button>
             </div>
           </div>

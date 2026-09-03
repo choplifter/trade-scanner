@@ -184,3 +184,23 @@ def test_trigger_needs_a_bound_and_sane_ordering():
         TriggerCreate(underlying="SPY", expiry=EXPIRY, legs=legs, qty=1)
     with pytest.raises(ValidationError):
         TriggerCreate(underlying="SPY", expiry=EXPIRY, legs=legs, qty=1, close_below=760, close_above=740)
+
+
+# --- single leg ----------------------------------------------------------------
+
+
+def test_single_leg_uses_long_strike_only():
+    t = _ticket(strategy="long_call", long_strike=750, short_strike=None)
+    assert t.direction == "debit" and t.strikes == (750,)
+    assert t.leg_specs() == [("call", 750, "buy")]
+    assert _ticket(strategy="long_put", long_strike=740, short_strike=None).leg_specs() == [("put", 740, "buy")]
+    with pytest.raises(ValidationError, match="long_strike is required"):
+        _ticket(strategy="long_put", long_strike=None, short_strike=None)
+    with pytest.raises(ValidationError, match="only long_strike"):
+        _ticket(strategy="long_call", long_strike=750, short_strike=755)
+
+
+def test_resolve_single_leg_from_the_chain():
+    legs = resolve_legs(_ticket(strategy="long_call", long_strike=750, short_strike=None), _chain())
+    assert len(legs) == 1
+    assert legs[0].symbol == "SPY260918C00750000" and legs[0].position_intent == "buy_to_open"
