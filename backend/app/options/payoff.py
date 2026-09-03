@@ -22,9 +22,12 @@ from app.services.market_clock import ET
 CONTRACT_MULTIPLIER = 100
 GRID_POINTS = 81
 # The grid reaches at least this far either side of spot...
-MIN_HALF_RANGE_PCT = 0.08
-# ...and at least this many expected one-sigma moves to the last expiry.
+MIN_HALF_RANGE_PCT = 0.02
+# ...at least this many expected one-sigma moves to the last expiry...
 SIGMA_REACH = 3.0
+# ...and past the farthest strike by this fraction of the strikes' span, so
+# a tight 0DTE butterfly is not a sliver in the middle of a wide chart.
+STRIKE_REACH = 0.6
 
 LegKind = Literal["call", "put", "stock"]
 
@@ -145,7 +148,10 @@ def payoff_curve(
     ivs = [leg.iv for leg in option_legs if leg.iv]
     sigma = sum(ivs) / len(ivs) if ivs else 0.0
     reach = SIGMA_REACH * spot * sigma * math.sqrt(years_between(now, last_expiry)) if sigma else 0.0
-    half = max(MIN_HALF_RANGE_PCT * spot, reach)
+    strikes = [leg.strike for leg in option_legs]
+    span = max(max(strikes) - min(strikes), 0.01 * spot)
+    strike_reach = max(abs(k - spot) for k in strikes) + STRIKE_REACH * span
+    half = max(MIN_HALF_RANGE_PCT * spot, reach, strike_reach)
     lo, hi = max(0.01, spot - half), spot + half
     prices = [round(lo + (hi - lo) * i / (points - 1), 4) for i in range(points)]
     # The strikes themselves join the grid: the at-expiry curve kinks there,
