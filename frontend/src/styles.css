@@ -3131,3 +3131,17 @@ a.news-feed-headline:hover {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* --- symbol drag and drop --------------------------------------------------- */
+
+[draggable="true"].symbol-cell,
+[draggable="true"].news-feed-symbol,
+[draggable="true"].spread-leg,
+td[draggable="true"].chain-side {
+  cursor: grab;
+}
+
+.chart-widget.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}

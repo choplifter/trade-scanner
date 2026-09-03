@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getScannerBenchmarkPerformance } from "../../api/http";
 import type { ScannerBenchmarkPick } from "../../types/scannerBenchmark";
 import { formatDollarVolume, formatPrice, formatRvol } from "../../utils/format";
+import { symbolDragProps } from "../../utils/dragSymbol";
 
 const POLL_MS = 30_000;
 
@@ -182,7 +183,7 @@ export function ScannerBenchmarkWidget({ selectedSymbol, onSelectSymbol }: Scann
                     aria-selected={p.symbol === selectedSymbol}
                     onClick={() => onSelectSymbol(p.symbol)}
                   >
-                    <td className="symbol-cell">
+                    <td className="symbol-cell" {...symbolDragProps(p.symbol)}>
                       {p.symbol}
                       {p.shortable && (
                         <span

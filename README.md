@@ -772,6 +772,12 @@ past dates.
   or dropped from a scanner/watchlist row -- and ignores the scanner's
   selection; copies of other widgets follow it), plus **Float** and
   **Close**. Copies are saved with the layout, pinned symbol included.
+  Every symbol cell in the app is a drag source -- scanner rows and heatmap
+  tiles, watchlist rows, news-feed symbols, positions/orders/trades in the
+  trading panel, and option contracts in the chain, the spread ticket's
+  legs and open spreads -- and both the main chart and any chart copy
+  accept the drop (the Options widget too): a stock loads its chart, an
+  option contract its premium chart.
 - Session badge (Premarket / Market Open / After Hours / Closed) in the
   header, computed from the NYSE trading calendar.
 - **Market-conditions traffic light** (needs `FMP_API_KEY`): a red/yellow/

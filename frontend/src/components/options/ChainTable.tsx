@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 import type { ChainResponse, LegQuote, OptionKind, StrikeRow } from "../../types/options";
 import { formatStrike } from "../../utils/occ";
+import { symbolDragProps } from "../../utils/dragSymbol";
 
 export type LegRole = "long" | "short";
 
@@ -68,7 +69,8 @@ function Side({
           key={i}
           className={cls}
           onClick={pickable && quote ? onPick : undefined}
-          title={quote ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}` : "no contract"}
+          title={quote ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"} -- drag onto a chart for its premium chart` : "no contract"}
+          {...(quote ? symbolDragProps(quote.symbol) : {})}
         >
           {cell}
         </td>

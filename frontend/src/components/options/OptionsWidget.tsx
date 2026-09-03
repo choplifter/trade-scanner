@@ -10,6 +10,7 @@ import { ChainTable } from "./ChainTable";
 import { applyPick, defaultLegs, selectionOf, strategyKind, type Legs } from "./legPicker";
 import { OpenSpreads } from "./OpenSpreads";
 import { SpreadTicket } from "./SpreadTicket";
+import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 
 type Tab = "chain" | "spreads";
 
@@ -124,7 +125,23 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const openCount = spreads.spreads.length;
 
   return (
-    <div className={`widget options-widget${mode === "live" ? " live-frame" : ""}`} tabIndex={0} onKeyDown={onKeyDown}>
+    <div
+      className={`widget options-widget${mode === "live" ? " live-frame" : ""}`}
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      onDragOver={(e) => {
+        if (!onSelectSymbol || !isSymbolDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(e) => {
+        if (!onSelectSymbol) return;
+        const dropped = readDroppedSymbol(e);
+        if (!dropped) return;
+        e.preventDefault();
+        onSelectSymbol(dropped);
+      }}
+    >
       <div className="widget-header">
         <h2>Options</h2>
         <span className={`trading-mode-badge ${badge.className}`}>{badge.label}</span>

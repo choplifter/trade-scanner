@@ -1,5 +1,7 @@
 import type { DragEvent } from "react";
 
+import { parseOcc } from "./occ";
+
 // Custom MIME type so the watchlist's drop handler can tell "a symbol was
 // dragged from inside this app" apart from an incidental text drag (e.g.
 // dragging selected page text) landing on the same drop zone.
@@ -26,5 +28,26 @@ export function startSymbolDrag(e: DragEvent, symbol: string): void {
 export function readDroppedSymbol(e: DragEvent): string | null {
   const raw = e.dataTransfer.getData(SYMBOL_MIME) || e.dataTransfer.getData("text/plain");
   const upper = raw.trim().toUpperCase();
-  return TICKER_RE.test(upper) ? upper : null;
+  // A stock ticker, or an option contract (OCC symbol) -- the chart shows
+  // the latter as a premium chart; drop zones that only take stocks (the
+  // watchlist) re-check with TICKER_RE themselves.
+  return TICKER_RE.test(upper) || parseOcc(upper) ? upper : null;
+}
+
+/** During dragover the payload is not readable, only its types: true when
+ * the drag started on one of this app's symbol cells. */
+export function isSymbolDrag(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer.types).includes(SYMBOL_MIME);
+}
+
+/** Spread onto any element that stands for a symbol (a scanner row, an
+ * order's symbol cell, an option leg) to make it a drag source. */
+export function symbolDragProps(symbol: string) {
+  return {
+    draggable: true,
+    onDragStart: (e: DragEvent<HTMLElement>) => {
+      e.stopPropagation();
+      startSymbolDrag(e, symbol);
+    },
+  };
 }

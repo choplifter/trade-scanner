@@ -6,7 +6,7 @@ import { searchSymbols } from "../../api/http";
 import { useWatchlist } from "../../hooks/useWatchlist";
 import { useWatchlistQuotes } from "../../hooks/useWatchlistQuotes";
 import type { SymbolSuggestion, WatchlistQuote } from "../../types/watchlist";
-import { readDroppedSymbol, TICKER_RE } from "../../utils/dragSymbol";
+import { readDroppedSymbol, symbolDragProps, TICKER_RE } from "../../utils/dragSymbol";
 import { formatPct, formatPrice, formatVolume } from "../../utils/format";
 
 // Same debounce this codebase already uses for OrderTicket's preview call --
@@ -319,7 +319,9 @@ export function WatchlistPanel({ selectedSymbol, onSelectSymbol }: WatchlistPane
                   aria-selected={symbol === selectedSymbol}
                   onClick={() => onSelectSymbol(symbol)}
                 >
-                  <td className="symbol-cell">{symbol}</td>
+                  <td className="symbol-cell" {...symbolDragProps(symbol)}>
+                    {symbol}
+                  </td>
                   <td>{quote ? formatPrice(quote.last) : "—"}</td>
                   <td className={pctClass(quote?.pctChange)}>
                     {quote?.pctChange != null ? formatPct(quote.pctChange) : "—"}

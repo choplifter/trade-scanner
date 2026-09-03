@@ -25,6 +25,7 @@ import { LiveConfirmField } from "./LiveConfirmField";
 import { chartSymbolOf, formatLeg } from "../../utils/occ";
 import { BalanceChart } from "./BalanceChart";
 import { OrderTicket } from "./OrderTicket";
+import { symbolDragProps } from "../../utils/dragSymbol";
 
 type Tab = "ticket" | "positions" | "orders" | "balance" | "account";
 
@@ -821,7 +822,9 @@ function PositionsTable({
               aria-selected={p.symbol === selectedSymbol}
               onClick={() => onSelectSymbol(p.symbol)}
             >
-              <td className="symbol-cell">{p.symbol}</td>
+              <td className="symbol-cell" {...symbolDragProps(p.symbol)}>
+                {p.symbol}
+              </td>
               <td>{p.side}</td>
               <td>{num(p.qty) ?? "—"}</td>
               <td>{money(p.avg_entry_price)}</td>
@@ -963,7 +966,9 @@ function OrdersTable({
               if (symbol) onSelectSymbol(symbol);
             }}
           >
-            <td className="symbol-cell">{orderLabel(o)}</td>
+            <td className="symbol-cell" {...(orderChartSymbol(o) ? symbolDragProps(orderChartSymbol(o)!) : {})}>
+              {orderLabel(o)}
+            </td>
             <td>{o.side}</td>
             <td>{o.order_type}</td>
             <td>{num(o.qty) ?? "—"}</td>
@@ -1162,7 +1167,9 @@ function FillsTable({
               onClick={() => o.symbol && onSelectSymbol(o.symbol)}
             >
               <td>{fillTime(o)}</td>
-              <td className="symbol-cell">{orderLabel(o)}</td>
+              <td className="symbol-cell" {...(orderChartSymbol(o) ? symbolDragProps(orderChartSymbol(o)!) : {})}>
+                {orderLabel(o)}
+              </td>
               <td>{o.side}</td>
               <td>{qty ?? "—"}</td>
               <td>{money(o.filled_avg_price)}</td>
@@ -1293,7 +1300,9 @@ function TradesTable({
                   }`}
                 >
                   <td>{tradeTime(t.closed_at)}</td>
-                  <td className="symbol-cell">{t.symbol}</td>
+                  <td className="symbol-cell" {...symbolDragProps(t.symbol)}>
+                    {t.symbol}
+                  </td>
                   <td>{t.side}</td>
                   <td>{t.qty.toLocaleString()}</td>
                   <td>{formatPrice(t.entry_avg)}</td>

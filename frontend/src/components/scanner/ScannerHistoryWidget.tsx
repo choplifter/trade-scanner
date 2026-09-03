@@ -8,6 +8,7 @@ import type {
   ScannerHistoryResponse,
 } from "../../types/scannerHistory";
 import { formatRvol } from "../../utils/format";
+import { symbolDragProps } from "../../utils/dragSymbol";
 
 const POLL_MS = 60_000;
 
@@ -68,7 +69,9 @@ function LeaderboardTable({ title, picks, selectedSymbol, onSelectSymbol }: Lead
                 aria-selected={p.symbol === selectedSymbol}
                 onClick={() => onSelectSymbol(p.symbol)}
               >
-                <td className="symbol-cell">{p.symbol}</td>
+                <td className="symbol-cell" {...symbolDragProps(p.symbol)}>
+                  {p.symbol}
+                </td>
                 <td>{VIEW_LABEL[p.view] ?? p.view}</td>
                 <td>{p.trading_date}</td>
                 <td className={pctClass(p.entry_pct_change)}>{pctText(p.entry_pct_change)}</td>

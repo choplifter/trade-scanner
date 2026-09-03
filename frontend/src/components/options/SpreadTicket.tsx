@@ -20,6 +20,7 @@ import { formatLeg, formatStrike } from "../../utils/occ";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import { isCondor, isSingle, type Legs } from "./legPicker";
+import { symbolDragProps } from "../../utils/dragSymbol";
 
 const STRATEGIES: Strategy[] = ["long_call", "long_put", "bull_call", "bear_put", "bull_put", "bear_call", "iron_condor"];
 /** Widget-local hotkeys (see OptionsWidget); the outright longs have none
@@ -333,7 +334,7 @@ export function SpreadTicket({
           </span>
           <span className="spread-legs">
             {spread.legs.map((leg) => (
-              <span key={leg.symbol} className={`spread-leg ${leg.side}`}>
+              <span key={leg.symbol} className={`spread-leg ${leg.side}`} {...symbolDragProps(leg.symbol)}>
                 {leg.side === "buy" ? "+" : "−"}{" "}
                 {onSelectSymbol ? (
                   <button

@@ -1,5 +1,6 @@
 import { useNewsFeed } from "../../hooks/useNewsFeed";
 import { newsAge } from "../../utils/format";
+import { symbolDragProps } from "../../utils/dragSymbol";
 
 interface NewsFeedWidgetProps {
   selectedSymbol: string | null;
@@ -46,7 +47,9 @@ export function NewsFeedWidget({ selectedSymbol, onSelectSymbol }: NewsFeedWidge
                 aria-selected={item.symbol === selectedSymbol}
                 onClick={() => onSelectSymbol(item.symbol)}
               >
-                <span className="news-feed-symbol">{item.symbol}</span>
+                <span className="news-feed-symbol" {...symbolDragProps(item.symbol)}>
+                  {item.symbol}
+                </span>
                 {item.url ? (
                   <a
                     className="news-feed-headline"

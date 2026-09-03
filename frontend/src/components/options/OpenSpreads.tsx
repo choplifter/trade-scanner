@@ -17,6 +17,7 @@ import {
 import { formatExpiry, formatLeg, formatStrike } from "../../utils/occ";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
+import { symbolDragProps } from "../../utils/dragSymbol";
 
 interface OpenSpreadsProps {
   spreads: SpreadGroup[];
@@ -310,7 +311,11 @@ export function OpenSpreads({
                   <td colSpan={10}>
                     <ul className="spread-legs">
                       {group.legs.map((leg) => (
-                        <li key={leg.symbol} className={`spread-leg ${leg.qty > 0 ? "buy" : "sell"}`}>
+                        <li
+                          key={leg.symbol}
+                          className={`spread-leg ${leg.qty > 0 ? "buy" : "sell"}`}
+                          {...symbolDragProps(leg.symbol)}
+                        >
                           {leg.qty > 0 ? "+" : ""}
                           {leg.qty}{" "}
                           {onSelectSymbol ? (

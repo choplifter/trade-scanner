@@ -1,9 +1,9 @@
-import type { FormEvent } from "react";
+import type { FormEvent, DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
-import { TICKER_RE } from "../../utils/dragSymbol";
+import { TICKER_RE, isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatLeg, parseOcc } from "../../utils/occ";
 import { ContractTicket } from "./ContractTicket";
 import { useTradingContext } from "../../context/TradingContext";
@@ -151,6 +151,30 @@ const CHART_TYPES: { key: ChartType; label: string; title: string }[] = [
 export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinned = false }: ChartWidgetProps) {
   // An OCC symbol: the chart shows the contract's premium, not a stock.
   const contract = symbol ? parseOcc(symbol) : null;
+  // A symbol (or option contract) dragged from a scanner, watchlist, order
+  // or option-chain row and dropped on the chart loads it -- for the main
+  // chart that is the dashboard's selection, for a pinned copy its own.
+  const [dropActive, setDropActive] = useState(false);
+  const dropProps = onSelectSymbol
+    ? {
+        onDragOver: (e: DragEvent<HTMLDivElement>) => {
+          if (!isSymbolDrag(e)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          if (!dropActive) setDropActive(true);
+        },
+        onDragLeave: (e: DragEvent<HTMLDivElement>) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropActive(false);
+        },
+        onDrop: (e: DragEvent<HTMLDivElement>) => {
+          setDropActive(false);
+          const dropped = readDroppedSymbol(e);
+          if (!dropped) return;
+          e.preventDefault();
+          onSelectSymbol(dropped);
+        },
+      }
+    : {};
   // The pinned chart's own symbol field.
   const [symbolDraft, setSymbolDraft] = useState(symbol ?? "");
   useEffect(() => setSymbolDraft(symbol ?? ""), [symbol]);
@@ -589,7 +613,10 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // copy of it (see the return statement below) -- one CandleChart, one WS
   // subscription, regardless of where in the DOM it currently renders.
   const content = (
-    <div className={isFullscreen ? "widget chart-widget chart-widget-fullscreen" : "widget chart-widget"}>
+    <div
+      className={`widget chart-widget${isFullscreen ? " chart-widget-fullscreen" : ""}${dropActive ? " drop-target" : ""}`}
+      {...dropProps}
+    >
       <div className="widget-header">
         <div className="chart-toolbar">
           {pinned ? (
