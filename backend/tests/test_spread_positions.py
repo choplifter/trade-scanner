@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from app.options.positions import group_spreads
 
 TODAY = date(2026, 9, 2)
@@ -56,7 +58,11 @@ def test_iron_condor():
 
 
 def test_lone_leg_and_unbalanced_legs_are_broken():
-    lone = group_spreads([_pos("SPY260918P00745000", -1, "2")], today=TODAY)[0]
+    # A lone short put is cash-secured (Alpaca allows no naked writing at
+    # level 3); a lone short call without shares is a spread's remains.
+    lone_put = group_spreads([_pos("SPY260918P00745000", -1, "2")], today=TODAY)[0]
+    assert lone_put.strategy == "cash_secured_put" and not lone_put.broken and lone_put.qty == 1
+    lone = group_spreads([_pos("SPY260918C00745000", -1, "2")], today=TODAY)[0]
     assert lone.strategy == "broken" and lone.broken and lone.qty == 1
     unbalanced = group_spreads(
         [_pos("SPY260918P00745000", -2, "2"), _pos("SPY260918P00740000", 1, "1")], today=TODAY
@@ -91,3 +97,62 @@ def test_a_lone_long_contract_is_a_long_call_or_put_not_broken():
     assert call.net_entry == 2.5
     put = group_spreads([_pos("SPY260918P00740000", 1, "3")], today=TODAY)[0]
     assert put.strategy == "long_put" and not put.broken
+
+
+def test_straddle_strangle_and_butterflies_are_recognised():
+    straddle = group_spreads([_pos("SPY260918P00750000", 2, "4"), _pos("SPY260918C00750000", 2, "4.5")], today=TODAY)[0]
+    assert straddle.strategy == "long_straddle" and straddle.qty == 2 and straddle.net_entry == 8.5
+    strangle = group_spreads([_pos("SPY260918P00745000", 1, "2"), _pos("SPY260918C00755000", 1, "2")], today=TODAY)[0]
+    assert strangle.strategy == "long_strangle"
+    fly = group_spreads(
+        [_pos("SPY260918C00745000", 1, "6"), _pos("SPY260918C00750000", -2, "3"), _pos("SPY260918C00755000", 1, "1.2")],
+        today=TODAY,
+    )[0]
+    assert fly.strategy == "call_butterfly" and fly.qty == 1 and not fly.broken
+    assert fly.net_entry == pytest.approx(6 + 1.2 - 2 * 3)
+    iron = group_spreads(
+        [
+            _pos("SPY260918P00745000", 1, "1"),
+            _pos("SPY260918P00750000", -1, "3"),
+            _pos("SPY260918C00750000", -1, "3"),
+            _pos("SPY260918C00755000", 1, "1"),
+        ],
+        today=TODAY,
+    )[0]
+    assert iron.strategy == "iron_butterfly" and iron.net_entry == -4.0
+
+
+def test_calendar_pairs_across_expiries_and_the_rest_stays_per_expiry():
+    groups = group_spreads(
+        [
+            _pos("SPY260918C00750000", -1, "2"),
+            _pos("SPY261016C00750000", 1, "5"),
+            _pos("SPY261016P00740000", 1, "1"),
+        ],
+        today=TODAY,
+    )
+    assert [(g.strategy, g.expiry.isoformat(), g.long_expiry.isoformat() if g.long_expiry else None) for g in groups] == [
+        ("calendar", "2026-09-18", "2026-10-16"),
+        ("long_put", "2026-10-16", None),
+    ]
+    assert groups[0].net_entry == 3.0 and groups[0].qty == 1
+    diagonal = group_spreads(
+        [_pos("SPY260918P00745000", -2, "2"), _pos("SPY261016P00750000", 2, "5")], today=TODAY
+    )[0]
+    assert diagonal.strategy == "diagonal" and diagonal.qty == 2
+
+
+def test_covered_call_needs_the_shares():
+    short_call = _pos("SPY260918C00760000", -2, "1.5")
+    shares = _pos("SPY", 250, "740", asset_class="us_equity")
+    covered = group_spreads([short_call], equity_positions=[shares], today=TODAY)[0]
+    assert covered.strategy == "covered_call" and covered.qty == 2 and covered.shares == 200 and not covered.broken
+    assert covered.net_entry == -1.5
+    # 150 shares cover one contract; the other stands alone.
+    partial = group_spreads(
+        [short_call], equity_positions=[_pos("SPY", 150, "740", asset_class="us_equity")], today=TODAY
+    )[0]
+    assert partial.strategy == "broken"
+    # Shares of another symbol do not count.
+    other = group_spreads([short_call], equity_positions=[_pos("QQQ", 500, "700", asset_class="us_equity")], today=TODAY)[0]
+    assert other.strategy == "broken"

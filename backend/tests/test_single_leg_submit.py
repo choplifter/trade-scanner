@@ -86,3 +86,30 @@ def test_a_spread_still_goes_as_mleg_and_a_long_needs_only_level_two(monkeypatch
     asyncio.run(service.submit(ticket))
     (request,) = trading.requests
     assert request.order_class == OrderClass.MLEG and len(request.legs) == 2 and request.limit_price == -1.2
+
+
+def test_an_uncovered_write_is_refused_before_the_broker(monkeypatch):
+    from app.options.models import Coverage, TicketLeg
+    from app.trading.errors import OrderRejected
+
+    resolved = _resolved("covered_call", [_leg("SPY260918C00760000", "call", 760, "sell")], -1.5)
+    resolved.coverage = Coverage(kind="shares", have=0, need=200, ok=False)
+    resolved.options_level = 1
+    service, trading = _service(monkeypatch, resolved)
+    ticket = SpreadTicket(
+        underlying="SPY", strategy="covered_call", expiry=EXPIRY, qty=2,
+        legs=[TicketLeg(kind="call", strike=760, side="sell")],
+    )
+    try:
+        asyncio.run(service.submit(ticket))
+    except OrderRejected as exc:
+        assert "not covered" in exc.message and "200 shares" in exc.message
+    else:
+        raise AssertionError("an uncovered call must not reach the broker")
+    assert trading.requests == []
+
+    # Covered: a plain sell-to-open order goes out.
+    resolved.coverage = Coverage(kind="shares", have=200, need=200, ok=True)
+    asyncio.run(service.submit(ticket))
+    (request,) = trading.requests
+    assert request.symbol == "SPY260918C00760000" and request.legs is None

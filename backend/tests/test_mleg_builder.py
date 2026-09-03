@@ -68,3 +68,34 @@ def test_single_leg_close_is_a_plain_option_limit_order():
     assert request.limit_price == 0.55  # magnitude: a single leg has no signed net
     assert request.qty == 3
     assert request.time_in_force is TimeInForce.DAY
+
+
+def test_butterfly_body_carries_ratio_two_and_a_calendar_spans_two_expiries():
+    from app.options.models import SpreadLeg as _SpreadLeg
+
+    fly = [
+        _leg("SPY260918C00745000", "buy", "buy_to_open", kind="call", strike=745.0),
+        _SpreadLeg(symbol="SPY260918C00750000", kind="call", strike=750.0, expiry=EXPIRY, side="sell",
+                   position_intent="sell_to_open", ratio_qty=2),
+        _leg("SPY260918C00755000", "buy", "buy_to_open", kind="call", strike=755.0),
+    ]
+    request = build_mleg_request(fly, 1, 1.20, None)
+    assert [leg.ratio_qty for leg in request.legs] == [1, 2, 1]
+    assert request.limit_price == 1.20 and len(request.legs) == 3
+
+    calendar = [
+        _leg("SPY260918C00750000", "sell", "sell_to_open", kind="call", strike=750.0),
+        _SpreadLeg(symbol="SPY261016C00750000", kind="call", strike=750.0, expiry=date(2026, 10, 16), side="buy",
+                   position_intent="buy_to_open"),
+    ]
+    request = build_mleg_request(calendar, 1, 2.10, "cid-cal")
+    assert [leg.symbol for leg in request.legs] == ["SPY260918C00750000", "SPY261016C00750000"]
+    assert request.order_class is OrderClass.MLEG and request.limit_price == 2.10
+
+
+def test_income_writes_are_plain_sell_to_open_orders():
+    leg = _leg("SPY260918C00760000", "sell", "sell_to_open", kind="call", strike=760.0)
+    request = build_single_leg_request(leg, 2, 1.5, None)
+    assert request.symbol == "SPY260918C00760000" and request.qty == 2
+    assert request.side is OrderSide.SELL and request.position_intent is PositionIntent.SELL_TO_OPEN
+    assert request.limit_price == 1.5 and request.legs is None

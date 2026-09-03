@@ -13,7 +13,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.auth.dependency import get_current_user
-from app.options.models import CloseSpreadRequest, SpreadTicket, TriggerCreate
+from app.options.models import CloseSpreadRequest, PayoffRequest, SpreadTicket, TriggerCreate
 from app.options.service import OptionsService
 from app.routers.trading import _account, _confirm
 from app.trading.errors import TradingError
@@ -178,6 +178,20 @@ async def preview_close(body: CloseSpreadRequest, request: Request) -> dict:
     except Exception:
         logger.exception("Close preview failed")
         raise HTTPException(status_code=502, detail="Failed to price the close")
+
+
+@router.post("/spreads/payoff")
+async def spread_payoff(body: PayoffRequest, request: Request) -> dict:
+    """The risk chart of a held position (see app.options.payoff)."""
+    try:
+        return (await _service(request).payoff_for_held(body)).model_dump(mode="json")
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Payoff failed")
+        raise HTTPException(status_code=502, detail="Failed to build the risk chart")
 
 
 @router.post("/spreads/close")
