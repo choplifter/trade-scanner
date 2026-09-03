@@ -9,6 +9,8 @@ import { API_BASE, OrderRejectedError, checkUnauthorized, extractErrorMessage, g
 import { tradingPath } from "./tradingMode";
 import type {
   ChainResponse,
+  Payoff,
+  PayoffRequest,
   LegQuote,
   ClosePreview,
   CloseSpreadRequest,
@@ -79,6 +81,10 @@ export function getSpreads(): Promise<SpreadsResponse> {
 
 export function previewCloseSpread(body: CloseSpreadRequest): Promise<ClosePreview> {
   return send<ClosePreview>("POST", "/trading/options/spreads/close/preview", body);
+}
+
+export function getSpreadPayoff(body: PayoffRequest): Promise<Payoff> {
+  return send<Payoff>("POST", tradingPath("/trading/options/spreads/payoff"), body);
 }
 
 export function closeSpread(body: CloseSpreadRequest, confirm?: string): Promise<OrderResponse> {

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 
 import { OrderRejectedError } from "../../api/http";
-import { previewCloseSpread } from "../../api/options";
+import { getSpreadPayoff, previewCloseSpread } from "../../api/options";
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useSpreadLevelsContext } from "../../context/SpreadLevelsContext";
 import {
   STRATEGY_LABELS,
+  type Payoff,
   triggerBoundsLabel,
   type ClosePreview,
   type CloseSpreadRequest,
@@ -17,6 +18,7 @@ import {
 import { formatExpiry, formatLeg, formatStrike } from "../../utils/occ";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
+import { PayoffChart } from "./PayoffChart";
 import { symbolDragProps } from "../../utils/dragSymbol";
 
 interface OpenSpreadsProps {
@@ -64,6 +66,52 @@ function entryLabel(group: SpreadGroup): string {
   if (group.qty === 0) return "—";
   const abs = Math.abs(group.net_entry).toFixed(2);
   return group.net_entry > 0 ? `${abs} db` : `${abs} cr`;
+}
+
+/** The risk chart of a held position, fetched when its row is expanded
+ * and refreshed with the poll (the legs' quotes move). */
+function GroupPayoff({ group }: { group: SpreadGroup }) {
+  const [payoff, setPayoff] = useState<Payoff | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(true);
+  const legsKey = group.legs.map((leg) => `${leg.symbol}:${leg.qty}`).join("|");
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const load = () =>
+      getSpreadPayoff({ legs: closeLegs(group), qty: group.qty || 1, net_entry: group.net_entry })
+        .then((res) => {
+          if (!cancelled) {
+            setPayoff(res);
+            setError(null);
+          }
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        });
+    load();
+    const id = window.setInterval(load, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+    // legsKey stands in for group.legs (a new array every poll tick).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [legsKey, group.qty, group.net_entry, open]);
+  return (
+    <div className="spread-risk">
+      <button type="button" className="row-action" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }} aria-expanded={open}>
+        Risk {open ? "▾" : "▸"}
+      </button>
+      {open && error && <p className="order-rejection">{error}</p>}
+      {open && payoff && (
+        <PayoffChart
+          payoff={payoff}
+          expiryLabel={group.long_expiry ? `at short expiry ${formatExpiry(payoff.expiry)}` : "at expiry"}
+        />
+      )}
+    </div>
+  );
 }
 
 function closeLegs(group: SpreadGroup) {
@@ -335,6 +383,7 @@ export function OpenSpreads({
                         </li>
                       ))}
                     </ul>
+                    <GroupPayoff group={group} />
                     <div className="trigger-editor">
                       <span>
                         Close the spread if <strong>{group.underlying}</strong> trades

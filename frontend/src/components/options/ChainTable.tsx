@@ -4,7 +4,8 @@ import type { ChainResponse, LegQuote, OptionKind, StrikeRow } from "../../types
 import { formatStrike } from "../../utils/occ";
 import { symbolDragProps } from "../../utils/dragSymbol";
 
-export type LegRole = "long" | "short";
+/** `body` is a butterfly's doubled short. */
+export type LegRole = "long" | "short" | "body";
 
 /** `${kind}:${strike}` -> role, for the legs currently selected. */
 export type LegSelection = Map<string, LegRole>;
@@ -53,7 +54,7 @@ function Side({
     "chain-side",
     kind,
     itm ? "chain-itm" : "",
-    role ? `chain-leg-${role}` : "",
+    role ? `chain-leg-${role === "body" ? "short chain-leg-body" : role}` : "",
     pickable && quote ? "chain-pickable" : "",
   ]
     .filter(Boolean)
@@ -69,7 +70,11 @@ function Side({
           key={i}
           className={cls}
           onClick={pickable && quote ? onPick : undefined}
-          title={quote ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"} -- drag onto a chart for its premium chart` : "no contract"}
+          title={
+            quote
+              ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""} -- drag onto a chart for its premium chart`
+              : "no contract"
+          }
           {...(quote ? symbolDragProps(quote.symbol) : {})}
         >
           {cell}

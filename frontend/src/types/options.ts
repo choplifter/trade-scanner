@@ -4,7 +4,23 @@
 
 import type { Order, TradingAccount } from "./trading";
 
-export type Strategy = "long_call" | "long_put" | "bull_call" | "bear_put" | "bull_put" | "bear_call" | "iron_condor";
+export type Strategy =
+  | "long_call"
+  | "long_put"
+  | "bull_call"
+  | "bear_put"
+  | "bull_put"
+  | "bear_call"
+  | "iron_condor"
+  | "long_straddle"
+  | "long_strangle"
+  | "call_butterfly"
+  | "put_butterfly"
+  | "iron_butterfly"
+  | "calendar"
+  | "diagonal"
+  | "covered_call"
+  | "cash_secured_put";
 export type OptionKind = "call" | "put";
 export type SpreadDirection = "debit" | "credit";
 
@@ -16,18 +32,94 @@ export const STRATEGY_LABELS: Record<Strategy, string> = {
   bull_put: "Bull put",
   bear_call: "Bear call",
   iron_condor: "Iron condor",
+  long_straddle: "Straddle",
+  long_strangle: "Strangle",
+  call_butterfly: "Call fly",
+  put_butterfly: "Put fly",
+  iron_butterfly: "Iron fly",
+  calendar: "Calendar",
+  diagonal: "Diagonal",
+  covered_call: "Covered call",
+  cash_secured_put: "Cash-sec. put",
 };
 
-export const SINGLE_LEG_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>(["long_call", "long_put"]);
+/** The ticket's strategy buttons, grouped. */
+export const STRATEGY_GROUPS: { label: string; strategies: Strategy[] }[] = [
+  { label: "Long", strategies: ["long_call", "long_put", "long_straddle", "long_strangle"] },
+  { label: "Vertical", strategies: ["bull_call", "bear_put", "bull_put", "bear_call"] },
+  { label: "Neutral", strategies: ["iron_condor", "iron_butterfly", "call_butterfly", "put_butterfly"] },
+  { label: "Time", strategies: ["calendar", "diagonal"] },
+  { label: "Income", strategies: ["covered_call", "cash_secured_put"] },
+];
+
+/** Strategies described to the backend as an explicit legs list. */
+export const LEGS_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>([
+  "long_straddle",
+  "long_strangle",
+  "call_butterfly",
+  "put_butterfly",
+  "iron_butterfly",
+  "calendar",
+  "diagonal",
+  "covered_call",
+  "cash_secured_put",
+]);
+export const TIME_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>(["calendar", "diagonal"]);
+export const INCOME_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>(["covered_call", "cash_secured_put"]);
+export const BUTTERFLY_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>(["call_butterfly", "put_butterfly", "iron_butterfly"]);
+
+export const SINGLE_LEG_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>([
+  "long_call",
+  "long_put",
+  "covered_call",
+  "cash_secured_put",
+]);
 export const DEBIT_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>([
   "long_call",
   "long_put",
   "bull_call",
   "bear_put",
+  "long_straddle",
+  "long_strangle",
+  "call_butterfly",
+  "put_butterfly",
+  "calendar",
+  "diagonal",
 ]);
-/** Alpaca's options level: 2 buys a call or put outright, 3 for spreads. */
+/** Alpaca's options level: 1 writes a covered call / cash-secured put, 2
+ * buys a call or put outright, 3 for every spread. */
 export function optionsLevelRequired(strategy: Strategy): number {
+  if (INCOME_STRATEGIES.has(strategy)) return 1;
   return SINGLE_LEG_STRATEGIES.has(strategy) ? 2 : 3;
+}
+
+export interface TicketLeg {
+  kind: OptionKind;
+  strike: number;
+  /** YYYY-MM-DD; omitted = the ticket's expiry. */
+  expiry?: string;
+  side: "buy" | "sell";
+  ratio?: number;
+}
+
+/** The risk chart's numbers, per position (x 100 x qty). */
+export interface Payoff {
+  prices: number[];
+  at_expiry: number[];
+  today: number[] | null;
+  breakevens: number[];
+  max_profit: number | null;
+  max_loss: number | null;
+  spot: number;
+  expiry: string;
+  multiplier: number;
+}
+
+export interface Coverage {
+  kind: "shares" | "cash";
+  have: number;
+  need: number;
+  ok: boolean;
 }
 
 export interface OptionsAccountResponse {
@@ -99,6 +191,8 @@ export interface SpreadTicketRequest {
   put_short_strike?: number;
   call_short_strike?: number;
   call_long_strike?: number;
+  /** The legs of the newer strategies (see LEGS_STRATEGIES). */
+  legs?: TicketLeg[];
   /** Positive net price per spread; omitted = current mid. */
   limit_price?: number;
   client_order_id?: string;
@@ -116,6 +210,9 @@ export interface SpreadLeg {
   ask: number | null;
   mid: number | null;
   delta: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  iv?: number | null;
 }
 
 export interface ResolvedSpread {
@@ -134,7 +231,7 @@ export interface ResolvedSpread {
   alpaca_limit_price: number;
   /** null = unlimited (a long call). */
   max_profit: number | null;
-  max_loss: number;
+  max_loss: number | null;
   breakevens: number[];
   collateral: number;
   options_buying_power: number | null;
@@ -143,6 +240,8 @@ export interface ResolvedSpread {
   account: TradingAccount;
   warnings: string[];
   client_order_id: string | null;
+  coverage: Coverage | null;
+  payoff: Payoff | null;
 }
 
 export interface SpreadPreview {
@@ -181,6 +280,17 @@ export interface SpreadGroup {
   unrealized_pl: number;
   broken: boolean;
   account: TradingAccount;
+  /** The later expiry of a calendar/diagonal. */
+  long_expiry: string | null;
+  /** Shares backing a covered call. */
+  shares: number;
+}
+
+export interface PayoffRequest {
+  legs: CloseLeg[];
+  qty: number;
+  /** Per share, signed: positive was paid. */
+  net_entry: number;
 }
 
 export type TriggerStatus = "active" | "fired" | "cancelled" | "failed" | "orphaned";

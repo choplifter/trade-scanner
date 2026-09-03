@@ -896,6 +896,14 @@ the quantity. `W` is the distance between the strikes, `D` a debit paid,
 | **Bull put** | sell higher put, buy lower put | credit `C` | `C` | `W − C` | short strike − `C` | `W − C` | 3 |
 | **Bear call** | sell lower call, buy higher call | credit `C` | `C` | `W − C` | short strike + `C` | `W − C` | 3 |
 | **Iron condor** | bull put + bear call, same expiry | credit `C` | `C` | `max(put W, call W) − C` | put short − `C` and call short + `C` | `max W − C` | 3 |
+| **Straddle** | buy put + buy call, one strike | debit `D` | unlimited | `D` | strike ± `D` | `D` | 3 |
+| **Strangle** | buy OTM put + buy OTM call | debit `D` | unlimited | `D` | put − `D`, call + `D` | `D` | 3 |
+| **Call / put fly** | buy wing, sell body ×2, buy wing | debit `D` | wing width − `D` | `D` | low + `D`, high − `D` | `D` | 3 |
+| **Iron fly** | bull put + bear call sharing the body strike | credit `C` | `C` | wing − `C` | body ± `C` | wing − `C` | 3 |
+| **Calendar** | sell near expiry, buy later expiry, one strike | debit `D` | from the risk chart | `D` | from the risk chart | `D` | 3 |
+| **Diagonal** | calendar with two strikes | debit `D` | from the risk chart | `D` | from the risk chart | `D` | 3 |
+| **Covered call** | sell a call against 100 held shares per contract | credit `C` | strike − share price + `C` | share price − `C` | share price − `C` | the shares | 1 |
+| **Cash-secured put** | sell a put against `strike × 100` of buying power | credit `C` | `C` | strike − `C` | strike − `C` | strike × 100 | 1 |
 
 When to reach for which: a **long call/put** is the directional bet with
 the most delta and the most theta bleed. The **debit verticals** (bull
@@ -906,6 +914,20 @@ typical loss-to-profit ratio is 2–3 : 1. The **iron condor** sells both
 sides for a range-bound day. A 0DTE credit spread at a level is the
 common day-trading shape; the ticket warns because Alpaca force-closes
 same-day-expiry positions around 15:15 ET.
+
+**Straddle / strangle** buy movement in either direction (earnings, a
+binary event); the debit is the whole risk and theta is the enemy.
+**Butterflies** are cheap bets on a narrow target: the body is sold
+twice, the wings bought once each; an **iron fly** is a sold straddle
+with wings. **Calendar / diagonal** sell the near expiry's faster time
+decay against a later expiry; their profit shape depends on the long
+leg's remaining time value at the short expiry, which is why the numbers
+come from the risk chart rather than a formula. **Covered call /
+cash-secured put** are the income writes: the ticket reports what covers
+them (shares held, buying power) and refuses an uncovered one. Alpaca
+treats the writes as level 1 and everything with more than one option
+leg as level 3; a covered call is sent as a plain sell-to-open order, a
+calendar as a two-expiry multi-leg order.
 
 The preview refuses a price that makes no sense: a net price at or above
 the width (`Net price 0.55 is not below the spread width (0.5)`), a long
@@ -928,6 +950,18 @@ of that name) chooses the legs like this:
 - **Iron condor:** both short legs at ~**0.20** delta, wings Width strikes
   out.
 - **Long call / put:** the strike nearest the spot.
+
+- **Straddle:** the strike nearest the spot. **Strangle:** put and call
+  at ~**0.25** delta each side.
+- **Butterflies:** body at the spot, wings *Wings* strikes either side
+  (the iron fly the same on both kinds).
+- **Calendar:** the strike nearest the spot that both expiries quote;
+  **diagonal:** short leg at ~0.30 delta OTM in the near expiry, long leg
+  at the spot in the later one. The later expiry defaults to the first
+  one at least a week after the short; the ticket's *Long expiry* list
+  changes it, *Calls / Puts* the kind, and *chain shows short / long*
+  which expiry's chain the table shows and a click sets.
+- **Covered call / cash-secured put:** ~0.30 delta out of the money.
 
 **Width** is a strike count, not a dollar amount: 2 means "two rows
 apart", so it follows whatever strike spacing the chain has ($1 on SPY, $5
@@ -966,6 +1000,16 @@ strategy changes.
   wide market (bid/ask more than a quarter of the mid apart -- a mid
   limit may not fill); and a spread the market quotes the other way
   round.
+- **Risk** (the payoff diagram, under the summary, collapsible): P&L per
+  position over the underlying's price. The solid line is the position
+  **at expiry** -- for a calendar at the *short* expiry with the long leg
+  still valued -- with the profit and loss areas tinted; the dashed line is
+  **today**, every leg priced by Black-Scholes at its own implied
+  volatility (r = 0, no dividends, no skew model -- an estimate, like the
+  chain's greeks, and absent when a leg has no IV). The zero line, the
+  spot, the breakevens and max profit / max loss are marked; hovering
+  reads off S and the P&L on both curves. The same chart sits under each
+  position in Open spreads, priced from fresh quotes every 15 s.
 - **Confirm** lists every leg, the signed limit, the risk figures and the
   warnings again; in Live it demands `LIVE`. Orders are day orders (the
   only kind Alpaca allows for options). A rejection from the broker comes
@@ -980,8 +1024,12 @@ non-tradable contract is handled by the data.
 Alpaca reports option positions one contract at a time; the tab groups
 them back into spreads by underlying and expiry and classifies them by
 shape: two legs of one kind with opposite sides → a vertical, four legs
-with the right ordering → an iron condor, one long contract → long
-call/put, anything else → **custom**. A lone short contract or unequal
+with the right ordering → an iron condor (or an iron fly when the shorts
+share a strike), two longs of both kinds → straddle / strangle, three of
+one kind 1-2-1 → a butterfly, one long contract → long call/put, a lone
+short put → cash-secured put, a short call with 100 held shares per
+contract → covered call, a short leg and a later-expiry long leg of the
+same kind → calendar / diagonal, anything else → **custom**. A lone short contract or unequal
 quantities are flagged **broken** (the remains of a spread closed one leg
 at a time); **expires today** flags a 0DTE position.
 
