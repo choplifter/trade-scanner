@@ -246,6 +246,11 @@ const MAX_SPACING = 12;
 // wanted.
 const LEVEL_LABEL_CLEARANCE_PX = 150;
 
+// Wide enough for "1234.56" plus the axis padding at the chart's font, so
+// the axis never resizes with the digits of the last price (see the price
+// scale options in the series effect).
+const PRICE_AXIS_MIN_WIDTH = 72;
+
 // Every place that repositions the viewport has to re-assert the margin,
 // because setting a visible range repositions the content and drops it.
 // That is what made the first attempts look like the option did nothing: it
@@ -482,11 +487,23 @@ export function CandleChart({
    * does on every new candle. */
   function snapToNewestBar(chart: IChartApi, barCount: number) {
     if (barCount <= 0) return;
-    const current = chart.timeScale().getVisibleLogicalRange();
-    const fallback = visibleLogicalRange(containerRef.current?.clientWidth || 1, barCount);
-    const width = current ? current.to - current.from : fallback ? fallback.to - fallback.from : barCount - 1;
+    const ts = chart.timeScale();
+    // One scroll, zoom untouched. The earlier version rebuilt the viewport
+    // from getVisibleLogicalRange() -- but a logical range does not round
+    // trip through setVisibleLogicalRange exactly (the library derives the
+    // bar spacing from `to - from + 1`, not from the width it reported),
+    // and the margin was re-applied in a second step. Net effect: on every
+    // new candle the bar spacing changed by a fraction of a pixel and the
+    // chart drew one frame with the newest bar hard against the right edge
+    // -- the "zooms in and out on some ticks" flicker. scrollToPosition
+    // sets the right offset in bars for the current spacing and nothing
+    // else, which is what "go to realtime" means.
+    const clearance = hasLevelsRef.current ? LEVEL_LABEL_CLEARANCE_PX : 0;
+    const barSpacing = ts.options().barSpacing || 1;
     rangeRequestedRef.current = true;
-    chart.timeScale().setVisibleLogicalRange({ from: barCount - 1 - width, to: barCount - 1 });
+    ts.scrollToPosition(clearance / barSpacing, false);
+    // Keeps the option in step for later range sets; same offset, so this
+    // is not a second scroll.
     applyLabelClearance(chart, hasLevelsRef.current);
     appliedClearanceRef.current = hasLevelsRef.current;
   }
@@ -880,8 +897,17 @@ export function CandleChart({
             wickDownColor: "#d03b3b",
           });
     // Leaves the bottom fifth to the volume histogram (see the volume
-    // scale's own margins above).
-    series.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.2 } });
+    // scale's own margins above). minimumWidth pins the axis: the library
+    // sizes it to its widest label, and the last-price label changes width
+    // with every tick ("769.11" is narrower than "769.88" in a proportional
+    // font), so without it the pane grew and shrank by a few pixels per
+    // print. The right offset is kept in bars, so that showed as the left
+    // edge revealing and hiding a bar and the autoscale re-fitting to it --
+    // the "zooms in and out on some ticks" flicker.
+    series.priceScale().applyOptions({
+      scaleMargins: { top: 0.05, bottom: 0.2 },
+      minimumWidth: PRICE_AXIS_MIN_WIDTH,
+    });
     priceSeriesRef.current = series;
 
     return () => {
@@ -1344,7 +1370,15 @@ export function CandleChart({
     // upstream just moved the viewport, so the preserved/restored range is
     // always a faithful echo of wherever the user actually left it.
     if (preservedRange && focusTime == null) {
-      chart.timeScale().setVisibleLogicalRange(preservedRange);
+      // Only when rebuilding the lines actually moved the viewport. The
+      // restore is not free: a logical range does not round trip through
+      // setVisibleLogicalRange exactly (see snapToNewestBar), and this
+      // effect runs on every trade tick, so an unconditional restore
+      // re-derived the zoom several times a second and let it drift.
+      const after = chart.timeScale().getVisibleLogicalRange();
+      const moved =
+        !after || Math.abs(after.from - preservedRange.from) > 0.01 || Math.abs(after.to - preservedRange.to) > 0.01;
+      if (moved) chart.timeScale().setVisibleLogicalRange(preservedRange);
     }
     // After the restore, never before: setVisibleLogicalRange repositions
     // the content and drops the margin. Only when the need for clearance
