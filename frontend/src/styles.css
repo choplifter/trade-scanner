@@ -2730,3 +2730,217 @@ a.news-feed-headline:hover {
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* --- Options widget ------------------------------------------------------- */
+.options-widget .widget-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.options-widget:focus {
+  outline: none;
+}
+
+.expiry-strip {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 2px;
+}
+
+.expiry-strip small {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.options-chain-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.chain-scroll {
+  overflow: auto;
+  min-height: 220px;
+  max-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.chain-table {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.chain-table thead th {
+  position: sticky;
+  background: var(--surface-raised);
+  z-index: 1;
+  text-align: right;
+  padding: 2px 6px;
+}
+
+.chain-table thead tr:first-child th {
+  top: 0;
+}
+
+.chain-table thead tr:nth-child(2) th {
+  top: 21px;
+}
+
+.chain-table th.chain-group {
+  text-align: center;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.chain-table td.chain-strike,
+.chain-table th.chain-strike {
+  text-align: center;
+  font-weight: 700;
+  background: var(--surface-raised);
+}
+
+.chain-table td.chain-side {
+  text-align: right;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.chain-table td.chain-itm {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.chain-table td.chain-pickable {
+  cursor: pointer;
+}
+
+.chain-table td.chain-pickable:hover {
+  background: var(--row-hover);
+}
+
+.chain-table td.chain-leg-long {
+  box-shadow: inset 0 0 0 1px var(--delta-up);
+  background: color-mix(in srgb, var(--delta-up) 18%, transparent);
+}
+
+.chain-table td.chain-leg-short {
+  box-shadow: inset 0 0 0 1px var(--delta-down);
+  background: color-mix(in srgb, var(--delta-down) 18%, transparent);
+}
+
+.chain-spot-row td {
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--row-selected);
+  padding: 1px;
+}
+
+.spread-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.spread-ticket label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.spread-ticket input[type="number"] {
+  width: 78px;
+}
+
+.spread-strategies,
+.spread-legs-row {
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.spread-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.spread-legs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  list-style: none;
+  padding: 0;
+  margin: 4px 0;
+}
+
+.spread-leg.buy {
+  color: var(--delta-up);
+}
+
+.spread-leg.sell {
+  color: var(--delta-down);
+}
+
+.spread-broken {
+  color: var(--status-warning);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.spread-expand td {
+  background: var(--surface-raised);
+}
+
+.trigger-editor {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.trigger-editor input[type="number"] {
+  width: 90px;
+}
+
+.trigger-status {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-right: 4px;
+}
+
+.trigger-status.active {
+  color: var(--accent);
+}
+
+.trigger-status.fired {
+  color: var(--status-good);
+}
+
+.trigger-status.failed,
+.trigger-status.orphaned {
+  color: var(--status-critical);
+}
+
+.trigger-status.cancelled {
+  color: var(--text-muted);
+}

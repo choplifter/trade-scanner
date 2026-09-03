@@ -22,6 +22,7 @@ import { exitsForPosition, num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "./LiveConfirmField";
+import { formatLeg } from "../../utils/occ";
 import { BalanceChart } from "./BalanceChart";
 import { OrderTicket } from "./OrderTicket";
 
@@ -136,6 +137,14 @@ function signedMoney(value: string | null | undefined): { text: string; cls: str
  * returns -- already numbers, already in the unit shown. Exported for
  * TradeJournalWidget, which shows the same P&L/R figures against the same
  * trade list. */
+/** A multi-leg (spread) parent order has no symbol of its own; label it
+ * by its legs so the Orders tab can still say what it is. */
+function orderLabel(order: Order): string {
+  if (order.symbol) return order.symbol;
+  const legs = (order.legs ?? []).map((leg) => (leg.symbol ? formatLeg(leg.symbol) : "?"));
+  return legs.length > 0 ? legs.join(" / ") : "multi-leg";
+}
+
 export function signedNumber(
   value: number | null,
   digits: number,
@@ -768,6 +777,9 @@ function PositionsTable({
   onSelectSymbol: (symbol: string) => void;
   onAction: (action: PendingAction) => void;
 }) {
+  // Option legs are grouped into spreads by the Options widget; here they
+  // would read as unrelated single contracts.
+  const equityPositions = positions.filter((p) => (p.asset_class ?? "us_equity") !== "us_option");
   if (positions.length === 0) {
     return <div className="widget-empty">No open positions.</div>;
   }
@@ -789,7 +801,7 @@ function PositionsTable({
         </tr>
       </thead>
       <tbody>
-        {positions.map((p) => {
+        {equityPositions.map((p) => {
           const pl = signedMoney(p.unrealized_pl);
           const plpc = signedPct(p.unrealized_plpc);
           const exits = exitsForPosition(p, orders);
@@ -936,9 +948,9 @@ function OrdersTable({
           <tr
             key={o.id}
             aria-selected={o.symbol === selectedSymbol}
-            onClick={() => onSelectSymbol(o.symbol)}
+            onClick={() => o.symbol && onSelectSymbol(o.symbol)}
           >
-            <td className="symbol-cell">{o.symbol}</td>
+            <td className="symbol-cell">{orderLabel(o)}</td>
             <td>{o.side}</td>
             <td>{o.order_type}</td>
             <td>{num(o.qty) ?? "—"}</td>
@@ -954,7 +966,7 @@ function OrdersTable({
                   // The row click selects the symbol; without this, cancelling
                   // would also retarget the chart.
                   e.stopPropagation();
-                  onCancelOrder(o.id, o.symbol);
+                  onCancelOrder(o.id, orderLabel(o));
                 }}
               >
                 Cancel
@@ -1134,10 +1146,10 @@ function FillsTable({
             <tr
               key={o.id}
               aria-selected={o.symbol === selectedSymbol}
-              onClick={() => onSelectSymbol(o.symbol)}
+              onClick={() => o.symbol && onSelectSymbol(o.symbol)}
             >
               <td>{fillTime(o)}</td>
-              <td className="symbol-cell">{o.symbol}</td>
+              <td className="symbol-cell">{orderLabel(o)}</td>
               <td>{o.side}</td>
               <td>{qty ?? "—"}</td>
               <td>{money(o.filled_avg_price)}</td>

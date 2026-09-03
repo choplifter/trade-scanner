@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
 import { useTradingContext } from "../../context/TradingContext";
+import { useSpreadLevels } from "../../hooks/useSpreadLevels";
 import { useTradingMode } from "../../hooks/useTradingMode";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import {
@@ -290,6 +291,9 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
   // as isReplaySymbol/usingReplayBars just above.
   const symbolHasGex = isGexSymbol(symbol);
   const gexLevels = useGexLevels(symbolHasGex ? symbol : null);
+  // The Options widget's strikes and armed underlying bounds, drawn like
+  // the GEX walls (see useSpreadLevels).
+  const spreadLevels = useSpreadLevels(symbol);
   const gexReading = useGexReading(symbolHasGex ? symbol : null);
   // Shared with SymbolInfoWidget via context rather than a second
   // useSymbolInfo(symbol) call here -- the chart marks the same news on its
@@ -462,10 +466,10 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
   // gexLevels folded in here, not just at the CandleChart prop, so the
   // Levels-checklist below (which also maps over this same list) can offer
   // it as a toggle -- both call sites have to see one consistent array.
-  const indicatorsWithGex = useMemo(
-    () => (gexLevels ? [...displayed.indicators, gexLevels] : displayed.indicators),
-    [displayed.indicators, gexLevels],
-  );
+  const indicatorsWithGex = useMemo(() => {
+    const extra = [gexLevels, spreadLevels].filter((i): i is NonNullable<typeof i> => i !== null);
+    return extra.length > 0 ? [...displayed.indicators, ...extra] : displayed.indicators;
+  }, [displayed.indicators, gexLevels, spreadLevels]);
   // Memoized rather than filtered inline at the prop: CandleChart's
   // indicators effect tears down and rebuilds every price line whenever
   // this reference changes, and this component re-renders on every trade

@@ -8,6 +8,7 @@ import { LoginPage } from "./components/auth/LoginPage";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { SymbolInfoWidget } from "./components/chart/SymbolInfoWidget";
 import { GexPlanWidget } from "./components/gex/GexPlanWidget";
+import { OptionsWidget } from "./components/options/OptionsWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { DockviewDashboard } from "./components/layout/DockviewDashboard";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
@@ -22,6 +23,7 @@ import { TradeJournalWidget } from "./components/trading/TradeJournalWidget";
 import { TradingWidget } from "./components/trading/TradingWidget";
 import { WatchlistPanel } from "./components/watchlist/WatchlistPanel";
 import { SymbolInfoProvider } from "./context/SymbolInfoContext";
+import { SpreadLevelsProvider } from "./context/SpreadLevelsContext";
 import { TradingProvider, useTradingContext } from "./context/TradingContext";
 import type { ChartFocus } from "./types/screener";
 import type { User } from "./api/auth";
@@ -160,6 +162,12 @@ function AppShell({ user, onLogout }: AppShellProps) {
       // Same key requirement as gex_plan above -- also placed outside the
       // resizable splits in panels mode.
       trade_journal: <TradeJournalWidget key="trade_journal" onSelectPick={selectPick} />,
+      // Options chain + spread ticket + open spreads. Same key requirement;
+      // the mode dependency below remounts it on a mode switch like the
+      // trading widget.
+      options: (
+        <OptionsWidget key="options" symbol={selectedSymbol} mode={tradingMode.mode} onSelectSymbol={selectSymbol} />
+      ),
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
     // state the comment above guards against: switching modes should
@@ -319,6 +327,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               </ResizablePanels>
               {widgets.gex_plan}
               {widgets.trade_journal}
+              {widgets.options}
             </div>
           ) : (
             // No session -- replay collapses to its own content-sized strip
@@ -343,6 +352,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               {widgets.replay}
               {widgets.gex_plan}
               {widgets.trade_journal}
+              {widgets.options}
             </div>
           )}
         </main>
@@ -371,7 +381,9 @@ export default function App() {
 
   return (
     <TradingProvider>
+      <SpreadLevelsProvider>
       <AppShell user={auth.user} onLogout={() => void auth.logout()} />
+      </SpreadLevelsProvider>
     </TradingProvider>
   );
 }

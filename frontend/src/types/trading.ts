@@ -56,6 +56,8 @@ export interface AccountResponse {
 
 export interface Position {
   symbol: string;
+  /** "us_equity" or "us_option"; option legs are shown by the Options widget. */
+  asset_class?: string;
   qty: string;
   side: string;
   avg_entry_price: string;
@@ -71,7 +73,8 @@ export interface Position {
 
 export interface Order {
   id: string;
-  symbol: string;
+  /** Null on a multi-leg (options spread) parent -- see `legs`. */
+  symbol: string | null;
   side: string;
   order_type: string;
   qty: string | null;

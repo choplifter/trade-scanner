@@ -31,7 +31,7 @@ import type {
 } from "../types/trading";
 import type { TradeIdeasPerformanceResponse, TradeIdeasResponse } from "../types/tradeIdeas";
 
-const API_BASE = "/api";
+export const API_BASE = "/api";
 
 /** Fires when any call below gets a 401 -- the session cookie the browser
  * sent was missing or no longer validated server-side, regardless of why
@@ -49,13 +49,13 @@ export function onUnauthorized(listener: UnauthorizedListener): () => void {
   return () => unauthorizedListeners.delete(listener);
 }
 
-function checkUnauthorized(res: Response): void {
+export function checkUnauthorized(res: Response): void {
   if (res.status === 401) {
     unauthorizedListeners.forEach((fn) => fn());
   }
 }
 
-async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
+export async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const body = (await res.json()) as { detail?: string };
     return body.detail ?? fallback;
