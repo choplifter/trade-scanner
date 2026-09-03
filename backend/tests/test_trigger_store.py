@@ -69,3 +69,39 @@ def test_mark_transitions(tmp_path):
     asyncio.run(store.mark_failed(b["id"], "still down", 3, final=True))
     assert asyncio.run(store.all_active()) == []
     assert {t["status"] for t in asyncio.run(store.list_for_user(1, "paper"))} == {FIRED, FAILED, ORPHANED}
+
+
+def test_premium_bounds_are_stored_and_old_databases_get_the_columns(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.sqlite3"
+    # A database from before premium triggers existed: no premium columns.
+    with sqlite3.connect(db) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE option_underlying_triggers (
+                id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, account TEXT NOT NULL DEFAULT 'paper',
+                underlying TEXT NOT NULL, expiry TEXT NOT NULL, legs TEXT NOT NULL, qty INTEGER NOT NULL,
+                close_below REAL, close_above REAL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, fired_at TEXT,
+                fired_price REAL, fired_order_id TEXT
+            );
+            """
+        )
+    store = TriggerStore(str(db))
+    asyncio.run(store.init_schema())
+    created = asyncio.run(store.create(1, "paper", _body(close_below=None, premium_below=1.2, premium_above=4.0)))
+    assert created["premium_below"] == 1.2 and created["premium_above"] == 4.0 and created["close_below"] is None
+    asyncio.run(store.mark_fired(created["id"], 1.15, "ord-9", on="premium"))
+    (fired,) = asyncio.run(store.list_for_user(1, "paper"))
+    assert fired["status"] == FIRED and fired["fired_price"] == 1.15 and fired["fired_on"] == "premium"
+
+
+def test_trigger_needs_some_bound_and_ordered_premium_bounds():
+    import pytest
+
+    with pytest.raises(ValueError):
+        _body(close_below=None)
+    with pytest.raises(ValueError):
+        _body(close_below=None, premium_below=3.0, premium_above=2.0)
+    assert _body(close_below=None, premium_above=2.0).has_premium_bounds

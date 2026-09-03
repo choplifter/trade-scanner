@@ -235,19 +235,36 @@ class TriggerCreate(BaseModel):
     expiry: date
     legs: list[CloseLeg] = Field(min_length=1, max_length=4)
     qty: int = Field(gt=0)
+    # Bounds on the underlying's last price...
     close_below: float | None = Field(default=None, gt=0)
     close_above: float | None = Field(default=None, gt=0)
+    # ...and/or on the position's own mark per share: the mid of closing
+    # the package, as a positive number (a long call's premium; what it
+    # costs to buy a credit spread back). premium_below is a long's stop
+    # or a credit spread's take-profit; premium_above the reverse.
+    premium_below: float | None = Field(default=None, gt=0)
+    premium_above: float | None = Field(default=None, gt=0)
+
+    @property
+    def has_premium_bounds(self) -> bool:
+        return self.premium_below is not None or self.premium_above is not None
 
     @model_validator(mode="after")
     def check_bounds(self) -> "TriggerCreate":
-        if self.close_below is None and self.close_above is None:
-            raise ValueError("set close_below, close_above or both")
+        if all(v is None for v in (self.close_below, self.close_above, self.premium_below, self.premium_above)):
+            raise ValueError("set a bound on the underlying price (close_below/close_above) or the premium")
         if (
             self.close_below is not None
             and self.close_above is not None
             and not self.close_below < self.close_above
         ):
             raise ValueError("close_below must be below close_above")
+        if (
+            self.premium_below is not None
+            and self.premium_above is not None
+            and not self.premium_below < self.premium_above
+        ):
+            raise ValueError("premium_below must be below premium_above")
         if self.qty > min(abs(leg.qty) for leg in self.legs):
             raise ValueError("qty exceeds what is held on at least one leg")
         return self

@@ -6,6 +6,7 @@ import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMod
 import { useSpreadLevelsContext } from "../../context/SpreadLevelsContext";
 import {
   STRATEGY_LABELS,
+  triggerBoundsLabel,
   type ClosePreview,
   type CloseSpreadRequest,
   type OptionsAccountResponse,
@@ -89,6 +90,8 @@ export function OpenSpreads({
   const [liveTyped, setLiveTyped] = useState("");
   const [below, setBelow] = useState("");
   const [above, setAbove] = useState("");
+  const [premBelow, setPremBelow] = useState("");
+  const [premAbove, setPremAbove] = useState("");
   const [armTyped, setArmTyped] = useState("");
   const [armError, setArmError] = useState<string | null>(null);
   const [armBusy, setArmBusy] = useState(false);
@@ -168,12 +171,18 @@ export function OpenSpreads({
   const arm = async (group: SpreadGroup) => {
     const b = below.trim() === "" ? undefined : Number(below);
     const a = above.trim() === "" ? undefined : Number(above);
-    if (b === undefined && a === undefined) {
-      setArmError("Enter a close-below and/or close-above price.");
+    const pb = premBelow.trim() === "" ? undefined : Number(premBelow);
+    const pa = premAbove.trim() === "" ? undefined : Number(premAbove);
+    if (b === undefined && a === undefined && pb === undefined && pa === undefined) {
+      setArmError("Enter a bound on the underlying's price and/or on the premium.");
       return;
     }
-    if ((b !== undefined && !(b > 0)) || (a !== undefined && !(a > 0))) {
+    if ([b, a, pb, pa].some((v) => v !== undefined && !(v > 0))) {
       setArmError("Prices must be positive.");
+      return;
+    }
+    if (pb !== undefined && pa !== undefined && !(pb < pa)) {
+      setArmError("The premium stop must be below the premium target.");
       return;
     }
     if (!liveConfirmed(mode, armTyped)) {
@@ -191,11 +200,15 @@ export function OpenSpreads({
           qty: group.qty || 1,
           ...(b !== undefined ? { close_below: b } : {}),
           ...(a !== undefined ? { close_above: a } : {}),
+          ...(pb !== undefined ? { premium_below: pb } : {}),
+          ...(pa !== undefined ? { premium_above: pa } : {}),
         },
         mode === "live" ? armTyped.trim() : undefined,
       );
       setBelow("");
       setAbove("");
+      setPremBelow("");
+      setPremAbove("");
       setArmTyped("");
     } catch (err: unknown) {
       setArmError(err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err));
@@ -264,10 +277,17 @@ export function OpenSpreads({
                 <td>
                   {active.length > 0
                     ? active.map((t) => (
-                        <span key={t.id} className="trigger-status active">
+                        <span key={t.id} className="trigger-status active" title={triggerBoundsLabel(t)}>
                           {t.close_below != null ? `≤${t.close_below}` : ""}
                           {t.close_below != null && t.close_above != null ? " " : ""}
                           {t.close_above != null ? `≥${t.close_above}` : ""}
+                          {(t.close_below != null || t.close_above != null) &&
+                          (t.premium_below != null || t.premium_above != null)
+                            ? " "
+                            : ""}
+                          {t.premium_below != null ? `prem≤${t.premium_below}` : ""}
+                          {t.premium_below != null && t.premium_above != null ? " " : ""}
+                          {t.premium_above != null ? `prem≥${t.premium_above}` : ""}
                         </span>
                       ))
                     : "—"}
@@ -336,6 +356,31 @@ export function OpenSpreads({
                           onClick={(e) => e.stopPropagation()}
                         />
                       </label>
+                      <span title="The position's own mark: the mid of closing it, per share. Its entry is the net entry column.">
+                        or its premium
+                      </span>
+                      <label>
+                        ≤{" "}
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={premBelow}
+                          placeholder={group.net_entry > 0 ? "stop" : "take profit"}
+                          onChange={(e) => setPremBelow(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </label>
+                      <label>
+                        ≥{" "}
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={premAbove}
+                          placeholder={group.net_entry > 0 ? "take profit" : "stop"}
+                          onChange={(e) => setPremAbove(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </label>
                       <LiveConfirmField mode={mode} value={armTyped} onChange={setArmTyped} />
                       <button
                         type="button"
@@ -359,10 +404,10 @@ export function OpenSpreads({
                         {groupTriggers.map((t) => (
                           <li key={t.id}>
                             <span className={`trigger-status ${t.status}`}>{t.status.toUpperCase()}</span>{" "}
-                            {t.close_below != null ? `below ${t.close_below}` : ""}
-                            {t.close_below != null && t.close_above != null ? " · " : ""}
-                            {t.close_above != null ? `above ${t.close_above}` : ""} · {t.qty}x
-                            {t.fired_price != null ? ` · fired at ${t.fired_price.toFixed(2)}` : ""}
+                            {triggerBoundsLabel(t)} · {t.qty}x
+                            {t.fired_price != null
+                              ? ` · fired at ${t.fired_on === "premium" ? "premium " : ""}${t.fired_price.toFixed(2)}`
+                              : ""}
                             {t.fired_order_id ? ` · order ${t.fired_order_id.slice(0, 8)}` : ""}
                             {t.last_error ? ` · ${t.last_error}` : ""}
                             {t.status === "active" && (

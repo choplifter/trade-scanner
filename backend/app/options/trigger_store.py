@@ -1,6 +1,8 @@
-"""Underlying-price triggers for open spreads: "close this spread if SPY
-trades below 740 / above 775". Alpaca takes no stop orders on options, so
-the dashboard keeps these itself and app.options.monitor watches them.
+"""Exit triggers for open spreads and contracts: "close this if SPY
+trades below 740 / above 775", and/or "close this if its own premium
+(mark) falls below 1.20 / rises above 4.00". Alpaca takes no stop orders
+on options, so the dashboard keeps these itself and app.options.monitor
+watches them.
 
 Persisted (same sqlite file and conventions as app.trading.journal_store)
 so a backend restart does not silently drop a stop someone is relying on.
@@ -27,6 +29,8 @@ CREATE TABLE IF NOT EXISTS option_underlying_triggers (
     qty INTEGER NOT NULL,
     close_below REAL,
     close_above REAL,
+    premium_below REAL,
+    premium_above REAL,
     status TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
@@ -34,7 +38,8 @@ CREATE TABLE IF NOT EXISTS option_underlying_triggers (
     updated_at TEXT NOT NULL,
     fired_at TEXT,
     fired_price REAL,
-    fired_order_id TEXT
+    fired_order_id TEXT,
+    fired_on TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_option_triggers_user_status
     ON option_underlying_triggers(user_id, status);
@@ -42,9 +47,18 @@ CREATE INDEX IF NOT EXISTS idx_option_triggers_user_status
 
 _COLUMNS = (
     "id", "user_id", "account", "underlying", "expiry", "legs", "qty", "close_below",
-    "close_above", "status", "attempts", "last_error", "created_at", "updated_at",
-    "fired_at", "fired_price", "fired_order_id",
+    "close_above", "premium_below", "premium_above", "status", "attempts", "last_error",
+    "created_at", "updated_at", "fired_at", "fired_price", "fired_order_id", "fired_on",
 )
+
+# Columns added after the table first shipped; init_schema adds any that an
+# existing database lacks (same PRAGMA table_info + ALTER pattern as
+# app.trading.trade_store).
+_ADDED_COLUMNS = {
+    "premium_below": "REAL",
+    "premium_above": "REAL",
+    "fired_on": "TEXT",
+}
 
 ACTIVE = "active"
 FIRED = "fired"
@@ -75,6 +89,10 @@ class TriggerStore:
     def _init_schema_sync(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            present = {row[1] for row in conn.execute("PRAGMA table_info(option_underlying_triggers)")}
+            for column, kind in _ADDED_COLUMNS.items():
+                if column not in present:
+                    conn.execute(f"ALTER TABLE option_underlying_triggers ADD COLUMN {column} {kind}")
 
     async def init_schema(self) -> None:
         await asyncio.to_thread(self._init_schema_sync)
@@ -91,8 +109,8 @@ class TriggerStore:
                 (
                     trigger_id, user_id, account, body.underlying.upper(), body.expiry.isoformat(),
                     json.dumps([{"symbol": leg.symbol, "qty": leg.qty} for leg in body.legs]),
-                    body.qty, body.close_below, body.close_above, ACTIVE, 0, None, stamp, stamp,
-                    None, None, None,
+                    body.qty, body.close_below, body.close_above, body.premium_below, body.premium_above,
+                    ACTIVE, 0, None, stamp, stamp, None, None, None, None,
                 ),
             )
             row = conn.execute(
@@ -125,12 +143,29 @@ class TriggerStore:
                 (*fields.values(), trigger_id),
             )
 
-    async def mark_fired(self, trigger_id: str, price: float, order_id: str | None, now: datetime | None = None) -> None:
+    async def mark_fired(
+        self,
+        trigger_id: str,
+        price: float,
+        order_id: str | None,
+        now: datetime | None = None,
+        *,
+        on: str = "underlying",
+    ) -> None:
+        """`price` is the value that crossed the bound -- the underlying's
+        last, or the premium when `on` is "premium"."""
         stamp = (now or datetime.now(UTC)).isoformat()
         await asyncio.to_thread(
             self._mark_sync,
             trigger_id,
-            {"status": FIRED, "fired_at": stamp, "fired_price": price, "fired_order_id": order_id, "updated_at": stamp},
+            {
+                "status": FIRED,
+                "fired_at": stamp,
+                "fired_price": price,
+                "fired_order_id": order_id,
+                "fired_on": on,
+                "updated_at": stamp,
+            },
         )
 
     async def mark_failed(

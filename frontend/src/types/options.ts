@@ -195,6 +195,9 @@ export interface UnderlyingTrigger {
   qty: number;
   close_below: number | null;
   close_above: number | null;
+  /** Bounds on the position's own mark (the mid of closing it), per share. */
+  premium_below: number | null;
+  premium_above: number | null;
   status: TriggerStatus;
   attempts: number;
   last_error: string | null;
@@ -203,6 +206,8 @@ export interface UnderlyingTrigger {
   fired_at: string | null;
   fired_price: number | null;
   fired_order_id: string | null;
+  /** What fired_price refers to: "underlying" or "premium". */
+  fired_on: "underlying" | "premium" | null;
 }
 
 export interface SpreadsResponse {
@@ -239,6 +244,23 @@ export interface TriggerCreateRequest {
   qty: number;
   close_below?: number;
   close_above?: number;
+  premium_below?: number;
+  premium_above?: number;
+}
+
+/** "below 740 · above 775 · prem ≤ 1.20" for a trigger row. */
+export function triggerBoundsLabel(t: {
+  close_below: number | null;
+  close_above: number | null;
+  premium_below?: number | null;
+  premium_above?: number | null;
+}): string {
+  const parts: string[] = [];
+  if (t.close_below != null) parts.push(`below ${t.close_below}`);
+  if (t.close_above != null) parts.push(`above ${t.close_above}`);
+  if (t.premium_below != null) parts.push(`premium ≤ ${t.premium_below.toFixed(2)}`);
+  if (t.premium_above != null) parts.push(`premium ≥ ${t.premium_above.toFixed(2)}`);
+  return parts.join(" · ");
 }
 
 export interface OrderResponse {

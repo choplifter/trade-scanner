@@ -189,7 +189,8 @@ async def list_triggers(request: Request, user: dict = Depends(get_current_user)
 
 @router.post("/triggers")
 async def create_trigger(body: TriggerCreate, request: Request, user: dict = Depends(get_current_user)) -> dict:
-    """Arm a stop and/or target on the underlying's price. Arming a live
+    """Arm a stop and/or target on the underlying's price and/or on the
+    position's own premium (the mark of the closing package). Arming a live
     trigger is itself a real-money decision, so it asks for the typed
     confirmation; the loop that later fires it does not ask again."""
     from app.trading.guards import assert_can_trade

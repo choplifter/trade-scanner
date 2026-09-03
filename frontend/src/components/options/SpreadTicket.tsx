@@ -46,6 +46,8 @@ interface SpreadTicketProps {
   account: OptionsAccountResponse | null;
   mode: TradingMode;
   onSubmitted: () => void;
+  /** Clicking a leg in the summary loads that contract's premium chart. */
+  onSelectSymbol?: (symbol: string) => void;
 }
 
 function randomUUID(): string {
@@ -88,6 +90,7 @@ export function SpreadTicket({
   account,
   mode,
   onSubmitted,
+  onSelectSymbol,
 }: SpreadTicketProps) {
   const [qty, setQty] = useState("1");
   const [limit, setLimit] = useState("");
@@ -331,7 +334,20 @@ export function SpreadTicket({
           <span className="spread-legs">
             {spread.legs.map((leg) => (
               <span key={leg.symbol} className={`spread-leg ${leg.side}`}>
-                {leg.side === "buy" ? "+" : "−"} {formatLeg(leg.symbol)} @ {leg.mid?.toFixed(2) ?? "—"}
+                {leg.side === "buy" ? "+" : "−"}{" "}
+                {onSelectSymbol ? (
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => onSelectSymbol(leg.symbol)}
+                    title={`Chart this contract's premium (${leg.symbol})`}
+                  >
+                    {formatLeg(leg.symbol)}
+                  </button>
+                ) : (
+                  formatLeg(leg.symbol)
+                )}{" "}
+                @ {leg.mid?.toFixed(2) ?? "—"}
                 {leg.delta != null ? ` Δ${leg.delta.toFixed(2)}` : ""}
               </span>
             ))}

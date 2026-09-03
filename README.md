@@ -626,17 +626,21 @@ past dates.
   is a long call/put, an unbalanced or lone short remainder is flagged
   **broken**) with net entry, mark and P&L, expandable legs, a **Close**
   modal that reverses every leg at the mid (limit editable; a single
-  remaining leg closes with a plain order) and an **underlying-price
-  trigger** editor: arm *close below* and/or *close above* on the stock's
-  price and a backend loop (`backend/app/options/monitor.py`, every 2 s
-  during the regular session, batched snapshot prices) closes the spread
-  with a limit stepped toward the natural price so it fills rather than
-  rests. Triggers are persisted in `scanner_history.sqlite3` per user and
+  remaining leg closes with a plain order) and a **trigger** editor: arm
+  *close below* and/or *close above* on the stock's price, and/or a bound
+  on the position's own **premium** (its mark: the mid of closing the
+  package per share — a long's stop or a credit spread's take-profit at
+  *≤*, the reverse at *≥*), and a backend loop
+  (`backend/app/options/monitor.py`, every 2 s during the regular session,
+  one batched stock-price fetch and one batched option-snapshot fetch)
+  closes the spread with a limit stepped toward the natural price so it
+  fills rather than rests. Triggers are persisted in `scanner_history.sqlite3` per user and
   account, survive restarts, show their status (active / fired / failed /
   orphaned when the legs are gone) and can be cancelled. The ticket's
   strikes and an open spread's strikes/trigger bounds draw on the chart as
-  levels. Clicking a leg under Open spreads, or a single option order in
-  the Orders tab, loads the contract's own **premium chart** — its minute
+  levels. Clicking a leg in the ticket's summary, a leg under Open
+  spreads, or a single option order in the Orders tab, loads the
+  contract's own **premium chart** — its minute
   bars (1m/5m/15m) or native hourly/daily/weekly bars from Alpaca's option
   bars endpoint, labelled "SPY 4 Sep 765C · premium", with a button back to
   the underlying; no VWAP or levels on it (those belong to the stock's
@@ -647,7 +651,10 @@ past dates.
   written naked), each opening a dialog with the mid, natural price and an
   editable limit; the held quantity, entry and P&L, and any working order
   on the contract are shown beside it, and working orders draw as dashed
-  lines at their limits with the held entry as a solid line. While a
+  lines at their limits with the held entry as a solid line. Below the
+  ticket, for a held contract, a **premium trigger** editor arms *close if
+  the premium is ≤ / ≥* (same trigger store and loop; the bounds draw as
+  dashed stop/target-coloured lines on the premium chart). While a
   contract is on the chart the Options widget follows it: its expiry is
   selected and the strike marked as a long call/put. Widget-local hotkeys (not in Live): `[` `]` expiry, `5`–`9`
   strategy (the two outright longs have none — `0`–`4` belong to the

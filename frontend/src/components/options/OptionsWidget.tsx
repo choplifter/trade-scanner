@@ -210,6 +210,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   account={spreads.account}
                   mode={mode}
                   onSubmitted={spreads.afterAction}
+                  onSelectSymbol={onSelectSymbol}
                 />
               )}
             </div>

@@ -350,16 +350,22 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
     [contract, orders, symbol],
   );
   const orderLevelsKey = contractOrders.map((o) => `${o.id}:${o.side}:${o.qty}:${o.limit_price}`).join("|");
+  // Premium-trigger bounds on the contract, reported by the ContractTicket
+  // (which owns the trigger poll); reset with the symbol.
+  const [triggerLevels, setTriggerLevels] = useState<OrderLevel[]>([]);
+  useEffect(() => setTriggerLevels([]), [symbol]);
   const orderLevels = useMemo<OrderLevel[]>(
-    () =>
-      contractOrders.flatMap((o) => {
+    () => [
+      ...contractOrders.flatMap((o) => {
         const price = Number(o.limit_price);
         if (!Number.isFinite(price) || price <= 0) return [];
         const side: "buy" | "sell" = o.side === "sell" ? "sell" : "buy";
         return [{ price, side, title: `${side === "buy" ? "Buy" : "Sell"} ${o.qty ?? ""}`.trim() }];
       }),
+      ...triggerLevels,
+    ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [orderLevelsKey],
+    [orderLevelsKey, triggerLevels],
   );
 
   // What the chart actually draws -- each field nulled out when its Levels
@@ -764,6 +770,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
             position={position}
             orders={contractOrders}
             onSubmitted={refreshTrading}
+            onTriggerLevels={setTriggerLevels}
           />
         )
       )}

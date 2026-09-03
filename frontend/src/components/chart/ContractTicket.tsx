@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { OrderRejectedError } from "../../api/http";
 import { closeSpread, previewCloseSpread, previewSpread, submitSpread } from "../../api/options";
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
-import type { ClosePreview, SpreadPreview } from "../../types/options";
+import { useSpreads } from "../../hooks/useSpreads";
+import { triggerBoundsLabel, type ClosePreview, type SpreadPreview } from "../../types/options";
 import type { Order, Position, TradingRejection } from "../../types/trading";
 import { formatLeg, type ParsedOcc } from "../../utils/occ";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
+import { POSITION_STOP_COLOR, POSITION_TARGET_COLOR, type OrderLevel } from "./CandleChart";
 
 interface ContractTicketProps {
   /** The OCC symbol on the chart. */
@@ -23,6 +25,8 @@ interface ContractTicketProps {
   /** Called after an order went out, so the positions/orders poll catches
    * up right away. */
   onSubmitted?: () => void;
+  /** Active premium-trigger bounds on this contract, as chart lines. */
+  onTriggerLevels?: (levels: OrderLevel[]) => void;
 }
 
 type Pending =
@@ -48,7 +52,16 @@ function randomUUID(): string {
  * confirmation); selling is the close path and only offered for what is
  * held -- there is no naked writing here. Each button fetches its preview
  * once and opens the confirm dialog with the limit prefilled at the mid. */
-export function ContractTicket({ symbol, contract, mode, lastPrice, position, orders, onSubmitted }: ContractTicketProps) {
+export function ContractTicket({
+  symbol,
+  contract,
+  mode,
+  lastPrice,
+  position,
+  orders,
+  onSubmitted,
+  onTriggerLevels,
+}: ContractTicketProps) {
   const [qty, setQty] = useState("1");
   const [limit, setLimit] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
@@ -58,12 +71,22 @@ export function ContractTicket({ symbol, contract, mode, lastPrice, position, or
   const [error, setError] = useState<string | null>(null);
   const [placed, setPlaced] = useState<string | null>(null);
   const clientOrderIdRef = useRef<string | null>(null);
+  // Premium triggers on this contract: the same store and poll the Options
+  // widget uses (its own hook instance, only while a contract is on the
+  // chart).
+  const spreads = useSpreads(mode !== "simulation");
+  const [premBelow, setPremBelow] = useState("");
+  const [premAbove, setPremAbove] = useState("");
+  const [armTyped, setArmTyped] = useState("");
+  const [armBusy, setArmBusy] = useState(false);
+  const [armError, setArmError] = useState<string | null>(null);
 
   useEffect(() => {
     setPending(null);
     setPlaced(null);
     setRejection(null);
     setError(null);
+    setArmError(null);
   }, [symbol]);
 
   const heldQty = position ? Math.abs(num(position.qty) ?? 0) : 0;
@@ -177,6 +200,70 @@ export function ContractTicket({ symbol, contract, mode, lastPrice, position, or
   const working = orders.filter((o) => o.symbol === symbol);
   const label = formatLeg(symbol);
 
+  // Triggers whose legs are exactly this contract.
+  const triggers = spreads.triggers.filter((t) => t.legs.length === 1 && t.legs[0].symbol === symbol);
+  const activeTriggers = triggers.filter((t) => t.status === "active");
+  const recentTriggers = triggers.filter((t) => t.status !== "active").slice(0, 3);
+  const triggerKey = activeTriggers.map((t) => `${t.id}:${t.premium_below}:${t.premium_above}`).join("|");
+  useEffect(() => {
+    if (!onTriggerLevels) return;
+    const levels: OrderLevel[] = [];
+    for (const t of activeTriggers) {
+      if (t.premium_below != null) {
+        levels.push({ price: t.premium_below, side: "sell", title: "Close ≤", color: POSITION_STOP_COLOR });
+      }
+      if (t.premium_above != null) {
+        levels.push({ price: t.premium_above, side: "sell", title: "Close ≥", color: POSITION_TARGET_COLOR });
+      }
+    }
+    onTriggerLevels(levels);
+    // triggerKey stands in for activeTriggers (rebuilt every poll tick).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [triggerKey, onTriggerLevels]);
+
+  const arm = async () => {
+    const pb = premBelow.trim() === "" ? undefined : Number(premBelow);
+    const pa = premAbove.trim() === "" ? undefined : Number(premAbove);
+    if (pb === undefined && pa === undefined) {
+      setArmError("Enter a premium stop (≤) and/or target (≥).");
+      return;
+    }
+    if ([pb, pa].some((v) => v !== undefined && !(v > 0))) {
+      setArmError("Prices must be positive.");
+      return;
+    }
+    if (pb !== undefined && pa !== undefined && !(pb < pa)) {
+      setArmError("The stop must be below the target.");
+      return;
+    }
+    if (!liveConfirmed(mode, armTyped)) {
+      setArmError("Type LIVE to arm a real-money trigger.");
+      return;
+    }
+    setArmBusy(true);
+    setArmError(null);
+    try {
+      await spreads.armTrigger(
+        {
+          underlying: contract.underlying,
+          expiry: contract.expiry,
+          legs: [{ symbol, qty: isShort ? -heldQty : heldQty }],
+          qty: heldQty,
+          ...(pb !== undefined ? { premium_below: pb } : {}),
+          ...(pa !== undefined ? { premium_above: pa } : {}),
+        },
+        live ? armTyped.trim() : undefined,
+      );
+      setPremBelow("");
+      setPremAbove("");
+      setArmTyped("");
+    } catch (err: unknown) {
+      setArmError(err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err));
+    } finally {
+      setArmBusy(false);
+    }
+  };
+
   return (
     <div className={`contract-ticket${live ? " live-frame" : ""}`}>
       <div className="contract-ticket-row">
@@ -229,6 +316,63 @@ export function ContractTicket({ symbol, contract, mode, lastPrice, position, or
         </p>
       )}
       {error && <p className="order-rejection">{error}</p>}
+
+      {heldQty > 0 && (
+        <div className="contract-ticket-row trigger-editor">
+          <span title="Checked every few seconds during the regular session against the contract's mid; fires a marketable limit close">
+            Close if the premium is
+          </span>
+          <label>
+            ≤{" "}
+            <input
+              type="number"
+              step="0.01"
+              value={premBelow}
+              placeholder="stop"
+              onChange={(e) => setPremBelow(e.target.value)}
+            />
+          </label>
+          <label>
+            ≥{" "}
+            <input
+              type="number"
+              step="0.01"
+              value={premAbove}
+              placeholder="target"
+              onChange={(e) => setPremAbove(e.target.value)}
+            />
+          </label>
+          <LiveConfirmField mode={mode} value={armTyped} onChange={setArmTyped} />
+          <button
+            type="button"
+            className={`generate-button${live ? " live-action" : ""}`}
+            disabled={armBusy || !liveConfirmed(mode, armTyped)}
+            onClick={() => void arm()}
+          >
+            {armBusy ? "Arming…" : "Arm"}
+          </button>
+          {activeTriggers.map((t) => (
+            <span key={t.id} className="order-hint">
+              <span className="trigger-status active">ACTIVE</span> {triggerBoundsLabel(t)} · {t.qty}x{" "}
+              <button type="button" className="row-action" onClick={() => void spreads.cancelTrigger(t.id)}>
+                Cancel
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {armError && <p className="order-rejection">{armError}</p>}
+      {recentTriggers.length > 0 && heldQty === 0 && (
+        <div className="contract-ticket-row">
+          {recentTriggers.map((t) => (
+            <span key={t.id} className="order-hint">
+              <span className={`trigger-status ${t.status}`}>{t.status.toUpperCase()}</span> {triggerBoundsLabel(t)}
+              {t.fired_price != null ? ` · fired at ${t.fired_price.toFixed(2)}` : ""}
+              {t.last_error ? ` · ${t.last_error}` : ""}
+            </span>
+          ))}
+        </div>
+      )}
 
       <Modal
         open={pending != null}

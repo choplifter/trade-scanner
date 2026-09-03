@@ -5,7 +5,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from app.core.config import Settings
-from app.options.monitor import MAX_ATTEMPTS, check_one, is_hit
+from app.options.monitor import MAX_ATTEMPTS, check_one, is_hit, premium_of, wants_premium
 
 
 def test_is_hit_bounds_are_inclusive():
@@ -51,8 +51,9 @@ class _FakeStore:
     failed: list = field(default_factory=list)
     orphaned: list = field(default_factory=list)
 
-    async def mark_fired(self, trigger_id, price, order_id):
+    async def mark_fired(self, trigger_id, price, order_id, *, on="underlying"):
         self.fired.append((trigger_id, price, order_id))
+        self.fired_on = on
 
     async def mark_failed(self, trigger_id, error, attempts, *, final):
         self.failed.append((trigger_id, error, attempts, final))
@@ -131,3 +132,52 @@ def test_refused_by_the_gate_is_final_without_touching_the_service():
         )
     )
     assert store.failed[-1][3] is True and service.closes == []
+
+
+# --- premium bounds ------------------------------------------------------------
+
+
+@dataclass
+class _Quote:
+    bid: float
+    ask: float
+    mid: float
+
+
+def test_is_hit_on_the_premium_and_a_missing_price_only_silences_its_own_bounds():
+    t = {"close_below": 740.0, "close_above": None, "premium_below": 1.0, "premium_above": 3.0}
+    assert is_hit(t, 750.0, 1.0) == "premium_below"
+    assert is_hit(t, 750.0, 3.5) == "premium_above"
+    assert is_hit(t, 750.0, 2.0) is None
+    assert is_hit(t, None, 0.5) == "premium_below"
+    assert is_hit(t, 739.0, None) == "below"
+    # The underlying is checked first when both cross.
+    assert is_hit(t, 739.0, 0.5) == "below"
+    assert not wants_premium({"premium_below": None, "premium_above": None})
+    assert wants_premium({"premium_below": 1.0})
+
+
+def test_premium_of_is_the_positive_mid_of_the_closing_package():
+    long_call = {"legs": [{"symbol": "SPY260918C00750000", "qty": 2}]}
+    quotes = {"SPY260918C00750000": _Quote(2.0, 2.2, 2.1)}
+    assert premium_of(long_call, quotes) == 2.1
+    # A credit spread held short: closing costs a debit, the mark is that cost.
+    spread = {"legs": [{"symbol": "SPY260918P00740000", "qty": 1}, {"symbol": "SPY260918P00745000", "qty": -1}]}
+    quotes = {"SPY260918P00740000": _Quote(1.0, 1.2, 1.1), "SPY260918P00745000": _Quote(2.0, 2.2, 2.1)}
+    assert premium_of(spread, quotes) == 1.0
+    # A missing leg quote means no price.
+    assert premium_of(spread, {"SPY260918P00740000": _Quote(1.0, 1.2, 1.1)}) is None
+    assert premium_of({"legs": []}, quotes) is None
+
+
+def test_premium_hit_closes_and_records_the_premium():
+    service, store = _FakeService(HELD), _FakeStore()
+    trigger = _trigger(close_below=None, premium_below=1.5)
+    asyncio.run(check_one(service, store, _settings(), trigger, 750.0, 1.4))
+    (req, _confirm, marketable), = service.closes
+    assert marketable is True and req.qty == 1
+    assert store.fired == [("t1", 1.4, "ord-1")] and store.fired_on == "premium"
+    # No premium this tick: the premium-only trigger stays armed.
+    service, store = _FakeService(HELD), _FakeStore()
+    asyncio.run(check_one(service, store, _settings(), trigger, 750.0, None))
+    assert service.closes == [] and store.fired == []

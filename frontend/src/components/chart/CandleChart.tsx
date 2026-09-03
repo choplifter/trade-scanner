@@ -144,6 +144,9 @@ export interface OrderLevel {
   price: number;
   title: string;
   side: "buy" | "sell";
+  /** Overrides the side colour -- premium triggers use the stop/target
+   * colours of a position. */
+  color?: string;
 }
 
 export const POSITION_ENTRY_COLOR = "#5b8bd6";
@@ -1372,7 +1375,7 @@ export function CandleChart({
   // position lines below -- an order appearing or filling must not rebuild
   // the position or indicator lines. Keyed on a string of the levels so a
   // poll tick that changes nothing does not tear the lines down.
-  const orderLevelsKey = (orderLevels ?? []).map((o) => `${o.side}:${o.price}:${o.title}`).join("|");
+  const orderLevelsKey = (orderLevels ?? []).map((o) => `${o.side}:${o.price}:${o.title}:${o.color ?? ""}`).join("|");
   useEffect(() => {
     const priceSeries = priceSeriesRef.current;
     if (!priceSeries) return;
@@ -1382,7 +1385,7 @@ export function CandleChart({
       orderLinesRef.current.push(
         priceSeries.createPriceLine({
           price: level.price,
-          color: level.side === "buy" ? POSITION_ENTRY_COLOR : POSITION_TARGET_COLOR,
+          color: level.color ?? (level.side === "buy" ? POSITION_ENTRY_COLOR : POSITION_TARGET_COLOR),
           lineWidth: 1,
           lineStyle: INDICATIVE_LINE_STYLE,
           axisLabelVisible: true,
