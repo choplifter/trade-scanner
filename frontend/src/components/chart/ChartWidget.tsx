@@ -24,6 +24,7 @@ import { useReplayIndicators } from "../../hooks/useReplayIndicators";
 import { useReplaySession } from "../../hooks/useReplaySession";
 import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
+import { PREMIUM_LEVEL_NAMES, usePremiumLevels } from "../../hooks/usePremiumLevels";
 import { formatPrice, newsAge } from "../../utils/format";
 import { CandleChart, POSITION_ENTRY_COLOR, POSITION_STOP_COLOR, POSITION_TARGET_COLOR, type OrderLevel } from "./CandleChart";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
@@ -54,6 +55,7 @@ const DEFAULT_TIMEFRAME_KEY = "5m";
 // the *visible* set, not a hidden one: the control is a checklist, so each
 // row's checked state has to read directly off this.
 const VISIBLE_INDICATORS_KEY = "chart:visibleIndicators";
+const PREMIUM_LEVELS_SEEDED_KEY = "chart:premiumLevelsSeeded";
 
 type TradeLevelKey = "entry" | "stop" | "target";
 const ALL_TRADE_LEVEL_KEYS: TradeLevelKey[] = ["entry", "stop", "target"];
@@ -150,7 +152,10 @@ const CHART_TYPES: { key: ChartType; label: string; title: string }[] = [
 
 export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinned = false }: ChartWidgetProps) {
   // An OCC symbol: the chart shows the contract's premium, not a stock.
-  const contract = symbol ? parseOcc(symbol) : null;
+  // Memoized on the symbol: a fresh object per render would give the
+  // premium levels (and so CandleChart's price lines) a new identity on
+  // every trade tick.
+  const contract = useMemo(() => (symbol ? parseOcc(symbol) : null), [symbol]);
   // A symbol (or option contract) dragged from a scanner, watchlist, order
   // or option-chain row and dropped on the chart loads it -- for the main
   // chart that is the dashboard's selection, for a pinned copy its own.
@@ -369,6 +374,40 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   } = useTradingContext();
   const position = positions.find((p) => p.symbol === symbol) ?? null;
   const entry = position ? num(position.avg_entry_price) : null;
+  // Levels on the premium axis (option contracts only): bid/ask, the
+  // session's high/low and previous close, entry multiples, intrinsic
+  // value, plus the premium's own session VWAP.
+  const premium = usePremiumLevels(contract, intraday.bars, intraday.quote, entry);
+  // First time a premium chart shows, its levels start visible; after that
+  // the Levels menu's own choices (persisted like every other indicator)
+  // apply.
+  useEffect(() => {
+    if (!contract) return;
+    // Remembered per name, so a level added (or renamed) later gets the
+    // same first showing.
+    let seeded: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse(localStorage.getItem(PREMIUM_LEVELS_SEEDED_KEY) ?? "[]");
+      // An older build stored a bare flag here; anything but a list of
+      // names means "nothing seeded yet".
+      seeded = Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === "string") : [];
+    } catch {
+      seeded = [];
+    }
+    const fresh = PREMIUM_LEVEL_NAMES.filter((name) => !seeded.includes(name));
+    if (fresh.length === 0) return;
+    try {
+      localStorage.setItem(PREMIUM_LEVELS_SEEDED_KEY, JSON.stringify([...seeded, ...fresh]));
+    } catch {
+      return;
+    }
+    setVisibleIndicators((current) => {
+      const next = new Set(current);
+      for (const name of fresh) next.add(name);
+      persistLevelSet(VISIBLE_INDICATORS_KEY, next);
+      return next;
+    });
+  }, [contract]);
   const exits = position ? exitsForPosition(position, orders) : null;
   const positionSide: "long" | "short" = position?.side === "short" ? "short" : "long";
   // Memoized on the extracted primitives, not on `positions`/`orders`
@@ -532,7 +571,9 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
       }
       return aggregateBars(
         intraday.bars,
-        vwapFromPremarket ? intraday.vwapPremarket : intraday.vwap,
+        // A contract's VWAP is computed here from its bars (the option
+        // stream carries none); it has no premarket, so one anchor only.
+        contract ? premium.vwap : vwapFromPremarket ? intraday.vwapPremarket : intraday.vwap,
         option.minutes ?? 1,
         intraday.indicators,
       );
@@ -566,6 +607,8 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
     intraday.vwapPremarket,
     vwapFromPremarket,
     intraday.indicators,
+    contract,
+    premium.vwap,
     historical.bars,
     historical.vwap,
     historical.indicators,
@@ -575,9 +618,11 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // Levels-checklist below (which also maps over this same list) can offer
   // it as a toggle -- both call sites have to see one consistent array.
   const indicatorsWithGex = useMemo(() => {
-    const extra = [gexLevels, spreadLevels].filter((i): i is NonNullable<typeof i> => i !== null);
+    const extra = [gexLevels, spreadLevels, ...premium.levels].filter(
+      (i): i is NonNullable<typeof i> => i !== null,
+    );
     return extra.length > 0 ? [...displayed.indicators, ...extra] : displayed.indicators;
-  }, [displayed.indicators, gexLevels, spreadLevels]);
+  }, [displayed.indicators, gexLevels, spreadLevels, premium.levels]);
   // Memoized rather than filtered inline at the prop: CandleChart's
   // indicators effect tears down and rebuilds every price line whenever
   // this reference changes, and this component re-renders on every trade
@@ -737,19 +782,23 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
               Auto
             </button>
           </div>
-          {option.kind === "intraday" && !contract && (
+          {option.kind === "intraday" && (
             <button
               type="button"
               className="vwap-legend"
-              aria-pressed={vwapFromPremarket}
-              onClick={() => setVwapFromPremarket((v) => !v)}
+              aria-pressed={!contract && vwapFromPremarket}
+              onClick={() => {
+                if (!contract) setVwapFromPremarket((v) => !v);
+              }}
               title={
-                vwapFromPremarket
-                  ? "VWAP anchored at the premarket open, counting every print (what TradingView draws). Click for the 09:30 session anchor."
-                  : "VWAP anchored at the 09:30 session open, premarket excluded. Click to anchor at the premarket open instead."
+                contract
+                  ? "Session VWAP of the premium, from the contract's own bars (options have no premarket)."
+                  : vwapFromPremarket
+                    ? "VWAP anchored at the premarket open, counting every print (what TradingView draws). Click for the 09:30 session anchor."
+                    : "VWAP anchored at the 09:30 session open, premarket excluded. Click to anchor at the premarket open instead."
               }
             >
-              <span className="vwap-swatch" /> VWAP {vwapFromPremarket ? "(pre)" : "(session)"}
+              <span className="vwap-swatch" /> VWAP {!contract && vwapFromPremarket ? "(pre)" : "(session)"}
             </button>
           )}
           {gexReading && (

@@ -651,6 +651,15 @@ past dates.
   bid / ask in the header; closed candles come from a 5 s re-fetch of the
   newest option bars (Alpaca streams no option bars), higher timeframes
   re-fetch every 30 s.
+  The premium chart draws its own levels (Levels menu, on by default):
+  live **bid / ask** lines, the **session** high, low and previous close of
+  the premium, **entry ±** lines at +50% / +100% / −50% of a held
+  contract's entry, the **intrinsic value** from the underlying's live
+  price (only when above zero -- the gap to the candle is the time value),
+  and a session **VWAP** of the premium computed from the contract's bars.
+  (On a cheap contract the axis can still show values below zero: the
+  bottom fifth of the pane is reserved for volume, and the library scales
+  that margin linearly.)
   A **contract ticket** sits under the header: contracts, **Buy** (to open,
   the long call/put path with its preview, limits and confirmation) and
   **Sell** (to close, only enabled for what is held -- nothing is ever
