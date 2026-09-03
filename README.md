@@ -11,10 +11,17 @@ VWAP overlay, EMA/premarket/weekly/monthly range indicators, news pinned on
 the timeline, and company info/news; a drop-in **strategy engine** (ORB
 family, VWAP rules) whose signals are switchable from the UI, drawn on the
 chart, badged in the scanner and measured by the same backtest that would
-trade them; a **paper-trading panel** (risk-sized tickets, brackets, live
-position management, and DAS Trader/Andrew Aziz-style instant-fire hotkeys
-for entries, breakout orders, flatten, scale-out and stop-to-breakeven —
-no confirm dialog); a dashboard-wide momentum alarm, AI-generated trade-idea
+trade them; a **trading panel** that runs against a local Simulation
+book, the Alpaca paper account or — behind its own keys, an env switch and
+a typed confirmation — the real-money account (risk-sized tickets,
+brackets, live position management, and DAS Trader/Andrew Aziz-style
+instant-fire hotkeys for entries, breakout orders, flatten, scale-out and
+stop-to-breakeven — no confirm dialog); an **Options** widget (option chain
+with click-to-pick legs, long calls/puts, vertical spreads and iron condors
+sent as multi-leg orders, open spreads with P&L, one-click close and
+underlying-price exit triggers); a per-user trading journal, watchlist,
+history replay, live news feed and GEX plan; a dashboard-wide momentum
+alarm, AI-generated trade-idea
 annotations, a scanner-wide benchmark against SPY, a persistent scanner
 match history with fade-risk analysis, one-click backtesting of whatever
 screen you're looking at, CLI tools for re-validating the ranking formula
@@ -31,9 +38,15 @@ in from Financial Modeling Prep and FINRA.
 2. In the Alpaca dashboard, generate an **API Key ID** and **Secret Key**.
 3. Copy `backend/.env.example` to `backend/.env` and fill in
    `ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY`.
+4. Set `SESSION_SECRET_KEY` (the app refuses to start without it —
+   `python -c "import secrets; print(secrets.token_hex(32))"`) and create a
+   login from `backend/`: `python -m scripts.create_user <username> "<display
+   name>"`. Every route except login needs a signed-in user; there is no
+   signup page. Watchlist, journal, Simulation book, replay session and
+   options triggers are all per user.
 
-Without valid credentials the app still starts, but the universe stays empty
-and scanners will show no rows.
+Without valid Alpaca credentials the app still starts, but the universe stays
+empty and scanners will show no rows.
 
 ### Optional keys
 
@@ -44,11 +57,25 @@ with fewer annotations/columns.
   and annotates the 3 most notable scanner setups). Get a key at
   https://console.anthropic.com → API Keys.
 - **`TRADING_ENABLED=true`** — arms the trading panel's *write* paths
-  (ticket, cancel, close, stop moves, partial sells). Ships off so merging
-  the feature changes nothing until you opt in, and even switched on the
-  service refuses a non-paper account — this build is paper-only by
-  construction. The read side (account, positions, orders, balance curve)
-  works regardless.
+  (ticket, cancel, close, stop moves, partial sells, spreads). Ships off so
+  merging the feature changes nothing until you opt in. The read side
+  (account, positions, orders, balance curve, option chain) works
+  regardless, and Simulation Mode's local book never needs it.
+- **`ALPACA_LIVE_API_KEY_ID` / `ALPACA_LIVE_API_SECRET_KEY` +
+  `TRADING_ALLOW_LIVE=true`** — the real-money account. The first key pair
+  stays the paper *and* market-data account (`ALPACA_PAPER=true` remains
+  mandatory for it); the live pair is only ever used by the trading client
+  behind the `/api/trading/live/...` prefix. Keys alone arm nothing: without
+  `TRADING_ALLOW_LIVE` every live write is refused, and with it every live
+  order/cancel/close still has to be confirmed by typing `LIVE` in the
+  dialog (sent as an `X-Live-Confirm` header the server checks). Live gets
+  its own, smaller ceilings — `TRADING_LIVE_MAX_ORDER_QTY` (500),
+  `TRADING_LIVE_MAX_ORDER_NOTIONAL` (5,000), `_NOTIONAL_PCT` (10) and
+  `TRADING_LIVE_MAX_OPTION_CONTRACTS` (5).
+- **`ALPACA_OPTIONS_FEED`** — `opra` (the paid options feed, real greeks,
+  bid/ask and open interest) or `indicative`. Feeds the Options widget's
+  chain and the GEX plan alike. `TRADING_MAX_OPTION_CONTRACTS` (20) caps
+  spreads or contracts per order on the paper account.
 - **`FMP_API_KEY`** — free key at https://site.financialmodelingprep.com.
   Fills in the **Float**, **Mkt Cap**, **Country**, and **Company** scanner
   columns (Alpaca doesn't expose any of these), plus company
@@ -410,6 +437,15 @@ past dates.
   hypothetical ticket line can never be mistaken for a real position's. Both
   can show at once for the same symbol (e.g. planning a scale-in next to
   the position already protecting it); the Levels checkboxes gate both.
+  The forming candle updates **tick by tick** from Alpaca's trade stream
+  (odd-lot/late/out-of-sequence prints excluded by condition code) rather
+  than once per completed minute bar, with TradingView-like proportions
+  (tight bar spacing, the price pane taking ~80% of the height). An
+  **Auto** toggle in the chart header is TradingView's auto-scroll: on,
+  every new candle snaps the view back to the right edge; off, the chart
+  stays exactly where you dragged it — including into the empty space
+  right of the newest bar — until you switch it back on. The choice is
+  remembered.
 - **Strategy scripts** (`backend/app/strategies/`): the same drop-in idea as
   the indicators above, but for trade setups rather than chart lines. A file
   exposes `NAME`, an optional `ENABLED` flag and an `evaluate(ctx)` that
@@ -454,12 +490,27 @@ past dates.
   `python -m scripts.strategy_backtest_report --strategy <name> [--cost-bps 2]`,
   which reports expectancy in R alongside the percentage stats every other
   backtest here uses, plus the exit mix and the ambiguous-bar share.
-- **Trading panel** (paper-only, off by default): order entry and live
-  position management against the Alpaca **paper** account. Write paths are
-  double-gated in the service layer — `TRADING_ENABLED=true` must be set in
-  `backend/.env`, and a live (non-paper) account is refused outright —
-  with fat-finger ceilings (`TRADING_MAX_ORDER_QTY` / `_NOTIONAL` /
-  `_NOTIONAL_PCT`) checked before anything reaches the broker. The ticket
+- **Trading panel** (off by default): order entry and live position
+  management against one of three accounts, switched by the header's
+  **Simulation / Paper / Live** toggle and shown as a badge on every
+  trading widget. **Simulation** is a fully local, per-user order book
+  (`backend/app/trading/sim/`): the same pure ticket validation and sizing
+  as the real path, exact-price full-quantity fills (no slippage or
+  partials modelled), resting limit/stop/bracket legs filled by a
+  background loop against live prices, and a **Reset** to start over — it
+  needs no `TRADING_ENABLED` and works without Alpaca credentials except
+  for pricing. **Paper** is the Alpaca paper account. **Live** is the
+  real-money account: only selectable when live keys and
+  `TRADING_ALLOW_LIVE` are set, entered through a modal that shows the
+  account's equity and demands the word `LIVE`, never persisted across
+  reloads, framed in red, with instant-fire buttons/hotkeys and chart
+  stop/target dragging disabled and every action re-confirmed by typing
+  `LIVE`. Write paths are gated in the service layer — `TRADING_ENABLED`
+  for paper, plus the live switch and confirmation for live — with
+  fat-finger ceilings (`TRADING_MAX_ORDER_QTY` / `_NOTIONAL` /
+  `_NOTIONAL_PCT`, smaller `TRADING_LIVE_*` twins) checked before anything
+  reaches the broker. Closed round trips are stored per account, so a
+  paper reset never touches the live record. The ticket
   sizes from risk (risk % of equity or a fixed amount against your stop
   distance — the same arithmetic the strategy backtests report R in) or from
   a fixed quantity, previews server-side before submitting, and attaches
@@ -542,6 +593,52 @@ past dates.
   `scanner_history.sqlite3` (`trades` table), so the record survives a
   paper-account reset and the broker's 500-order history cap.
 
+- **Options widget** (Paper and Live; Simulation shows a "not available"
+  banner because there is no simulated options book). Pick a symbol
+  anywhere and the widget loads its expiries (next 60 days, with DTE) and
+  the **option chain** for the selected one — calls left, puts right, OI /
+  IV / delta / bid / mid / ask per side, in-the-money shading, a spot
+  divider row the table scrolls to, greeks shown as "—" where Alpaca has
+  none (0DTE). Seven strategies: **Long call / Long put** (one bought
+  contract, options level 2), **Bull call / Bear put** (debit verticals),
+  **Bull put / Bear call** (credit verticals) and **Iron condor** (level 3).
+  An **Auto-pick** chooses the legs — the short leg at ~0.30 delta
+  out-of-the-money (0.20 for a condor's wings, ~3% OTM without greeks),
+  the long leg *Width* strikes further out, a debit spread's long at the
+  money, an outright long at the money — and clicking a strike in the
+  chain moves the matching leg while keeping the spread's shape (long
+  below short for the bullish pair, above for the bearish). The ticket
+  previews server-side with a 300 ms debounce: net mid and natural
+  (bid/ask-crossing) price, the limit (prefilled with the mid, editable),
+  max profit / max loss / breakevens / collateral per the standard
+  defined-risk arithmetic (`backend/app/options/pricing.py`, e.g. credit
+  vertical max loss = (width − credit) × 100), the account's options
+  buying power and the per-order ceilings, plus warnings for same-day
+  expiry (Alpaca force-closes 0DTE positions around 15:15 ET), missing
+  greeks and wide markets. Spreads go out as Alpaca **multi-leg (MLEG)**
+  day limit orders with the +debit/−credit signed limit, a long call/put
+  as a plain option limit order; the confirm dialog lists every leg and, in
+  Live, asks for `LIVE`. Contract symbols always come from the live chain
+  (never composed by hand), so adjusted roots like `SPY1` and non-tradable
+  contracts are handled by the data. **Open spreads** groups Alpaca's
+  per-contract positions back into the spreads they were opened as
+  (by underlying + expiry, classified by leg shape; a lone long contract
+  is a long call/put, an unbalanced or lone short remainder is flagged
+  **broken**) with net entry, mark and P&L, expandable legs, a **Close**
+  modal that reverses every leg at the mid (limit editable; a single
+  remaining leg closes with a plain order) and an **underlying-price
+  trigger** editor: arm *close below* and/or *close above* on the stock's
+  price and a backend loop (`backend/app/options/monitor.py`, every 2 s
+  during the regular session, batched snapshot prices) closes the spread
+  with a limit stepped toward the natural price so it fills rather than
+  rests. Triggers are persisted in `scanner_history.sqlite3` per user and
+  account, survive restarts, show their status (active / fired / failed /
+  orphaned when the legs are gone) and can be cancelled. The ticket's
+  strikes and an open spread's strikes/trigger bounds draw on the chart as
+  levels. Widget-local hotkeys (not in Live): `[` `]` expiry, `5`–`9`
+  strategy (the two outright longs have none — `0`–`4` belong to the
+  equity ticket), `+` `−` width. Market data for the chain always comes
+  from the paper/market-data key, whichever account the order goes to.
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks up to 3 of
   today's movers, each **required** to have a genuine, stock-specific news
   catalyst — enforced server-side before the model ever sees a candidate
@@ -629,10 +726,12 @@ past dates.
   heatmap + table + symbol detail + AI trade ideas view, plus separate pages
   for the scanner benchmark, scanner match history, cross-symbol
   correlation/comparison, and seasonality.
-- **Two layout modes** (React app), switched by the header's **Layout:
-  Panels / Grid** toggle and remembered across reloads: **Panels** is the
-  default nested-splitter layout (drag the splitters to resize fixed slots),
-  and **Grid** makes all five widgets freely repositionable -- drag a widget
+- **Three layout modes** (React app), switched by the header's
+  **Panels / Grid / Dock** toggle and remembered across reloads: **Panels**
+  is the default nested-splitter layout (drag the splitters to resize fixed
+  slots), **Dock** is a VS Code-style docking layout (`dockview-react`) where
+  every widget is a tab you can drag into any group, split or
+  maximise, and **Grid** makes every widget freely repositionable -- drag a widget
   by its header to move it, drag its bottom-right corner to resize, and
   neighbours compact out of the way (`react-grid-layout`, wrapped by
   `frontend/src/components/layout/DashboardGrid.tsx`). A **Reset** button
@@ -729,7 +828,18 @@ past dates.
   bulk file, which in practice runs noticeably behind FINRA's advertised
   publish schedule -- expect it to reflect a settlement date roughly 2-4
   weeks old, not this week's.
-- **Watchlists**: roadmap item, not built yet.
+- **Options**: no simulated options book — the Options widget is Paper
+  and Live only. Paper MLEG fills at the mid can rest unfilled for a
+  while; the trigger loop compensates with a limit stepped toward the
+  natural price, manual closes don't. Underlying-price triggers only fire
+  during the regular session and only while the backend is running — they
+  are not broker-side orders (Alpaca takes no stop orders on options).
+  Greeks are missing for same-day expiries (Alpaca can't compute them),
+  so the auto-pick falls back to a ~3% OTM strike and the chain shows "—".
+  Alpaca force-closes 0DTE positions around 15:15 ET. And FINRA's
+  pattern-day-trader rule (three day trades per five sessions under
+  $25k equity on a margin account) applies to Alpaca accounts regardless
+  of the holder's country — option round trips count.
 - **Catalyst boost still pools two news feeds.** `entry_headline_source` is
   recorded per appearance, but nothing reads it yet — so FMP-sourced headlines
   currently feed a multiplier calibrated only on Alpaca ones. Splitting the
@@ -814,6 +924,10 @@ past dates.
 ```
 backend/           FastAPI app: Alpaca integration, scanner engine, VWAP, WebSockets,
                     fundamentals (FMP + FINRA), AI trade ideas, Plotly Dash analytics app
+backend/app/trading/   Equity ticket, sizing, guards (paper/live), trade + journal stores,
+                        sim/ = the local Simulation Mode book and fill loop
+backend/app/options/   OCC parser, chain fetch/cache, spread ticket + pricing, MLEG builder,
+                        position grouping, underlying-price trigger store + monitor
 backend/scripts/   Standalone CLI tools (ranking drift report, backtest) -- run via
                     `python -m scripts.<name>` from backend/, not part of the running app
 frontend/          Vite + React + TypeScript dashboard, lightweight-charts for candles
