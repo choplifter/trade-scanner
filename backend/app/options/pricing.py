@@ -52,14 +52,104 @@ def net_price(legs, use: Literal["mid", "natural"] = "mid") -> float | None:
     return round(total, 4)
 
 
-def spread_risk(strategy: str, strikes: tuple[float, ...], price: float, qty: int) -> SpreadRisk:
+def spread_risk(
+    strategy: str, strikes: tuple[float, ...], price: float, qty: int, *, stock_price: float | None = None
+) -> SpreadRisk:
     """Max profit / max loss / breakevens / collateral for a defined-risk
     position at a given positive net price per spread (or per contract for
     a single leg). `strikes` are in the ticket's canonical order (see
-    SpreadTicket.strikes)."""
+    SpreadTicket.strikes). `stock_price` is the covered call's share
+    reference (what the shares are worth now)."""
     if price <= 0:
         raise OrderRejected("The net price must be positive", field="limit_price")
     money = CONTRACT_MULTIPLIER * qty
+
+    if strategy in ("long_straddle", "long_strangle"):
+        # Bought put (lower) and call (higher): the debit is the whole risk,
+        # the upside is open on both sides.
+        put_k, call_k = strikes[0], strikes[-1]
+        return SpreadRisk(
+            direction="debit",
+            width=round(call_k - put_k, 4),
+            max_profit=None,
+            max_loss=round(price * money, 2),
+            breakevens=[round(put_k - price, 2), round(call_k + price, 2)],
+            collateral=round(price * money, 2),
+        )
+
+    if strategy in ("call_butterfly", "put_butterfly"):
+        low, body, high = strikes
+        wing = min(body - low, high - body)
+        if price >= wing:
+            raise OrderRejected(
+                f"Debit {price:.2f} is not below the wing width ({wing:g}) -- check the legs",
+                field="limit_price",
+            )
+        return SpreadRisk(
+            direction="debit",
+            width=round(wing, 4),
+            max_profit=round((wing - price) * money, 2),
+            max_loss=round(price * money, 2),
+            breakevens=[round(low + price, 2), round(high - price, 2)],
+            collateral=round(price * money, 2),
+        )
+
+    if strategy == "iron_butterfly":
+        put_long, body, _call_short, call_long = strikes
+        wing = max(body - put_long, call_long - body)
+        if price >= wing:
+            raise OrderRejected(
+                f"Credit {price:.2f} is not below the wider wing ({wing:g}) -- check the legs",
+                field="limit_price",
+            )
+        return SpreadRisk(
+            direction="credit",
+            width=round(wing, 4),
+            max_profit=round(price * money, 2),
+            max_loss=round((wing - price) * money, 2),
+            breakevens=[round(body - price, 2), round(body + price, 2)],
+            collateral=round((wing - price) * money, 2),
+        )
+
+    if strategy in ("calendar", "diagonal"):
+        # The debit is the most that can be lost; the profit and breakevens
+        # depend on the long leg's remaining time value at the short
+        # expiry, which the payoff curve supplies (see service.preview).
+        short_k, long_k = strikes
+        return SpreadRisk(
+            direction="debit",
+            width=round(abs(long_k - short_k), 4),
+            max_profit=None,
+            max_loss=round(price * money, 2),
+            breakevens=[],
+            collateral=round(price * money, 2),
+        )
+
+    if strategy == "covered_call":
+        (strike,) = strikes
+        reference = stock_price if stock_price is not None else strike
+        return SpreadRisk(
+            direction="credit",
+            width=0.0,
+            max_profit=round((strike - reference + price) * money, 2),
+            max_loss=round((reference - price) * money, 2),
+            breakevens=[round(reference - price, 2)],
+            # Covered by the shares, not by cash.
+            collateral=0.0,
+        )
+
+    if strategy == "cash_secured_put":
+        (strike,) = strikes
+        if price >= strike:
+            raise OrderRejected(f"Credit {price:.2f} is not below the strike ({strike:g})", field="limit_price")
+        return SpreadRisk(
+            direction="credit",
+            width=0.0,
+            max_profit=round(price * money, 2),
+            max_loss=round((strike - price) * money, 2),
+            breakevens=[round(strike - price, 2)],
+            collateral=round(strike * money, 2),
+        )
 
     if strategy in ("long_call", "long_put"):
         # An outright long: the premium is the whole risk and the collateral.

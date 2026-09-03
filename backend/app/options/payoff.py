@@ -1,0 +1,196 @@
+"""The risk chart's numbers: a position's P&L over a grid of underlying
+prices, at expiry and -- with each leg's implied volatility -- today.
+
+Pure: no SDK, no settings. Black-Scholes with r = 0 and the leg's own IV
+(no skew model, no dividends); the "today" curve is therefore an estimate
+in the same sense the chain's greeks are. The "at expiry" curve is exact
+for single-expiry positions; for a calendar/diagonal it is drawn at the
+short leg's expiry with the long leg still valued by Black-Scholes at
+its remaining time, which is the number that matters for that trade.
+
+Money is per position: per share x 100 x qty, so the chart reads in the
+same dollars as the ticket's max profit / max loss.
+"""
+
+import math
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
+from typing import Literal
+
+from app.services.market_clock import ET
+
+CONTRACT_MULTIPLIER = 100
+GRID_POINTS = 81
+# The grid reaches at least this far either side of spot...
+MIN_HALF_RANGE_PCT = 0.08
+# ...and at least this many expected one-sigma moves to the last expiry.
+SIGMA_REACH = 3.0
+
+LegKind = Literal["call", "put", "stock"]
+
+
+@dataclass(frozen=True)
+class PayoffLeg:
+    kind: LegKind
+    strike: float  # a stock leg's strike is its reference price
+    side: Literal["buy", "sell"]
+    ratio: int = 1
+    expiry: date | None = None  # None for a stock leg
+    iv: float | None = None
+
+    @property
+    def sign(self) -> int:
+        return 1 if self.side == "buy" else -1
+
+
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def bs_price(kind: str, spot: float, strike: float, years: float, sigma: float, rate: float = 0.0) -> float:
+    """Black-Scholes price of a European call/put; intrinsic when there is
+    no time or no volatility left."""
+    if years <= 0 or sigma <= 0 or spot <= 0:
+        return intrinsic(kind, spot, strike)
+    sqrt_t = math.sqrt(years)
+    d1 = (math.log(spot / strike) + (rate + 0.5 * sigma * sigma) * years) / (sigma * sqrt_t)
+    d2 = d1 - sigma * sqrt_t
+    discount = math.exp(-rate * years)
+    if kind == "call":
+        return spot * _norm_cdf(d1) - strike * discount * _norm_cdf(d2)
+    return strike * discount * _norm_cdf(-d2) - spot * _norm_cdf(-d1)
+
+
+def intrinsic(kind: str, spot: float, strike: float) -> float:
+    if kind == "call":
+        return max(spot - strike, 0.0)
+    if kind == "put":
+        return max(strike - spot, 0.0)
+    return spot - strike  # stock: P&L per share against its reference price
+
+
+def _expiry_moment(expiry: date) -> datetime:
+    return datetime.combine(expiry, time(16, 0), tzinfo=ET)
+
+
+def years_between(now: datetime, expiry: date) -> float:
+    delta = _expiry_moment(expiry) - now.astimezone(ET)
+    return max(0.0, delta / timedelta(days=365))
+
+
+def leg_value(leg: PayoffLeg, spot: float, at: datetime) -> float | None:
+    """A leg's value per share at moment `at` for underlying `spot`: intrinsic
+    once expired, Black-Scholes before -- None when that needs an IV the
+    leg does not have."""
+    if leg.kind == "stock":
+        return intrinsic("stock", spot, leg.strike)
+    years = years_between(at, leg.expiry) if leg.expiry is not None else 0.0
+    if years <= 0:
+        return intrinsic(leg.kind, spot, leg.strike)
+    if leg.iv is None or leg.iv <= 0:
+        return None
+    return bs_price(leg.kind, spot, leg.strike, years, leg.iv)
+
+
+def _position_value(legs: list[PayoffLeg], spot: float, at: datetime) -> float | None:
+    total = 0.0
+    for leg in legs:
+        value = leg_value(leg, spot, at)
+        if value is None:
+            return None
+        total += leg.sign * leg.ratio * value
+    return total
+
+
+def _breakevens(prices: list[float], pnl: list[float]) -> list[float]:
+    out: list[float] = []
+    for i in range(1, len(prices)):
+        a, b = pnl[i - 1], pnl[i]
+        if a == 0:
+            out.append(prices[i - 1])
+        elif (a < 0 < b) or (b < 0 < a):
+            out.append(prices[i - 1] + (prices[i] - prices[i - 1]) * (-a) / (b - a))
+    if pnl and pnl[-1] == 0:
+        out.append(prices[-1])
+    return [round(p, 2) for p in out]
+
+
+def _net_calls(legs: list[PayoffLeg]) -> int:
+    return sum(leg.sign * leg.ratio for leg in legs if leg.kind == "call") + sum(
+        leg.sign * leg.ratio for leg in legs if leg.kind == "stock"
+    )
+
+
+def payoff_curve(
+    legs: list[PayoffLeg],
+    qty: int,
+    net_price: float,
+    spot: float,
+    now: datetime,
+    *,
+    points: int = GRID_POINTS,
+) -> dict:
+    """`net_price` is per share and signed: positive was (or will be) paid,
+    negative received. Returns prices, at_expiry, today (None if a leg lacks
+    IV), breakevens, max_profit/max_loss (None = unbounded on the upside/
+    downside beyond the grid), spot, expiry (the evaluation date of the
+    at-expiry curve) and the multiplier."""
+    option_legs = [leg for leg in legs if leg.kind != "stock" and leg.expiry is not None]
+    if not option_legs:
+        raise ValueError("a payoff needs at least one option leg")
+    first_expiry = min(leg.expiry for leg in option_legs)  # type: ignore[type-var]
+    last_expiry = max(leg.expiry for leg in option_legs)  # type: ignore[type-var]
+    at_expiry_moment = _expiry_moment(first_expiry)
+
+    ivs = [leg.iv for leg in option_legs if leg.iv]
+    sigma = sum(ivs) / len(ivs) if ivs else 0.0
+    reach = SIGMA_REACH * spot * sigma * math.sqrt(years_between(now, last_expiry)) if sigma else 0.0
+    half = max(MIN_HALF_RANGE_PCT * spot, reach)
+    lo, hi = max(0.01, spot - half), spot + half
+    prices = [round(lo + (hi - lo) * i / (points - 1), 4) for i in range(points)]
+    # The strikes themselves join the grid: the at-expiry curve kinks there,
+    # and a breakeven interpolated across a kink would land off by a few
+    # cents.
+    for leg in option_legs:
+        if lo < leg.strike < hi:
+            prices.append(round(leg.strike, 4))
+    prices = sorted(set(prices))
+
+    multiplier = CONTRACT_MULTIPLIER * qty
+    at_expiry: list[float] = []
+    today: list[float] | None = []
+    for price in prices:
+        value = _position_value(legs, price, at_expiry_moment)
+        # A long leg beyond the first expiry without IV: value it at intrinsic
+        # rather than dropping the curve -- the chart still shows the shape.
+        if value is None:
+            value = sum(
+                leg.sign * leg.ratio * (leg_value(leg, price, at_expiry_moment) or intrinsic(leg.kind, price, leg.strike))
+                for leg in legs
+            )
+        at_expiry.append(round((value - net_price) * multiplier, 2))
+        if today is not None:
+            now_value = _position_value(legs, price, now)
+            if now_value is None:
+                today = None
+            else:
+                today.append(round((now_value - net_price) * multiplier, 2))
+
+    net_calls = _net_calls(legs)
+    max_profit: float | None = max(at_expiry)
+    max_loss: float | None = min(at_expiry)
+    if net_calls > 0:
+        max_profit = None  # keeps rising with the underlying
+    if net_calls < 0:
+        max_loss = None  # keeps falling with the underlying
+    return {
+        "prices": prices,
+        "at_expiry": at_expiry,
+        "today": today,
+        "breakevens": _breakevens(prices, at_expiry),
+        "max_profit": max_profit,
+        "max_loss": max_loss,
+        "spot": spot,
+        "expiry": first_expiry,
+        "multiplier": multiplier,
+    }

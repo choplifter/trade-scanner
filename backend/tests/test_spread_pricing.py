@@ -143,3 +143,27 @@ def test_long_put_profit_is_capped_at_the_strike():
     assert r.breakevens == [737.0]
     with pytest.raises(OrderRejected):
         spread_risk("long_put", (740,), 740.0, 1)
+
+
+def test_straddle_strangle_and_butterflies():
+    s = spread_risk("long_straddle", (750, 750), 8.0, 1)
+    assert s.max_profit is None and s.max_loss == 800.0 and s.breakevens == [742.0, 758.0]
+    g = spread_risk("long_strangle", (745, 755), 4.0, 2)
+    assert g.max_loss == 800.0 and g.breakevens == [741.0, 759.0] and g.width == 10
+    f = spread_risk("call_butterfly", (745, 750, 755), 1.2, 1)
+    assert (f.max_profit, f.max_loss, f.breakevens, f.collateral) == (380.0, 120.0, [746.2, 753.8], 120.0)
+    with pytest.raises(OrderRejected):
+        spread_risk("put_butterfly", (745, 750, 755), 5.0, 1)
+    i = spread_risk("iron_butterfly", (745, 750, 750, 755), 3.0, 1)
+    assert (i.max_profit, i.max_loss, i.breakevens, i.collateral) == (300.0, 200.0, [747.0, 753.0], 200.0)
+
+
+def test_calendar_and_income():
+    c = spread_risk("calendar", (750, 750), 2.0, 1)
+    assert c.max_profit is None and c.max_loss == 200.0 and c.breakevens == [] and c.collateral == 200.0
+    cc = spread_risk("covered_call", (105,), 2.0, 1, stock_price=100.0)
+    assert (cc.max_profit, cc.max_loss, cc.breakevens, cc.collateral) == (700.0, 9800.0, [98.0], 0.0)
+    csp = spread_risk("cash_secured_put", (100,), 2.5, 2)
+    assert (csp.max_profit, csp.max_loss, csp.breakevens, csp.collateral) == (500.0, 19500.0, [97.5], 20000.0)
+    with pytest.raises(OrderRejected):
+        spread_risk("cash_secured_put", (100,), 100.0, 1)

@@ -204,3 +204,100 @@ def test_resolve_single_leg_from_the_chain():
     legs = resolve_legs(_ticket(strategy="long_call", long_strike=750, short_strike=None), _chain())
     assert len(legs) == 1
     assert legs[0].symbol == "SPY260918C00750000" and legs[0].position_intent == "buy_to_open"
+
+
+# --- leg-list strategies ---------------------------------------------------------
+
+
+def _legs(*specs):
+    from app.options.models import TicketLeg
+
+    return [TicketLeg(kind=k, strike=s, side=side, ratio=r, expiry=e) for k, s, side, r, e in specs]
+
+
+def _leg_ticket(strategy, legs, **overrides):
+    base = dict(underlying="SPY", strategy=strategy, expiry=EXPIRY, qty=1, legs=legs)
+    base.update(overrides)
+    return SpreadTicket(**base)
+
+
+def test_straddle_and_strangle_shapes():
+    t = _leg_ticket("long_straddle", _legs(("put", 750, "buy", 1, None), ("call", 750, "buy", 1, None)))
+    assert t.direction == "debit" and t.strikes == (750, 750)
+    assert [(l.kind, l.side) for l in t.leg_specs_full()] == [("put", "buy"), ("call", "buy")]
+    assert t.expiries == [EXPIRY]
+    with pytest.raises(ValidationError, match="share one strike"):
+        _leg_ticket("long_straddle", _legs(("put", 745, "buy", 1, None), ("call", 750, "buy", 1, None)))
+    t = _leg_ticket("long_strangle", _legs(("call", 755, "buy", 1, None), ("put", 745, "buy", 1, None)))
+    assert t.strikes == (745, 755)
+    with pytest.raises(ValidationError, match="below the call"):
+        _leg_ticket("long_strangle", _legs(("put", 755, "buy", 1, None), ("call", 745, "buy", 1, None)))
+    with pytest.raises(ValidationError, match="not strike fields"):
+        _leg_ticket("long_straddle", _legs(("put", 750, "buy", 1, None), ("call", 750, "buy", 1, None)), long_strike=750)
+
+
+def test_butterfly_shapes():
+    fly = _legs(("call", 745, "buy", 1, None), ("call", 750, "sell", 2, None), ("call", 755, "buy", 1, None))
+    t = _leg_ticket("call_butterfly", fly)
+    assert t.strikes == (745, 750, 755)
+    assert [l.ratio for l in t.leg_specs_full()] == [1, 2, 1]
+    assert t.leg_specs() == [("call", 745, "buy"), ("call", 750, "sell"), ("call", 755, "buy")]
+    with pytest.raises(ValidationError, match="ratio 2"):
+        _leg_ticket("call_butterfly", _legs(("call", 745, "buy", 1, None), ("call", 750, "sell", 1, None), ("call", 755, "buy", 1, None)))
+    with pytest.raises(ValidationError, match="all three legs are puts"):
+        _leg_ticket("put_butterfly", fly)
+    iron = _legs(("put", 745, "buy", 1, None), ("put", 750, "sell", 1, None), ("call", 750, "sell", 1, None), ("call", 755, "buy", 1, None))
+    t = _leg_ticket("iron_butterfly", iron)
+    assert t.direction == "credit" and t.strikes == (745, 750, 750, 755)
+    with pytest.raises(ValidationError, match="body strike"):
+        _leg_ticket("iron_butterfly", _legs(("put", 745, "buy", 1, None), ("put", 749, "sell", 1, None), ("call", 750, "sell", 1, None), ("call", 755, "buy", 1, None)))
+
+
+def test_calendar_and_diagonal_shapes():
+    later = date(2026, 10, 16)
+    cal = _legs(("call", 750, "sell", 1, None), ("call", 750, "buy", 1, later))
+    t = _leg_ticket("calendar", cal)
+    assert t.expiries == [EXPIRY, later] and t.strikes == (750, 750)
+    assert [(l.side, l.expiry) for l in t.leg_specs_full()] == [("sell", EXPIRY), ("buy", later)]
+    with pytest.raises(ValidationError, match="expires before"):
+        _leg_ticket("calendar", _legs(("call", 750, "sell", 1, later), ("call", 750, "buy", 1, None)), expiry=later)
+    with pytest.raises(ValidationError, match="use a diagonal"):
+        _leg_ticket("calendar", _legs(("call", 750, "sell", 1, None), ("call", 755, "buy", 1, later)))
+    diag = _legs(("put", 745, "sell", 1, None), ("put", 750, "buy", 1, later))
+    assert _leg_ticket("diagonal", diag).strikes == (745, 750)
+    with pytest.raises(ValidationError, match="every leg uses the ticket's expiry"):
+        _leg_ticket("long_straddle", _legs(("put", 750, "buy", 1, later), ("call", 750, "buy", 1, None)))
+
+
+def test_income_shapes_and_levels():
+    from app.options.models import options_level_required
+
+    cc = _leg_ticket("covered_call", _legs(("call", 760, "sell", 1, None)))
+    assert cc.direction == "credit" and cc.leg_specs() == [("call", 760, "sell")]
+    csp = _leg_ticket("cash_secured_put", _legs(("put", 740, "sell", 1, None)))
+    assert csp.strikes == (740,)
+    with pytest.raises(ValidationError, match="one sold call"):
+        _leg_ticket("covered_call", _legs(("call", 760, "buy", 1, None)))
+    assert options_level_required("covered_call") == 1
+    assert options_level_required("cash_secured_put") == 1
+    assert options_level_required("long_straddle") == 3
+    assert options_level_required("calendar") == 3
+
+
+def test_resolve_legs_across_two_chains():
+    later = date(2026, 10, 16)
+    from dataclasses import replace
+
+    def later_quote(kind):
+        return replace(_quote(kind, 750), expiry=later, symbol=f"SPY261016{'C' if kind == 'call' else 'P'}00750000")
+
+    later_chain = Chain(underlying="SPY", expiry=later, spot=748.0, feed="opra", as_of=datetime.now(timezone.utc),
+                        rows=[StrikeRow(strike=750, call=later_quote("call"), put=later_quote("put"))])
+    ticket = _leg_ticket("calendar", _legs(("call", 750, "sell", 1, None), ("call", 750, "buy", 1, later)))
+    legs = resolve_legs(ticket, {EXPIRY: _chain(), later: later_chain})
+    assert [(l.side, l.expiry, l.ratio_qty) for l in legs] == [("sell", EXPIRY, 1), ("buy", later, 1)]
+    assert legs[0].iv == 0.2
+    with pytest.raises(OrderRejected):
+        resolve_legs(ticket, _chain())  # only one expiry loaded
+    fly = _leg_ticket("call_butterfly", _legs(("call", 745, "buy", 1, None), ("call", 750, "sell", 2, None), ("call", 755, "buy", 1, None)))
+    assert [l.ratio_qty for l in resolve_legs(fly, _chain())] == [1, 2, 1]
