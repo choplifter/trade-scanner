@@ -2970,3 +2970,29 @@ a.news-feed-headline:hover {
 .link-button:hover {
   color: var(--accent);
 }
+
+/* --- contract ticket (buy/sell the option shown on the premium chart) ----- */
+
+.contract-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.contract-ticket-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.contract-ticket-row label input {
+  width: 56px;
+}
+
+.contract-ticket .generate-button {
+  padding: 2px 12px;
+}

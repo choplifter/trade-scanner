@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
 import { formatLeg, parseOcc } from "../../utils/occ";
+import { ContractTicket } from "./ContractTicket";
 import { useTradingContext } from "../../context/TradingContext";
 import { useSpreadLevels } from "../../hooks/useSpreadLevels";
 import { useTradingMode } from "../../hooks/useTradingMode";
@@ -22,7 +23,7 @@ import { useReplaySession } from "../../hooks/useReplaySession";
 import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { formatPrice } from "../../utils/format";
-import { CandleChart, POSITION_ENTRY_COLOR, POSITION_STOP_COLOR, POSITION_TARGET_COLOR } from "./CandleChart";
+import { CandleChart, POSITION_ENTRY_COLOR, POSITION_STOP_COLOR, POSITION_TARGET_COLOR, type OrderLevel } from "./CandleChart";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
 
 interface ChartWidgetProps {
@@ -319,8 +320,14 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
   // Entry/stop/target lines for whatever position is open on the symbol on
   // screen -- via context rather than a second useTrading() call, which
   // would be an independent, out-of-sync poll loop (see TradingContext).
-  const { positions, orders, indicativeLevels: rawIndicativeLevels, moveStop, moveTarget } =
-    useTradingContext();
+  const {
+    positions,
+    orders,
+    indicativeLevels: rawIndicativeLevels,
+    moveStop,
+    moveTarget,
+    refresh: refreshTrading,
+  } = useTradingContext();
   const position = positions.find((p) => p.symbol === symbol) ?? null;
   const entry = position ? num(position.avg_entry_price) : null;
   const exits = position ? exitsForPosition(position, orders) : null;
@@ -333,6 +340,27 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
     if (!position || entry == null) return null;
     return { side: positionSide, entry, stop: exits?.stopLoss ?? null, target: exits?.takeProfit ?? null };
   }, [position, entry, positionSide, exits?.stopLoss, exits?.takeProfit]);
+
+  // Working orders on the contract shown by the premium chart, as dashed
+  // lines at their limits. Equity charts draw their exits via
+  // positionLevels instead; a stock's resting entry orders stay off the
+  // chart as before.
+  const contractOrders = useMemo(
+    () => (contract ? orders.filter((o) => o.symbol === symbol) : []),
+    [contract, orders, symbol],
+  );
+  const orderLevelsKey = contractOrders.map((o) => `${o.id}:${o.side}:${o.qty}:${o.limit_price}`).join("|");
+  const orderLevels = useMemo<OrderLevel[]>(
+    () =>
+      contractOrders.flatMap((o) => {
+        const price = Number(o.limit_price);
+        if (!Number.isFinite(price) || price <= 0) return [];
+        const side: "buy" | "sell" = o.side === "sell" ? "sell" : "buy";
+        return [{ price, side, title: `${side === "buy" ? "Buy" : "Sell"} ${o.qty ?? ""}`.trim() }];
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [orderLevelsKey],
+  );
 
   // What the chart actually draws -- each field nulled out when its Levels
   // checkbox is unchecked, independent of whether the position itself has
@@ -722,6 +750,23 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
           </button>
         </div>
       )}
+      {contract && symbol && !usingReplayBars && (
+        tradingMode.mode === "simulation" ? (
+          <div className="contract-ticket">
+            <span className="order-hint">Options trade on the Paper or Live account -- switch the mode to buy or sell this contract.</span>
+          </div>
+        ) : (
+          <ContractTicket
+            symbol={symbol}
+            contract={contract}
+            mode={tradingMode.mode}
+            lastPrice={lastPrice}
+            position={position}
+            orders={contractOrders}
+            onSubmitted={refreshTrading}
+          />
+        )
+      )}
       <div className="widget-body">
         {!symbol ? (
           <div className="widget-empty">Click a symbol in a scanner to load its chart.</div>
@@ -745,6 +790,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
             indicators={chartIndicators}
             positionLevels={visiblePositionLevels}
             indicativeLevels={visibleIndicativeLevels}
+            orderLevels={orderLevels}
             onMovePositionLevel={onMovePositionLevel}
             onMoveIndicativeLevel={onMoveIndicativeLevel}
             cursorMode={cursorMode}

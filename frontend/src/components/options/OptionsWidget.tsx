@@ -5,7 +5,7 @@ import { modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useOptionChain } from "../../hooks/useOptionChain";
 import { useSpreads } from "../../hooks/useSpreads";
 import type { OptionKind, Strategy } from "../../types/options";
-import { formatExpiry } from "../../utils/occ";
+import { formatExpiry, type ParsedOcc } from "../../utils/occ";
 import { ChainTable } from "./ChainTable";
 import { applyPick, defaultLegs, selectionOf, strategyKind, type Legs } from "./legPicker";
 import { OpenSpreads } from "./OpenSpreads";
@@ -17,6 +17,9 @@ interface OptionsWidgetProps {
   symbol: string | null;
   mode: TradingMode;
   onSelectSymbol?: (symbol: string) => void;
+  /** The contract on the chart, if the chart shows a premium chart: the
+   * widget follows it -- its expiry, and the strike as a long call/put. */
+  focusContract?: ParsedOcc | null;
 }
 
 const STRATEGY_HOTKEYS: Strategy[] = ["bull_call", "bear_put", "bull_put", "bear_call", "iron_condor"];
@@ -25,7 +28,7 @@ const STRATEGY_HOTKEYS: Strategy[] = ["bull_call", "bear_put", "bull_put", "bear
  * and the open spreads with their close and trigger controls. Nothing here
  * runs in Simulation mode -- there is no sim options book -- and in Live
  * mode every action asks for the typed confirmation. */
-export function OptionsWidget({ symbol, mode, onSelectSymbol }: OptionsWidgetProps) {
+export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: OptionsWidgetProps) {
   const enabled = mode !== "simulation";
   const [tab, setTab] = useState<Tab>("chain");
   const [strategy, setStrategy] = useState<Strategy>("bull_put");
@@ -53,6 +56,35 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol }: OptionsWidgetPro
     setLegs(defaultLegs(strategy, chain, width));
     // Only the inputs of the default pick, not `legs` itself.
   }, [chain, strategy, width]);
+
+  // Following the chart's contract happens in three steps as the data
+  // arrives: strategy at once, the expiry once the list holds it, the
+  // strike once that expiry's chain is in. The pending ref carries the
+  // request across those renders and is cleared when the strike lands.
+  const pendingFocusRef = useRef<ParsedOcc | null>(null);
+  const focusKey = focusContract
+    ? `${focusContract.underlying}:${focusContract.expiry}:${focusContract.kind}:${focusContract.strike}`
+    : null;
+  useEffect(() => {
+    if (!focusContract || focusContract.underlying !== symbol) return;
+    pendingFocusRef.current = focusContract;
+    setStrategy(focusContract.kind === "call" ? "long_call" : "long_put");
+    setTab("chain");
+    // focusKey stands in for the object, which is rebuilt every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey, symbol]);
+  useEffect(() => {
+    const pending = pendingFocusRef.current;
+    if (!pending || expiries.length === 0) return;
+    if (expiry !== pending.expiry && expiries.some((e) => e.expiry === pending.expiry)) setExpiry(pending.expiry);
+  }, [expiries, expiry, setExpiry]);
+  useEffect(() => {
+    const pending = pendingFocusRef.current;
+    if (!pending || !chain || chain.expiry !== pending.expiry || chain.underlying !== pending.underlying) return;
+    manualRef.current = true;
+    setLegs({ strike: pending.strike });
+    pendingFocusRef.current = null;
+  }, [chain]);
 
   const selection = useMemo(() => selectionOf(strategy, legs), [strategy, legs]);
 

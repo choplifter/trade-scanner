@@ -8,7 +8,7 @@ import { LoginPage } from "./components/auth/LoginPage";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { SymbolInfoWidget } from "./components/chart/SymbolInfoWidget";
 import { GexPlanWidget } from "./components/gex/GexPlanWidget";
-import { chartSymbolOf } from "./utils/occ";
+import { chartSymbolOf, parseOcc } from "./utils/occ";
 import { OptionsWidget } from "./components/options/OptionsWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { DockviewDashboard } from "./components/layout/DockviewDashboard";
@@ -76,6 +76,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
   // The chart may show an option contract's premium; every other widget
   // (ticket, info, news, chain...) works on the underlying stock.
   const underlying = selectedSymbol ? chartSymbolOf(selectedSymbol) : null;
+  const focusContract = useMemo(() => (selectedSymbol ? parseOcc(selectedSymbol) : null), [selectedSymbol]);
 
   const selectPick = useCallback((focus: ChartFocus) => {
     setSelectedSymbol(focus.symbol);
@@ -178,14 +179,20 @@ function AppShell({ user, onLogout }: AppShellProps) {
       // the mode dependency below remounts it on a mode switch like the
       // trading widget.
       options: (
-        <OptionsWidget key="options" symbol={underlying} mode={tradingMode.mode} onSelectSymbol={selectSymbol} />
+        <OptionsWidget
+          key="options"
+          symbol={underlying}
+          mode={tradingMode.mode}
+          onSelectSymbol={selectSymbol}
+          focusContract={focusContract}
+        />
       ),
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
     // state the comment above guards against: switching modes should
     // remount the trading widget's local state, the same way a symbol
     // change does -- it is a rare, intentional action, not a tick.
-    [selectedSymbol, underlying, chartFocus, selectSymbol, selectPick, tradingMode.mode],
+    [selectedSymbol, underlying, focusContract, chartFocus, selectSymbol, selectPick, tradingMode.mode],
   );
 
   // Shared between the panels-mode active and idle layouts below -- only

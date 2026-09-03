@@ -639,8 +639,17 @@ past dates.
   the Orders tab, loads the contract's own **premium chart** — its minute
   bars (1m/5m/15m) or native hourly/daily/weekly bars from Alpaca's option
   bars endpoint, labelled "SPY 4 Sep 765C · premium", with a button back to
-  the underlying; no VWAP, levels or live stream on it (those belong to the
-  stock's price axis; the premium chart refreshes on reload). Widget-local hotkeys (not in Live): `[` `]` expiry, `5`–`9`
+  the underlying; no VWAP or levels on it (those belong to the stock's
+  price axis) and no live stream (the premium chart refreshes on reload).
+  A **contract ticket** sits under the header: contracts, **Buy** (to open,
+  the long call/put path with its preview, limits and confirmation) and
+  **Sell** (to close, only enabled for what is held -- nothing is ever
+  written naked), each opening a dialog with the mid, natural price and an
+  editable limit; the held quantity, entry and P&L, and any working order
+  on the contract are shown beside it, and working orders draw as dashed
+  lines at their limits with the held entry as a solid line. While a
+  contract is on the chart the Options widget follows it: its expiry is
+  selected and the strike marked as a long call/put. Widget-local hotkeys (not in Live): `[` `]` expiry, `5`–`9`
   strategy (the two outright longs have none — `0`–`4` belong to the
   equity ticket), `+` `−` width. Market data for the chain always comes
   from the paper/market-data key, whichever account the order goes to.

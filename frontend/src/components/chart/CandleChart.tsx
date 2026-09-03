@@ -69,6 +69,9 @@ interface CandleChartProps {
    * values, and both draw -- e.g. planning a scale-in the levels line
    * shows next to the position already protecting it. */
   indicativeLevels: PositionLevels | null;
+  /** Working orders to draw as dashed lines with their own labels (buy in
+   * the entry colour, sell in the target colour). Not draggable. */
+  orderLevels?: OrderLevel[];
   /** Dragging a real position's Stop or Target line to a new price calls
    * this with the field and the price it was dropped at -- the caller is
    * responsible for actually moving the order (and for what happens if that
@@ -133,6 +136,14 @@ export interface PositionLevels {
   entry: number | null;
   stop: number | null;
   target: number | null;
+}
+
+/** A working order's price, drawn dashed with its own label -- used by the
+ * premium chart for orders resting on the contract. */
+export interface OrderLevel {
+  price: number;
+  title: string;
+  side: "buy" | "sell";
 }
 
 export const POSITION_ENTRY_COLOR = "#5b8bd6";
@@ -395,6 +406,7 @@ export function CandleChart({
   indicators,
   positionLevels,
   indicativeLevels,
+  orderLevels,
   onMovePositionLevel,
   onMoveIndicativeLevel,
   cursorMode,
@@ -422,6 +434,7 @@ export function CandleChart({
   const sessionBandsRef = useRef<{ pre: ISeriesApi<"Histogram">; post: ISeriesApi<"Histogram"> } | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const positionLinesRef = useRef<IPriceLine[]>([]);
+  const orderLinesRef = useRef<IPriceLine[]>([]);
   const indicativeLinesRef = useRef<IPriceLine[]>([]);
   const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
   // The markers primitive, kept so the pick pin is updated in place rather
@@ -1355,6 +1368,33 @@ export function CandleChart({
   // one's clear-and-rebuild lifecycle is specifically about the `indicators`
   // prop, and sharing it would mean a position line flickers/rebuilds on
   // every indicator toggle for no reason, and vice versa.
+  // Working-order lines: their own effect and ref, same reasoning as the
+  // position lines below -- an order appearing or filling must not rebuild
+  // the position or indicator lines. Keyed on a string of the levels so a
+  // poll tick that changes nothing does not tear the lines down.
+  const orderLevelsKey = (orderLevels ?? []).map((o) => `${o.side}:${o.price}:${o.title}`).join("|");
+  useEffect(() => {
+    const priceSeries = priceSeriesRef.current;
+    if (!priceSeries) return;
+    orderLinesRef.current.forEach((line) => priceSeries.removePriceLine(line));
+    orderLinesRef.current = [];
+    for (const level of orderLevels ?? []) {
+      orderLinesRef.current.push(
+        priceSeries.createPriceLine({
+          price: level.price,
+          color: level.side === "buy" ? POSITION_ENTRY_COLOR : POSITION_TARGET_COLOR,
+          lineWidth: 1,
+          lineStyle: INDICATIVE_LINE_STYLE,
+          axisLabelVisible: true,
+          title: level.title,
+        }),
+      );
+    }
+    // orderLevelsKey stands in for orderLevels (see above); chartType because
+    // a series swap disposes the lines with the old series.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderLevelsKey, chartType]);
+
   useEffect(() => {
     const priceSeries = priceSeriesRef.current;
     if (!priceSeries) return;
