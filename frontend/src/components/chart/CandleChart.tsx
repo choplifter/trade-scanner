@@ -22,6 +22,8 @@ import {
 } from "lightweight-charts";
 
 import { isMarkerSeries, isPointSeries } from "../../types/alpaca";
+import { getPalette } from "../../api/settings";
+import type { ChartPalette } from "../../api/chartTheme";
 import type { Bar, IndicatorResult, IndicatorStyle } from "../../types/alpaca";
 import { crosshairTimeFormatter, tickMarkFormatter } from "../../utils/chartTime";
 import { SESSION_FILLS, sessionBandData, sessionBandOptions } from "./sessionBands";
@@ -87,6 +89,15 @@ interface CandleChartProps {
    * onDragStop/onDragTarget, which is what ChartWidget wires this to). */
   onMoveIndicativeLevel?: (field: "stop" | "target", price: number) => void;
   cursorMode: CursorMode;
+  /** The colour scheme in force (Settings dialog) and whether rising
+   * candles draw hollow; both re-theme the live chart. */
+  palette: ChartPalette;
+  hollowCandles: boolean;
+  /** True on the dark page: the axis text and grid colours are re-read
+   * from the CSS variables when it flips. */
+  dark: boolean;
+  /** Locale for the axis number format (Settings > Display). */
+  locale?: string;
   /** TradingView's auto-scroll. On: every new candle snaps the viewport
    * back to the newest bar (own zoom kept), wherever the viewer had
    * dragged it. Off: the chart only follows while already at the right
@@ -150,13 +161,19 @@ export interface OrderLevel {
 }
 
 export const POSITION_ENTRY_COLOR = "#5b8bd6";
-// Same green/red as the candlestick series' up/down colors below -- a
-// position's stop and target reuse the chart's own favorable/unfavorable
-// semantic rather than introducing a second palette.
-export const POSITION_TARGET_COLOR = "#0ca30c";
-export const POSITION_STOP_COLOR = "#d03b3b";
+// Same up/down pair as the candles -- a position's stop and target reuse
+// the chart's own favourable/unfavourable semantic rather than a second
+// palette. Read from the settings store at draw time so a scheme change
+// in the Settings dialog re-colours them with the candles.
+export function positionTargetColor(): string {
+  return getPalette().up;
+}
+export function positionStopColor(): string {
+  return getPalette().down;
+}
 // Solid and a shade wider than a "level" indicator's default (width 1,
 // dashed) so a position line reads as distinct at a glance.
+const VWAP_COLOR = "#eda100";
 const POSITION_LINE_WIDTH = 2 as const;
 // Indicative (draft-ticket) lines reuse positionLevels' own colors -- same
 // meaning, just not real yet -- but stay dashed at all times, unlike a real
@@ -216,12 +233,36 @@ function barToClose(bar: Bar): LineData {
   return { time: toUnixSeconds(bar.t), value: bar.c };
 }
 
-function barToVolume(bar: Bar): HistogramData {
+function barToVolume(bar: Bar, palette: ChartPalette): HistogramData {
   const up = bar.c >= bar.o;
   return {
     time: toUnixSeconds(bar.t),
     value: bar.v,
-    color: up ? "rgba(12,163,12,0.5)" : "rgba(208,59,59,0.5)",
+    color: up ? palette.volumeUp : palette.volumeDown,
+  };
+}
+
+/** The candlestick series' colour options for a palette and style. Hollow
+ * rising candles: transparent body with a coloured border (TradingView's
+ * "hollow candles"), falling ones stay filled. */
+function candleOptions(palette: ChartPalette, hollow: boolean) {
+  return {
+    upColor: hollow ? "transparent" : palette.up,
+    downColor: palette.down,
+    borderVisible: hollow,
+    borderUpColor: palette.up,
+    borderDownColor: palette.down,
+    wickUpColor: palette.up,
+    wickDownColor: palette.down,
+  };
+}
+
+function themeColors() {
+  const style = getComputedStyle(document.body);
+  return {
+    textColor: style.getPropertyValue("--text-secondary").trim() || "#888888",
+    gridColor: style.getPropertyValue("--gridline").trim() || "#2c2c2a",
+    lineColor: style.getPropertyValue("--text-primary").trim() || "#0b0b0b",
   };
 }
 
@@ -418,6 +459,10 @@ export function CandleChart({
   onMovePositionLevel,
   onMoveIndicativeLevel,
   cursorMode,
+  palette,
+  hollowCandles,
+  dark,
+  locale,
   autoScroll,
   focusTime,
   focusTrade,
@@ -441,6 +486,13 @@ export function CandleChart({
   // The premarket/after-hours background washes -- see sessionBands.ts.
   const sessionBandsRef = useRef<{ pre: ISeriesApi<"Histogram">; post: ISeriesApi<"Histogram"> } | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  // The palette/style/locale as of the last render, for effects that
+  // create series without depending on them (the mount and chart-type
+  // effects); the theme effect keeps them current.
+  const paletteRef = useRef<ChartPalette>(palette);
+  const hollowRef = useRef<boolean>(hollowCandles);
+  const localeRef = useRef<string | undefined>(locale);
+  const barsRef = useRef<Bar[]>(bars);
   const positionLinesRef = useRef<IPriceLine[]>([]);
   const orderLinesRef = useRef<IPriceLine[]>([]);
   const indicativeLinesRef = useRef<IPriceLine[]>([]);
@@ -616,10 +668,7 @@ export function CandleChart({
     const container = containerRef.current;
     if (!container) return;
 
-    const textColor =
-      getComputedStyle(document.body).getPropertyValue("--text-secondary").trim() || "#888888";
-    const gridColor =
-      getComputedStyle(document.body).getPropertyValue("--gridline").trim() || "#2c2c2a";
+    const { textColor, gridColor } = themeColors();
 
     const chart = createChart(container, {
       layout: { background: { color: "transparent" }, textColor },
@@ -650,7 +699,7 @@ export function CandleChart({
         // own that decision.
         shiftVisibleRangeOnNewBar: false,
       },
-      localization: { timeFormatter: crosshairTimeFormatter },
+      localization: { timeFormatter: crosshairTimeFormatter, locale: localeRef.current },
       autoSize: true,
     });
 
@@ -682,7 +731,7 @@ export function CandleChart({
     // VWAP overlays the same right-hand price scale as the candles -- it
     // is the day-trading reference line, not a secondary measure.
     const vwapSeries = chart.addSeries(LineSeries, {
-      color: "#eda100",
+      color: VWAP_COLOR,
       lineWidth: 2,
       crosshairMarkerVisible: false,
       lastValueVisible: false,
@@ -883,19 +932,11 @@ export function CandleChart({
             // The palette's foreground rather than a colour of its own: a
             // close-only line is the price itself, not one more overlay
             // competing with VWAP and the level lines.
-            color:
-              getComputedStyle(document.body).getPropertyValue("--text-primary").trim() ||
-              "#0b0b0b",
+            color: themeColors().lineColor,
             lineWidth: 2,
             lastValueVisible: true,
           })
-        : chart.addSeries(CandlestickSeries, {
-            upColor: "#0ca30c",
-            downColor: "#d03b3b",
-            borderVisible: false,
-            wickUpColor: "#0ca30c",
-            wickDownColor: "#d03b3b",
-          });
+        : chart.addSeries(CandlestickSeries, candleOptions(paletteRef.current, hollowRef.current));
     // Leaves the bottom fifth to the volume histogram (see the volume
     // scale's own margins above). minimumWidth pins the axis: the library
     // sizes it to its widest label, and the last-price label changes width
@@ -950,7 +991,7 @@ export function CandleChart({
     } else {
       (priceSeries as ISeriesApi<"Candlestick">).setData(bars.map(barToCandle));
     }
-    volumeSeries.setData(bars.map(barToVolume));
+    volumeSeries.setData(bars.map((bar) => barToVolume(bar, paletteRef.current)));
 
     vwapSeries.setData(
       toLinePoints(
@@ -1077,6 +1118,8 @@ export function CandleChart({
     // re-asserted when it changes for real. chartType is one because the
     // swap above leaves a brand-new, empty series behind -- without it,
     // toggling would blank the price until the next tick.
+    barsRef.current = bars;
+    barsRef.current = bars;
   }, [bars, vwap, focusTime, positionLevels, chartType, shadeSessions]);
 
   // Scroll a clicked backtest pick into view and pin it with an arrow. Runs
@@ -1122,7 +1165,7 @@ export function CandleChart({
           markers.push({
             time: exitTime,
             position: "aboveBar",
-            color: focusTrade.won ? POSITION_TARGET_COLOR : POSITION_STOP_COLOR,
+            color: focusTrade.won ? positionTargetColor() : positionStopColor(),
             shape: "arrowDown",
             text: "Exit",
           });
@@ -1419,7 +1462,7 @@ export function CandleChart({
       orderLinesRef.current.push(
         priceSeries.createPriceLine({
           price: level.price,
-          color: level.color ?? (level.side === "buy" ? POSITION_ENTRY_COLOR : POSITION_TARGET_COLOR),
+          color: level.color ?? (level.side === "buy" ? POSITION_ENTRY_COLOR : positionTargetColor()),
           lineWidth: 1,
           lineStyle: INDICATIVE_LINE_STYLE,
           axisLabelVisible: true,
@@ -1473,7 +1516,7 @@ export function CandleChart({
       if (stop != null) {
         const line = priceSeries.createPriceLine({
           price: stop,
-          color: POSITION_STOP_COLOR,
+          color: positionStopColor(),
           lineWidth: POSITION_LINE_WIDTH,
           lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
@@ -1487,7 +1530,7 @@ export function CandleChart({
       if (target != null) {
         const line = priceSeries.createPriceLine({
           price: target,
-          color: POSITION_TARGET_COLOR,
+          color: positionTargetColor(),
           lineWidth: POSITION_LINE_WIDTH,
           lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
@@ -1539,7 +1582,7 @@ export function CandleChart({
       if (stop != null) {
         const line = priceSeries.createPriceLine({
           price: stop,
-          color: POSITION_STOP_COLOR,
+          color: positionStopColor(),
           lineWidth: INDICATIVE_LINE_WIDTH,
           lineStyle: INDICATIVE_LINE_STYLE,
           axisLabelVisible: true,
@@ -1553,7 +1596,7 @@ export function CandleChart({
       if (target != null) {
         const line = priceSeries.createPriceLine({
           price: target,
-          color: POSITION_TARGET_COLOR,
+          color: positionTargetColor(),
           lineWidth: INDICATIVE_LINE_WIDTH,
           lineStyle: INDICATIVE_LINE_STYLE,
           axisLabelVisible: true,
@@ -1572,6 +1615,74 @@ export function CandleChart({
   // lose the zoom -- the same reason the series swap has one.
   useEffect(() => {
     chartRef.current?.applyOptions({ crosshair: { mode: CROSSHAIR_MODES[cursorMode] } });
+  }, [cursorMode]);
+
+  // Re-theme the live chart when the Settings dialog changes the scheme,
+  // the candle style, the colour mode or the number locale: series
+  // options in place, the volume columns re-coloured, the axis text and
+  // grid re-read from the CSS variables (which the settings store has
+  // just rewritten). No series is recreated, so zoom and scroll survive.
+  useEffect(() => {
+    paletteRef.current = palette;
+    hollowRef.current = hollowCandles;
+    localeRef.current = locale;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const { textColor, gridColor, lineColor } = themeColors();
+    chart.applyOptions({
+      layout: { textColor },
+      grid: { vertLines: { color: gridColor }, horzLines: { color: gridColor } },
+      localization: { locale },
+    });
+    const priceSeries = priceSeriesRef.current;
+    if (priceSeries) {
+      if (chartType === "line") (priceSeries as ISeriesApi<"Line">).applyOptions({ color: lineColor });
+      else (priceSeries as ISeriesApi<"Candlestick">).applyOptions(candleOptions(palette, hollowCandles));
+    }
+    volumeSeriesRef.current?.setData(barsRef.current.map((bar) => barToVolume(bar, palette)));
+    // The position/order/indicative lines carry the palette's colours;
+    // rebuild them by nudging their effects' inputs is overkill -- they
+    // read positionTargetColor()/positionStopColor() on their next run,
+    // and a re-render of the parent (the settings hook) triggers one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [palette, hollowCandles, dark, locale, chartType]);
+
+  useEffect(() => {
+    void 0;
+  }, [cursorMode]);
+
+  // Re-theme the live chart when the Settings dialog changes the scheme,
+  // the candle style, the colour mode or the number locale: series
+  // options in place, the volume columns re-coloured, the axis text and
+  // grid re-read from the CSS variables (which the settings store has
+  // just rewritten). No series is recreated, so zoom and scroll survive.
+  useEffect(() => {
+    paletteRef.current = palette;
+    hollowRef.current = hollowCandles;
+    localeRef.current = locale;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const { textColor, gridColor, lineColor } = themeColors();
+    chart.applyOptions({
+      layout: { textColor },
+      grid: { vertLines: { color: gridColor }, horzLines: { color: gridColor } },
+      localization: { locale },
+    });
+    const priceSeries = priceSeriesRef.current;
+    if (priceSeries) {
+      if (chartType === "line") (priceSeries as ISeriesApi<"Line">).applyOptions({ color: lineColor });
+      else (priceSeries as ISeriesApi<"Candlestick">).applyOptions(candleOptions(palette, hollowCandles));
+    }
+    volumeSeriesRef.current?.setData(barsRef.current.map((bar) => barToVolume(bar, palette)));
+    // The position/order/indicative lines carry the palette's colours;
+    // rebuild them by nudging their effects' inputs is overkill -- they
+    // read positionTargetColor()/positionStopColor() on their next run,
+    // and a re-render of the parent (the settings hook) triggers one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [palette, hollowCandles, dark, locale, chartType]);
+
+  useEffect(() => {
+    void 0;
   }, [cursorMode]);
 
   // Switching auto-scroll on jumps to the newest bar straight away, the way

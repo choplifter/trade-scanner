@@ -40,8 +40,22 @@ async function send<T>(method: "POST" | "DELETE", path: string, body?: unknown, 
   });
   checkUnauthorized(res);
   if (res.status === 422) {
-    const detail = (await res.json()) as { detail: TradingRejection };
-    throw new OrderRejectedError(detail.detail);
+    const body = (await res.json()) as { detail: TradingRejection | { msg?: string; loc?: unknown[] }[] | string };
+    // A pydantic validation error arrives as a list; surface its first
+    // message rather than an empty rejection.
+    if (Array.isArray(body.detail)) {
+      const first = body.detail[0];
+      const loc = Array.isArray(first?.loc) ? first.loc.filter((x) => x !== "body").join(".") : "";
+      throw new OrderRejectedError({
+        code: "validation_error",
+        message: first?.msg?.replace(/^Value error, /, "") ?? "Invalid request",
+        field: loc || null,
+      });
+    }
+    if (typeof body.detail === "string") {
+      throw new OrderRejectedError({ code: "validation_error", message: body.detail, field: null });
+    }
+    throw new OrderRejectedError(body.detail);
   }
   if (!res.ok) {
     throw new Error(await extractErrorMessage(res, `${method} ${path} failed: ${res.status}`));

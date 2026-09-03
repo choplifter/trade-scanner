@@ -682,6 +682,21 @@ past dates.
   strategy (the two outright longs have none — `0`–`4` belong to the
   equity ticket), `+` `−` width. Market data for the chain always comes
   from the paper/market-data key, whichever account the order goes to.
+- **Settings** (the header's ⚙ button; closed until clicked, remembered
+  in the browser under `app:settings`): **Appearance** -- a chart colour
+  scheme from five presets (Classic, TradingView, Monochrome with hollow
+  rising candles, Colour-blind blue/orange, Muted), applied at once to
+  candles, wicks, volume, position and order lines, the GEX/spread/premium
+  levels, the balance curve, the risk chart's areas and the tables' up/down
+  colours; filled or hollow rising candles; Light / Dark / System (System
+  follows the OS live); premarket/after-hours shading on or off.
+  **Chart** -- the defaults a chart starts with: timeframe, candles or
+  line, auto-scroll, VWAP anchor (the buttons in a chart still change only
+  that chart). **Display** -- number format: the browser's, point
+  (1,234.56) or comma (1.234,56), for money and quantities and the chart
+  axes; price inputs keep the point. **Hotkeys** -- every shortcut in one
+  list. "Reset to defaults" puts everything back. The risk chart's height
+  is dragged at its bottom edge and remembered here too.
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks up to 3 of
   today's movers, each **required** to have a genuine, stock-specific news
   catalyst — enforced server-side before the model ever sees a candidate

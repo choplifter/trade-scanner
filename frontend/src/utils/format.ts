@@ -1,8 +1,16 @@
+import { numberLocale } from "../api/settings";
+
+/** Money and quantities in the Settings > Display number format. */
+export function formatNum(value: number, digits = 2, minDigits = digits): string {
+  return value.toLocaleString(numberLocale(), { minimumFractionDigits: minDigits, maximumFractionDigits: digits });
+}
+
+export function formatMoney(value: number): string {
+  return formatNum(value, 2);
+}
+
 export function formatPrice(value: number): string {
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return formatNum(value, 2);
 }
 
 export function formatPct(value: number): string {

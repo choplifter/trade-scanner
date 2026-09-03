@@ -14,6 +14,7 @@ import { WIDGET_IDS, type WidgetId } from "../../hooks/useDashboardLayout";
 import { ChartCopyPanel } from "./ChartCopyPanel";
 import { DockTab } from "./DockTab";
 import { DockContext, WIDGET_TITLES, type PanelParams } from "./dockShared";
+import { useEffectiveDark } from "../../hooks/useSettings";
 
 type DockviewApi = DockviewReadyEvent["api"];
 
@@ -172,10 +173,8 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
   // prefers-color-scheme block) -- read once, not reactive to a live OS
   // theme change, since dockview-react has no equivalent of :root
   // recomputing an @media query -- see the theme prop.
-  const theme = useMemo(
-    () => (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? themeDark : themeLight),
-    [],
-  );
+  const dark = useEffectiveDark();
+  const theme = dark ? themeDark : themeLight;
 
   // Only set once, in onReady -- exists so the reopen menu below can call
   // addWidgetPanel outside of Dockview's own event flow.

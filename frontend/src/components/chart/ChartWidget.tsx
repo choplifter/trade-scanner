@@ -12,8 +12,6 @@ import { useTradingMode } from "../../hooks/useTradingMode";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import {
   isGexSymbol,
-  NEGATIVE_COLOR,
-  POSITIVE_COLOR,
   useGexLevels,
   useGexReading,
 } from "../../hooks/useGexLevels";
@@ -26,7 +24,9 @@ import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { PREMIUM_LEVEL_NAMES, usePremiumLevels, usePremiumSeries } from "../../hooks/usePremiumLevels";
 import { formatPrice, newsAge } from "../../utils/format";
-import { CandleChart, POSITION_ENTRY_COLOR, POSITION_STOP_COLOR, POSITION_TARGET_COLOR, type OrderLevel } from "./CandleChart";
+import { CandleChart, POSITION_ENTRY_COLOR, positionStopColor, positionTargetColor, type OrderLevel } from "./CandleChart";
+import { getSettings } from "../../api/settings";
+import { useChartPalette, useSettings } from "../../hooks/useSettings";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
 
 interface ChartWidgetProps {
@@ -61,11 +61,13 @@ type TradeLevelKey = "entry" | "stop" | "target";
 const ALL_TRADE_LEVEL_KEYS: TradeLevelKey[] = ["entry", "stop", "target"];
 const VISIBLE_TRADE_LEVELS_KEY = "chart:visibleTradeLevels";
 
-const TRADE_LEVEL_ITEMS: { key: TradeLevelKey; label: string; color: string }[] = [
-  { key: "entry", label: "Entry", color: POSITION_ENTRY_COLOR },
-  { key: "stop", label: "Stop", color: POSITION_STOP_COLOR },
-  { key: "target", label: "Target", color: POSITION_TARGET_COLOR },
-];
+function tradeLevelItems(): { key: TradeLevelKey; label: string; color: string }[] {
+  return [
+    { key: "entry", label: "Entry", color: POSITION_ENTRY_COLOR },
+    { key: "stop", label: "Stop", color: positionStopColor() },
+    { key: "target", label: "Target", color: positionTargetColor() },
+  ];
+}
 
 function loadVisibleIndicators(): Set<string> {
   try {
@@ -101,17 +103,6 @@ function persistLevelSet(key: string, values: Set<string>) {
 }
 
 const CURSOR_KEY = "chart:cursorMode";
-const AUTO_SCROLL_KEY = "chart:autoScroll";
-
-function loadAutoScroll(): boolean {
-  try {
-    // On unless someone switched it off: following the live edge is the
-    // default a trading chart is expected to have.
-    return localStorage.getItem(AUTO_SCROLL_KEY) !== "off";
-  } catch {
-    return true;
-  }
-}
 
 const CURSOR_MODES: { key: CursorMode; label: string; title: string }[] = [
   {
@@ -189,7 +180,12 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
     if (!next || !(TICKER_RE.test(next) || parseOcc(next))) return;
     onSelectSymbol?.(next);
   };
-  const [timeframeKey, setTimeframeKey] = useState(DEFAULT_TIMEFRAME_KEY);
+  // The Settings dialog's chart defaults seed a chart's own state; the
+  // buttons in the chart change only this chart from then on.
+  const [timeframeKey, setTimeframeKey] = useState(() => {
+    const wanted = getSettings().defaultTimeframe;
+    return TIMEFRAME_OPTIONS.some((o) => o.key === wanted) ? wanted : DEFAULT_TIMEFRAME_KEY;
+  });
 
   // A pick carries the resolution that makes it legible -- a 10:35 intraday
   // entry means nothing on a daily chart, and a daily pick is a sliver on a
@@ -269,10 +265,10 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // convention and the default; premarket-anchored is what TradingView shows.
   // On a gapper these are genuinely different lines -- IPST 2026-08-17 closed
   // at 7.39 with the session line at 7.81 and the premarket one near 7.18.
-  const [vwapFromPremarket, setVwapFromPremarket] = useState(false);
+  const [vwapFromPremarket, setVwapFromPremarket] = useState(() => getSettings().vwapAnchor === "premarket");
   // Kept across symbol and timeframe changes: how someone wants price drawn
   // is a preference, not a property of what they are looking at.
-  const [chartType, setChartType] = useState<ChartType>("candles");
+  const [chartType, setChartType] = useState<ChartType>(() => getSettings().defaultChartType);
   // Portals the whole widget to document.body and sizes it to the viewport
   // (see the return statement below) rather than rendering a second chart
   // instance in an overlay -- one CandleChart, one WS subscription, just
@@ -293,15 +289,10 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   const [cursorMode, setCursorModeState] = useState<CursorMode>(loadCursorMode);
   // TradingView's auto-scroll: on, every new candle snaps the chart back to
   // the newest bar; off, the chart stays wherever it was dragged.
-  const [autoScroll, setAutoScrollState] = useState<boolean>(loadAutoScroll);
-  function setAutoScroll(on: boolean) {
-    setAutoScrollState(on);
-    try {
-      localStorage.setItem(AUTO_SCROLL_KEY, on ? "on" : "off");
-    } catch {
-      // Works for this session, just not remembered next time.
-    }
-  }
+  const [autoScroll, setAutoScroll] = useState<boolean>(() => getSettings().autoScroll);
+  const [appSettings] = useSettings();
+  const { palette, hollow, dark } = useChartPalette();
+  const numberLocale = appSettings.numberFormat === "point" ? "en-US" : appSettings.numberFormat === "comma" ? "de-DE" : undefined;
 
   function setCursorMode(mode: CursorMode) {
     setCursorModeState(mode);
@@ -807,7 +798,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
           {gexReading && (
             <span
               className="gex-net-badge"
-              style={{ color: gexReading.net_gex >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR }}
+              style={{ color: gexReading.net_gex >= 0 ? palette.up : palette.down }}
               title="Net dealer gamma exposure -- see the GEX Plan widget for what this regime tends to mean"
             >
               Net GEX {gexReading.net_gex >= 0 ? "+" : "-"}${(Math.abs(gexReading.net_gex) / 1e9).toFixed(2)}B
@@ -869,7 +860,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
                 {(position || visibleIndicativeLevels) && (
                   <>
                     <div className="levels-menu-divider" />
-                    {TRADE_LEVEL_ITEMS.map((item) => (
+                    {tradeLevelItems().map((item) => (
                       <label key={item.key} className="levels-menu-item">
                         <input
                           type="checkbox"
@@ -954,7 +945,11 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
             autoScroll={autoScroll}
             // Session tinting only where a bar sits inside one session --
             // on daily and coarser charts the distinction does not exist.
-            shadeSessions={option.kind === "intraday"}
+            shadeSessions={option.kind === "intraday" && appSettings.sessionShading}
+            palette={palette}
+            hollowCandles={hollow}
+            dark={dark}
+            locale={numberLocale}
             // Only honour the focus while it still refers to the symbol on
             // screen; a stale one would drag the chart to an unrelated time
             // after the user clicks a different row.

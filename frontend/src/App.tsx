@@ -20,6 +20,8 @@ import { ScannerBenchmarkWidget } from "./components/scanner/ScannerBenchmarkWid
 import { ScannerHistoryWidget } from "./components/scanner/ScannerHistoryWidget";
 import { ScannerWidget } from "./components/scanner/ScannerWidget";
 import { TradingModeSwitch } from "./components/trading/TradingModeSwitch";
+import { SettingsDialog } from "./components/settings/SettingsDialog";
+import "./api/settings";
 import { TradeJournalWidget } from "./components/trading/TradeJournalWidget";
 import { TradingWidget } from "./components/trading/TradingWidget";
 import { WatchlistPanel } from "./components/watchlist/WatchlistPanel";
@@ -62,6 +64,8 @@ interface AppShellProps {
 
 function AppShell({ user, onLogout }: AppShellProps) {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  // The Settings dialog: closed until the header's button opens it.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Set by DockviewDashboard once its api is ready; see its resetRef prop.
   const dockResetRef = useRef<(() => void) | null>(null);
   // Where the chart should jump to, set only by clicking a backtest pick.
@@ -306,6 +310,15 @@ function AppShell({ user, onLogout }: AppShellProps) {
               onClickCount={alarms.openOverlay}
             />
             <TradingModeSwitch mode={tradingMode.mode} onChange={handleTradingModeChange} />
+            <button
+              type="button"
+              className="settings-toggle"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings: chart colours, appearance, chart defaults, number format, hotkeys"
+            >
+              ⚙ Settings
+            </button>
+            <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
             <span className="logout-link">
               {user.display_name} ·{" "}
               <button type="button" className="row-action" onClick={onLogout}>

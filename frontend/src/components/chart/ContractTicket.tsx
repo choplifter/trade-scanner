@@ -7,9 +7,10 @@ import { useSpreads } from "../../hooks/useSpreads";
 import { triggerBoundsLabel, type ClosePreview, type SpreadPreview } from "../../types/options";
 import type { Order, Position, TradingRejection } from "../../types/trading";
 import { formatLeg, type ParsedOcc } from "../../utils/occ";
+import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
-import { POSITION_STOP_COLOR, POSITION_TARGET_COLOR, type OrderLevel } from "./CandleChart";
+import { positionStopColor, positionTargetColor, type OrderLevel } from "./CandleChart";
 
 interface ContractTicketProps {
   /** The OCC symbol on the chart. */
@@ -39,9 +40,7 @@ function num(value: string | number | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function money(value: number): string {
-  return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const money = formatMoney;
 
 function randomUUID(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
@@ -210,10 +209,10 @@ export function ContractTicket({
     const levels: OrderLevel[] = [];
     for (const t of activeTriggers) {
       if (t.premium_below != null) {
-        levels.push({ price: t.premium_below, side: "sell", title: "Close ≤", color: POSITION_STOP_COLOR });
+        levels.push({ price: t.premium_below, side: "sell", title: "Close ≤", color: positionStopColor() });
       }
       if (t.premium_above != null) {
-        levels.push({ price: t.premium_above, side: "sell", title: "Close ≥", color: POSITION_TARGET_COLOR });
+        levels.push({ price: t.premium_above, side: "sell", title: "Close ≥", color: positionTargetColor() });
       }
     }
     onTriggerLevels(levels);

@@ -5,7 +5,8 @@ import { getContractQuote } from "../api/options";
 import type { Bar, ChartQuoteMessage, IndicatorResult } from "../types/alpaca";
 import type { LegQuote } from "../types/options";
 import { formatOcc, type ParsedOcc } from "../utils/occ";
-import { FLIP_COLOR, NEGATIVE_COLOR, POSITIVE_COLOR } from "./useGexLevels";
+import { FLIP_COLOR, negativeColor, positiveColor } from "./useGexLevels";
+import { useChartPalette } from "./useSettings";
 
 /** How often the underlying's price is re-read for the intrinsic line and
  * the expected-move band. */
@@ -97,6 +98,7 @@ export function usePremiumLevels(
 ): PremiumLevels {
   const [spot, setSpot] = useState<number | null>(null);
   const [greeks, setGreeks] = useState<LegQuote | null>(null);
+  const { palette } = useChartPalette();
   const underlying = contract?.underlying ?? null;
   const symbol = contract ? formatOcc(contract) : null;
 
@@ -208,7 +210,7 @@ export function usePremiumLevels(
         level(
           "Entry ±",
           { "+100%": entry * 2, "+50%": entry * 1.5, "−50%": entry * 0.5 },
-          { "+100%": POSITIVE_COLOR, "+50%": POSITIVE_COLOR, "−50%": NEGATIVE_COLOR },
+          { "+100%": positiveColor(), "+50%": positiveColor(), "−50%": negativeColor() },
         ),
       );
     }
@@ -255,12 +257,14 @@ export function usePremiumLevels(
       }
     }
     return out;
-  }, [contract, bars, bid, ask, entry, spot, greeks, mid, intraday]);
+    // palette: the entry-multiple colours are read at build time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contract, bars, bid, ask, entry, spot, greeks, mid, intraday, palette]);
 
   // `bars` gets a new identity on every trade tick, which would hand
   // CandleChart a new indicator list (and a rebuild of every line) several
   // times a second. Only a change in the values themselves goes out.
-  const key = JSON.stringify(computed.map((i) => [i.name, i.series]));
+  const key = JSON.stringify(computed.map((i) => [i.name, i.series, i.colors]));
   const stableRef = useRef<{ key: string; value: IndicatorResult[] }>({ key: "", value: [] });
   if (stableRef.current.key !== key) stableRef.current = { key, value: computed };
   return { vwap, levels: stableRef.current.value };

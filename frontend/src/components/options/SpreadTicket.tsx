@@ -26,6 +26,7 @@ import {
 import type { TradingRejection } from "../../types/trading";
 import { symbolDragProps } from "../../utils/dragSymbol";
 import { formatExpiry, formatLeg, formatStrike } from "../../utils/occ";
+import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import {
@@ -81,9 +82,7 @@ function randomUUID(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
 }
 
-function money(value: number): string {
-  return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const money = formatMoney;
 
 function loadRiskOpen(): boolean {
   try {
@@ -131,7 +130,15 @@ export function ticketFor(
   const base = { underlying: symbol, strategy, expiry, qty };
   if (!LEGS_STRATEGIES.has(strategy)) {
     if (isSingle(legs)) return { ...base, long_strike: legs.strike };
-    if (isCondor(legs)) return { ...base, ...legs };
+    if (isCondor(legs)) {
+      return {
+        ...base,
+        put_long_strike: legs.put_long,
+        put_short_strike: legs.put_short,
+        call_short_strike: legs.call_short,
+        call_long_strike: legs.call_long,
+      };
+    }
     if ("long" in legs && "short" in legs) return { ...base, long_strike: legs.long, short_strike: legs.short };
     return base;
   }

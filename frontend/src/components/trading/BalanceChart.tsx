@@ -8,6 +8,9 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 
+import type { ChartPalette } from "../../api/chartTheme";
+import { numberLocale } from "../../api/settings";
+import { useChartPalette } from "../../hooks/useSettings";
 import type { BalancePoint } from "../../types/trading";
 import {
   crosshairDateFormatter,
@@ -22,8 +25,6 @@ interface BalanceChartProps {
   daily: boolean;
 }
 
-const UP = "#0ca30c";
-const DOWN = "#d03b3b";
 
 /**
  * The account equity curve.
@@ -39,6 +40,17 @@ const DOWN = "#d03b3b";
  * chart owns its canvas, and re-creating it whenever the poll returns would
  * throw away the user's zoom every 30 seconds.
  */
+function baselineColors(palette: ChartPalette) {
+  return {
+    topLineColor: palette.up,
+    topFillColor1: palette.upSoft.replace(/[\d.]+\)$/, "0.28)"),
+    topFillColor2: palette.upSoft.replace(/[\d.]+\)$/, "0.02)"),
+    bottomLineColor: palette.down,
+    bottomFillColor1: palette.downSoft.replace(/[\d.]+\)$/, "0.02)"),
+    bottomFillColor2: palette.downSoft.replace(/[\d.]+\)$/, "0.28)"),
+  };
+}
+
 export function BalanceChart({ points, daily }: BalanceChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -47,6 +59,10 @@ export function BalanceChart({ points, daily }: BalanceChartProps) {
   // a prop that changes when the range does.
   const dailyRef = useRef(daily);
   dailyRef.current = daily;
+  // The Settings dialog's colour scheme; applied to the live series below.
+  const { palette } = useChartPalette();
+  const paletteRef = useRef(palette);
+  paletteRef.current = palette;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -67,7 +83,7 @@ export function BalanceChart({ points, daily }: BalanceChartProps) {
         // renders a six-figure balance as "97.57k" -- which is the one thing
         // on this panel a reader wants exactly.
         priceFormatter: (price: number) =>
-          price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          price.toLocaleString(numberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       },
       autoSize: true,
       handleScale: { axisPressedMouseMove: false },
@@ -75,12 +91,7 @@ export function BalanceChart({ points, daily }: BalanceChartProps) {
 
     const series = chart.addSeries(BaselineSeries, {
       lineWidth: 2,
-      topLineColor: UP,
-      topFillColor1: "rgba(12,163,12,0.28)",
-      topFillColor2: "rgba(12,163,12,0.02)",
-      bottomLineColor: DOWN,
-      bottomFillColor1: "rgba(208,59,59,0.02)",
-      bottomFillColor2: "rgba(208,59,59,0.28)",
+      ...baselineColors(paletteRef.current),
       priceLineVisible: false,
     });
     series.priceScale().applyOptions({ scaleMargins: { top: 0.12, bottom: 0.12 } });
@@ -94,6 +105,10 @@ export function BalanceChart({ points, daily }: BalanceChartProps) {
       seriesRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    seriesRef.current?.applyOptions(baselineColors(palette));
+  }, [palette]);
 
   useEffect(() => {
     const chart = chartRef.current;

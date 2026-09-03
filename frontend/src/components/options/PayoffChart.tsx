@@ -1,14 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 
 import type { Payoff } from "../../types/options";
+import { formatNum } from "../../utils/format";
+import { getSettings, updateSettings } from "../../api/settings";
+import { useSettings } from "../../hooks/useSettings";
 
 const WIDTH = 560;
 const HEIGHT = 200;
 const PAD = { top: 14, right: 12, bottom: 24, left: 52 };
 
 function money(value: number): string {
-  return value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return formatNum(value, 0);
 }
 
 interface PayoffChartProps {
@@ -24,6 +27,26 @@ interface PayoffChartProps {
  * SVG: the numbers all come from the backend (app/options/payoff.py). */
 export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
   const [hover, setHover] = useState<number | null>(null);
+  // The frame is CSS-resizable (drag its bottom edge); the height it ends
+  // up at is remembered in the settings so every risk chart shares it.
+  const [settings] = useSettings();
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || typeof ResizeObserver === "undefined") return;
+    let timer: number | null = null;
+    const observer = new ResizeObserver(() => {
+      const height = Math.round(frame.getBoundingClientRect().height);
+      if (!height || height === getSettings().riskChartHeight) return;
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => updateSettings({ riskChartHeight: height }), 250);
+    });
+    observer.observe(frame);
+    return () => {
+      observer.disconnect();
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, []);
 
   const geometry = useMemo(() => {
     const xs = payoff.prices;
@@ -70,6 +93,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
 
   return (
     <div className="payoff-chart">
+      <div className="payoff-frame" ref={frameRef} style={{ height: settings.riskChartHeight }} title="Drag the bottom edge to resize">
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         preserveAspectRatio="none"
@@ -116,6 +140,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
           </g>
         )}
       </svg>
+      </div>
       <div className="payoff-legend">
         <span>
           <i className="payoff-swatch expiry" /> {expiryLabel ?? "at expiry"}

@@ -16,6 +16,7 @@ import {
   type UnderlyingTrigger,
 } from "../../types/options";
 import { formatExpiry, formatLeg, formatStrike } from "../../utils/occ";
+import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import { PayoffChart } from "./PayoffChart";
@@ -44,9 +45,7 @@ interface PendingClose {
   busy: boolean;
 }
 
-function money(value: number): string {
-  return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const money = formatMoney;
 
 function signed(value: number): string {
   return `${value > 0 ? "+" : ""}${money(value)}`;

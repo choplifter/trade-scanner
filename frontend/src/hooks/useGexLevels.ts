@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { getGex } from "../api/http";
+import { getPalette } from "../api/settings";
 import type { IndicatorResult } from "../types/alpaca";
 import type { GexSymbolReading } from "../types/gex";
 
@@ -18,8 +19,13 @@ const REFRESH_MS = 5 * 60_000; // matches backend's gex_refresh_interval (300s)
 // (POSITION_TARGET_COLOR/POSITION_STOP_COLOR) -- this chart's price-line
 // colors aren't theme-reactive anywhere today, so this doesn't introduce a
 // new pattern.
-export const POSITIVE_COLOR = "#0ca30c";
-export const NEGATIVE_COLOR = "#d03b3b";
+/** The scheme's up/down colours (Settings dialog), read at call time. */
+export function positiveColor(): string {
+  return getPalette().up;
+}
+export function negativeColor(): string {
+  return getPalette().down;
+}
 // Neither support nor resistance, so it gets its own neutral color rather
 // than borrowing the positive/negative convention above.
 export const FLIP_COLOR = "#8a6fd6";
@@ -91,7 +97,7 @@ export function useGexLevels(symbol: string | null): IndicatorResult | null {
   };
 
   for (const wall of reading.top_walls) {
-    setLevel(`Wall ${wall.strike}`, wall.strike, wall.net_gex >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR);
+    setLevel(`Wall ${wall.strike}`, wall.strike, wall.net_gex >= 0 ? positiveColor() : negativeColor());
   }
   // Drawn after the generic walls so a coinciding strike keeps this more
   // specific label (see setLevel dedup note above -- same `series` key).
@@ -105,11 +111,11 @@ export function useGexLevels(symbol: string | null): IndicatorResult | null {
   };
   if (reading.call_wall) {
     dropCoincidingWall(reading.call_wall.strike);
-    setLevel("Call Wall", reading.call_wall.strike, POSITIVE_COLOR);
+    setLevel("Call Wall", reading.call_wall.strike, positiveColor());
   }
   if (reading.put_wall) {
     dropCoincidingWall(reading.put_wall.strike);
-    setLevel("Put Wall", reading.put_wall.strike, NEGATIVE_COLOR);
+    setLevel("Put Wall", reading.put_wall.strike, negativeColor());
   }
   if (reading.gamma_flip_strike != null) {
     setLevel("Flip", reading.gamma_flip_strike, FLIP_COLOR);
