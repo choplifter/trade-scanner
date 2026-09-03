@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 
 import { DockviewReact, themeDark, themeLight } from "dockview-react";
 import type {
@@ -25,6 +25,10 @@ interface DockviewDashboardProps {
   /** The dashboard's current underlying symbol -- what a chart copy opened
    * from a tab's context menu starts pinned to. */
   selectedSymbol: string | null;
+  /** Filled in once the dock is ready with a function that restores the
+   * default arrangement (the header's Reset button calls it). A ref rather
+   * than state so the toggle can call it without re-rendering the dock. */
+  resetRef?: MutableRefObject<(() => void) | null>;
 }
 
 /** See DockContext (dockShared.ts) for why panels read the widget record
@@ -163,7 +167,7 @@ function buildDefaultLayout(api: DockviewApi) {
  * menu below, and the tab's own right-click menu (DockTab.tsx: open a
  * second instance as a new tab, float, close).
  */
-export function DockviewDashboard({ widgets, selectedSymbol }: DockviewDashboardProps) {
+export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: DockviewDashboardProps) {
   // Matches the app's own system-preference-only dark mode (see styles.css's
   // prefers-color-scheme block) -- read once, not reactive to a live OS
   // theme change, since dockview-react has no equivalent of :root
@@ -190,6 +194,14 @@ export function DockviewDashboard({ widgets, selectedSymbol }: DockviewDashboard
     }
     setContainerApi(event.api);
     setOpenIds(openWidgetIds(event.api));
+    if (resetRef) {
+      resetRef.current = () => {
+        // clear() drops every panel, group, floating and popout window;
+        // the layout-change event below then persists the rebuilt default.
+        event.api.clear();
+        buildDefaultLayout(event.api);
+      };
+    }
 
     // onDidLayoutChange fires on every add/move/resize -- the library's own
     // doc comment on the event flags it as "worth debouncing" -- same

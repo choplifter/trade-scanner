@@ -36,12 +36,16 @@ const MODES: { key: LayoutMode; label: string; title: string }[] = [
 export function LayoutModeToggle({ mode, onChange, onReset }: LayoutModeToggleProps) {
   return (
     <span className="layout-mode-group">
-      {mode === "grid" && (
+      {(mode === "grid" || mode === "dock") && (
         <button
           type="button"
           className="layout-reset-button"
           onClick={onReset}
-          title="Restore the default widget arrangement"
+          title={
+            mode === "dock"
+              ? "Restore the default dock arrangement (closes widget copies and floating windows)"
+              : "Restore the default widget arrangement"
+          }
         >
           Reset
         </button>

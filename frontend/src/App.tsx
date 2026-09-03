@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useRef } from "react";
 import type { ReactNode } from "react";
 
 import { TradeIdeasWidget } from "./components/ai/TradeIdeasWidget";
@@ -62,6 +62,8 @@ interface AppShellProps {
 
 function AppShell({ user, onLogout }: AppShellProps) {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  // Set by DockviewDashboard once its api is ready; see its resetRef prop.
+  const dockResetRef = useRef<(() => void) | null>(null);
   // Where the chart should jump to, set only by clicking a backtest pick.
   const [chartFocus, setChartFocus] = useState<ChartFocus | null>(null);
 
@@ -292,7 +294,10 @@ function AppShell({ user, onLogout }: AppShellProps) {
             <LayoutModeToggle
               mode={dashboardLayout.mode}
               onChange={dashboardLayout.setMode}
-              onReset={dashboardLayout.resetLayout}
+              onReset={() => {
+                if (dashboardLayout.mode === "dock") dockResetRef.current?.();
+                else dashboardLayout.resetLayout();
+              }}
             />
             <AlarmsToggle
               enabled={alarms.enabled}
@@ -324,7 +329,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               widgets={widgets}
             />
           ) : dashboardLayout.mode === "dock" ? (
-            <DockviewDashboard widgets={widgets} selectedSymbol={underlying} />
+            <DockviewDashboard widgets={widgets} selectedSymbol={underlying} resetRef={dockResetRef} />
           ) : replaySession ? (
             // A session is running -- replay gets its own resizable third
             // row, same as it always has. news_feed no longer lives here --
