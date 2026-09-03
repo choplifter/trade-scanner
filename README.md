@@ -654,7 +654,9 @@ past dates.
   lines at their limits with the held entry as a solid line. Below the
   ticket, for a held contract, a **premium trigger** editor arms *close if
   the premium is ≤ / ≥* (same trigger store and loop; the bounds draw as
-  dashed stop/target-coloured lines on the premium chart). While a
+  dashed stop/target-coloured lines on the premium chart). Both trigger
+  editors only exist for something actually held: a resting, unfilled
+  order shows neither -- there is nothing to close yet. While a
   contract is on the chart the Options widget follows it: its expiry is
   selected and the strike marked as a long call/put. Widget-local hotkeys (not in Live): `[` `]` expiry, `5`–`9`
   strategy (the two outright longs have none — `0`–`4` belong to the
