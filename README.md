@@ -412,8 +412,9 @@ past dates.
   Alpaca's live minute-bar stream, plus a company info + recent news panel
   (name/sector/industry/description from FMP, headlines from both feeds).
   Recent headlines are also **pinned on the timeline** as 📰 markers at the
-  bar nearest their publish time; clicking a pinned bar scrolls the news
-  panel to that story and highlights it. Every symbol is clickable, not
+  bar nearest their publish time; clicking a pinned bar opens the story
+  (headline link, source, age, summary) in a popover on the chart itself
+  and scrolls the news panel to it. Every symbol is clickable, not
   just the main scanner table — the AI past-picks table, the scanner
   benchmark table, and the scanner match history leaderboards all load
   into the same chart. A **Levels** toggle overlays EMA 9/20 (sourced from

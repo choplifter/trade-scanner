@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
@@ -24,7 +24,7 @@ import { useReplayIndicators } from "../../hooks/useReplayIndicators";
 import { useReplaySession } from "../../hooks/useReplaySession";
 import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
-import { formatPrice } from "../../utils/format";
+import { formatPrice, newsAge } from "../../utils/format";
 import { CandleChart, POSITION_ENTRY_COLOR, POSITION_STOP_COLOR, POSITION_TARGET_COLOR, type OrderLevel } from "./CandleChart";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
 
@@ -448,6 +448,32 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
         }
       : undefined;
 
+  // Stories behind the 📰 pin the user clicked, shown in a popover over the
+  // chart -- the Symbol Info widget also highlights them, but in the dock
+  // it may be a background tab or closed, so the chart shows them itself.
+  const [openNews, setOpenNews] = useState<number[] | null>(null);
+  useEffect(() => setOpenNews(null), [symbol]);
+  useEffect(() => {
+    if (!openNews) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenNews(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openNews]);
+  const onNewsClick = useCallback(
+    (times: number[]) => {
+      setHighlightedNews(times);
+      setOpenNews(times);
+    },
+    [setHighlightedNews],
+  );
+  const openStories = useMemo(() => {
+    if (!openNews || !symbolInfo.info || symbolInfo.info.symbol !== symbol) return [];
+    const wanted = new Set(openNews);
+    return symbolInfo.info.news.filter((item) => wanted.has(Math.floor(Date.parse(item.published_at) / 1000)));
+  }, [openNews, symbolInfo.info, symbol]);
+
   // The shared symbol info is the dashboard's selected symbol's; a pinned
   // copy showing something else must not pin that symbol's stories.
   const newsMarkers = useMemo(
@@ -851,8 +877,36 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
             // list covers the last few days, so on daily+ charts every
             // story would pile onto the newest one or two candles.
             news={option.kind === "intraday" ? newsMarkers : []}
-            onNewsClick={setHighlightedNews}
+            onNewsClick={onNewsClick}
           />
+        )}
+        {openStories.length > 0 && (
+          <div className="chart-news-popover" role="dialog" aria-label="News at this bar">
+            <div className="chart-news-popover-header">
+              <strong>
+                {openStories.length === 1 ? "News" : `${openStories.length} stories`} ·{" "}
+                {new Date(openStories[0].published_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </strong>
+              <button type="button" className="row-action" onClick={() => setOpenNews(null)} title="Close (Esc)">
+                ✕
+              </button>
+            </div>
+            {openStories.map((item) => (
+              <div key={`${item.published_at}:${item.headline}`} className="chart-news-story">
+                {item.url ? (
+                  <a href={item.url} target="_blank" rel="noreferrer" className="symbol-news-headline">
+                    {item.headline}
+                  </a>
+                ) : (
+                  <span className="symbol-news-headline">{item.headline}</span>
+                )}
+                <span className="symbol-news-source">
+                  — {item.source} · {newsAge(item.published_at)}
+                </span>
+                {item.summary && <p className="chart-news-summary">{item.summary}</p>}
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>
