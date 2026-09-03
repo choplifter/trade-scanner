@@ -42,3 +42,9 @@ export function formatLeg(symbol: string): string {
   if (!parsed) return symbol;
   return `${parsed.underlying} ${formatExpiry(parsed.expiry)} ${formatStrike(parsed.strike)}${parsed.kind === "call" ? "C" : "P"}`;
 }
+
+/** What the chart should load for a symbol: an option contract's
+ * underlying (the bars endpoint only knows stocks), anything else as is. */
+export function chartSymbolOf(symbol: string): string {
+  return parseOcc(symbol)?.underlying ?? symbol;
+}

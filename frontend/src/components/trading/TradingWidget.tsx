@@ -22,7 +22,7 @@ import { exitsForPosition, num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "./LiveConfirmField";
-import { formatLeg } from "../../utils/occ";
+import { chartSymbolOf, formatLeg } from "../../utils/occ";
 import { BalanceChart } from "./BalanceChart";
 import { OrderTicket } from "./OrderTicket";
 
@@ -139,6 +139,13 @@ function signedMoney(value: string | null | undefined): { text: string; cls: str
  * trade list. */
 /** A multi-leg (spread) parent order has no symbol of its own; label it
  * by its legs so the Orders tab can still say what it is. */
+/** The chart symbol behind an order: the stock itself, or an option
+ * order's underlying (an MLEG parent has no symbol, so take a leg's). */
+function orderChartSymbol(order: Order): string | null {
+  const symbol = order.symbol ?? order.legs?.find((leg) => leg.symbol)?.symbol ?? null;
+  return symbol ? chartSymbolOf(symbol) : null;
+}
+
 function orderLabel(order: Order): string {
   if (order.symbol) return order.symbol;
   const legs = (order.legs ?? []).map((leg) => (leg.symbol ? formatLeg(leg.symbol) : "?"));
@@ -947,8 +954,11 @@ function OrdersTable({
         {orders.map((o) => (
           <tr
             key={o.id}
-            aria-selected={o.symbol === selectedSymbol}
-            onClick={() => o.symbol && onSelectSymbol(o.symbol)}
+            aria-selected={orderChartSymbol(o) === selectedSymbol}
+            onClick={() => {
+              const symbol = orderChartSymbol(o);
+              if (symbol) onSelectSymbol(symbol);
+            }}
           >
             <td className="symbol-cell">{orderLabel(o)}</td>
             <td>{o.side}</td>
