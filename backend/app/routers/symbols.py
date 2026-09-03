@@ -164,6 +164,14 @@ async def get_symbol_bars(
     symbol: str,
     request: Request,
     timeframe: str = Query(default="1Min"),
+    since: int | None = Query(
+        default=None,
+        description=(
+            "Unix seconds -- for an option contract at timeframe=1Min, fetch only bars "
+            "from this moment on (the premium chart's refresh poll), instead of the "
+            "full lookback window."
+        ),
+    ),
     around: int | None = Query(
         default=None,
         description=(
@@ -183,10 +191,11 @@ async def get_symbol_bars(
         # An option contract: its premium, bar for bar. No VWAP (not a
         # same-session concept the chart draws for a contract), no
         # indicators (every level here belongs to the underlying's price
-        # axis, not the premium's) and no live stream -- the chart is a
-        # one-shot fetch, same as the higher timeframes on a stock.
+        # axis, not the premium's) and no live stream -- the chart polls
+        # this endpoint with `since` for the newest bars instead.
         if timeframe == "1Min":
-            bars = await get_option_minute_bars(clients, symbol)
+            start = datetime.fromtimestamp(since, tz=timezone.utc) if since else None
+            bars = await get_option_minute_bars(clients, symbol, start=start)
         elif timeframe in HISTORICAL_TIMEFRAMES:
             bars = await get_option_historical_bars(clients, symbol, timeframe)
         else:

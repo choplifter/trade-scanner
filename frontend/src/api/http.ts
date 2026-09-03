@@ -119,8 +119,9 @@ export function getRecentNewsFeed(limit = 50): Promise<{ items: NewsFeedItem[] }
   return getJson<{ items: NewsFeedItem[] }>(`/news-feed/recent?limit=${limit}`);
 }
 
-export function getSymbolBars(symbol: string, timeframe = "1Min"): Promise<SymbolBarsResponse> {
-  return getJson<SymbolBarsResponse>(`/symbols/${symbol}/bars?timeframe=${encodeURIComponent(timeframe)}`);
+export function getSymbolBars(symbol: string, timeframe = "1Min", since?: number): Promise<SymbolBarsResponse> {
+  const query = `timeframe=${encodeURIComponent(timeframe)}${since != null ? `&since=${Math.floor(since)}` : ""}`;
+  return getJson<SymbolBarsResponse>(`/symbols/${symbol}/bars?${query}`);
 }
 
 export function getSymbolInfo(symbol: string): Promise<SymbolInfoResponse> {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { getSymbolBars } from "../api/http";
 import { chartSocket } from "../api/ws";
@@ -22,6 +22,9 @@ export interface ChartFeedState {
   loading: boolean;
 }
 
+/** How often a premium chart re-fetches its newest bars. */
+const OPTION_POLL_MS = 5000;
+
 const EMPTY_STATE: ChartFeedState = {
   bars: [],
   vwap: [],
@@ -39,6 +42,9 @@ const EMPTY_STATE: ChartFeedState = {
  */
 export function useChartFeed(symbol: string | null): ChartFeedState {
   const [state, setState] = useState<ChartFeedState>(EMPTY_STATE);
+  // Read by the premium chart's refresh poll without being a dependency.
+  const stateRef = useRef(state);
+  stateRef.current = state;
   // Signal settings (opening-range length, strategy switches) shape the
   // indicators the REST fetch returns; a change re-runs the whole effect.
   // The brief ws re-subscribe that rides along is harmless -- the next tick
@@ -73,11 +79,47 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
         }
       });
 
-    // An option contract (premium chart) has no live stream: the REST
-    // fetch above is the whole feed, like the higher timeframes on a stock.
+    // An option contract (premium chart) has no live stream here; instead
+    // the newest bars are re-fetched every few seconds (`since` a minute
+    // before the last bar held, so the forming bar is refreshed and a bar
+    // closed meanwhile is added) and merged in by minute.
     if (parseOcc(symbol)) {
+      const poll = window.setInterval(() => {
+        if (cancelled || document.hidden) return;
+        const held = stateRef.current.bars;
+        const last = held[held.length - 1];
+        const since = last ? Date.parse(last.t) / 1000 - 60 : undefined;
+        getSymbolBars(symbol, "1Min", since)
+          .then((res) => {
+            if (cancelled || res.bars.length === 0) return;
+            setState((s) => {
+              const bars = [...s.bars];
+              for (const bar of res.bars) {
+                const barMs = Date.parse(bar.t);
+                let index = bars.length - 1;
+                while (index >= 0 && Date.parse(bars[index].t) > barMs)
+                  index -= 1;
+                if (index >= 0 && Date.parse(bars[index].t) === barMs)
+                  bars[index] = bar;
+                else bars.splice(index + 1, 0, bar);
+              }
+              return {
+                ...s,
+                bars,
+                vwap: bars.map(() => null),
+                vwapPremarket: bars.map(() => null),
+                error: null,
+              };
+            });
+          })
+          .catch(() => {
+            // A failed refresh keeps the bars already shown; the next
+            // tick tries again.
+          });
+      }, OPTION_POLL_MS);
       return () => {
         cancelled = true;
+        window.clearInterval(poll);
       };
     }
 
@@ -141,7 +183,14 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
               v: last.v + msg.v,
             };
           } else {
-            bars.push({ t: msg.t, o: msg.o, h: msg.h, l: msg.l, c: msg.c, v: msg.v });
+            bars.push({
+              t: msg.t,
+              o: msg.o,
+              h: msg.h,
+              l: msg.l,
+              c: msg.c,
+              v: msg.v,
+            });
             // VWAP is only re-derived server-side per closed bar; carrying
             // the last value forward keeps the arrays aligned with `bars`
             // (aggregateBars indexes them together) without inventing a

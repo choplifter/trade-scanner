@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { getSymbolBars } from "../api/http";
+import { parseOcc } from "../utils/occ";
 import type { Bar, IndicatorResult } from "../types/alpaca";
 import { useStrategySettingsNonce } from "./useStrategySettingsNonce";
 
@@ -16,6 +17,9 @@ export interface HistoricalBarsState {
   error: string | null;
   loading: boolean;
 }
+
+/** Refresh cadence of a premium chart on a higher timeframe. */
+const OPTION_POLL_MS = 30000;
 
 const EMPTY_STATE: HistoricalBarsState = {
   bars: [],
@@ -63,8 +67,22 @@ export function useHistoricalBars(
         if (!cancelled) setState((s) => ({ ...s, error: String(err), loading: false }));
       });
 
+    // A premium chart on a higher timeframe has no live tick either; a slow
+    // full re-fetch keeps its newest candle current.
+    const poll = parseOcc(symbol)
+      ? window.setInterval(() => {
+          if (cancelled || document.hidden) return;
+          getSymbolBars(symbol, alpacaTimeframe)
+            .then((res) => {
+              if (!cancelled) setState({ bars: res.bars, vwap: res.vwap, indicators: res.indicators, error: null, loading: false });
+            })
+            .catch(() => {});
+        }, OPTION_POLL_MS)
+      : null;
+
     return () => {
       cancelled = true;
+      if (poll != null) window.clearInterval(poll);
     };
   }, [symbol, alpacaTimeframe, settingsNonce]);
 
