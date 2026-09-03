@@ -645,9 +645,12 @@ past dates.
   bars (1m/5m/15m) or native hourly/daily/weekly bars from Alpaca's option
   bars endpoint, labelled "SPY 4 Sep 765C · premium", with a button back to
   the underlying; no VWAP or levels on it (those belong to the stock's
-  price axis); instead of a live stream the premium chart re-fetches its
-  newest minute bars every 5 s (higher timeframes every 30 s) and merges
-  them in, so the forming candle and last price stay current.
+  price axis). It is live like the stock chart: the backend subscribes the
+  contract on Alpaca's option websocket (OPRA) and streams its trades,
+  which shape the forming candle tick by tick, and its quotes, shown as
+  bid / ask in the header; closed candles come from a 5 s re-fetch of the
+  newest option bars (Alpaca streams no option bars), higher timeframes
+  re-fetch every 30 s.
   A **contract ticket** sits under the header: contracts, **Buy** (to open,
   the long call/put path with its preview, limits and confirmation) and
   **Sell** (to close, only enabled for what is held -- nothing is ever

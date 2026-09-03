@@ -28,7 +28,13 @@ async def chart_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     manager = websocket.app.state.connection_manager
     stream_manager = websocket.app.state.stream_manager
+    option_stream_manager = websocket.app.state.option_stream_manager
     subscribed_symbols: set[str] = set()
+
+    # Option contracts (OCC symbols) ride the option stream, stocks the
+    # stock stream; both publish on chart:{symbol}.
+    def manager_for(symbol: str):
+        return option_stream_manager if try_parse_occ(symbol) is not None else stream_manager
 
     try:
         while True:
@@ -39,12 +45,8 @@ async def chart_ws(websocket: WebSocket) -> None:
             topic = f"chart:{symbol}"
 
             if msg.get("type") == "subscribe":
-                if try_parse_occ(symbol) is not None:
-                    # Option contracts have no live stream here; the premium
-                    # chart is served by the REST bars endpoint alone.
-                    continue
                 try:
-                    await stream_manager.subscribe(symbol)
+                    await manager_for(symbol).subscribe(symbol)
                 except ValueError as exc:
                     await websocket.send_json(
                         {"type": "error", "symbol": symbol, "message": str(exc)}
@@ -55,7 +57,7 @@ async def chart_ws(websocket: WebSocket) -> None:
             elif msg.get("type") == "unsubscribe":
                 await manager.unsubscribe(topic, websocket)
                 subscribed_symbols.discard(symbol)
-                await stream_manager.unsubscribe(symbol)
+                await manager_for(symbol).unsubscribe(symbol)
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -63,4 +65,4 @@ async def chart_ws(websocket: WebSocket) -> None:
     finally:
         await manager.unsubscribe_all(websocket)
         for symbol in subscribed_symbols:
-            await stream_manager.unsubscribe(symbol)
+            await manager_for(symbol).unsubscribe(symbol)

@@ -3145,3 +3145,9 @@ td[draggable="true"].chain-side {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }
+
+.chart-quote {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: 12px;
+}

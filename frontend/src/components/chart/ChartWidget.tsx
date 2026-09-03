@@ -654,6 +654,14 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
             </button>
           )}
           {lastPrice != null && <span className="last-price">{formatPrice(lastPrice)}</span>}
+          {contract && intraday.quote && (
+            <span
+              className="chart-quote"
+              title={`Bid ${intraday.quote.bid ?? "—"} × ${intraday.quote.bid_size ?? "—"} · Ask ${intraday.quote.ask ?? "—"} × ${intraday.quote.ask_size ?? "—"} (live)`}
+            >
+              {intraday.quote.bid?.toFixed(2) ?? "—"} / {intraday.quote.ask?.toFixed(2) ?? "—"}
+            </span>
+          )}
           {usingReplayBars && replaySession && (
             <span
               className="replay-chart-badge"

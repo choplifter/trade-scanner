@@ -172,7 +172,19 @@ export interface ChartErrorMessage {
   message: string;
 }
 
-export type ChartSocketMessage = ChartBarMessage | ChartTradeMessage | ChartErrorMessage;
+/** An option contract's newest bid/ask (the option stream sends quotes
+ * alongside trades; stocks carry none). */
+export interface ChartQuoteMessage {
+  type: "quote";
+  symbol: string;
+  t: string;
+  bid: number | null;
+  ask: number | null;
+  bid_size: number | null;
+  ask_size: number | null;
+}
+
+export type ChartSocketMessage = ChartBarMessage | ChartTradeMessage | ChartQuoteMessage | ChartErrorMessage;
 
 /** One named indicator's computed result -- "level" is a static horizontal
  * reference price per sub-series (e.g. {High, Low}), "series" is a

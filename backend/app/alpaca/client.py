@@ -6,6 +6,7 @@ from alpaca.data.historical.news import NewsClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.screener import ScreenerClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
+from alpaca.data.live.option import OptionDataStream
 from alpaca.data.live.stock import StockDataStream
 from alpaca.trading.client import TradingClient
 
@@ -69,6 +70,15 @@ class AlpacaClients:
             feed=self.feed,
         )
         self._stream_task: asyncio.Task | None = None
+        # Live option trades/quotes for the premium chart (see
+        # app.market_data.option_stream_manager). Its own websocket: Alpaca
+        # serves options on a separate endpoint from stocks.
+        self.option_stream = OptionDataStream(
+            api_key=settings.alpaca_api_key_id,
+            secret_key=settings.alpaca_api_secret_key,
+            feed=self.options_feed,
+        )
+        self._option_stream_task: asyncio.Task | None = None
 
     def trading_for(self, account: str) -> TradingClient:
         """The TradingClient for "paper" or "live" -- see app.trading.guards
@@ -135,3 +145,17 @@ class AlpacaClients:
         await self.stream.stop_ws()
         self._stream_task.cancel()
         self._stream_task = None
+
+    def start_option_stream(self) -> None:
+        """Same shape as start_stream, for the option websocket."""
+        if self._option_stream_task is not None:
+            return
+        self._option_stream_task = asyncio.create_task(self.option_stream._run_forever())
+        logger.info("Alpaca option stream task started (feed=%s)", self.options_feed)
+
+    async def stop_option_stream(self) -> None:
+        if self._option_stream_task is None:
+            return
+        await self.option_stream.stop_ws()
+        self._option_stream_task.cancel()
+        self._option_stream_task = None

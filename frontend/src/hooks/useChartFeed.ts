@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { getSymbolBars } from "../api/http";
 import { chartSocket } from "../api/ws";
-import type { Bar, IndicatorResult } from "../types/alpaca";
+import type { Bar, ChartQuoteMessage, IndicatorResult } from "../types/alpaca";
 import { parseOcc } from "../utils/occ";
 import { useStrategySettingsNonce } from "./useStrategySettingsNonce";
 
@@ -18,6 +18,8 @@ export interface ChartFeedState {
   /** From the initial REST fetch only -- not refreshed per live WS tick,
    * since these (premarket/weekly/monthly range) don't change bar to bar. */
   indicators: IndicatorResult[];
+  /** The newest bid/ask, option contracts only (from the option stream). */
+  quote: ChartQuoteMessage | null;
   error: string | null;
   loading: boolean;
 }
@@ -30,6 +32,7 @@ const EMPTY_STATE: ChartFeedState = {
   vwap: [],
   vwapPremarket: [],
   indicators: [],
+  quote: null,
   error: null,
   loading: false,
 };
@@ -79,12 +82,13 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
         }
       });
 
-    // An option contract (premium chart) has no live stream here; instead
-    // the newest bars are re-fetched every few seconds (`since` a minute
-    // before the last bar held, so the forming bar is refreshed and a bar
-    // closed meanwhile is added) and merged in by minute.
-    if (parseOcc(symbol)) {
-      const poll = window.setInterval(() => {
+    // An option contract (premium chart): live trades and quotes arrive
+    // over the socket like a stock's (subscribed below), but there is no
+    // closed-bar stream for options, so the newest bars are also
+    // re-fetched every few seconds (`since` a minute before the last bar
+    // held) and merged in by minute -- that is what finalises a candle.
+    const poll = parseOcc(symbol)
+      ? window.setInterval(() => {
         if (cancelled || document.hidden) return;
         const held = stateRef.current.bars;
         const last = held[held.length - 1];
@@ -116,12 +120,8 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
             // A failed refresh keeps the bars already shown; the next
             // tick tries again.
           });
-      }, OPTION_POLL_MS);
-      return () => {
-        cancelled = true;
-        window.clearInterval(poll);
-      };
-    }
+      }, OPTION_POLL_MS)
+      : null;
 
     const unsubscribe = chartSocket.subscribe(symbol, (msg) => {
       if (msg.type === "bar") {
@@ -200,6 +200,8 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
           }
           return { ...s, bars, vwap, vwapPremarket };
         });
+      } else if (msg.type === "quote") {
+        setState((s) => ({ ...s, quote: msg }));
       } else {
         setState((s) => ({ ...s, error: msg.message }));
       }
@@ -207,6 +209,7 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
 
     return () => {
       cancelled = true;
+      if (poll != null) window.clearInterval(poll);
       unsubscribe();
     };
   }, [symbol, settingsNonce]);

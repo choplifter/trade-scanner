@@ -21,6 +21,7 @@ from app.dash_app.state import bind as bind_dash_state
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.news_cache import NewsCache
 from app.market_data.news_feed import NewsFeedTracker
+from app.market_data.option_stream_manager import OptionStreamManager
 from app.market_data.stream_manager import StreamManager
 from app.replay.engine import ReplayEngineCache
 from app.replay.loop import run_replay_pacing_loop
@@ -80,6 +81,7 @@ async def lifespan(app: FastAPI):
     manager = ConnectionManager()
     app.state.connection_manager = manager
     app.state.stream_manager = StreamManager(clients, manager, settings.max_stream_symbols)
+    app.state.option_stream_manager = OptionStreamManager(clients, manager, settings.max_stream_symbols)
     # Live user-defined screens. Separate from ConnectionManager because a
     # screen's result is per-connection, not shareable across a topic --
     # see app.ws.screen_subscriptions.
@@ -234,6 +236,7 @@ async def lifespan(app: FastAPI):
         options_trigger_task.cancel()
         replay_task.cancel()
         await clients.stop_stream()
+        await clients.stop_option_stream()
         await fundamentals.aclose()
 
 
