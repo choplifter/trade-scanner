@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.auth.dependency import get_current_user_ws
+from app.options.occ import try_parse_occ
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ async def chart_ws(websocket: WebSocket) -> None:
             topic = f"chart:{symbol}"
 
             if msg.get("type") == "subscribe":
+                if try_parse_occ(symbol) is not None:
+                    # Option contracts have no live stream here; the premium
+                    # chart is served by the REST bars endpoint alone.
+                    continue
                 try:
                     await stream_manager.subscribe(symbol)
                 except ValueError as exc:

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getSymbolBars } from "../api/http";
 import { chartSocket } from "../api/ws";
 import type { Bar, IndicatorResult } from "../types/alpaca";
+import { parseOcc } from "../utils/occ";
 import { useStrategySettingsNonce } from "./useStrategySettingsNonce";
 
 export interface ChartFeedState {
@@ -71,6 +72,14 @@ export function useChartFeed(symbol: string | null): ChartFeedState {
           setState((s) => ({ ...s, error: String(err), loading: false }));
         }
       });
+
+    // An option contract (premium chart) has no live stream: the REST
+    // fetch above is the whole feed, like the higher timeframes on a stock.
+    if (parseOcc(symbol)) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const unsubscribe = chartSocket.subscribe(symbol, (msg) => {
       if (msg.type === "bar") {

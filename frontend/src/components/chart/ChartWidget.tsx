@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
+import { formatLeg, parseOcc } from "../../utils/occ";
 import { useTradingContext } from "../../context/TradingContext";
 import { useSpreadLevels } from "../../hooks/useSpreadLevels";
 import { useTradingMode } from "../../hooks/useTradingMode";
@@ -33,6 +34,8 @@ interface ChartWidgetProps {
   /** Called when the user takes manual control of the timeframe while a
    * focus is active -- see the timeframe buttons' onClick for why. */
   onClearFocus?: () => void;
+  /** Lets the premium chart of an option contract jump to its underlying. */
+  onSelectSymbol?: (symbol: string) => void;
 }
 
 const DEFAULT_TIMEFRAME_KEY = "5m";
@@ -138,7 +141,9 @@ const CHART_TYPES: { key: ChartType; label: string; title: string }[] = [
   },
 ];
 
-export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
+export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: ChartWidgetProps) {
+  // An OCC symbol: the chart shows the contract's premium, not a stock.
+  const contract = symbol ? parseOcc(symbol) : null;
   const [timeframeKey, setTimeframeKey] = useState(DEFAULT_TIMEFRAME_KEY);
 
   // A pick carries the resolution that makes it legible -- a 10:35 intraday
@@ -508,7 +513,24 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
     <div className={isFullscreen ? "widget chart-widget chart-widget-fullscreen" : "widget chart-widget"}>
       <div className="widget-header">
         <div className="chart-toolbar">
-          <span className="symbol">{symbol ?? "Select a symbol"}</span>
+          <span className="symbol" title={contract ? `${symbol} -- option premium` : undefined}>
+            {contract && symbol ? formatLeg(symbol) : (symbol ?? "Select a symbol")}
+          </span>
+          {contract && (
+            <span className="chart-premium-badge" title="This chart shows the option's premium per share; the underlying's levels are not drawn here">
+              premium
+            </span>
+          )}
+          {contract && onSelectSymbol && (
+            <button
+              type="button"
+              className="timeframe-button"
+              onClick={() => onSelectSymbol(contract.underlying)}
+              title={`Back to the ${contract.underlying} stock chart`}
+            >
+              {contract.underlying} ↗
+            </button>
+          )}
           {lastPrice != null && <span className="last-price">{formatPrice(lastPrice)}</span>}
           {usingReplayBars && replaySession && (
             <span
@@ -585,7 +607,7 @@ export function ChartWidget({ symbol, focus, onClearFocus }: ChartWidgetProps) {
               Auto
             </button>
           </div>
-          {option.kind === "intraday" && (
+          {option.kind === "intraday" && !contract && (
             <button
               type="button"
               className="vwap-legend"

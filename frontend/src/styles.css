@@ -2944,3 +2944,29 @@ a.news-feed-headline:hover {
 .trigger-status.cancelled {
   color: var(--text-muted);
 }
+
+/* --- premium chart (option contract in the chart widget) ------------------ */
+
+.chart-premium-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--accent);
+}

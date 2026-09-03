@@ -139,15 +139,18 @@ function signedMoney(value: string | null | undefined): { text: string; cls: str
  * trade list. */
 /** A multi-leg (spread) parent order has no symbol of its own; label it
  * by its legs so the Orders tab can still say what it is. */
-/** The chart symbol behind an order: the stock itself, or an option
- * order's underlying (an MLEG parent has no symbol, so take a leg's). */
+/** The chart symbol behind an order: the stock itself, a single option
+ * contract (its premium chart), or -- for an MLEG parent, which has no
+ * symbol and no single premium -- the first leg's underlying. */
 function orderChartSymbol(order: Order): string | null {
-  const symbol = order.symbol ?? order.legs?.find((leg) => leg.symbol)?.symbol ?? null;
-  return symbol ? chartSymbolOf(symbol) : null;
+  if (order.symbol) return order.symbol;
+  const leg = order.legs?.find((l) => l.symbol)?.symbol;
+  return leg ? chartSymbolOf(leg) : null;
 }
 
 function orderLabel(order: Order): string {
-  if (order.symbol) return order.symbol;
+  // formatLeg hands a stock symbol back untouched.
+  if (order.symbol) return formatLeg(order.symbol);
   const legs = (order.legs ?? []).map((leg) => (leg.symbol ? formatLeg(leg.symbol) : "?"));
   return legs.length > 0 ? legs.join(" / ") : "multi-leg";
 }

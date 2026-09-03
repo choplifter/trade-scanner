@@ -8,6 +8,7 @@ import { LoginPage } from "./components/auth/LoginPage";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { SymbolInfoWidget } from "./components/chart/SymbolInfoWidget";
 import { GexPlanWidget } from "./components/gex/GexPlanWidget";
+import { chartSymbolOf } from "./utils/occ";
 import { OptionsWidget } from "./components/options/OptionsWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { DockviewDashboard } from "./components/layout/DockviewDashboard";
@@ -72,6 +73,10 @@ function AppShell({ user, onLogout }: AppShellProps) {
     setSelectedSymbol(symbol);
   }, []);
 
+  // The chart may show an option contract's premium; every other widget
+  // (ticket, info, news, chain...) works on the underlying stock.
+  const underlying = selectedSymbol ? chartSymbolOf(selectedSymbol) : null;
+
   const selectPick = useCallback((focus: ChartFocus) => {
     setSelectedSymbol(focus.symbol);
     // A new object identity every time on purpose: clicking the same pick
@@ -112,19 +117,26 @@ function AppShell({ user, onLogout }: AppShellProps) {
     () => ({
       scanner: (
         <ScannerWidget
-          selectedSymbol={selectedSymbol}
+          selectedSymbol={underlying}
           onSelectSymbol={selectSymbol}
           onSelectPick={selectPick}
         />
       ),
-      chart: <ChartWidget symbol={selectedSymbol} focus={chartFocus} onClearFocus={() => setChartFocus(null)} />,
-      symbol_info: <SymbolInfoWidget symbol={selectedSymbol} />,
-      ideas: <TradeIdeasWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />,
+      chart: (
+        <ChartWidget
+          symbol={selectedSymbol}
+          focus={chartFocus}
+          onClearFocus={() => setChartFocus(null)}
+          onSelectSymbol={selectSymbol}
+        />
+      ),
+      symbol_info: <SymbolInfoWidget symbol={underlying} />,
+      ideas: <TradeIdeasWidget selectedSymbol={underlying} onSelectSymbol={setSelectedSymbol} />,
       benchmark: (
-        <ScannerBenchmarkWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+        <ScannerBenchmarkWidget selectedSymbol={underlying} onSelectSymbol={setSelectedSymbol} />
       ),
       history: (
-        <ScannerHistoryWidget selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+        <ScannerHistoryWidget selectedSymbol={underlying} onSelectSymbol={setSelectedSymbol} />
       ),
       // Owns its own polling hook rather than taking state from here. If that
       // state were lifted into App, this memo would recompute every poll tick
@@ -134,31 +146,31 @@ function AppShell({ user, onLogout }: AppShellProps) {
       // own consumers on a poll tick without touching this memo at all.
       trading: (
         <TradingWidget
-          selectedSymbol={selectedSymbol}
+          selectedSymbol={underlying}
           onSelectSymbol={setSelectedSymbol}
           mode={tradingMode.mode}
         />
       ),
       watchlist: (
-        <WatchlistPanel selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+        <WatchlistPanel selectedSymbol={underlying} onSelectSymbol={setSelectedSymbol} />
       ),
       // key: harmless as a plain widgets.replay reference (React strips it
       // from props either way), but required where App's panels-mode
       // layout places this element inside an array alongside topAndBottomRows
       // instead of as its own literal JSX child -- see that array's build site.
       replay: (
-        <ReplayPanel key="replay" selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+        <ReplayPanel key="replay" selectedSymbol={underlying} onSelectSymbol={setSelectedSymbol} />
       ),
       // Same key requirement as replay above -- also placed inside a
       // constructed children array in panels mode, not as a literal JSX
       // child.
       news_feed: (
-        <NewsFeedWidget key="news_feed" selectedSymbol={selectedSymbol} onSelectSymbol={setSelectedSymbol} />
+        <NewsFeedWidget key="news_feed" selectedSymbol={underlying} onSelectSymbol={setSelectedSymbol} />
       ),
       // Same key requirement as replay/news_feed above -- placed outside
       // the resizable splits entirely in panels mode (see the
       // dashboard-active-column/dashboard-idle-column render sites below).
-      gex_plan: <GexPlanWidget key="gex_plan" symbol={selectedSymbol} />,
+      gex_plan: <GexPlanWidget key="gex_plan" symbol={underlying} />,
       // Same key requirement as gex_plan above -- also placed outside the
       // resizable splits in panels mode.
       trade_journal: <TradeJournalWidget key="trade_journal" onSelectPick={selectPick} />,
@@ -166,14 +178,14 @@ function AppShell({ user, onLogout }: AppShellProps) {
       // the mode dependency below remounts it on a mode switch like the
       // trading widget.
       options: (
-        <OptionsWidget key="options" symbol={selectedSymbol} mode={tradingMode.mode} onSelectSymbol={selectSymbol} />
+        <OptionsWidget key="options" symbol={underlying} mode={tradingMode.mode} onSelectSymbol={selectSymbol} />
       ),
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
     // state the comment above guards against: switching modes should
     // remount the trading widget's local state, the same way a symbol
     // change does -- it is a rare, intentional action, not a tick.
-    [selectedSymbol, chartFocus, selectSymbol, selectPick, tradingMode.mode],
+    [selectedSymbol, underlying, chartFocus, selectSymbol, selectPick, tradingMode.mode],
   );
 
   // Shared between the panels-mode active and idle layouts below -- only
@@ -239,7 +251,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
   ];
 
   return (
-    <SymbolInfoProvider symbol={selectedSymbol}>
+    <SymbolInfoProvider symbol={underlying}>
     <div className="app-shell">
       <header className="app-header">
           <h1>Stocks in Play</h1>

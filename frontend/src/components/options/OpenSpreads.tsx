@@ -292,7 +292,20 @@ export function OpenSpreads({
                       {group.legs.map((leg) => (
                         <li key={leg.symbol} className={`spread-leg ${leg.qty > 0 ? "buy" : "sell"}`}>
                           {leg.qty > 0 ? "+" : ""}
-                          {leg.qty} {formatLeg(leg.symbol)} · entry {leg.avg_entry_price.toFixed(2)} · now{" "}
+                          {leg.qty}{" "}
+                          {onSelectSymbol ? (
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => onSelectSymbol(leg.symbol)}
+                              title={`Chart this contract's premium (${leg.symbol})`}
+                            >
+                              {formatLeg(leg.symbol)}
+                            </button>
+                          ) : (
+                            formatLeg(leg.symbol)
+                          )}{" "}
+                          · entry {leg.avg_entry_price.toFixed(2)} · now{" "}
                           {leg.current_price.toFixed(2)} · {signed(leg.unrealized_pl)}
                         </li>
                       ))}

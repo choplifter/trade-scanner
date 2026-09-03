@@ -635,7 +635,12 @@ past dates.
   account, survive restarts, show their status (active / fired / failed /
   orphaned when the legs are gone) and can be cancelled. The ticket's
   strikes and an open spread's strikes/trigger bounds draw on the chart as
-  levels. Widget-local hotkeys (not in Live): `[` `]` expiry, `5`–`9`
+  levels. Clicking a leg under Open spreads, or a single option order in
+  the Orders tab, loads the contract's own **premium chart** — its minute
+  bars (1m/5m/15m) or native hourly/daily/weekly bars from Alpaca's option
+  bars endpoint, labelled "SPY 4 Sep 765C · premium", with a button back to
+  the underlying; no VWAP, levels or live stream on it (those belong to the
+  stock's price axis; the premium chart refreshes on reload). Widget-local hotkeys (not in Live): `[` `]` expiry, `5`–`9`
   strategy (the two outright longs have none — `0`–`4` belong to the
   equity ticket), `+` `−` width. Market data for the chain always comes
   from the paper/market-data key, whichever account the order goes to.

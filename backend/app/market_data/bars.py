@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from alpaca.data.enums import Adjustment
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.requests import OptionBarsRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from app.alpaca.client import AlpacaClients
@@ -97,6 +97,34 @@ async def get_intraday_minute_bars(clients: AlpacaClients, symbol: str, start: d
         adjustment=Adjustment.RAW,
     )
     bar_set = await asyncio.to_thread(clients.data.get_stock_bars, request)
+    return bar_set.data.get(symbol, [])
+
+
+async def get_option_minute_bars(clients: AlpacaClients, symbol: str, start: datetime | None = None) -> list:
+    """Minute bars of one option contract (OCC symbol) over the same window
+    the stock chart uses -- the premium chart. Options have no premarket
+    session, so the earliest bars of each day start at 09:30 ET."""
+    request = OptionBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=TimeFrame.Minute,
+        start=start or intraday_chart_lookback_start_utc(),
+    )
+    bar_set = await asyncio.to_thread(clients.options.get_option_bars, request)
+    return bar_set.data.get(symbol, [])
+
+
+async def get_option_historical_bars(clients: AlpacaClients, symbol: str, timeframe_key: str) -> list:
+    """Native-resolution bars of an option contract for one of
+    HISTORICAL_TIMEFRAMES' keys. A contract lives weeks to months, so the
+    lookbacks are far longer than needed; Alpaca simply returns what exists.
+    No split adjustment -- contracts are adjusted by re-symbolling."""
+    alpaca_timeframe, lookback = HISTORICAL_TIMEFRAMES[timeframe_key]
+    request = OptionBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=alpaca_timeframe,
+        start=datetime.now(timezone.utc) - lookback,
+    )
+    bar_set = await asyncio.to_thread(clients.options.get_option_bars, request)
     return bar_set.data.get(symbol, [])
 
 

@@ -8,12 +8,15 @@ from app.alpaca.universe import _looks_like_etf
 from app.indicators.context import build_context
 from app.indicators.loader import run_indicators
 from app.market_data.bars import (
+    get_option_historical_bars,
+    get_option_minute_bars,
     HISTORICAL_TIMEFRAMES,
     get_historical_bars,
     get_intraday_minute_bars,
     intraday_chart_lookback_start_utc,
 )
 from app.market_data.vwap import SessionVwapState
+from app.options.occ import try_parse_occ
 from app.symbols.info import get_symbol_info
 
 router = APIRouter(prefix="/api/symbols", tags=["symbols"])
@@ -175,6 +178,26 @@ async def get_symbol_bars(
     clients = request.app.state.alpaca_clients
     if not clients.settings.has_credentials:
         raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
+
+    if try_parse_occ(symbol) is not None:
+        # An option contract: its premium, bar for bar. No VWAP (not a
+        # same-session concept the chart draws for a contract), no
+        # indicators (every level here belongs to the underlying's price
+        # axis, not the premium's) and no live stream -- the chart is a
+        # one-shot fetch, same as the higher timeframes on a stock.
+        if timeframe == "1Min":
+            bars = await get_option_minute_bars(clients, symbol)
+        elif timeframe in HISTORICAL_TIMEFRAMES:
+            bars = await get_option_historical_bars(clients, symbol, timeframe)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
+        return {
+            "symbol": symbol,
+            "bars": [_bar_to_dict(b) for b in bars],
+            "vwap": [None] * len(bars),
+            "vwap_premarket": [None] * len(bars),
+            "indicators": [],
+        }
 
     if timeframe != "1Min":
         if timeframe not in HISTORICAL_TIMEFRAMES:
