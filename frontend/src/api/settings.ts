@@ -26,6 +26,9 @@ export interface AppSettings {
   numberFormat: NumberFormat;
   /** Height of the risk chart (payoff diagram) in px; dragged in place. */
   riskChartHeight: number;
+  /** Width of the Options widget's ticket column in px; dragged at the
+   * splitter between the chain and the ticket. */
+  optionsTicketWidth: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -39,7 +42,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   vwapAnchor: "session",
   numberFormat: "auto",
   riskChartHeight: 200,
+  optionsTicketWidth: 360,
 };
+
+export const TICKET_MIN_WIDTH = 280;
+export const TICKET_MAX_WIDTH = 1000;
 
 export const RISK_CHART_MIN_HEIGHT = 120;
 export const RISK_CHART_MAX_HEIGHT = 800;
@@ -77,6 +84,10 @@ function load(): AppSettings {
         typeof parsed.riskChartHeight === "number" && Number.isFinite(parsed.riskChartHeight)
           ? Math.min(RISK_CHART_MAX_HEIGHT, Math.max(RISK_CHART_MIN_HEIGHT, Math.round(parsed.riskChartHeight)))
           : DEFAULT_SETTINGS.riskChartHeight,
+      optionsTicketWidth:
+        typeof parsed.optionsTicketWidth === "number" && Number.isFinite(parsed.optionsTicketWidth)
+          ? Math.min(TICKET_MAX_WIDTH, Math.max(TICKET_MIN_WIDTH, Math.round(parsed.optionsTicketWidth)))
+          : DEFAULT_SETTINGS.optionsTicketWidth,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

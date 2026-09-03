@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 
+import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, getSettings, updateSettings } from "../../api/settings";
 import { modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useOptionChain } from "../../hooks/useOptionChain";
 import { useSpreads } from "../../hooks/useSpreads";
@@ -166,6 +167,34 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
 
   const openCount = spreads.spreads.length;
 
+  // The ticket column's width: dragged at the splitter between the chain
+  // and the ticket (left = wider ticket, so the risk chart grows), kept in
+  // the settings. Pointer capture keeps the drag alive over the chain.
+  const [ticketWidth, setTicketWidth] = useState(() => getSettings().optionsTicketWidth);
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+  const onSplitterDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const layout = layoutRef.current;
+    if (!layout) return;
+    e.preventDefault();
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    const right = layout.getBoundingClientRect().right;
+    let latest = ticketWidth;
+    const move = (ev: PointerEvent) => {
+      latest = Math.min(TICKET_MAX_WIDTH, Math.max(TICKET_MIN_WIDTH, Math.round(right - ev.clientX)));
+      setTicketWidth(latest);
+    };
+    const up = () => {
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", up);
+      target.removeEventListener("pointercancel", up);
+      updateSettings({ optionsTicketWidth: latest });
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", up);
+    target.addEventListener("pointercancel", up);
+  };
+
   return (
     <div
       className={`widget options-widget${mode === "live" ? " live-frame" : ""}`}
@@ -250,7 +279,11 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             </div>
             {chainState.error && <p className="order-rejection">{chainState.error}</p>}
             {isTime && longChainState.error && <p className="order-rejection">{longChainState.error}</p>}
-            <div className="options-chain-layout">
+            <div
+              className="options-chain-layout"
+              ref={layoutRef}
+              style={{ gridTemplateColumns: `minmax(0, 1fr) 8px ${ticketWidth}px` }}
+            >
               {shownChain ? (
                 <ChainTable chain={shownChain} selection={selection} pickable={strategyKind(strategy, timeKind)} onPick={pick} />
               ) : (
@@ -258,6 +291,17 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   {chainState.loading || longChainState.loading ? "Loading chain…" : "No chain."}
                 </div>
               )}
+              <div
+                className="options-splitter"
+                role="separator"
+                aria-orientation="vertical"
+                title="Drag to resize the ticket (and its risk chart)"
+                onPointerDown={onSplitterDown}
+                onDoubleClick={() => {
+                  setTicketWidth(360);
+                  updateSettings({ optionsTicketWidth: 360 });
+                }}
+              />
               {expiry && (
                 <SpreadTicket
                   symbol={symbol}

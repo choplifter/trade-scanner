@@ -2801,10 +2801,24 @@ a.news-feed-headline:hover {
 
 .options-chain-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 12px;
+  /* The ticket column's width is set inline from the settings; the 8px
+     middle column is the splitter. */
+  grid-template-columns: minmax(0, 1fr) 8px 360px;
+  gap: 8px;
   flex: 1;
   min-height: 0;
+}
+
+.options-splitter {
+  cursor: col-resize;
+  border-radius: 4px;
+  background: transparent;
+  touch-action: none;
+}
+
+.options-splitter:hover,
+.options-splitter:active {
+  background: var(--row-selected);
 }
 
 .chain-scroll {

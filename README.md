@@ -696,7 +696,9 @@ past dates.
   (1,234.56) or comma (1.234,56), for money and quantities and the chart
   axes; price inputs keep the point. **Hotkeys** -- every shortcut in one
   list. "Reset to defaults" puts everything back. The risk chart's height
-  is dragged at its bottom edge and remembered here too.
+  is dragged at its bottom edge, the Options ticket's width (and with it
+  the risk chart's) at the splitter between the chain and the ticket
+  (double-click resets it); both are remembered here too.
 - **AI Trade Ideas** (needs `ANTHROPIC_API_KEY`): Claude ranks up to 3 of
   today's movers, each **required** to have a genuine, stock-specific news
   catalyst — enforced server-side before the model ever sees a candidate
