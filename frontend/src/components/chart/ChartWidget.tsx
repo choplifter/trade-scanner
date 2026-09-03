@@ -24,7 +24,7 @@ import { useReplayIndicators } from "../../hooks/useReplayIndicators";
 import { useReplaySession } from "../../hooks/useReplaySession";
 import { exitsForPosition, num } from "../../types/trading";
 import { aggregateBars, TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
-import { PREMIUM_LEVEL_NAMES, usePremiumLevels } from "../../hooks/usePremiumLevels";
+import { PREMIUM_LEVEL_NAMES, usePremiumLevels, usePremiumSeries } from "../../hooks/usePremiumLevels";
 import { formatPrice, newsAge } from "../../utils/format";
 import { CandleChart, POSITION_ENTRY_COLOR, POSITION_STOP_COLOR, POSITION_TARGET_COLOR, type OrderLevel } from "./CandleChart";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
@@ -377,7 +377,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // Levels on the premium axis (option contracts only): bid/ask, the
   // session's high/low and previous close, entry multiples, intrinsic
   // value, plus the premium's own session VWAP.
-  const premium = usePremiumLevels(contract, intraday.bars, intraday.quote, entry);
+  const premium = usePremiumLevels(contract, intraday.bars, intraday.quote, entry, option.kind === "intraday");
   // First time a premium chart shows, its levels start visible; after that
   // the Levels menu's own choices (persisted like every other indicator)
   // apply.
@@ -617,12 +617,15 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // gexLevels folded in here, not just at the CandleChart prop, so the
   // Levels-checklist below (which also maps over this same list) can offer
   // it as a toggle -- both call sites have to see one consistent array.
+  // EMA of the premium over the displayed (aggregated) bars, so it lines
+  // up with the candles at any timeframe.
+  const premiumSeries = usePremiumSeries(contract, displayed.bars);
   const indicatorsWithGex = useMemo(() => {
-    const extra = [gexLevels, spreadLevels, ...premium.levels].filter(
+    const extra = [gexLevels, spreadLevels, ...premium.levels, premiumSeries].filter(
       (i): i is NonNullable<typeof i> => i !== null,
     );
     return extra.length > 0 ? [...displayed.indicators, ...extra] : displayed.indicators;
-  }, [displayed.indicators, gexLevels, spreadLevels, premium.levels]);
+  }, [displayed.indicators, gexLevels, spreadLevels, premium.levels, premiumSeries]);
   // Memoized rather than filtered inline at the prop: CandleChart's
   // indicators effect tears down and rebuilds every price line whenever
   // this reference changes, and this component re-renders on every trade

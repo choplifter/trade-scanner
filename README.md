@@ -656,7 +656,12 @@ past dates.
   the premium, **entry ±** lines at +50% / +100% / −50% of a held
   contract's entry, the **intrinsic value** from the underlying's live
   price (only when above zero -- the gap to the candle is the time value),
-  and a session **VWAP** of the premium computed from the contract's bars.
+  an **expected move** pair (where the premium lands on a one-sigma move
+  of the underlying over the shorter of the rest of today and the time to
+  expiry, from the snapshot's IV, delta and gamma; the labels carry the
+  underlying prices), **theta** levels (the premium in an hour and at the
+  close if the underlying stands still, from the snapshot's daily theta), **EMA 9/20** of the premium on the displayed bars, and a session
+  **VWAP** of the premium computed from the contract's bars.
   (On a cheap contract the axis can still show values below zero: the
   bottom fifth of the pane is reserved for volume, and the library scales
   that margin linearly.)

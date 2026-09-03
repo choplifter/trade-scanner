@@ -48,3 +48,11 @@ export function formatLeg(symbol: string): string {
 export function chartSymbolOf(symbol: string): string {
   return parseOcc(symbol)?.underlying ?? symbol;
 }
+
+/** The OCC symbol back from its parts (SPY, 2026-09-04, call, 765 ->
+ * SPY260904C00765000); the root keeps an adjusted suffix like SPY1. */
+export function formatOcc(parsed: ParsedOcc): string {
+  const [y, m, d] = parsed.expiry.split("-");
+  const strike = String(Math.round(parsed.strike * 1000)).padStart(8, "0");
+  return `${parsed.root}${y.slice(2)}${m}${d}${parsed.kind === "call" ? "C" : "P"}${strike}`;
+}

@@ -81,6 +81,28 @@ async def expiries(underlying: str, request: Request) -> dict:
         raise HTTPException(status_code=502, detail="Failed to load option expiries")
 
 
+@router.get("/contract/{symbol}")
+async def contract_quote(symbol: str, request: Request) -> dict:
+    """One contract's live snapshot -- bid/ask/mid, greeks, IV -- for the
+    premium chart's theta projection and expected-move band."""
+    from app.options.chain_fetch import fetch_leg_quotes
+    from app.options.occ import try_parse_occ
+
+    symbol = symbol.upper()
+    if try_parse_occ(symbol) is None:
+        raise HTTPException(status_code=422, detail=f"Not an option contract symbol: {symbol}")
+    _service(request)  # the credentials check
+    try:
+        quotes = await fetch_leg_quotes(request.app.state.alpaca_clients, [symbol])
+    except Exception:
+        logger.exception("Contract snapshot failed for %s", symbol)
+        raise HTTPException(status_code=502, detail="Failed to load the contract snapshot")
+    quote = quotes.get(symbol)
+    if quote is None:
+        raise HTTPException(status_code=404, detail=f"No snapshot for {symbol}")
+    return quote.to_dict()
+
+
 @router.get("/chain/{underlying}")
 async def chain(
     underlying: str,

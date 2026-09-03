@@ -9,6 +9,7 @@ import { API_BASE, OrderRejectedError, checkUnauthorized, extractErrorMessage, g
 import { tradingPath } from "./tradingMode";
 import type {
   ChainResponse,
+  LegQuote,
   ClosePreview,
   CloseSpreadRequest,
   ExpiriesResponse,
@@ -52,6 +53,10 @@ export function getOptionsAccount(): Promise<OptionsAccountResponse> {
 
 export function getExpiries(underlying: string): Promise<ExpiriesResponse> {
   return getJson<ExpiriesResponse>(tradingPath(`/trading/options/expiries/${encodeURIComponent(underlying)}`));
+}
+
+export function getContractQuote(symbol: string): Promise<LegQuote> {
+  return getJson<LegQuote>(tradingPath(`/trading/options/contract/${encodeURIComponent(symbol)}`));
 }
 
 export function getChain(underlying: string, expiry: string): Promise<ChainResponse> {
