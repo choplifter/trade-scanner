@@ -1,7 +1,9 @@
+import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
+import { TICKER_RE } from "../../utils/dragSymbol";
 import { formatLeg, parseOcc } from "../../utils/occ";
 import { ContractTicket } from "./ContractTicket";
 import { useTradingContext } from "../../context/TradingContext";
@@ -37,6 +39,10 @@ interface ChartWidgetProps {
   onClearFocus?: () => void;
   /** Lets the premium chart of an option contract jump to its underlying. */
   onSelectSymbol?: (symbol: string) => void;
+  /** A copy opened from the dock's tab menu: pinned to its own symbol
+   * (typed into the header or dropped from a scanner row) instead of
+   * following the scanner's selection. */
+  pinned?: boolean;
 }
 
 const DEFAULT_TIMEFRAME_KEY = "5m";
@@ -142,9 +148,18 @@ const CHART_TYPES: { key: ChartType; label: string; title: string }[] = [
   },
 ];
 
-export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: ChartWidgetProps) {
+export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinned = false }: ChartWidgetProps) {
   // An OCC symbol: the chart shows the contract's premium, not a stock.
   const contract = symbol ? parseOcc(symbol) : null;
+  // The pinned chart's own symbol field.
+  const [symbolDraft, setSymbolDraft] = useState(symbol ?? "");
+  useEffect(() => setSymbolDraft(symbol ?? ""), [symbol]);
+  const submitSymbol = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const next = symbolDraft.trim().toUpperCase();
+    if (!next || !(TICKER_RE.test(next) || parseOcc(next))) return;
+    onSelectSymbol?.(next);
+  };
   const [timeframeKey, setTimeframeKey] = useState(DEFAULT_TIMEFRAME_KEY);
 
   // A pick carries the resolution that makes it legible -- a 10:35 intraday
@@ -433,15 +448,19 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
         }
       : undefined;
 
+  // The shared symbol info is the dashboard's selected symbol's; a pinned
+  // copy showing something else must not pin that symbol's stories.
   const newsMarkers = useMemo(
     () =>
-      (symbolInfo.info?.news ?? [])
-        .map((item) => ({
-          time: Math.floor(Date.parse(item.published_at) / 1000),
-          headline: item.headline,
-        }))
-        .filter((item) => Number.isFinite(item.time)),
-    [symbolInfo.info],
+      symbolInfo.info && symbolInfo.info.symbol === symbol
+        ? symbolInfo.info.news
+            .map((item) => ({
+              time: Math.floor(Date.parse(item.published_at) / 1000),
+              headline: item.headline,
+            }))
+            .filter((item) => Number.isFinite(item.time))
+        : [],
+    [symbolInfo.info, symbol],
   );
 
   const displayed = useMemo(() => {
@@ -547,9 +566,25 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
     <div className={isFullscreen ? "widget chart-widget chart-widget-fullscreen" : "widget chart-widget"}>
       <div className="widget-header">
         <div className="chart-toolbar">
-          <span className="symbol" title={contract ? `${symbol} -- option premium` : undefined}>
-            {contract && symbol ? formatLeg(symbol) : (symbol ?? "Select a symbol")}
-          </span>
+          {pinned ? (
+            <form className="chart-symbol-form" onSubmit={submitSymbol}>
+              <input
+                type="text"
+                value={symbolDraft}
+                placeholder="Symbol"
+                spellCheck={false}
+                autoCapitalize="characters"
+                onChange={(e) => setSymbolDraft(e.target.value.toUpperCase())}
+                title="This chart is pinned: type a symbol (or an option contract) and press Enter, or drop a row from a scanner. It does not follow the scanner's selection."
+              />
+              <span className="chart-pinned-badge">pinned</span>
+              {contract && symbol && <span className="symbol">{formatLeg(symbol)}</span>}
+            </form>
+          ) : (
+            <span className="symbol" title={contract ? `${symbol} -- option premium` : undefined}>
+              {contract && symbol ? formatLeg(symbol) : (symbol ?? "Select a symbol")}
+            </span>
+          )}
           {contract && (
             <span className="chart-premium-badge" title="This chart shows the option's premium per share; the underlying's levels are not drawn here">
               premium
@@ -776,7 +811,9 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol }: Cha
       )}
       <div className="widget-body">
         {!symbol ? (
-          <div className="widget-empty">Click a symbol in a scanner to load its chart.</div>
+          <div className="widget-empty">
+            {pinned ? "Type a symbol above, or drop one from a scanner or the watchlist." : "Click a symbol in a scanner to load its chart."}
+          </div>
         ) : activeFeed.error ? (
           <div className="widget-error">{activeFeed.error}</div>
         ) : activeFeed.loading && displayed.bars.length === 0 ? (

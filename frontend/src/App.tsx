@@ -324,7 +324,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               widgets={widgets}
             />
           ) : dashboardLayout.mode === "dock" ? (
-            <DockviewDashboard widgets={widgets} />
+            <DockviewDashboard widgets={widgets} selectedSymbol={underlying} />
           ) : replaySession ? (
             // A session is running -- replay gets its own resizable third
             // row, same as it always has. news_feed no longer lives here --

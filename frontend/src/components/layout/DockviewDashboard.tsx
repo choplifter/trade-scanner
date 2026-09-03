@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { DockviewReact, themeDark, themeLight } from "dockview-react";
@@ -11,6 +11,9 @@ import type {
 import "dockview-react/dist/styles/dockview.css";
 
 import { WIDGET_IDS, type WidgetId } from "../../hooks/useDashboardLayout";
+import { ChartCopyPanel } from "./ChartCopyPanel";
+import { DockTab } from "./DockTab";
+import { DockContext, WIDGET_TITLES, type PanelParams } from "./dockShared";
 
 type DockviewApi = DockviewReadyEvent["api"];
 
@@ -19,42 +22,28 @@ interface DockviewDashboardProps {
    * render from -- build it memoized in the caller so a re-render can't
    * remount a widget (see WidgetId's docs for what that breaks). */
   widgets: Record<WidgetId, ReactNode>;
+  /** The dashboard's current underlying symbol -- what a chart copy opened
+   * from a tab's context menu starts pinned to. */
+  selectedSymbol: string | null;
 }
 
-/** Dockview panels are managed by its own imperative model, not by React
- * children -- a panel's `params` are fixed at `addPanel()` time and don't
- * update on their own when `widgets` changes (e.g. a new selectedSymbol).
- * Rather than pushing updates through Dockview's imperative
- * `panel.api.updateParameters()` on every App re-render, each panel's
- * content component reads the *current* `widgets` record from context --
- * ordinary React re-rendering, same as every other consumer of `widgets`. */
-const WidgetsContext = createContext<Record<WidgetId, ReactNode> | null>(null);
-
-function WidgetPanel(props: IDockviewPanelProps<{ widgetId: WidgetId }>) {
-  const widgets = useContext(WidgetsContext);
-  return <>{widgets?.[props.params.widgetId] ?? null}</>;
+/** See DockContext (dockShared.ts) for why panels read the widget record
+ * from context. A copy (context menu -> "Open in new window") renders a
+ * second instance: for the chart a ChartCopyPanel pinned to its own
+ * symbol, for anything else the same element again. */
+function WidgetPanel(props: IDockviewPanelProps<PanelParams>) {
+  const dock = useContext(DockContext);
+  const { widgetId, copy, symbol } = props.params;
+  if (copy && widgetId === "chart") {
+    return <ChartCopyPanel api={props.api} initialSymbol={symbol ?? null} />;
+  }
+  return <>{dock?.widgets[widgetId] ?? null}</>;
 }
 
 // Stable reference (module scope, not recreated per render) -- components
 // registered here are looked up by id when Dockview reads a panel's
 // `component` field, not re-supplied per panel.
 const COMPONENTS = { widget: WidgetPanel };
-
-const WIDGET_TITLES: Record<WidgetId, string> = {
-  scanner: "Scanner",
-  chart: "Chart",
-  ideas: "AI Trade Ideas",
-  benchmark: "Scanner vs SPY",
-  history: "Scanner Match History",
-  trading: "Trading",
-  watchlist: "Watchlist",
-  replay: "History Replay",
-  news_feed: "News Feed",
-  symbol_info: "Symbol Info",
-  gex_plan: "GEX Plan",
-  trade_journal: "Trading Journal",
-  options: "Options",
-};
 
 /** Rendered once per group's tab strip (top-right) -- dockview-react has no
  * default maximize button of its own, this is the
@@ -96,7 +85,14 @@ function addWidgetPanel(
     params: { widgetId: id },
     title: WIDGET_TITLES[id],
     ...(position ? { position } : {}),
-  });
+  } satisfies Parameters<DockviewApi["addPanel"]>[0]);
+}
+
+/** Ids of the singleton widgets with an open panel -- copies never count. */
+function openWidgetIds(api: DockviewApi): Set<WidgetId> {
+  return new Set(
+    api.panels.filter((p) => !(p.params as PanelParams | undefined)?.copy).map((p) => p.id as WidgetId),
+  );
 }
 
 const DOCK_LAYOUT_KEY = "layout:dock";
@@ -163,12 +159,11 @@ function buildDefaultLayout(api: DockviewApi) {
  * reopen, popout to a real window) instead of DashboardGrid/ResizablePanels.
  * Evaluate this against those two before deciding whether to replace either.
  *
- * Deliberately minimal for a first pass: only WIDGET_IDS' existing
- * components are wired in, not any Dockview-only chrome beyond the
- * maximize button and reopen-a-closed-widget menu below (no custom tab
- * renderer or right-click menus).
+ * Dockview-only chrome: the maximize button and reopen-a-closed-widget
+ * menu below, and the tab's own right-click menu (DockTab.tsx: open a
+ * second instance as a new tab, float, close).
  */
-export function DockviewDashboard({ widgets }: DockviewDashboardProps) {
+export function DockviewDashboard({ widgets, selectedSymbol }: DockviewDashboardProps) {
   // Matches the app's own system-preference-only dark mode (see styles.css's
   // prefers-color-scheme block) -- read once, not reactive to a live OS
   // theme change, since dockview-react has no equivalent of :root
@@ -194,7 +189,7 @@ export function DockviewDashboard({ widgets }: DockviewDashboardProps) {
       buildDefaultLayout(event.api);
     }
     setContainerApi(event.api);
-    setOpenIds(new Set(event.api.panels.map((p) => p.id as WidgetId)));
+    setOpenIds(openWidgetIds(event.api));
 
     // onDidLayoutChange fires on every add/move/resize -- the library's own
     // doc comment on the event flags it as "worth debouncing" -- same
@@ -204,16 +199,17 @@ export function DockviewDashboard({ widgets }: DockviewDashboardProps) {
     // write is.
     let writeTimer: number | undefined;
     event.api.onDidLayoutChange(() => {
-      setOpenIds(new Set(event.api.panels.map((p) => p.id as WidgetId)));
+      setOpenIds(openWidgetIds(event.api));
       if (writeTimer !== undefined) window.clearTimeout(writeTimer);
       writeTimer = window.setTimeout(() => saveDockLayout(event.api.toJSON()), DOCK_WRITE_DEBOUNCE_MS);
     });
   };
 
   const closedIds = WIDGET_IDS.filter((id) => !openIds.has(id));
+  const dockValue = useMemo(() => ({ widgets, selectedSymbol }), [widgets, selectedSymbol]);
 
   return (
-    <WidgetsContext.Provider value={widgets}>
+    <DockContext.Provider value={dockValue}>
       <div className="dockview-dashboard">
         {containerApi && closedIds.length > 0 && (
           <ReopenWidgetMenu api={containerApi} closedIds={closedIds} />
@@ -223,10 +219,11 @@ export function DockviewDashboard({ widgets }: DockviewDashboardProps) {
           theme={theme}
           onReady={onReady}
           components={COMPONENTS}
+          defaultTabComponent={DockTab}
           rightHeaderActionsComponent={GroupHeaderActions}
         />
       </div>
-    </WidgetsContext.Provider>
+    </DockContext.Provider>
   );
 }
 

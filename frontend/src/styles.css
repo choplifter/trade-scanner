@@ -2996,3 +2996,86 @@ a.news-feed-headline:hover {
 .contract-ticket .generate-button {
   padding: 2px 12px;
 }
+
+/* --- dock tab context menu + pinned chart copies -------------------------- */
+
+.dock-tab-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+}
+
+.dock-tab-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dock-tab-menu button:hover:not(:disabled) {
+  background: var(--panel-hover, rgba(127, 127, 127, 0.15));
+}
+
+.dock-tab-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dock-tab-menu hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+.chart-copy {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-copy > .widget {
+  flex: 1;
+  min-height: 0;
+}
+
+.chart-symbol-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-symbol-form input {
+  width: 92px;
+  font: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+.chart-pinned-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}

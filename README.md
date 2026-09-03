@@ -765,6 +765,12 @@ past dates.
   widgets don't restart their poll timers. Row height is derived from the
   measured viewport (12 rows) rather than fixed, so the default layout fills
   the window exactly; drag widgets past the bottom and the grid scrolls.
+  Right-clicking a Dock tab opens a small menu: **Open in new window**
+  adds a second instance of that widget as a new tab beside the original
+  (a second chart is *pinned* to its own symbol -- typed into its header
+  or dropped from a scanner/watchlist row -- and ignores the scanner's
+  selection; copies of other widgets follow it), plus **Float** and
+  **Close**. Copies are saved with the layout, pinned symbol included.
 - Session badge (Premarket / Market Open / After Hours / Closed) in the
   header, computed from the NYSE trading calendar.
 - **Market-conditions traffic light** (needs `FMP_API_KEY`): a red/yellow/
