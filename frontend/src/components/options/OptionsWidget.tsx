@@ -10,6 +10,7 @@ import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatExpiry, type ParsedOcc } from "../../utils/occ";
 import { ChainTable } from "./ChainTable";
 import { applyPick, defaultLegs, selectionOf, strategyKind, type Legs, type PickContext } from "./legPicker";
+import { BrokerMissing } from "../common/BrokerMissing";
 import { OpenSpreads } from "./OpenSpreads";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
@@ -246,7 +247,9 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
         )}
       </div>
       <div className="widget-body">
-        {tab === "spreads" ? (
+        {mode !== "simulation" && spreads.brokerMissing ? (
+          <BrokerMissing mode={mode} />
+        ) : tab === "spreads" ? (
           <>
             {mode === "simulation" && <OptionOrders onChanged={spreads.afterAction} />}
             <OpenSpreads

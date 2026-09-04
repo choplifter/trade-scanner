@@ -42,8 +42,13 @@ export interface AccountResponse {
   /** Whether this is the simulated account. Surfaced so the UI can label
    * itself rather than relying on the user remembering their .env. */
   paper: boolean;
-  /** A live key pair is configured server-side. */
+  /** This user has a live key pair (their own, or the operator's for the
+   * admin -- see backend app.broker). */
   live_available: boolean;
+  /** Whose keys answered: "user" (entered in Settings → Broker) or "env"
+   * (the operator's), with the key id's last characters and the Alpaca
+   * account number. */
+  broker?: { source?: string; key_hint?: string | null; account_number?: string | null } | null;
   /** TRADING_ALLOW_LIVE is on. Both must hold before Live is offered. */
   live_allowed: boolean;
   /** The fat-finger ceilings for this account. */

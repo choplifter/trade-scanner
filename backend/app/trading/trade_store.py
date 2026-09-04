@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS trades (
     fill_count INTEGER NOT NULL,
     recorded_at TEXT NOT NULL,
     account TEXT NOT NULL DEFAULT 'paper',
-    multiplier INTEGER NOT NULL DEFAULT 1
+    multiplier INTEGER NOT NULL DEFAULT 1,
+    user_id INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_trades_closed_at ON trades(closed_at);
 """
@@ -59,6 +60,7 @@ _COLUMNS = (
     "fill_count",
     "account",
     "multiplier",
+    "user_id",
 )
 
 
@@ -83,14 +85,22 @@ class TradeStore:
             # sync's upsert.
             if "multiplier" not in columns:
                 conn.execute("ALTER TABLE trades ADD COLUMN multiplier INTEGER NOT NULL DEFAULT 1")
+            # Whose broker account the trip was on (per-user keys, see
+            # app.broker). Rows from before are the operator's: user_id 0,
+            # read back only for the admin (see all()).
+            if "user_id" not in columns:
+                conn.execute("ALTER TABLE trades ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_trades_account_closed_at ON trades(account, closed_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_trades_user_account_closed_at ON trades(user_id, account, closed_at)"
             )
 
     async def init_schema(self) -> None:
         await asyncio.to_thread(self._init_schema_sync)
 
-    def _upsert_sync(self, trades: list[Trade], account: str, now: datetime) -> None:
+    def _upsert_sync(self, trades: list[Trade], account: str, user_id: int, now: datetime) -> None:
         # Upsert rather than insert-or-ignore: the closed-orders window
         # slides, and a trip first seen with only some of its fills (a
         # partial exit at the window's edge) is corrected on the next pass.
@@ -99,6 +109,7 @@ class TradeStore:
             d = t.to_dict()
             d["exit_order_ids"] = json.dumps(d["exit_order_ids"])
             d["account"] = account
+            d["user_id"] = user_id
             rows.append(tuple(d[c] for c in _COLUMNS) + (now.isoformat(),))
         assignments = ", ".join(f"{c} = excluded.{c}" for c in _COLUMNS if c != "id")
         with self._connect() as conn:
@@ -110,19 +121,20 @@ class TradeStore:
             )
 
     async def upsert(
-        self, trades: list[Trade], now: datetime | None = None, *, account: str = "paper"
+        self, trades: list[Trade], now: datetime | None = None, *, account: str = "paper", user_id: int = 0
     ) -> None:
         if not trades:
             return
-        await asyncio.to_thread(self._upsert_sync, trades, account, now or datetime.now(UTC))
+        await asyncio.to_thread(self._upsert_sync, trades, account, user_id, now or datetime.now(UTC))
 
-    def _all_sync(self, account: str) -> list[dict]:
+    def _all_sync(self, account: str, user_id: int, include_legacy: bool) -> list[dict]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 f"SELECT {', '.join(_COLUMNS)} FROM trades WHERE account = ? "
+                "AND (user_id = ? OR (? AND user_id = 0)) "
                 "ORDER BY closed_at DESC, id",
-                (account,),
+                (account, user_id, 1 if include_legacy else 0),
             ).fetchall()
         out = []
         for row in rows:
@@ -134,6 +146,9 @@ class TradeStore:
             out.append(d)
         return out
 
-    async def all(self, account: str = "paper") -> list[dict]:
-        """Every recorded trip of one account, newest close first."""
-        return await asyncio.to_thread(self._all_sync, account)
+    async def all(self, account: str = "paper", user_id: int = 0, include_legacy: bool = True) -> list[dict]:
+        """Every recorded trip of one user's account, newest close first.
+        `include_legacy` adds the rows recorded before trips were per user
+        (user_id 0) -- the admin's, since the .env keys were the only
+        account then."""
+        return await asyncio.to_thread(self._all_sync, account, user_id, include_legacy)

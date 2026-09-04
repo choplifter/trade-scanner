@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { closeSpread, createTrigger, deleteTrigger, getOptionsAccount, getSpreads } from "../api/options";
+import { OrderRejectedError } from "../api/http";
 import { subscribeReplaySession } from "../api/replayMode";
+import { subscribeBrokerChanged } from "../api/settingsDialog";
 import type {
   CloseSpreadRequest,
   OptionsAccountResponse,
@@ -24,6 +26,8 @@ export interface SpreadsState {
   triggers: UnderlyingTrigger[];
   loading: boolean;
   error: string | null;
+  /** No Alpaca key pair for this account (backend "broker_not_connected"). */
+  brokerMissing: boolean;
 }
 
 export interface SpreadsActions {
@@ -34,7 +38,7 @@ export interface SpreadsActions {
   cancelTrigger: (id: string) => Promise<void>;
 }
 
-const EMPTY: SpreadsState = { account: null, spreads: [], triggers: [], loading: true, error: null };
+const EMPTY: SpreadsState = { account: null, spreads: [], triggers: [], loading: true, error: null, brokerMissing: false };
 
 /** Open spreads, their triggers and the options account, polled while the
  * Options widget is mounted and refetched on every replay tick (the
@@ -58,14 +62,23 @@ export function useSpreads(enabled: boolean): SpreadsState & SpreadsActions {
         triggers: spreads.triggers,
         loading: false,
         error: null,
+        brokerMissing: false,
       });
     } catch (err: unknown) {
       if (cancelledRef.current) return;
+      if (err instanceof OrderRejectedError && err.detail.code === "broker_not_connected") {
+        failuresRef.current = 0;
+        setState({ ...EMPTY, loading: false, brokerMissing: true });
+        return;
+      }
       failuresRef.current += 1;
       if (failuresRef.current < ERROR_THRESHOLD) return;
       setState((s) => ({ ...s, loading: false, error: err instanceof Error ? err.message : String(err) }));
     }
   }, [enabled]);
+
+  // A key pair connected or removed in Settings → Broker: refetch at once.
+  useEffect(() => subscribeBrokerChanged(() => void refresh()), [refresh]);
 
   useEffect(() => {
     cancelledRef.current = false;

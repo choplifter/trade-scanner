@@ -101,6 +101,13 @@ class TradingDisabled(TradingError):
     code = "trading_disabled"
 
 
+class BrokerNotConnected(TradingError):
+    """This user has no Alpaca key pair for the account (see app.broker):
+    nothing can be read or written until one is entered in Settings."""
+
+    code = "broker_not_connected"
+
+
 def rejection_from_api_error(exc: Exception) -> OrderRejected | None:
     """Translate an Alpaca APIError into a rejection, or None to re-raise.
 

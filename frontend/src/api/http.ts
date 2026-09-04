@@ -68,9 +68,26 @@ export async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
   checkUnauthorized(res);
   if (!res.ok) {
-    throw new Error(await extractErrorMessage(res, `GET ${path} failed: ${res.status}`));
+    throw await errorFrom(res, `GET ${path} failed: ${res.status}`);
   }
   return (await res.json()) as T;
+}
+
+/** A typed refusal ({code, message, field} in `detail` -- e.g. a 503
+ * "broker_not_connected") becomes an OrderRejectedError so callers can
+ * branch on the code; anything else is a plain Error with the message. */
+async function errorFrom(res: Response, fallback: string): Promise<Error> {
+  let body: { detail?: unknown } | null = null;
+  try {
+    body = (await res.clone().json()) as { detail?: unknown };
+  } catch {
+    body = null;
+  }
+  const detail = body?.detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail) && "code" in detail && "message" in detail) {
+    return new OrderRejectedError(detail as TradingRejection);
+  }
+  return new Error(await extractErrorMessage(res, fallback));
 }
 
 export async function postJson<T>(path: string, body?: unknown): Promise<T> {

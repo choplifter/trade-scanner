@@ -84,6 +84,8 @@ async def check_one(
     trigger: dict,
     last: float | None,
     premium: float | None = None,
+    *,
+    live_available: bool | None = None,
 ) -> None:
     if last is None and premium is None:
         return
@@ -102,7 +104,7 @@ async def check_one(
     # simulated book has no gate: nothing it closes reaches a broker.
     if account != "sim":
         try:
-            assert_can_trade(settings, account, LIVE_CONFIRMATION)
+            assert_can_trade(settings, account, LIVE_CONFIRMATION, live_available=live_available)
         except TradingError as exc:
             await store.mark_failed(trigger_id, f"refused: {exc.message}", MAX_ATTEMPTS, final=True)
             logger.warning("Trigger %s refused: %s", trigger_id, exc.message)
@@ -134,8 +136,39 @@ async def check_one(
         logger.exception("Trigger %s attempt %d failed%s", trigger_id, attempts, " (final)" if final else "")
 
 
+async def _service_for(
+    clients: AlpacaClients, settings: Settings, engine, chain_cache: ChainCache, resolver, user: dict | None, account: str
+) -> OptionsService | None:
+    """The options service that closes this trigger owner's spreads on
+    `account`: their own broker (app.broker.resolver), the operator's from
+    .env for the admin, None when they have none -- a trigger cannot fire
+    against an account its owner cannot reach."""
+    if resolver is None:
+        if account == "live" and not settings.has_live_credentials:
+            return None
+        return OptionsService(clients, settings, engine=engine, chain_cache=chain_cache, account=account)
+    if user is None:
+        # The owner no longer exists: nothing to close on anyone's behalf.
+        return None
+    broker = await resolver.client(user, account)
+    if broker is None:
+        return None
+    availability = await resolver.availability(user)
+    return OptionsService(
+        clients, settings, engine=engine, chain_cache=chain_cache, account=account,
+        broker=broker, live_available=availability["live"],
+    )
+
+
 async def run_options_trigger_loop(
-    clients: AlpacaClients, settings: Settings, store: TriggerStore, chain_cache: ChainCache, engine
+    clients: AlpacaClients,
+    settings: Settings,
+    store: TriggerStore,
+    chain_cache: ChainCache,
+    engine,
+    *,
+    resolver=None,
+    user_store=None,
 ) -> None:
     while True:
         try:
@@ -158,19 +191,31 @@ async def run_options_trigger_loop(
                             quotes = await fetch_leg_quotes(clients, symbols)
                         except Exception:
                             logger.exception("Premium trigger quote fetch failed")
-                    services: dict[str, OptionsService] = {}
+                    # One service per (owner, account): each trigger closes on
+                    # its owner's broker, never on someone else's.
+                    users: dict[int, dict] = {}
+                    if user_store is not None:
+                        users = {int(u["id"]): u for u in await user_store.list_users()}
+                    services: dict[tuple[int, str], OptionsService | None] = {}
                     for trigger in triggers:
                         account = trigger.get("account", "paper")
-                        if account == "live" and not settings.has_live_credentials:
-                            await store.mark_failed(trigger["id"], "no live account configured", MAX_ATTEMPTS, final=True)
-                            continue
-                        service = services.get(account)
-                        if service is None:
-                            service = services[account] = OptionsService(
-                                clients, settings, engine=engine, chain_cache=chain_cache, account=account
+                        user_id = int(trigger.get("user_id") or 0)
+                        key = (user_id, account)
+                        if key not in services:
+                            services[key] = await _service_for(
+                                clients, settings, engine, chain_cache, resolver, users.get(user_id), account
                             )
+                        service = services[key]
+                        if service is None:
+                            await store.mark_failed(
+                                trigger["id"], f"no {account} broker account connected", MAX_ATTEMPTS, final=True
+                            )
+                            continue
                         premium = premium_of(trigger, quotes) if wants_premium(trigger) and quotes else None
-                        await check_one(service, store, settings, trigger, prices.get(trigger["underlying"]), premium)
+                        await check_one(
+                            service, store, settings, trigger, prices.get(trigger["underlying"]), premium,
+                            live_available=getattr(service, "_live_available", None),
+                        )
         except Exception:
             logger.exception("Options trigger loop tick failed")
         await asyncio.sleep(settings.trading_options_trigger_check_interval)

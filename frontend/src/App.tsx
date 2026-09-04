@@ -1,5 +1,7 @@
-import { useCallback, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import type { ReactNode } from "react";
+
+import { subscribeOpenSettings, type SettingsTab } from "./api/settingsDialog";
 
 import { TradeIdeasWidget } from "./components/ai/TradeIdeasWidget";
 import { AlarmsOverlay } from "./components/alarms/AlarmsOverlay";
@@ -64,8 +66,18 @@ interface AppShellProps {
 
 function AppShell({ user, onLogout }: AppShellProps) {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-  // The Settings dialog: closed until the header's button opens it.
+  // The Settings dialog: closed until the header's button opens it, or a
+  // widget asks for a tab (the "connect your broker" panels).
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+  useEffect(
+    () =>
+      subscribeOpenSettings((tab) => {
+        setSettingsTab(tab);
+        setSettingsOpen(true);
+      }),
+    [],
+  );
   // Set by DockviewDashboard once its api is ready; see its resetRef prop.
   const dockResetRef = useRef<(() => void) | null>(null);
   // Where the chart should jump to, set only by clicking a backtest pick.
@@ -318,7 +330,14 @@ function AppShell({ user, onLogout }: AppShellProps) {
             >
               ⚙ Settings
             </button>
-            <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+            <SettingsDialog
+              open={settingsOpen}
+              initialTab={settingsTab}
+              onClose={() => {
+                setSettingsOpen(false);
+                setSettingsTab(null);
+              }}
+            />
             <span className="logout-link">
               {user.display_name} ·{" "}
               <button type="button" className="row-action" onClick={onLogout}>

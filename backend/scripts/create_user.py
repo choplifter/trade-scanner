@@ -28,7 +28,7 @@ def _prompt_password(label: str) -> str:
     return input(f"{label}: ")
 
 
-async def _main(username: str, display_name: str) -> None:
+async def _main(username: str, display_name: str, is_admin: bool = False) -> None:
     settings = get_settings()
     store = UserStore(settings.scanner_history_db_path)
     await store.init_schema()
@@ -43,17 +43,23 @@ async def _main(username: str, display_name: str) -> None:
         return
 
     try:
-        user = await store.create_user(username, password, display_name)
+        user = await store.create_user(username, password, display_name, is_admin=is_admin)
     except UsernameTaken:
         print(f"Username {username!r} is already taken.")
         return
 
-    print(f"Created user {user['username']!r} (id={user['id']}, display_name={user['display_name']!r}).")
+    role = "admin -- may trade on the .env Alpaca keys" if user["is_admin"] else "user -- connects their own Alpaca keys in Settings"
+    print(f"Created user {user['username']!r} (id={user['id']}, display_name={user['display_name']!r}, {role}).")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("username")
     parser.add_argument("display_name")
+    parser.add_argument(
+        "--admin",
+        action="store_true",
+        help="Operator account: broker calls may fall back to the Alpaca keys in .env. The first account is always one.",
+    )
     args = parser.parse_args()
-    asyncio.run(_main(args.username, args.display_name))
+    asyncio.run(_main(args.username, args.display_name, args.admin))

@@ -20,6 +20,7 @@ import type {
 } from "../../types/trading";
 import { exitsForPosition, num } from "../../types/trading";
 import { formatPrice } from "../../utils/format";
+import { BrokerMissing } from "../common/BrokerMissing";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "./LiveConfirmField";
 import { chartSymbolOf, formatLeg } from "../../utils/occ";
@@ -196,6 +197,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
     close,
     moveStop,
   } = useTradingContext();
+  const { brokerMissing, brokerInfo } = useTradingContext();
   const [tab, setTab] = useState<Tab>("ticket");
   // The typed LIVE for the confirm dialog below; cleared with the dialog.
   const [liveTyped, setLiveTyped] = useState("");
@@ -425,7 +427,17 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
             is real. Shown always, not only when it is live. Simulation is a
             client-known state layered on top -- paper/live still describes
             whichever real account the backend's credentials point at. */}
-        <span className={`trading-mode-badge ${badge.className}`}>{badge.label}</span>
+        <span
+          className={`trading-mode-badge ${badge.className}`}
+          title={
+            mode !== "simulation" && brokerInfo?.key_hint
+              ? `Alpaca keys …${brokerInfo.key_hint} (${brokerInfo.source === "env" ? "operator's .env" : "your own"})${brokerInfo.account_number ? ` · account ${brokerInfo.account_number}` : ""}`
+              : undefined
+          }
+        >
+          {badge.label}
+          {mode !== "simulation" && brokerInfo?.key_hint ? ` · …${brokerInfo.key_hint}` : ""}
+        </span>
         <div className="timeframe-selector">
           {TABS.map((t) => (
             <button
@@ -519,7 +531,9 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
       )}
 
       <div className="widget-body">
-        {error ? (
+        {brokerMissing && mode !== "simulation" ? (
+          <BrokerMissing mode={mode} />
+        ) : error ? (
           <div className="widget-error">{error}</div>
         ) : loading ? (
           <div className="widget-empty">Loading account…</div>

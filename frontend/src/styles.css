@@ -3268,6 +3268,104 @@ td.chain-side.chain-stale {
   letter-spacing: 0.04em;
 }
 
+/* "Connect your broker": what a trading surface shows without keys. */
+.broker-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 16px;
+  padding: 16px 18px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.broker-missing.compact {
+  margin: 8px 12px;
+  padding: 10px 12px;
+}
+
+/* Settings → Broker: one card per account. */
+.broker-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.broker-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.broker-card-title {
+  font-weight: 600;
+}
+
+.broker-state {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.broker-state.connected {
+  color: var(--chart-up, #0ca30c);
+}
+
+.broker-facts {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.broker-facts dt {
+  color: var(--text-muted);
+}
+
+.broker-facts dd {
+  margin: 0;
+}
+
+.broker-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.broker-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.broker-form input {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-primary);
+  max-width: 420px;
+}
+
+.broker-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .chart-widget.drop-target {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;

@@ -117,10 +117,22 @@ class OrderService:
     """Everything the dashboard needs from the trading side of Alpaca."""
 
     def __init__(
-        self, clients: AlpacaClients, settings: Settings, engine=None, account: Account = "paper"
+        self,
+        clients: AlpacaClients,
+        settings: Settings,
+        engine=None,
+        account: Account = "paper",
+        *,
+        broker=None,
+        live_available: bool | None = None,
     ) -> None:
+        """`broker` is the user's own TradingClient (app.broker.resolver);
+        None falls back to the operator's clients from .env. `live_available`
+        is whether that user has a live key pair, for the guard."""
         self._clients = clients
         self._settings = settings
+        self._broker = broker
+        self._live_available = live_available
         # The scanner engine already holds a live last price for every ranked
         # symbol, refreshed every poll tick. Reusing it costs nothing; the
         # Alpaca fallback below covers symbols outside the ranked views.
@@ -139,6 +151,8 @@ class OrderService:
     def _trading(self):
         """Resolved lazily rather than in __init__: tests build this service
         with clients=None to prove the guard fires before the SDK is touched."""
+        if self._broker is not None:
+            return self._broker
         if self._account == "paper":
             return self._clients.trading
         return self._clients.trading_for(self._account)
@@ -183,7 +197,9 @@ class OrderService:
         request = GetOrdersRequest(status=query, limit=_ORDER_FETCH_LIMIT)
         return _plain(await asyncio.to_thread(self._trading.get_orders, request))
 
-    async def sync_trades(self, store: TradeStore, range_key: str = "all") -> dict:
+    async def sync_trades(
+        self, store: TradeStore, range_key: str = "all", *, user_id: int = 0, include_legacy: bool = True
+    ) -> dict:
         """Closed round trips -- which position made or lost what.
 
         Re-pairs the broker's recent fills on every call and persists any
@@ -217,8 +233,10 @@ class OrderService:
         )
         orders = _plain(await asyncio.to_thread(self._trading.get_orders, request))
         closed, still_open = round_trips(fills_from_orders(orders or []))
-        await store.upsert(closed, account=self._account)
-        selected = in_period(await store.all(account=self._account), start)
+        await store.upsert(closed, account=self._account, user_id=user_id)
+        selected = in_period(
+            await store.all(account=self._account, user_id=user_id, include_legacy=include_legacy), start
+        )
         return {
             "range": (range_key or "all").lower(),
             "period_start": start.isoformat() if start else None,
@@ -292,7 +310,7 @@ class OrderService:
         """Every write path starts here -- see app.trading.guards for the
         switches, and for what `confirm` (the typed LIVE, from the
         X-Live-Confirm header) is required for."""
-        assert_can_trade(self._settings, self._account, confirm)
+        assert_can_trade(self._settings, self._account, confirm, live_available=self._live_available)
 
     async def reference_price(self, symbol: str) -> float | None:
         """The price a market order should be sized and bounds-checked at.

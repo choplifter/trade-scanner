@@ -14,6 +14,9 @@ from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import build_universe, list_active_equity_symbols
 from app.auth.dependency import get_current_user
 from app.auth.store import UserStore
+from app.broker.crypto import secret_box_from_settings
+from app.broker.resolver import BrokerResolver
+from app.broker.store import BrokerStore
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.dash_app import dash_app
@@ -30,6 +33,7 @@ from app.replay.loop import run_replay_pacing_loop
 from app.replay.store import ReplayStore
 from app.routers import (
     auth,
+    broker,
     meta,
     news_feed,
     replay,
@@ -79,6 +83,14 @@ async def lifespan(app: FastAPI):
     user_store = UserStore(settings.scanner_history_db_path)
     await user_store.init_schema()
     app.state.user_store = user_store
+
+    # Per-user Alpaca key pairs (app.broker): secrets encrypted under the
+    # session secret (or BROKER_ENCRYPTION_KEY); the resolver decides which
+    # TradingClient a request gets -- the user's own, or .env for the admin.
+    broker_store = BrokerStore(settings.scanner_history_db_path, secret_box_from_settings(settings))
+    await broker_store.init_schema()
+    app.state.broker_store = broker_store
+    app.state.broker_resolver = BrokerResolver(settings, broker_store)
 
     clients = AlpacaClients(settings)
     app.state.alpaca_clients = clients
@@ -252,7 +264,8 @@ async def lifespan(app: FastAPI):
     )
     options_trigger_task = asyncio.create_task(
         run_options_trigger_loop(
-            clients, settings, options_trigger_store, app.state.options_chain_cache, engine
+            clients, settings, options_trigger_store, app.state.options_chain_cache, engine,
+            resolver=app.state.broker_resolver, user_store=user_store,
         )
     )
     replay_task = asyncio.create_task(
@@ -318,6 +331,7 @@ app.include_router(
     prefix="/api/trading/live/options",
     dependencies=[*_auth_gate, Depends(trading.mark_live_account)],
 )
+app.include_router(broker.router)
 app.include_router(trading_sim.router)
 app.include_router(trading_sim_options.router)
 app.include_router(replay.router)

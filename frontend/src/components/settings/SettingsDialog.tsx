@@ -1,24 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CHART_THEMES, type ChartThemeId } from "../../api/chartTheme";
 import { isDark, resetSettings, type AppSettings } from "../../api/settings";
+import type { SettingsTab } from "../../api/settingsDialog";
 import { useSettings } from "../../hooks/useSettings";
 import { TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { Modal } from "../common/Modal";
+import { BrokerTab } from "./BrokerTab";
 import { HOTKEY_GROUPS } from "./hotkeys";
 
-type Tab = "appearance" | "chart" | "display" | "hotkeys";
+type Tab = SettingsTab;
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "appearance", label: "Appearance" },
   { key: "chart", label: "Chart" },
   { key: "display", label: "Display" },
+  { key: "broker", label: "Broker" },
   { key: "hotkeys", label: "Hotkeys" },
 ];
 
 interface SettingsDialogProps {
   open: boolean;
   onClose: () => void;
+  /** The tab to show when opened by a widget (see api/settingsDialog.ts);
+   * null keeps whatever was open last. */
+  initialTab?: Tab | null;
 }
 
 /** Two candles in a theme's colours, for the scheme tiles. */
@@ -80,9 +86,12 @@ const SAMPLE = 1234.56;
 /** The Settings dialog. Every control writes straight into the settings
  * store (api/settings.ts); nothing is staged, there is no Save button,
  * and every open chart and table follows at once. */
-export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ open, onClose, initialTab = null }: SettingsDialogProps) {
   const [settings, update] = useSettings();
   const [tab, setTab] = useState<Tab>("appearance");
+  useEffect(() => {
+    if (open && initialTab) setTab(initialTab);
+  }, [open, initialTab]);
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => update({ [key]: value } as Partial<AppSettings>);
 
   return (
@@ -207,6 +216,8 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </Row>
           </div>
         )}
+
+        {tab === "broker" && <BrokerTab />}
 
         {tab === "hotkeys" && (
           <div className="settings-section settings-hotkeys">

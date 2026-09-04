@@ -16,7 +16,7 @@ from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, SpreadTicket, TriggerCreate
 from app.options.service import OptionsService
 from app.routers.trading import _account, _confirm
-from app.trading.errors import TradingError
+from app.trading.errors import BrokerNotConnected, TradingError
 from app.trading.guards import can_submit, limits_for
 
 logger = logging.getLogger(__name__)
@@ -24,12 +24,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["trading-options"])
 
 
-def _service(request: Request) -> OptionsService:
+async def _service(request: Request, user: dict = Depends(get_current_user)) -> OptionsService:
+    """The options service on this user's broker account -- same
+    resolution as routers/trading.py's _service."""
     settings = request.app.state.settings
     if not settings.has_credentials:
         raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
     account = _account(request)
-    if account == "live" and not settings.has_live_credentials:
+    resolver = getattr(request.app.state, "broker_resolver", None)
+    broker = None
+    live_available: bool | None = None
+    if resolver is not None:
+        creds = await resolver.credentials(user, account)
+        if creds is None:
+            raise HTTPException(
+                status_code=503,
+                detail=BrokerNotConnected(
+                    f"No Alpaca {account} account connected for {user['username']} -- "
+                    "enter your API keys in Settings → Broker.",
+                    field="account",
+                ).to_detail(),
+            )
+        broker = await resolver.client(user, account)
+        live_available = (await resolver.availability(user))["live"]
+    elif account == "live" and not settings.has_live_credentials:
         raise HTTPException(status_code=503, detail="Live account not configured")
     return OptionsService(
         request.app.state.alpaca_clients,
@@ -37,6 +55,8 @@ def _service(request: Request) -> OptionsService:
         engine=getattr(request.app.state, "scanner_engine", None),
         chain_cache=getattr(request.app.state, "options_chain_cache", None),
         account=account,
+        broker=broker,
+        live_available=live_available,
     )
 
 
@@ -51,10 +71,10 @@ def _limits(request: Request) -> dict:
 
 
 @router.get("/account")
-async def options_account(request: Request) -> dict:
+async def options_account(request: Request, service: OptionsService = Depends(_service)) -> dict:
     settings = request.app.state.settings
     try:
-        account = await _service(request).account()
+        account = await service.account()
     except HTTPException:
         raise
     except Exception:
@@ -62,16 +82,16 @@ async def options_account(request: Request) -> dict:
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
     return {
         **account,
-        "can_submit": can_submit(settings, _account(request)),
+        "can_submit": can_submit(settings, _account(request), live_available=getattr(service, "_live_available", None)),
         "feed": settings.alpaca_options_feed,
         "limits": _limits(request),
     }
 
 
 @router.get("/expiries/{underlying}")
-async def expiries(underlying: str, request: Request) -> dict:
+async def expiries(underlying: str, request: Request, service: OptionsService = Depends(_service)) -> dict:
     try:
-        return await _service(request).expiries(underlying.upper())
+        return await service.expiries(underlying.upper())
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -82,7 +102,7 @@ async def expiries(underlying: str, request: Request) -> dict:
 
 
 @router.get("/contract/{symbol}")
-async def contract_quote(symbol: str, request: Request) -> dict:
+async def contract_quote(symbol: str, request: Request, service: OptionsService = Depends(_service)) -> dict:
     """One contract's live snapshot -- bid/ask/mid, greeks, IV -- for the
     premium chart's theta projection and expected-move band."""
     from app.options.chain_fetch import fetch_leg_quotes
@@ -91,7 +111,6 @@ async def contract_quote(symbol: str, request: Request) -> dict:
     symbol = symbol.upper()
     if try_parse_occ(symbol) is None:
         raise HTTPException(status_code=422, detail=f"Not an option contract symbol: {symbol}")
-    _service(request)  # the credentials check
     try:
         quotes = await fetch_leg_quotes(request.app.state.alpaca_clients, [symbol])
     except Exception:
@@ -106,11 +125,11 @@ async def contract_quote(symbol: str, request: Request) -> dict:
 @router.get("/chain/{underlying}")
 async def chain(
     underlying: str,
-    request: Request,
+    request: Request, service: OptionsService = Depends(_service),
     expiry: date = Query(..., description="Expiration date, YYYY-MM-DD"),
 ) -> dict:
     try:
-        return (await _service(request).chain(underlying.upper(), expiry)).to_dict()
+        return (await service.chain(underlying.upper(), expiry)).to_dict()
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -121,10 +140,10 @@ async def chain(
 
 
 @router.post("/preview")
-async def preview_spread(ticket: SpreadTicket, request: Request) -> dict:
+async def preview_spread(ticket: SpreadTicket, request: Request, service: OptionsService = Depends(_service)) -> dict:
     settings = request.app.state.settings
     try:
-        resolved = await _service(request).preview(ticket)
+        resolved = await service.preview(ticket)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -134,15 +153,15 @@ async def preview_spread(ticket: SpreadTicket, request: Request) -> dict:
         raise HTTPException(status_code=502, detail="Failed to price the spread")
     return {
         "spread": resolved.model_dump(mode="json"),
-        "can_submit": can_submit(settings, _account(request)),
+        "can_submit": can_submit(settings, _account(request), live_available=getattr(service, "_live_available", None)),
         "limits": _limits(request),
     }
 
 
 @router.post("/orders")
-async def submit_spread(ticket: SpreadTicket, request: Request) -> dict:
+async def submit_spread(ticket: SpreadTicket, request: Request, service: OptionsService = Depends(_service)) -> dict:
     try:
-        order = await _service(request).submit(ticket, confirm=_confirm(request))
+        order = await service.submit(ticket, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -154,10 +173,10 @@ async def submit_spread(ticket: SpreadTicket, request: Request) -> dict:
 
 
 @router.get("/spreads")
-async def spreads(request: Request, user: dict = Depends(get_current_user)) -> dict:
+async def spreads(request: Request, service: OptionsService = Depends(_service), user: dict = Depends(get_current_user)) -> dict:
     store = getattr(request.app.state, "options_trigger_store", None)
     try:
-        groups = await _service(request).spreads()
+        groups = await service.spreads()
         triggers = await store.list_for_user(user["id"], _account(request)) if store is not None else []
     except HTTPException:
         raise
@@ -168,9 +187,9 @@ async def spreads(request: Request, user: dict = Depends(get_current_user)) -> d
 
 
 @router.post("/spreads/close/preview")
-async def preview_close(body: CloseSpreadRequest, request: Request) -> dict:
+async def preview_close(body: CloseSpreadRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
     try:
-        return await _service(request).preview_close(body)
+        return await service.preview_close(body)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -181,10 +200,10 @@ async def preview_close(body: CloseSpreadRequest, request: Request) -> dict:
 
 
 @router.post("/spreads/payoff")
-async def spread_payoff(body: PayoffRequest, request: Request) -> dict:
+async def spread_payoff(body: PayoffRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
     """The risk chart of a held position (see app.options.payoff)."""
     try:
-        return (await _service(request).payoff_for_held(body)).model_dump(mode="json")
+        return (await service.payoff_for_held(body)).model_dump(mode="json")
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -195,9 +214,9 @@ async def spread_payoff(body: PayoffRequest, request: Request) -> dict:
 
 
 @router.post("/spreads/close")
-async def close_spread(body: CloseSpreadRequest, request: Request) -> dict:
+async def close_spread(body: CloseSpreadRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
     try:
-        order = await _service(request).close_spread(body, confirm=_confirm(request))
+        order = await service.close_spread(body, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -224,7 +243,7 @@ async def list_triggers(request: Request, user: dict = Depends(get_current_user)
 
 
 @router.post("/triggers")
-async def create_trigger(body: TriggerCreate, request: Request, user: dict = Depends(get_current_user)) -> dict:
+async def create_trigger(body: TriggerCreate, request: Request, service: OptionsService = Depends(_service), user: dict = Depends(get_current_user)) -> dict:
     """Arm a stop and/or target on the underlying's price and/or on the
     position's own premium (the mark of the closing package). Arming a live
     trigger is itself a real-money decision, so it asks for the typed
@@ -234,8 +253,7 @@ async def create_trigger(body: TriggerCreate, request: Request, user: dict = Dep
     settings = request.app.state.settings
     account = _account(request)
     try:
-        assert_can_trade(settings, account, _confirm(request))
-        service = _service(request)
+        assert_can_trade(settings, account, _confirm(request), live_available=getattr(service, "_live_available", None))
         spot = await service.spot(body.underlying.upper())
         if spot is not None:
             if body.close_below is not None and body.close_below >= spot:

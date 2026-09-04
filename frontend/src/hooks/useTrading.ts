@@ -32,6 +32,9 @@ const HOT_WINDOW_MS = 12_000;
  * immediately flickered an error banner over live positions every time that
  * happened. Wait for a few in a row before treating it as real; a genuine
  * outage still surfaces within a handful of seconds. */
+import { OrderRejectedError } from "../api/http";
+import { subscribeBrokerChanged } from "../api/settingsDialog";
+
 const ERROR_THRESHOLD = 3;
 
 /** Draft entry/stop/target from the order ticket currently being built --
@@ -73,6 +76,12 @@ export interface TradingState {
   orders: Order[];
   loading: boolean;
   error: string | null;
+  /** This user has no Alpaca key pair for the account (backend
+   * "broker_not_connected"): the panel offers Settings → Broker instead
+   * of an error. */
+  brokerMissing: boolean;
+  /** Which keys answer: the user's own, or the operator's from .env. */
+  brokerInfo: { source?: string; key_hint?: string | null; account_number?: string | null } | null;
 }
 
 const EMPTY_STATE: TradingState = {
@@ -88,6 +97,8 @@ const EMPTY_STATE: TradingState = {
   orders: [],
   loading: true,
   error: null,
+  brokerMissing: false,
+  brokerInfo: null,
 };
 
 export interface TradingActions {
@@ -144,9 +155,23 @@ export function useTrading(): TradingState & TradingActions {
         orders: orders.orders,
         loading: false,
         error: null,
+        brokerMissing: false,
+        brokerInfo: account.broker ?? null,
       });
     } catch (err: unknown) {
       if (cancelledRef.current) return;
+      // No key pair for this account: not a transient failure, so no
+      // threshold -- the panel switches to "connect your broker" at once.
+      if (err instanceof OrderRejectedError && err.detail.code === "broker_not_connected") {
+        failureCountRef.current = 0;
+        setState((s) => ({
+          ...EMPTY_STATE,
+          tradingAccount: s.tradingAccount,
+          loading: false,
+          brokerMissing: true,
+        }));
+        return;
+      }
       failureCountRef.current += 1;
       if (failureCountRef.current < ERROR_THRESHOLD) return;
       // Keep whatever was last known rather than blanking the panel: a
@@ -158,6 +183,9 @@ export function useTrading(): TradingState & TradingActions {
       }));
     }
   }, []);
+
+  // A key pair connected or removed in Settings → Broker: refetch at once.
+  useEffect(() => subscribeBrokerChanged(() => void refresh()), [refresh]);
 
   useEffect(() => {
     cancelledRef.current = false;

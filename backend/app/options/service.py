@@ -109,12 +109,18 @@ class OptionsService:
         chain_cache: ChainCache | None = None,
         account: Account = "paper",
         source: QuoteSource | None = None,
+        broker=None,
+        live_available: bool | None = None,
     ) -> None:
         """`source` is where prices and the clock come from (see
         app.options.quote_source): Alpaca now by default, a replayed
-        moment for the simulated book."""
+        moment for the simulated book. `broker` is the user's own
+        TradingClient (app.broker.resolver), None the operator's from .env;
+        `live_available` whether that user has a live pair, for the guard."""
         self._clients = clients
         self._settings = settings
+        self._broker = broker
+        self._live_available = live_available
         self._engine = engine
         self._account: Account = account
         self._chain_cache = chain_cache or ChainCache(clients, self._live_spot)
@@ -130,6 +136,8 @@ class OptionsService:
 
     @property
     def _trading(self):
+        if self._broker is not None:
+            return self._broker
         if self._account == "paper":
             return self._clients.trading
         return self._clients.trading_for(self._account)
@@ -381,7 +389,7 @@ class OptionsService:
     # --- writes -------------------------------------------------------------
 
     async def submit(self, ticket: SpreadTicket, confirm: str | None = None) -> dict:
-        assert_can_trade(self._settings, self._account, confirm)
+        assert_can_trade(self._settings, self._account, confirm, live_available=self._live_available)
         resolved = await self.preview(ticket)
         assert_options_level(
             resolved.options_level, options_level_required(ticket.strategy), STRATEGY_LABELS[ticket.strategy]
@@ -426,7 +434,7 @@ class OptionsService:
         """Close `req.qty` spreads with a limit order: the caller's price,
         else the mid, else (for the trigger loop) a price stepped toward
         the natural so it fills rather than rests."""
-        assert_can_trade(self._settings, self._account, confirm)
+        assert_can_trade(self._settings, self._account, confirm, live_available=self._live_available)
         legs, direction, net_mid, net_natural = await self._priced_close(req)
         if req.limit_price is not None:
             price = round(req.limit_price, 2)

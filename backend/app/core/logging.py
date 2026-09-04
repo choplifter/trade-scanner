@@ -13,6 +13,8 @@ _SECRET_QUERY_PARAMS = (
     "token",
     "password",
     "secret",
+    "api_secret_key",
+    "secret_key",
 )
 
 # Value runs to the next param separator, whitespace, or quote -- httpx's

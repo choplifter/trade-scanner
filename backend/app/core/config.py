@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # with a guessable default -- generate one with e.g.
     # `python -c "import secrets; print(secrets.token_hex(32))"`.
     session_secret_key: str = ""
+    # Encrypts the per-user Alpaca secrets at rest (app.broker.crypto).
+    # Optional: derived from session_secret_key when empty. Changing either
+    # makes every stored broker secret unreadable (users re-enter them).
+    broker_encryption_key: str = ""
 
     # Master switch for the trading panel's *write* paths. Off by default and
     # deliberately separate from alpaca_paper: shipping order placement should
@@ -433,14 +437,6 @@ class Settings(BaseSettings):
     @property
     def has_credentials(self) -> bool:
         return bool(self.alpaca_api_key_id and self.alpaca_api_secret_key)
-
-    @property
-    def has_live_credentials(self) -> bool:
-        return bool(self.alpaca_live_api_key_id and self.alpaca_live_api_secret_key)
-
-    @property
-    def has_live_credentials(self) -> bool:
-        return bool(self.alpaca_live_api_key_id and self.alpaca_live_api_secret_key)
 
     @property
     def has_live_credentials(self) -> bool:

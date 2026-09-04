@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.auth.dependency import get_current_user
-from app.trading.errors import TradingError
+from app.trading.errors import BrokerNotConnected, TradingError
 from app.trading.guards import LIVE_CONFIRM_HEADER, Account, can_submit, limits_for
 from app.trading.models import OrderTicket
 from app.trading.service import OrderService
@@ -44,23 +44,53 @@ def _confirm(request: Request) -> str | None:
     return request.headers.get(LIVE_CONFIRM_HEADER)
 
 
-def _service(request: Request) -> OrderService:
+async def _service(request: Request, user: dict = Depends(get_current_user)) -> OrderService:
+    """The order service on *this user's* broker account (see
+    app.broker.resolver): their own keys, or the operator's from .env for
+    the admin. No keys for the account -> 503 with a typed detail the UI
+    turns into "connect your broker"."""
     settings = request.app.state.settings
     if not settings.has_credentials:
         raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
     account = _account(request)
-    if account == "live" and not settings.has_live_credentials:
+    resolver = getattr(request.app.state, "broker_resolver", None)
+    broker = None
+    live_available: bool | None = None
+    broker_info: dict = {"source": "env", "key_hint": None}
+    if resolver is not None:
+        creds = await resolver.credentials(user, account)
+        if creds is None:
+            raise HTTPException(
+                status_code=503,
+                detail=BrokerNotConnected(
+                    f"No Alpaca {account} account connected for {user['username']} -- "
+                    "enter your API keys in Settings → Broker.",
+                    field="account",
+                ).to_detail(),
+            )
+        broker = await resolver.client(user, account)
+        live_available = (await resolver.availability(user))["live"]
+        broker_info = {"source": creds.source, "key_hint": creds.key_hint}
+    elif account == "live" and not settings.has_live_credentials:
         raise HTTPException(status_code=503, detail="Live account not configured")
-    return OrderService(
+    service = OrderService(
         request.app.state.alpaca_clients,
         settings,
         engine=getattr(request.app.state, "scanner_engine", None),
         account=account,
+        broker=broker,
+        live_available=live_available,
     )
+    # What the handlers need to know about the caller, without a second
+    # dependency: whose trips to record, and what the account line shows.
+    service.user_id = int(user["id"])  # type: ignore[attr-defined]
+    service.include_legacy_trades = bool(user.get("is_admin"))  # type: ignore[attr-defined]
+    service.broker_info = broker_info  # type: ignore[attr-defined]
+    return service
 
 
 @router.get("/account")
-async def get_account(request: Request) -> dict:
+async def get_account(request: Request, service: OrderService = Depends(_service)) -> dict:
     """Buying power, equity and cash for the connected account.
 
     Also reports which mode the app is in, so the UI can label itself rather
@@ -69,18 +99,20 @@ async def get_account(request: Request) -> dict:
     """
     settings = request.app.state.settings
     try:
-        account = await _service(request).account()
+        account = await service.account()
     except HTTPException:
         raise
     except Exception:
         logger.exception("Alpaca account fetch failed")
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
     which = _account(request)
+    live_available = getattr(service, "_live_available", None)
     return {
         "account": account,
         "trading_account": which,
         "paper": settings.alpaca_paper and which == "paper",
-        "live_available": settings.has_live_credentials,
+        "live_available": settings.has_live_credentials if live_available is None else live_available,
+        "broker": {**getattr(service, "broker_info", {}), "account_number": account.get("account_number")},
         "live_allowed": settings.trading_allow_live,
         "limits": limits_for(settings, which).to_dict(),
         "trading_enabled": settings.trading_enabled,
@@ -91,9 +123,9 @@ async def get_account(request: Request) -> dict:
 
 
 @router.get("/positions")
-async def get_positions(request: Request) -> dict:
+async def get_positions(request: Request, service: OrderService = Depends(_service)) -> dict:
     try:
-        positions = await _service(request).positions()
+        positions = await service.positions()
     except HTTPException:
         raise
     except Exception:
@@ -103,10 +135,10 @@ async def get_positions(request: Request) -> dict:
 
 
 @router.get("/orders")
-async def get_orders(request: Request, status: str = "open") -> dict:
+async def get_orders(request: Request, service: OrderService = Depends(_service), status: str = "open") -> dict:
     """Working orders by default; pass status=all or closed for history."""
     try:
-        orders = await _service(request).orders(status)
+        orders = await service.orders(status)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -119,7 +151,7 @@ async def get_orders(request: Request, status: str = "open") -> dict:
 
 @router.get("/trades")
 async def get_trades(
-    request: Request,
+    request: Request, service: OrderService = Depends(_service),
     # ?range=day|week|month|all -- calendar periods in ET. Aliased for the
     # same reason as portfolio-history's. An unknown value is refused by
     # the service and arrives as the usual typed 422.
@@ -136,7 +168,10 @@ async def get_trades(
     if store is None:
         raise HTTPException(status_code=503, detail="Trade record not initialised")
     try:
-        return await _service(request).sync_trades(store, range_key)
+        return await service.sync_trades(
+            store, range_key, user_id=getattr(service, "user_id", 0),
+            include_legacy=getattr(service, "include_legacy_trades", True),
+        )
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -181,7 +216,7 @@ async def save_journal_entry(
 
 @router.get("/portfolio-history")
 async def get_portfolio_history(
-    request: Request,
+    request: Request, service: OrderService = Depends(_service),
     # Aliased so the query string reads ?range=1M while the parameter avoids
     # shadowing the builtin. Which ranges exist is the service's business --
     # the period/timeframe pairing is constrained by Alpaca, so an unknown
@@ -194,7 +229,7 @@ async def get_portfolio_history(
     reason: looking at a balance is harmless whichever account it is.
     """
     try:
-        return await _service(request).portfolio_history(range_key)
+        return await service.portfolio_history(range_key)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -205,7 +240,7 @@ async def get_portfolio_history(
 
 
 @router.get("/reference-price/{symbol}")
-async def get_reference_price(symbol: str, request: Request) -> dict:
+async def get_reference_price(symbol: str, request: Request, service: OrderService = Depends(_service)) -> dict:
     """Last price for `symbol`, independent of any ticket -- what the
     Stop/Target auto-suggestion in the ticket sizes off before a ticket
     exists to preview. previewOrder can't fill this role: it's gated on the
@@ -213,7 +248,7 @@ async def get_reference_price(symbol: str, request: Request) -> dict:
     exactly the field this is suggesting a starting value for.
     """
     try:
-        price = await _service(request).reference_price(symbol.upper())
+        price = await service.reference_price(symbol.upper())
     except HTTPException:
         raise
     except Exception:
@@ -223,13 +258,13 @@ async def get_reference_price(symbol: str, request: Request) -> dict:
 
 
 @router.get("/day-high/{symbol}")
-async def get_day_high(symbol: str, request: Request) -> dict:
+async def get_day_high(symbol: str, request: Request, service: OrderService = Depends(_service)) -> dict:
     """Today's high for `symbol` -- the trigger price a breakout-entry
     hotkey sizes off. Ungated like the other read paths: this is a quote,
     not an order.
     """
     try:
-        high = await _service(request).day_high(symbol.upper())
+        high = await service.day_high(symbol.upper())
     except HTTPException:
         raise
     except Exception:
@@ -239,7 +274,7 @@ async def get_day_high(symbol: str, request: Request) -> dict:
 
 
 @router.post("/orders/preview")
-async def preview_order(ticket: OrderTicket, request: Request) -> dict:
+async def preview_order(ticket: OrderTicket, request: Request, service: OrderService = Depends(_service)) -> dict:
     """Size and price a ticket without placing anything.
 
     Ungated on purpose: this is arithmetic, and seeing the size and risk of
@@ -252,7 +287,7 @@ async def preview_order(ticket: OrderTicket, request: Request) -> dict:
     """
     settings = request.app.state.settings
     try:
-        resolved = await _service(request).preview(ticket)
+        resolved = await service.preview(ticket)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -264,7 +299,7 @@ async def preview_order(ticket: OrderTicket, request: Request) -> dict:
     limits = limits_for(settings, _account(request))
     return {
         "order": resolved.model_dump(mode="json"),
-        "can_submit": can_submit(settings, _account(request)),
+        "can_submit": can_submit(settings, _account(request), live_available=getattr(service, "_live_available", None)),
         "limits": {
             "account": limits.account,
             "max_order_qty": limits.max_order_qty,
@@ -275,7 +310,7 @@ async def preview_order(ticket: OrderTicket, request: Request) -> dict:
 
 
 @router.post("/orders")
-async def submit_order(ticket: OrderTicket, request: Request) -> dict:
+async def submit_order(ticket: OrderTicket, request: Request, service: OrderService = Depends(_service)) -> dict:
     """Place an order.
 
     Every refusal -- switched off, live account, bad stop, past a ceiling,
@@ -283,7 +318,7 @@ async def submit_order(ticket: OrderTicket, request: Request) -> dict:
     the preview uses, so the ticket renders them all through one path.
     """
     try:
-        order = await _service(request).submit(ticket, confirm=_confirm(request))
+        order = await service.submit(ticket, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -304,10 +339,10 @@ class ReplaceStopRequest(BaseModel):
 
 
 @router.patch("/orders/{order_id}")
-async def replace_stop(order_id: str, body: ReplaceStopRequest, request: Request) -> dict:
+async def replace_stop(order_id: str, body: ReplaceStopRequest, request: Request, service: OrderService = Depends(_service)) -> dict:
     """Move a working stop -- the edited SL cell and the break-even button."""
     try:
-        order = await _service(request).replace_stop(order_id, body.symbol, body.stop_price, confirm=_confirm(request))
+        order = await service.replace_stop(order_id, body.symbol, body.stop_price, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -327,12 +362,12 @@ class ReplaceTargetRequest(BaseModel):
 
 
 @router.patch("/orders/{order_id}/target")
-async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Request) -> dict:
+async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Request, service: OrderService = Depends(_service)) -> dict:
     """Move a working take-profit -- a distinct path from the stop-move
     route above since the two need different body shapes for the same
     underlying resource."""
     try:
-        order = await _service(request).replace_target(order_id, body.symbol, body.limit_price, confirm=_confirm(request))
+        order = await service.replace_target(order_id, body.symbol, body.limit_price, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -344,9 +379,9 @@ async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Req
 
 
 @router.delete("/orders/{order_id}")
-async def cancel_order(order_id: str, request: Request) -> dict:
+async def cancel_order(order_id: str, request: Request, service: OrderService = Depends(_service)) -> dict:
     try:
-        await _service(request).cancel(order_id, confirm=_confirm(request))
+        await service.cancel(order_id, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:
@@ -360,7 +395,7 @@ async def cancel_order(order_id: str, request: Request) -> dict:
 @router.delete("/positions/{symbol}")
 async def close_position(
     symbol: str,
-    request: Request,
+    request: Request, service: OrderService = Depends(_service),
     qty: float | None = Query(
         default=None,
         gt=0,
@@ -374,7 +409,7 @@ async def close_position(
     """Flatten one position, or sell part of it. There is deliberately no
     close-all endpoint."""
     try:
-        order = await _service(request).close_position(symbol, qty, confirm=_confirm(request))
+        order = await service.close_position(symbol, qty, confirm=_confirm(request))
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:

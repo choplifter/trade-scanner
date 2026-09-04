@@ -12,8 +12,6 @@ from alpaca.trading.client import TradingClient
 
 from app.core.config import Settings
 from app.trading.errors import LiveTradingRefused
-from app.trading.errors import LiveTradingRefused
-from app.trading.errors import LiveTradingRefused
 
 logger = logging.getLogger(__name__)
 
@@ -79,36 +77,6 @@ class AlpacaClients:
             feed=self.options_feed,
         )
         self._option_stream_task: asyncio.Task | None = None
-
-    def trading_for(self, account: str) -> TradingClient:
-        """The TradingClient for "paper" or "live" -- see app.trading.guards
-        for the gate that decides whether a live client may be *written*
-        through; this only answers which one a request is talking about."""
-        if account == "paper":
-            return self.trading
-        if account == "live":
-            if self.trading_live is None:
-                raise LiveTradingRefused(
-                    "No live account configured. Set ALPACA_LIVE_API_KEY_ID and "
-                    "ALPACA_LIVE_API_SECRET_KEY in backend/.env."
-                )
-            return self.trading_live
-        raise ValueError(f"Unknown trading account: {account!r}")
-
-    def trading_for(self, account: str) -> TradingClient:
-        """The TradingClient for "paper" or "live" -- see app.trading.guards
-        for the gate that decides whether a live client may be *written*
-        through; this only answers which one a request is talking about."""
-        if account == "paper":
-            return self.trading
-        if account == "live":
-            if self.trading_live is None:
-                raise LiveTradingRefused(
-                    "No live account configured. Set ALPACA_LIVE_API_KEY_ID and "
-                    "ALPACA_LIVE_API_SECRET_KEY in backend/.env."
-                )
-            return self.trading_live
-        raise ValueError(f"Unknown trading account: {account!r}")
 
     def trading_for(self, account: str) -> TradingClient:
         """The TradingClient for "paper" or "live" -- see app.trading.guards

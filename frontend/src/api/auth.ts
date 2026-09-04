@@ -4,6 +4,9 @@ export interface User {
   id: number;
   username: string;
   display_name: string;
+  /** The operator: broker calls may fall back to the Alpaca keys in
+   * backend/.env. Everyone else connects their own account in Settings. */
+  is_admin?: boolean;
 }
 
 async function extractErrorMessage(res: Response, fallback: string): Promise<string> {

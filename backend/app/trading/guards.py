@@ -31,10 +31,20 @@ LIVE_CONFIRMATION = "LIVE"
 LIVE_CONFIRM_HEADER = "X-Live-Confirm"
 
 
-def assert_can_trade(settings: Settings, account: Account = "paper", confirm: str | None = None) -> None:
+def assert_can_trade(
+    settings: Settings,
+    account: Account = "paper",
+    confirm: str | None = None,
+    *,
+    live_available: bool | None = None,
+) -> None:
     """Every write path starts here. Order matters: the message should name
     the switch the user actually controls, so the master switch comes first
-    and the live checks last."""
+    and the live checks last.
+
+    `live_available` is whether *this user* has a live key pair (their own,
+    or the operator's for the admin -- see app.broker.resolver); None keeps
+    the old answer from .env alone."""
     if not settings.trading_enabled:
         raise TradingDisabled(
             "Trading is switched off. Set TRADING_ENABLED=true in backend/.env to enable it."
@@ -46,10 +56,11 @@ def assert_can_trade(settings: Settings, account: Account = "paper", confirm: st
             "reached only through the live prefix with its own keys."
         )
     if account == "live":
-        if not settings.has_live_credentials:
+        has_live = settings.has_live_credentials if live_available is None else live_available
+        if not has_live:
             raise LiveTradingRefused(
-                "No live account configured. Set ALPACA_LIVE_API_KEY_ID and "
-                "ALPACA_LIVE_API_SECRET_KEY in backend/.env."
+                "No live account connected. Enter your live Alpaca keys in Settings → Broker "
+                "(the admin may set ALPACA_LIVE_API_KEY_ID / ALPACA_LIVE_API_SECRET_KEY in backend/.env)."
             )
         if not settings.trading_allow_live:
             raise LiveTradingRefused(
@@ -98,11 +109,12 @@ def limits_for(settings: Settings, account: Account = "paper") -> Limits:
     )
 
 
-def can_submit(settings: Settings, account: Account = "paper") -> bool:
+def can_submit(settings: Settings, account: Account = "paper", *, live_available: bool | None = None) -> bool:
     """What the preview reports: whether a submit *could* pass the gate
     (the typed confirmation aside, which is collected at submit time)."""
     if not settings.trading_enabled or not settings.alpaca_paper:
         return False
     if account == "live":
-        return settings.has_live_credentials and settings.trading_allow_live
+        has_live = settings.has_live_credentials if live_available is None else live_available
+        return has_live and settings.trading_allow_live
     return True

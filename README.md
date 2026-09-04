@@ -837,6 +837,40 @@ past dates.
   reasons. Purely descriptive market weather, not a trade signal -- same
   non-advisory framing as AI Trade Ideas.
 
+## Broker login per user
+
+Every login trades on **its own Alpaca account**. The keys in
+`backend/.env` (`ALPACA_API_KEY_ID` / `ALPACA_LIVE_*`) belong to the
+**admin** -- the first account ever created, or one made with
+`python -m scripts.create_user <name> "<display>" --admin`. Everyone else
+sees "No Alpaca account connected" on the Trading and Options widgets (a
+typed 503, `broker_not_connected`) until they enter their own key pair in
+**Settings → Broker**, and can use Simulation mode meanwhile.
+
+- **Settings → Broker** has one card per account, Paper and Live. A pair
+  is verified against Alpaca once (`get_account`) and stored encrypted;
+  the card shows the key id's last characters, the account number, its
+  status and options level, and whether the keys are the user's own or the
+  operator's from `.env`. Connecting a live pair asks for the typed `LIVE`
+  like every real-money action; `TRADING_ALLOW_LIVE` and `TRADING_ENABLED`
+  stay global switches the operator controls.
+- **What is per user:** account, positions, orders, fills, closed round
+  trips (the `trades` table carries `user_id`; rows from before the split
+  read as the admin's), options spreads, option orders and triggers (the
+  trigger loop closes each trigger on its owner's account, and parks it
+  when the owner has no keys for that account). The trading widget's badge
+  shows the connected keys (`PAPER · …ABCD`).
+- **What stays the operator's:** all market data -- bars, streams, chains,
+  snapshots, news, screener, the universe, GEX -- runs on the `.env` data
+  subscription. Contract lists via the trading endpoint
+  (`get_option_contracts`, assets) do too; they are reference data.
+- **Storage:** `user_broker_keys` in the same sqlite file, the secret
+  encrypted with Fernet under a key derived (HKDF) from
+  `BROKER_ENCRYPTION_KEY`, or from `SESSION_SECRET_KEY` when that is not
+  set. Rotating either makes the stored secrets unreadable: users re-enter
+  them. The API never returns a secret. Users are still created by the
+  operator (`scripts/create_user.py`); there is no self-registration.
+
 ## Options
 
 Everything the dashboard does with options, in one place. The short
