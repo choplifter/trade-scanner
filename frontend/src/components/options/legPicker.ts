@@ -10,6 +10,7 @@ import {
   TIME_STRATEGIES,
   type ChainResponse,
   type OptionKind,
+  type ShortTarget,
   type StrikeRow,
   type Strategy,
 } from "../../types/options";
@@ -100,6 +101,9 @@ export interface PickContext {
   longExpiry?: string | null;
   longChain?: ChainResponse | null;
   picking?: "short" | "long";
+  /** How far out the short leg(s) go for the current strategy (see
+   * types/options.ts ShortTarget); the delta constants above when unset. */
+  shortTarget?: ShortTarget | null;
 }
 
 export function strategyKind(strategy: Strategy, timeKind: OptionKind = "call"): OptionKind | "both" {
@@ -159,6 +163,25 @@ function otmShortIndex(rows: StrikeRow[], kind: OptionKind, spot: number, target
   return nearestIndex(rows, targetPrice);
 }
 
+/** Index of the n-th out-of-the-money row counted from the spot (0 = the
+ * first strike outside it), clamped to the chain. */
+function offsetIndex(rows: StrikeRow[], kind: OptionKind, spot: number, n: number): number {
+  const otm = rows
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => (kind === "call" ? r.strike > spot : r.strike < spot))
+    .sort((a, b) => Math.abs(a.r.strike - spot) - Math.abs(b.r.strike - spot));
+  if (otm.length === 0) return nearestIndex(rows, spot);
+  return otm[Math.min(Math.max(0, Math.floor(n)), otm.length - 1)].i;
+}
+
+/** Where a short leg goes: the picker's short-target setting when there
+ * is one (delta or strike offset), else the strategy's delta constant. */
+function shortIndex(rows: StrikeRow[], kind: OptionKind, spot: number, fallbackDelta: number, ctx: PickContext): number {
+  const target = ctx.shortTarget;
+  if (target && target.mode === "offset") return offsetIndex(rows, kind, spot, target.value);
+  return otmShortIndex(rows, kind, spot, target && target.value > 0 ? target.value : fallbackDelta);
+}
+
 function clampIndex(i: number, rows: StrikeRow[]): number {
   return Math.min(Math.max(i, 0), rows.length - 1);
 }
@@ -173,8 +196,8 @@ export function defaultLegs(strategy: Strategy, chain: ChainResponse, width: num
     const puts = quoted(chain.rows, "put");
     const calls = quoted(chain.rows, "call");
     if (puts.length < w + 1 || calls.length < w + 1) return null;
-    const ps = otmShortIndex(puts, "put", chain.spot, SHORT_DELTA_CONDOR);
-    const cs = otmShortIndex(calls, "call", chain.spot, SHORT_DELTA_CONDOR);
+    const ps = shortIndex(puts, "put", chain.spot, SHORT_DELTA_CONDOR, ctx);
+    const cs = shortIndex(calls, "call", chain.spot, SHORT_DELTA_CONDOR, ctx);
     const pl = clampIndex(ps - w, puts);
     const cl = clampIndex(cs + w, calls);
     const legs = {
@@ -198,8 +221,8 @@ export function defaultLegs(strategy: Strategy, chain: ChainResponse, width: num
     const calls = quoted(chain.rows, "call");
     if (puts.length === 0 || calls.length === 0) return null;
     const legs = {
-      put: puts[otmShortIndex(puts, "put", chain.spot, STRANGLE_DELTA)].strike,
-      call: calls[otmShortIndex(calls, "call", chain.spot, STRANGLE_DELTA)].strike,
+      put: puts[shortIndex(puts, "put", chain.spot, STRANGLE_DELTA, ctx)].strike,
+      call: calls[shortIndex(calls, "call", chain.spot, STRANGLE_DELTA, ctx)].strike,
     };
     return legs.put < legs.call ? legs : null;
   }
@@ -252,7 +275,7 @@ export function defaultLegs(strategy: Strategy, chain: ChainResponse, width: num
   const rows = quoted(chain.rows, kind);
   if (INCOME_STRATEGIES.has(strategy)) {
     // Written ~0.30 delta out of the money.
-    return rows.length > 0 ? { strike: rows[otmShortIndex(rows, kind, chain.spot, SHORT_DELTA_VERTICAL)].strike } : null;
+    return rows.length > 0 ? { strike: rows[shortIndex(rows, kind, chain.spot, SHORT_DELTA_VERTICAL, ctx)].strike } : null;
   }
   if (SINGLE_LEG_STRATEGIES.has(strategy)) {
     // An outright long starts at the money.
@@ -266,8 +289,9 @@ export function defaultLegs(strategy: Strategy, chain: ChainResponse, width: num
     if (shortIdx === longIdx) return null;
     return { long: rows[longIdx].strike, short: rows[shortIdx].strike };
   }
-  // Credit: short the ~0.30-delta contract, long `width` strikes further out.
-  const shortIdx = otmShortIndex(rows, kind, chain.spot, SHORT_DELTA_VERTICAL);
+  // Credit: short the ~0.30-delta contract (or the picker's short-target
+  // setting), long `width` strikes further out.
+  const shortIdx = shortIndex(rows, kind, chain.spot, SHORT_DELTA_VERTICAL, ctx);
   const longIdx = clampIndex(kind === "call" ? shortIdx + w : shortIdx - w, rows);
   if (longIdx === shortIdx) return null;
   return { long: rows[longIdx].strike, short: rows[shortIdx].strike };

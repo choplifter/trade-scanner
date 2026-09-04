@@ -40,6 +40,7 @@ export const HOTKEY_GROUPS: HotkeyGroup[] = [
       { keys: "[ / ]", action: "Previous / next expiry" },
       { keys: "5 – 9", action: "Bull call, bear put, bull put, bear call, iron condor" },
       { keys: "+ / −", action: "Width (strikes between the legs) up / down" },
+      { keys: "Shift + + / −", action: "Short distance (delta or strikes from the spot) further out / closer in" },
     ],
   },
   {

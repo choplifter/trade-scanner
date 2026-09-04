@@ -1022,7 +1022,14 @@ check the legs").
 ### Auto-pick and clicking strikes
 
 **Auto-pick** (on load, on a new expiry / strategy / width, and the button
-of that name) chooses the legs like this:
+of that name) chooses the legs like this -- the delta targets below are
+the defaults of the ticket's **Short** control, which sets how far out
+the short leg(s) go for credit verticals and writes, the iron condor and
+the strangle, either as a **delta** (0.05 - 0.45) or as **strikes from the
+spot** (0 = the first strike outside the spot, the tightest corridor; a
+1-strike condor on SPY is a 2-dollar corridor). The setting is kept per
+strategy group in the browser; `Shift + +/-` steps it, the ticket shows
+the resulting corridor:
 
 - **Credit vertical:** the short leg is the out-of-the-money contract
   whose |delta| is nearest **0.30** (roughly a one-standard-deviation

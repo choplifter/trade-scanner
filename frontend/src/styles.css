@@ -3373,6 +3373,22 @@ td.chain-side.chain-stale {
   flex-wrap: wrap;
 }
 
+/* The options ticket's short-distance control (delta or strikes). */
+.short-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.short-target .timeframe-button {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.short-target input {
+  width: 58px;
+}
+
 /* The scanner's pause switch (operator), in the scanner header. */
 .scanner-pause.paused {
   color: var(--chart-down, #d03b3b);

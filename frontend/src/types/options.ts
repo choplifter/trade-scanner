@@ -96,6 +96,35 @@ export function optionsLevelRequired(strategy: Strategy): number {
   return SINGLE_LEG_STRATEGIES.has(strategy) ? 2 : 3;
 }
 
+/** How far out the auto-pick puts a short leg: a delta target, or a
+ * count of out-of-the-money strikes from the spot (0 = the first strike
+ * outside the spot). Kept per strategy group in the settings. */
+export interface ShortTarget {
+  mode: "delta" | "offset";
+  value: number;
+}
+export type ShortTargetGroup = "condor" | "vertical" | "strangle";
+export const DEFAULT_SHORT_TARGETS: Record<ShortTargetGroup, ShortTarget> = {
+  condor: { mode: "delta", value: 0.2 },
+  vertical: { mode: "delta", value: 0.3 },
+  strangle: { mode: "delta", value: 0.25 },
+};
+export const SHORT_DELTA_MIN = 0.05;
+export const SHORT_DELTA_MAX = 0.45;
+export const SHORT_OFFSET_MAX = 15;
+
+/** Which short-distance setting a strategy's auto-pick reads; null for
+ * the shapes that start at the money (butterflies, straddle, longs) or
+ * take the strike from a click. */
+export function shortTargetGroup(strategy: Strategy): ShortTargetGroup | null {
+  if (strategy === "iron_condor") return "condor";
+  if (strategy === "long_strangle") return "strangle";
+  if (strategy === "bull_put" || strategy === "bear_call" || strategy === "covered_call" || strategy === "cash_secured_put") {
+    return "vertical";
+  }
+  return null;
+}
+
 export interface TicketLeg {
   kind: OptionKind;
   strike: number;

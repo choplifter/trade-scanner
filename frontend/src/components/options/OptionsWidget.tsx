@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 
-import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, getSettings, updateSettings } from "../../api/settings";
+import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, clampShortTarget, getSettings, updateSettings } from "../../api/settings";
 import { modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useOptionChain } from "../../hooks/useOptionChain";
 import { useSpreads } from "../../hooks/useSpreads";
-import { TIME_STRATEGIES, type OptionKind, type Strategy } from "../../types/options";
+import {
+  SHORT_DELTA_MAX,
+  SHORT_DELTA_MIN,
+  SHORT_OFFSET_MAX,
+  TIME_STRATEGIES,
+  shortTargetGroup,
+  type OptionKind,
+  type ShortTarget,
+  type ShortTargetGroup,
+  type Strategy,
+} from "../../types/options";
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatExpiry, type ParsedOcc } from "../../utils/occ";
 import { ChainTable } from "./ChainTable";
@@ -74,14 +84,40 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTime, expiry, expiries, longChainState.expiries, longChainState.expiry]);
 
+  // How far out the auto-pick puts short legs, per strategy group; kept in
+  // the settings so the corridor a user likes survives a reload.
+  const [shortTargets, setShortTargets] = useState<Record<ShortTargetGroup, ShortTarget>>(
+    () => getSettings().optionsShortTargets,
+  );
+  const shortGroup = shortTargetGroup(strategy);
+  const shortTarget = shortGroup ? shortTargets[shortGroup] : undefined;
+  const setShortTarget = (target: ShortTarget) => {
+    if (!shortGroup) return;
+    const next = { ...shortTargets, [shortGroup]: clampShortTarget(target) };
+    setShortTargets(next);
+    updateSettings({ optionsShortTargets: next });
+    // A new distance is a request for a new default pick.
+    manualRef.current = false;
+  };
+  const stepShortTarget = (direction: 1 | -1) => {
+    if (!shortTarget) return;
+    // "Further out" is a smaller delta but a larger strike offset.
+    if (shortTarget.mode === "delta") {
+      setShortTarget({ mode: "delta", value: Math.min(SHORT_DELTA_MAX, Math.max(SHORT_DELTA_MIN, shortTarget.value - 0.05 * direction)) });
+    } else {
+      setShortTarget({ mode: "offset", value: Math.min(SHORT_OFFSET_MAX, Math.max(0, shortTarget.value + direction)) });
+    }
+  };
+
   const ctx = useMemo<PickContext>(
     () => ({
       timeKind,
       longExpiry: isTime ? longChainState.expiry : null,
       longChain: isTime ? longChainState.chain : null,
       picking,
+      shortTarget: shortTarget ?? null,
     }),
-    [timeKind, isTime, longChainState.expiry, longChainState.chain, picking],
+    [timeKind, isTime, longChainState.expiry, longChainState.chain, picking, shortTarget],
   );
 
   // Auto-pick on a new symbol/expiry/strategy/width, or the first chain.
@@ -98,7 +134,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     setLegs(defaultLegs(strategy, chain, width, ctx));
     // Only the inputs of the default pick, not `legs` itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, strategy, width, ctx.timeKind, ctx.longExpiry, ctx.longChain]);
+  }, [chain, strategy, width, ctx.timeKind, ctx.longExpiry, ctx.longChain, ctx.shortTarget]);
 
   // Following the chart's contract happens in three steps as the data
   // arrives: strategy at once, the expiry once the list holds it, the
@@ -161,10 +197,12 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
       setStrategy(STRATEGY_HOTKEYS[Number(e.key) - 5]);
       e.preventDefault();
     } else if (e.key === "+" || e.key === "=") {
-      setWidth((w) => Math.min(20, w + 1));
+      if (e.shiftKey) stepShortTarget(1);
+      else setWidth((w) => Math.min(20, w + 1));
       e.preventDefault();
-    } else if (e.key === "-") {
-      setWidth((w) => Math.max(1, w - 1));
+    } else if (e.key === "-" || e.key === "_") {
+      if (e.shiftKey) stepShortTarget(-1);
+      else setWidth((w) => Math.max(1, w - 1));
       e.preventDefault();
     }
   };
@@ -335,6 +373,8 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                     if (value) longChainState.setExpiry(value);
                   }}
                   onPicking={setPicking}
+                  shortTarget={shortTarget}
+                  onShortTarget={setShortTarget}
                 />
               )}
             </div>

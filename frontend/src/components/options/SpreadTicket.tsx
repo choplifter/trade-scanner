@@ -6,6 +6,13 @@ import { useReplaySession } from "../../hooks/useReplaySession";
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useSpreadLevelsContext } from "../../context/SpreadLevelsContext";
 import {
+  SHORT_DELTA_MAX,
+  SHORT_DELTA_MIN,
+  SHORT_OFFSET_MAX,
+  shortTargetGroup,
+  type ShortTarget,
+} from "../../types/options";
+import {
   BUTTERFLY_STRATEGIES,
   DEBIT_STRATEGIES,
   INCOME_STRATEGIES,
@@ -77,6 +84,10 @@ interface SpreadTicketProps {
   onTimeKind: (kind: OptionKind) => void;
   onLongExpiry: (expiry: string) => void;
   onPicking: (which: "short" | "long") => void;
+  /** How far out the auto-pick puts the short leg(s) for this strategy's
+   * group; undefined for shapes without a short-distance setting. */
+  shortTarget?: ShortTarget;
+  onShortTarget?: (target: ShortTarget) => void;
 }
 
 function randomUUID(): string {
@@ -192,6 +203,8 @@ export function SpreadTicket({
   onStrategy,
   width,
   onWidth,
+  shortTarget,
+  onShortTarget,
   legs,
   onResetLegs,
   account,
@@ -404,6 +417,58 @@ export function SpreadTicket({
               }
             />
           </label>
+        )}
+        {shortTarget && onShortTarget && shortTargetGroup(strategy) && (
+          <label
+            className="short-target"
+            title={
+              shortTarget.mode === "delta"
+                ? "Delta the short leg(s) aim for in the auto-pick: smaller = further out of the money"
+                : "Strikes from the spot for the short leg(s): 0 = the first strike outside the spot (the tightest corridor)"
+            }
+          >
+            Short{" "}
+            <span className="timeframe-selector">
+              <button
+                type="button"
+                className="timeframe-button"
+                aria-pressed={shortTarget.mode === "delta"}
+                onClick={() => onShortTarget({ mode: "delta", value: shortTarget.mode === "delta" ? shortTarget.value : 0.2 })}
+              >
+                Δ
+              </button>
+              <button
+                type="button"
+                className="timeframe-button"
+                aria-pressed={shortTarget.mode === "offset"}
+                onClick={() => onShortTarget({ mode: "offset", value: shortTarget.mode === "offset" ? shortTarget.value : 1 })}
+              >
+                Strikes
+              </button>
+            </span>
+            <input
+              type="number"
+              min={shortTarget.mode === "delta" ? SHORT_DELTA_MIN : 0}
+              max={shortTarget.mode === "delta" ? SHORT_DELTA_MAX : SHORT_OFFSET_MAX}
+              step={shortTarget.mode === "delta" ? 0.05 : 1}
+              value={shortTarget.value}
+              onChange={(e) => {
+                const raw = Number(e.target.value);
+                if (!Number.isFinite(raw)) return;
+                onShortTarget({ mode: shortTarget.mode, value: raw });
+              }}
+            />
+          </label>
+        )}
+        {legs && isCondor(legs) && (
+          <span className="order-hint" title="Distance between the short put and the short call">
+            corridor {formatStrike(legs.call_short - legs.put_short)}
+          </span>
+        )}
+        {legs && isStrangle(legs) && (
+          <span className="order-hint" title="Distance between the put and the call">
+            corridor {formatStrike(legs.call - legs.put)}
+          </span>
         )}
         <button type="button" className="row-action" onClick={onResetLegs} disabled={!chain}>
           Auto-pick

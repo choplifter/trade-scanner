@@ -15,6 +15,14 @@ import {
   type ChartThemeId,
   type CustomColors,
 } from "./chartTheme";
+import {
+  DEFAULT_SHORT_TARGETS,
+  SHORT_DELTA_MAX,
+  SHORT_DELTA_MIN,
+  SHORT_OFFSET_MAX,
+  type ShortTarget,
+  type ShortTargetGroup,
+} from "../types/options";
 
 export type ColorMode = "system" | "light" | "dark";
 export type CandleStyle = "filled" | "hollow";
@@ -39,6 +47,9 @@ export interface AppSettings {
   optionsTicketWidth: number;
   /** The "Custom" scheme's colours (used when chartTheme is "custom"). */
   customColors: CustomColors;
+  /** How far out the options auto-pick puts short legs, per strategy
+   * group (condor / credit vertical & writes / strangle). */
+  optionsShortTargets: Record<ShortTargetGroup, ShortTarget>;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -54,7 +65,34 @@ export const DEFAULT_SETTINGS: AppSettings = {
   riskChartHeight: 200,
   optionsTicketWidth: 360,
   customColors: { ...DEFAULT_CUSTOM_COLORS },
+  optionsShortTargets: {
+    condor: { ...DEFAULT_SHORT_TARGETS.condor },
+    vertical: { ...DEFAULT_SHORT_TARGETS.vertical },
+    strangle: { ...DEFAULT_SHORT_TARGETS.strangle },
+  },
 };
+
+/** One short target from storage, clamped to the picker's range. */
+export function clampShortTarget(target: ShortTarget): ShortTarget {
+  if (target.mode === "offset") {
+    return { mode: "offset", value: Math.min(SHORT_OFFSET_MAX, Math.max(0, Math.round(target.value))) };
+  }
+  const value = Math.round(target.value * 20) / 20;
+  return { mode: "delta", value: Math.min(SHORT_DELTA_MAX, Math.max(SHORT_DELTA_MIN, value)) };
+}
+
+function parseShortTargets(value: unknown): Record<ShortTargetGroup, ShortTarget> {
+  const out = { ...DEFAULT_SETTINGS.optionsShortTargets };
+  if (value && typeof value === "object") {
+    for (const group of Object.keys(out) as ShortTargetGroup[]) {
+      const t = (value as Record<string, unknown>)[group] as Partial<ShortTarget> | undefined;
+      if (t && (t.mode === "delta" || t.mode === "offset") && typeof t.value === "number" && Number.isFinite(t.value)) {
+        out[group] = clampShortTarget({ mode: t.mode, value: t.value });
+      }
+    }
+  }
+  return out;
+}
 
 export const TICKET_MIN_WIDTH = 280;
 export const TICKET_MAX_WIDTH = 1000;
@@ -111,6 +149,7 @@ function load(): AppSettings {
           ? Math.min(TICKET_MAX_WIDTH, Math.max(TICKET_MIN_WIDTH, Math.round(parsed.optionsTicketWidth)))
           : DEFAULT_SETTINGS.optionsTicketWidth,
       customColors: parseCustomColors(parsed.customColors),
+      optionsShortTargets: parseShortTargets(parsed.optionsShortTargets),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
