@@ -109,6 +109,9 @@ export interface Trade {
   opened_at: string;
   closed_at: string;
   qty: number;
+  /** Shares per unit of qty: 100 for an option contract, 1 for a stock;
+   * pnl and R already include it. */
+  multiplier?: number;
   entry_avg: number;
   exit_avg: number;
   pnl: number;

@@ -1300,11 +1300,14 @@ function TradesTable({
                   }`}
                 >
                   <td>{tradeTime(t.closed_at)}</td>
-                  <td className="symbol-cell" {...symbolDragProps(t.symbol)}>
-                    {t.symbol}
+                  <td className="symbol-cell" title={t.symbol} {...symbolDragProps(t.symbol)}>
+                    {formatLeg(t.symbol)}
                   </td>
                   <td>{t.side}</td>
-                  <td>{t.qty.toLocaleString()}</td>
+                  <td title={t.multiplier === 100 ? "Contracts (x100 shares each); P&L includes the multiplier" : undefined}>
+                    {t.qty.toLocaleString()}
+                    {t.multiplier === 100 ? " ×100" : ""}
+                  </td>
                   <td>{formatPrice(t.entry_avg)}</td>
                   <td>{formatPrice(t.exit_avg)}</td>
                   <td className={pnl.cls}>{pnl.text}</td>

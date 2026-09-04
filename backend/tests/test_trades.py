@@ -459,3 +459,20 @@ def test_sync_trades_narrows_to_the_period_but_syncs_everything(tmp_path):
     # Both trips were synced into the store regardless of the narrowing.
     assert len(everything["trades"]) == 2 and everything["period_start"] is None
     assert [b["date"] for b in everything["buckets"]] == ["2026-08-20", "2026-08-25"]
+
+
+def test_an_option_round_trip_counts_100_shares_per_contract():
+    fills = [
+        _fill("buy", 1, 3.10, symbol="SPY260904C00765000", order_id="o1", stop=2.10),
+        _fill("sell", 1, 3.76, minutes=30, symbol="SPY260904C00765000", order_id="o2"),
+    ]
+    (trade,), _ = round_trips(fills)
+    assert trade.multiplier == 100 and trade.qty == 1
+    assert trade.pnl == pytest.approx(66.0)
+    assert trade.pnl_pct == pytest.approx(0.66 / 3.10 * 100)
+    # R: 1.00 of risk per share x 100 shares = 100 of risk; 66 of profit.
+    assert trade.r_multiple == pytest.approx(0.66)
+    assert trade.to_dict()["multiplier"] == 100
+    # Stocks are unchanged.
+    (stock,), _ = round_trips([_fill("buy", 10, 5.0, order_id="s1"), _fill("sell", 10, 5.5, minutes=5, order_id="s2")])
+    assert stock.multiplier == 1 and stock.pnl == pytest.approx(5.0)

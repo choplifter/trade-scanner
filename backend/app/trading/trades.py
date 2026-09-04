@@ -20,6 +20,7 @@ results and backtests read side by side. A stop that was moved later
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
 
+from app.options.occ import try_parse_occ
 from app.services.market_clock import ET
 
 # Fills are reported in shares, but as strings from the broker; anything
@@ -67,6 +68,9 @@ class Trade:
     # fill that flipped the position opens a second trip from the same
     # order, and that one is 1. Part of the id so the two do not collide.
     leg: int = 0
+    # Shares per unit of qty: 1 for a stock, 100 for an option contract.
+    # qty stays in contracts; pnl and R are already multiplied.
+    multiplier: int = 1
 
     @property
     def id(self) -> str:
@@ -90,7 +94,13 @@ class Trade:
             "entry_order_id": self.entry_order_id,
             "exit_order_ids": list(self.exit_order_ids),
             "fill_count": self.fill_count,
+            "multiplier": self.multiplier,
         }
+
+
+def contract_multiplier(symbol: str) -> int:
+    """100 for an option contract (OCC symbol), 1 for a stock."""
+    return 100 if try_parse_occ(symbol) is not None else 1
 
 
 @dataclass
@@ -129,17 +139,20 @@ class _OpenTrip:
 
     def finish(self) -> Trade:
         qty = self.entry_qty
+        # An option contract is 100 shares: prices are per share, qty is in
+        # contracts, so money is price x qty x 100.
+        multiplier = contract_multiplier(self.symbol)
         entry_avg = self.entry_value / qty
         exit_avg = self.exit_value / self.exit_qty
         direction = 1.0 if self.side == "long" else -1.0
-        pnl = (exit_avg - entry_avg) * qty * direction
-        pnl_pct = pnl / (entry_avg * qty) * 100.0 if entry_avg > 0 else None
+        pnl = (exit_avg - entry_avg) * qty * multiplier * direction
+        pnl_pct = pnl / (entry_avg * qty * multiplier) * 100.0 if entry_avg > 0 else None
         risk_per_share = None
         r_multiple = None
         if self.initial_stop is not None:
             risk_per_share = abs(entry_avg - self.initial_stop)
             if risk_per_share > _FLAT:
-                r_multiple = pnl / (risk_per_share * qty)
+                r_multiple = pnl / (risk_per_share * qty * multiplier)
             else:
                 risk_per_share = None
         return Trade(
@@ -158,6 +171,7 @@ class _OpenTrip:
             entry_order_id=self.entry_order_id,
             exit_order_ids=list(self.exit_order_ids),
             fill_count=self.fill_count,
+            multiplier=multiplier,
             leg=self.leg,
         )
 

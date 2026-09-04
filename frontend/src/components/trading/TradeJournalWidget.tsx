@@ -6,6 +6,7 @@ import { useTradingMode } from "../../hooks/useTradingMode";
 import type { ChartFocus } from "../../types/screener";
 import { formatPrice } from "../../utils/format";
 import { signedNumber, tradeTime } from "./TradingWidget";
+import { formatLeg } from "../../utils/occ";
 
 /** Same intraday-vs-daily heuristic ScreenBacktestPanel uses for a backtest
  * pick's timeframeKey: a trade that opened and closed the same day needs an
@@ -211,7 +212,7 @@ export function TradeJournalWidget({ onSelectPick }: { onSelectPick: (focus: Cha
                       title={`Entry ${formatPrice(trade.entry_avg)} · Exit ${formatPrice(trade.exit_avg)} -- click to load the chart`}
                     >
                       <td>{tradeTime(trade.closed_at)}</td>
-                      <td className="symbol-cell">{trade.symbol}</td>
+                      <td className="symbol-cell" title={trade.symbol}>{formatLeg(trade.symbol)}</td>
                       <td>{trade.side}</td>
                       <td className={pnl.cls}>{pnl.text}</td>
                       <td className={r.cls}>{r.text}</td>
