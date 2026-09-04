@@ -378,6 +378,30 @@ async def replace_target(order_id: str, body: ReplaceTargetRequest, request: Req
     return {"order": order}
 
 
+class ReplaceLimitRequest(BaseModel):
+    symbol: str = Field(min_length=1)
+    limit_price: float
+
+
+@router.patch("/orders/{order_id}/limit")
+async def replace_limit(
+    order_id: str, body: ReplaceLimitRequest, request: Request, service: OrderService = Depends(_service)
+) -> dict:
+    """Re-price a working plain limit order (an unfilled entry) -- see
+    OrderService.replace_limit. Multi-leg packages are refused with the
+    reason; they are cancelled and placed again."""
+    try:
+        order = await service.replace_limit(order_id, body.symbol, body.limit_price, confirm=_confirm(request))
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Limit replace failed for %s", order_id)
+        raise HTTPException(status_code=502, detail="Failed to re-price the order")
+    return {"order": order}
+
+
 @router.delete("/orders/{order_id}")
 async def cancel_order(order_id: str, request: Request, service: OrderService = Depends(_service)) -> dict:
     try:

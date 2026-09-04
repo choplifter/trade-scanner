@@ -16,6 +16,7 @@ from app.core.config import Settings
 from app.trading.errors import OrderRejected, TradingDisabled
 from app.trading.service import (
     OrderService,
+    _validate_limit_replacement,
     _validate_stop_replacement,
     _validate_target_replacement,
     rearm_requests,
@@ -396,3 +397,56 @@ def test_replace_target_calls_the_sdk_with_the_new_price():
     assert client.replaced[0][0] == "tgt"
     assert client.replaced[0][1].limit_price == 16.5
     assert result["limit_price"] == "16.5"
+
+
+# --- re-pricing a working limit -------------------------------------------
+
+
+def _limit_order(**overrides):
+    order = {
+        "id": "o-limit",
+        "symbol": "AAA",
+        "status": "new",
+        "order_type": "limit",
+        "order_class": "simple",
+        "legs": None,
+        "limit_price": "1.00",
+    }
+    order.update(overrides)
+    return order
+
+
+def test_a_working_limit_can_be_re_priced():
+    _validate_limit_replacement(_limit_order(), "AAA", 2.45)
+
+
+def test_an_option_contract_limit_can_be_re_priced():
+    # A single-contract order carries the OCC symbol; the widget hands it in.
+    order = _limit_order(symbol="SPY260908P00770000")
+    _validate_limit_replacement(order, "SPY260908P00770000", 2.45)
+
+
+def test_a_filled_limit_cannot_be_re_priced():
+    with pytest.raises(OrderRejected):
+        _validate_limit_replacement(_limit_order(status="filled"), "AAA", 2.45)
+
+
+def test_a_multi_leg_order_is_refused_with_a_hint():
+    with pytest.raises(OrderRejected) as exc:
+        _validate_limit_replacement(_limit_order(order_class="mleg", symbol=None), "", 1.21)
+    assert "cancel" in exc.value.message.lower()
+    with pytest.raises(OrderRejected):
+        _validate_limit_replacement(_limit_order(legs=[{"id": "leg"}]), "AAA", 1.21)
+
+
+def test_a_market_or_stop_order_is_not_a_limit():
+    with pytest.raises(OrderRejected):
+        _validate_limit_replacement(_limit_order(order_type="market"), "AAA", 2.0)
+    with pytest.raises(OrderRejected):
+        _validate_limit_replacement(_limit_order(order_type="stop"), "AAA", 2.0)
+
+
+def test_the_new_limit_must_be_positive():
+    with pytest.raises(OrderRejected) as exc:
+        _validate_limit_replacement(_limit_order(), "AAA", 0)
+    assert exc.value.field == "limit_price"

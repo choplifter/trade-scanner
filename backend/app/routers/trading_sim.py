@@ -282,6 +282,25 @@ async def replace_target(
     return {"order": order}
 
 
+class ReplaceLimitRequest(BaseModel):
+    symbol: str = Field(min_length=1)
+    limit_price: float
+
+
+@router.patch("/orders/{order_id}/limit")
+async def replace_limit(
+    order_id: str, body: ReplaceLimitRequest, request: Request, user: dict = Depends(get_current_user)
+) -> dict:
+    try:
+        order = await (await _service(request, user)).replace_limit(order_id, body.symbol, body.limit_price)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except Exception:
+        logger.exception("Sim limit replace failed for %s", order_id)
+        raise HTTPException(status_code=502, detail="Failed to re-price the simulated order") from None
+    return {"order": order}
+
+
 @router.delete("/orders/{order_id}")
 async def cancel_order(order_id: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
     try:

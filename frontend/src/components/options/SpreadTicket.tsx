@@ -35,6 +35,7 @@ import type { TradingRejection } from "../../types/trading";
 import { symbolDragProps } from "../../utils/dragSymbol";
 import { formatExpiry, formatLeg, formatStrike } from "../../utils/occ";
 import { formatMoney } from "../../utils/format";
+import { getSettings, updateSettings } from "../../api/settings";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import {
@@ -195,6 +196,39 @@ export function ticketFor(
 /** Builds and prices the position. Everything money-related comes from
  * the server's preview (app/options/service.py) -- the ticket never does
  * the risk math itself, so what is shown is what the ceilings gate. */
+/** The limit a ticket starts with: the mid (better price, but on paper
+ * an MLEG order only fills against the natural and rests otherwise) or the
+ * natural (fills at once). The setting decides; the natural falls back to
+ * the mid when a leg has no quote. */
+export function prefillLimit(mid: number, natural: number | null, mode = getSettings().optionsLimitMode): number {
+  return mode === "natural" && natural != null ? natural : mid;
+}
+
+/** Mid | Natural: which price the tickets prefill. Persists in settings. */
+export function LimitModeToggle({ onChange }: { onChange?: (mode: "mid" | "natural") => void }) {
+  const [mode, setMode] = useState(getSettings().optionsLimitMode);
+  const pick = (next: "mid" | "natural") => {
+    updateSettings({ optionsLimitMode: next });
+    setMode(next);
+    onChange?.(next);
+  };
+  return (
+    <span
+      className="short-target-mode"
+      role="group"
+      aria-label="Limit prefill"
+      title="Mid: better price, may rest unfilled on paper. Natural: bid/ask, fills at once."
+    >
+      <button type="button" aria-pressed={mode === "mid"} onClick={() => pick("mid")}>
+        Mid
+      </button>
+      <button type="button" aria-pressed={mode === "natural"} onClick={() => pick("natural")}>
+        Natural
+      </button>
+    </span>
+  );
+}
+
 export function SpreadTicket({
   symbol,
   expiry,
@@ -274,7 +308,7 @@ export function SpreadTicket({
           setPreview(res);
           setRejection(null);
           setError(null);
-          if (!limitEdited) setLimit(res.spread.limit_price.toFixed(2));
+          if (!limitEdited) setLimit(prefillLimit(res.spread.limit_price, res.spread.net_natural).toFixed(2));
         })
         .catch((err: unknown) => {
           if (cancelled) return;
@@ -536,19 +570,25 @@ export function SpreadTicket({
             }}
           />
         </label>
-        {limitEdited ? (
+        <LimitModeToggle
+          onChange={(mode) => {
+            // Switching the mode also re-prefills, even after a manual edit:
+            // the click is the "put me at the mid / the natural" request.
+            setLimitEdited(false);
+            if (spread) setLimit(prefillLimit(spread.net_mid, spread.net_natural, mode).toFixed(2));
+          }}
+        />
+        {limitEdited && (
           <button
             type="button"
             className="row-action"
             onClick={() => {
               setLimitEdited(false);
-              setLimit(spread ? spread.net_mid.toFixed(2) : "");
+              if (spread) setLimit(prefillLimit(spread.net_mid, spread.net_natural).toFixed(2));
             }}
           >
-            Back to mid
+            Reset
           </button>
-        ) : (
-          <span className="order-hint">mid</span>
         )}
       </div>
 

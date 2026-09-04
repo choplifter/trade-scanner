@@ -523,6 +523,21 @@ export function replaceTarget(
   );
 }
 
+/** Re-price a working plain limit order (an unfilled entry, stock or
+ * option). Multi-leg packages are refused server-side. */
+export function replaceLimit(
+  orderId: string,
+  symbol: string,
+  limitPrice: number,
+  confirm?: string,
+): Promise<{ order: Order }> {
+  return patchJson<{ order: Order }>(
+    tradingPath(`/trading/orders/${encodeURIComponent(orderId)}/limit`),
+    { symbol, limit_price: limitPrice },
+    confirm,
+  );
+}
+
 /** The close response, which for a partial close also reports what happened
  * to the position's exits -- see OrderService.close_position on stop_lost. */
 export interface CloseResult {

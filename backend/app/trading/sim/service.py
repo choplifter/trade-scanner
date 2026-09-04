@@ -329,6 +329,17 @@ class SimOrderService:
         _validate_target_replacement(order, symbol, limit_price, price)
         return _public_order(await self._broker.replace_price(order_id, stop_price=None, limit_price=limit_price))
 
+    async def replace_limit(self, order_id: str, symbol: str, limit_price: float) -> dict:
+        """Re-price a resting limit entry in the simulated book."""
+        from app.trading.service import _validate_limit_replacement
+
+        symbol = symbol.upper()
+        order = await self._store.get_order(self._user_id, order_id)
+        if order is None:
+            raise OrderRejected("No such order.", field="order_id")
+        _validate_limit_replacement(order, symbol, limit_price)
+        return _public_order(await self._broker.replace_price(order_id, stop_price=None, limit_price=limit_price))
+
     async def close_position(self, symbol: str, qty: float | None = None) -> dict:
         symbol = symbol.upper()
         price = await self.reference_price(symbol)

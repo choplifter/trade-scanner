@@ -3931,3 +3931,31 @@ td.chain-side.chain-stale {
 .settings-footer .order-hint {
   font-size: 12.5px;
 }
+
+/* Orders tab: click-to-edit limit of a working limit order. */
+.limit-edit-trigger {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.limit-edit-trigger:hover {
+  text-decoration: underline;
+}
+.limit-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.limit-edit input {
+  width: 72px;
+  font: inherit;
+  padding: 1px 4px;
+}
+.limit-edit .order-rejection {
+  margin: 0;
+  white-space: nowrap;
+}

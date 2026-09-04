@@ -6,6 +6,7 @@ import {
   getAccount,
   getOrders,
   getPositions,
+  replaceLimit,
   replaceStop,
   replaceTarget,
   type CloseResult,
@@ -114,6 +115,8 @@ export interface TradingActions {
   moveStop: (orderId: string, symbol: string, stopPrice: number, confirm?: string) => Promise<void>;
   /** Same as moveStop, for the take-profit leg (see OrderService.replace_target). */
   moveTarget: (orderId: string, symbol: string, limitPrice: number, confirm?: string) => Promise<void>;
+  /** Re-price a working plain limit entry (see OrderService.replace_limit). */
+  moveLimit: (orderId: string, symbol: string, limitPrice: number, confirm?: string) => Promise<void>;
   /** See IndicativeLevels. Kept out of TradingState/EMPTY_STATE on purpose:
    * that object is fully replaced by every poll tick's setState in
    * refresh(), which would silently wipe this out unless every such call
@@ -228,6 +231,10 @@ export function useTrading(): TradingState & TradingActions {
     },
     moveStop: async (orderId: string, symbol: string, stopPrice: number, confirm?: string) => {
       await replaceStop(orderId, symbol, stopPrice, confirm);
+      afterAction();
+    },
+    moveLimit: async (orderId: string, symbol: string, limitPrice: number, confirm?: string) => {
+      await replaceLimit(orderId, symbol, limitPrice, confirm);
       afterAction();
     },
     moveTarget: async (orderId: string, symbol: string, limitPrice: number, confirm?: string) => {

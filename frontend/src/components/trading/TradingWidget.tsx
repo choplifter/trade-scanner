@@ -196,6 +196,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
     cancel,
     close,
     moveStop,
+    moveLimit,
   } = useTradingContext();
   const { brokerMissing, brokerInfo } = useTradingContext();
   const [tab, setTab] = useState<Tab>("ticket");
@@ -577,6 +578,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
             onCancelOrder={(id, symbol) => setPending({ kind: "cancel", id, symbol })}
+            onEditLimit={mode === "live" ? undefined : (id, symbol, price) => moveLimit(id, symbol, price)}
           />
         ) : tab === "balance" ? (
           <BalancePanel
@@ -946,11 +948,15 @@ function OrdersTable({
   selectedSymbol,
   onSelectSymbol,
   onCancelOrder,
+  onEditLimit,
 }: {
   orders: Order[];
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
   onCancelOrder: (id: string, symbol: string) => void;
+  /** Re-prices a working plain limit order; absent in live mode, where a
+   * change goes through cancel + a fresh confirmed ticket instead. */
+  onEditLimit?: (id: string, symbol: string, limitPrice: number) => Promise<void>;
 }) {
   if (orders.length === 0) {
     return <div className="widget-empty">No working orders.</div>;
@@ -987,7 +993,9 @@ function OrdersTable({
             <td>{o.order_type}</td>
             <td>{num(o.qty) ?? "—"}</td>
             <td>{num(o.filled_qty) ?? "—"}</td>
-            <td>{money(o.limit_price)}</td>
+            <td>
+              <LimitCell order={o} onEditLimit={onEditLimit} />
+            </td>
             <td>{money(o.stop_price)}</td>
             <td>{o.status}</td>
             <td>
@@ -1008,6 +1016,97 @@ function OrdersTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** The Limit column of a working order: a click-to-edit price for a plain
+ * limit order (the case that rests unfilled -- a long put bid below the
+ * ask), read-only otherwise. A spread parent (legs) cannot be re-priced
+ * through Alpaca's replace call; the title says to cancel and place again. */
+function LimitCell({
+  order,
+  onEditLimit,
+}: {
+  order: Order;
+  onEditLimit?: (id: string, symbol: string, limitPrice: number) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const current = num(order.limit_price);
+  const spread = !!(order.legs && order.legs.length > 0);
+  const editable = !!onEditLimit && !spread && (order.order_type === "limit" || order.order_type === "stop_limit");
+
+  if (current == null) return <>—</>;
+  if (!editable) {
+    return (
+      <span title={spread && onEditLimit ? "A spread's limit cannot be changed in place: cancel it and place it again." : undefined}>
+        {money(order.limit_price)}
+      </span>
+    );
+  }
+
+  const commit = async () => {
+    const value = Number(draft);
+    if (!Number.isFinite(value) || value <= 0) {
+      setError("Enter a price above 0.");
+      return;
+    }
+    if (Math.abs(value - current) < 0.005) {
+      setDraft(null);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await onEditLimit!(order.id, order.symbol ?? "", Math.round(value * 100) / 100);
+      setDraft(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (draft == null) {
+    return (
+      <button
+        type="button"
+        className="limit-edit-trigger"
+        title="Change the limit price"
+        onClick={(e) => {
+          e.stopPropagation();
+          setError(null);
+          setDraft(current.toFixed(2));
+        }}
+      >
+        {money(order.limit_price)} ✎
+      </button>
+    );
+  }
+  return (
+    <span className="limit-edit" onClick={(e) => e.stopPropagation()}>
+      <input
+        type="number"
+        min={0.01}
+        step={0.01}
+        value={draft}
+        autoFocus
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void commit();
+          if (e.key === "Escape") setDraft(null);
+        }}
+      />
+      <button type="button" className="row-action" disabled={busy} onClick={() => void commit()}>
+        {busy ? "…" : "Save"}
+      </button>
+      <button type="button" className="row-action" disabled={busy} onClick={() => setDraft(null)}>
+        ✕
+      </button>
+      {error && <span className="order-rejection">{error}</span>}
+    </span>
   );
 }
 
@@ -1040,6 +1139,7 @@ function OrdersPanel({
   selectedSymbol,
   onSelectSymbol,
   onCancelOrder,
+  onEditLimit,
 }: {
   view: OrdersView;
   onViewChange: (view: OrdersView) => void;
@@ -1051,6 +1151,7 @@ function OrdersPanel({
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
   onCancelOrder: (id: string, symbol: string) => void;
+  onEditLimit?: (id: string, symbol: string, limitPrice: number) => Promise<void>;
 }) {
   return (
     <div className="trading-subview">
@@ -1108,6 +1209,7 @@ function OrdersPanel({
             selectedSymbol={selectedSymbol}
             onSelectSymbol={onSelectSymbol}
             onCancelOrder={onCancelOrder}
+            onEditLimit={onEditLimit}
           />
         ) : view === "trades" ? (
           trades.error ? (

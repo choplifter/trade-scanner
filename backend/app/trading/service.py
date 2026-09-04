@@ -528,6 +528,41 @@ class OrderService:
         logger.info("Replaced target %s on %s -> %.4f", order_id, symbol, limit_price)
         return _plain(replaced)
 
+    async def replace_limit(
+        self, order_id: str, symbol: str, limit_price: float, confirm: str | None = None
+    ) -> dict:
+        """Re-price one working plain limit order -- an entry that has not
+        filled (a long put bid too low, say). Any side, any asset class;
+        the only refusals are shape ones (see _validate_limit_replacement).
+        Alpaca cannot replace a multi-leg order: those are cancelled and
+        placed again from the ticket."""
+        self._assert_can_trade(confirm)
+        symbol = symbol.upper()
+        try:
+            order = _plain(await asyncio.to_thread(self._trading.get_order_by_id, order_id))
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status is None:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500:
+                raise OrderRejected("No such order.", field="order_id") from exc
+            raise
+        _validate_limit_replacement(order, symbol, limit_price)
+
+        from alpaca.trading.requests import ReplaceOrderRequest
+
+        try:
+            replaced = await asyncio.to_thread(
+                self._trading.replace_order_by_id, order_id, ReplaceOrderRequest(limit_price=limit_price)
+            )
+        except Exception as exc:
+            rejection = rejection_from_api_error(exc)
+            if rejection is not None:
+                raise rejection from exc
+            raise
+        logger.info("Replaced limit %s on %s -> %.4f", order_id, symbol, limit_price)
+        return _plain(replaced)
+
     async def close_position(
         self, symbol: str, qty: float | None = None, confirm: str | None = None
     ) -> dict:
@@ -835,6 +870,32 @@ def _validate_stop_replacement(
                 f"{reference_price:.2f} -- below it, it would trigger instantly.",
                 field="stop_price",
             )
+
+
+def _validate_limit_replacement(order: dict | None, symbol: str, limit_price: float) -> None:
+    """A plain limit order can move to any positive price -- a resting
+    entry is not a protective leg, and a price that fills at once is the
+    point of moving it. Shape checks only: the order exists, matches the
+    symbol, is still working, is a limit, and is not a multi-leg package
+    (Alpaca refuses to replace those)."""
+    if not isinstance(order, dict) or not order:
+        raise OrderRejected("No such order.", field="order_id")
+    if str(order.get("symbol") or "").upper() != symbol and symbol:
+        if order.get("symbol") is not None:
+            raise OrderRejected(f"Order belongs to {order.get('symbol')}, not {symbol}.", field="order_id")
+    if str(order.get("status", "")).lower() not in _WORKING_STATUSES:
+        raise OrderRejected(
+            f"Order is {order.get('status')} -- only a working order can be re-priced.", field="order_id"
+        )
+    if str(order.get("order_class", "")).lower() == "mleg" or order.get("legs"):
+        raise OrderRejected(
+            "A multi-leg order cannot be re-priced at Alpaca -- cancel it and place the spread again.",
+            field="order_id",
+        )
+    if str(order.get("order_type", "")).lower() not in ("limit", "stop_limit"):
+        raise OrderRejected(f"Order is a {order.get('order_type')} order, not a limit.", field="order_id")
+    if limit_price <= 0:
+        raise OrderRejected("The limit must be positive.", field="limit_price")
 
 
 def _validate_target_replacement(

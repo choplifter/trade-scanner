@@ -1076,10 +1076,14 @@ strategy changes.
   fit under the account's order-notional ceiling and its options buying
   power.
 - **Max debit / Min credit / Max premium:** the limit per spread (or per
-  contract), prefilled with the current **mid** and re-derived on every
-  change until you type; **Back to mid** returns to it. Alpaca's MLEG
-  limit is signed -- positive for a debit, negative for a credit -- and
-  the confirm dialog shows that signed value.
+  contract), prefilled with the **natural** (buy legs at the ask, sell
+  legs at the bid: fills at once) or the **mid** (the better price, but
+  Alpaca's paper account only fills a multi-leg order against the natural,
+  so a mid limit often rests), whichever **Mid | Natural** is set to -- the
+  choice is remembered and the single-contract ticket uses it too. The
+  limit re-derives on every change until you type; **Reset** returns to
+  the prefill. Alpaca's MLEG limit is signed -- positive for a debit,
+  negative for a credit -- and the confirm dialog shows that signed value.
 - **Preview** (300 ms after any change, server-side): pay/receive × 100 ×
   qty, the **mid** and the **natural** price (buy legs at the ask, sell
   legs at the bid: the worst fill a marketable order gets), spot and DTE,
@@ -1217,7 +1221,14 @@ or by typing the OCC symbol into a pinned chart copy's header.
 
 - **Orders tab:** option orders show as `SPY 4 Sep 765C`; a multi-leg
   order lists its legs. Clicking a single option order opens its premium
-  chart, an MLEG parent the underlying. Cancel works as for stocks.
+  chart, an MLEG parent the underlying. Cancel works as for stocks. The
+  **Limit** of a working single-contract (or stock) limit order is
+  click-to-edit: a bid that rests below the ask -- the usual reason a
+  long put "does not fill" -- can be moved up in place (Enter or Save;
+  Alpaca replaces the order, the id changes). A multi-leg order cannot be
+  re-priced at Alpaca: cancel it and place the spread again, at the
+  natural if it should fill now. Not offered in Live mode, where a price
+  change goes through a fresh confirmed ticket.
 - **Positions tab** shows stocks only and says where the option positions
   are (in Simulation mode the simulated book's contracts are part of the
   same positions list, so the premium chart's ticket finds what is held).

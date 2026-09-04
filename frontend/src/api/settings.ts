@@ -50,6 +50,9 @@ export interface AppSettings {
   /** How far out the options auto-pick puts short legs, per strategy
    * group (condor / credit vertical & writes / strangle). */
   optionsShortTargets: Record<ShortTargetGroup, ShortTarget>;
+  /** What the option tickets prefill as the limit: the mid (better price,
+   * often rests on paper) or the natural (fills at once). */
+  optionsLimitMode: "mid" | "natural";
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -70,6 +73,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     vertical: { ...DEFAULT_SHORT_TARGETS.vertical },
     strangle: { ...DEFAULT_SHORT_TARGETS.strangle },
   },
+  optionsLimitMode: "natural",
 };
 
 /** One short target from storage, clamped to the picker's range. */
@@ -150,6 +154,7 @@ function load(): AppSettings {
           : DEFAULT_SETTINGS.optionsTicketWidth,
       customColors: parseCustomColors(parsed.customColors),
       optionsShortTargets: parseShortTargets(parsed.optionsShortTargets),
+      optionsLimitMode: oneOf(parsed.optionsLimitMode, ["mid", "natural"] as const, DEFAULT_SETTINGS.optionsLimitMode),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

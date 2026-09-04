@@ -10,6 +10,7 @@ import { formatLeg, type ParsedOcc } from "../../utils/occ";
 import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
+import { LimitModeToggle, prefillLimit } from "../options/SpreadTicket";
 import { positionStopColor, positionTargetColor, type OrderLevel } from "./CandleChart";
 
 interface ContractTicketProps {
@@ -121,7 +122,7 @@ export function ContractTicket({
         long_strike: contract.strike,
       });
       clientOrderIdRef.current = randomUUID();
-      setLimit(preview.spread.limit_price.toFixed(2));
+      setLimit(prefillLimit(preview.spread.limit_price, preview.spread.net_natural).toFixed(2));
       setLiveTyped("");
       setPending({ side: "buy", preview });
     } catch (err) {
@@ -141,7 +142,7 @@ export function ContractTicket({
     try {
       const preview = await previewCloseSpread({ legs: [{ symbol, qty: heldQty }], qty: sellQty });
       clientOrderIdRef.current = randomUUID();
-      setLimit(preview.suggested_limit.toFixed(2));
+      setLimit(prefillLimit(preview.suggested_limit, preview.net_natural).toFixed(2));
       setLiveTyped("");
       setPending({ side: "sell", preview, heldQty });
     } catch (err) {
@@ -399,7 +400,15 @@ export function ContractTicket({
             </p>
             <label className="order-confirm-line">
               Limit per contract{" "}
-              <input type="number" min={0.01} step={0.01} value={limit} onChange={(e) => setLimit(e.target.value)} />
+              <input type="number" min={0.01} step={0.01} value={limit} onChange={(e) => setLimit(e.target.value)} />{" "}
+              <LimitModeToggle
+                onChange={(mode) => {
+                  const p = pending;
+                  const mid = p.side === "buy" ? p.preview.spread.net_mid : p.preview.net_mid;
+                  const natural = p.side === "buy" ? p.preview.spread.net_natural : p.preview.net_natural;
+                  setLimit(prefillLimit(mid, natural, mode).toFixed(2));
+                }}
+              />
             </label>
             {pending.side === "buy" && (
               <p className="order-confirm-line">
