@@ -181,7 +181,12 @@ async def start_replay(body: StartRequest, request: Request, user: dict = Depend
 
 @router.get("/state")
 async def get_state(request: Request, user: dict = Depends(get_current_user)) -> dict:
-    session = _session_or_404(await request.app.state.replay_store.get(user["id"]))
+    """The user's session, or `session: null` -- not a 404: most users
+    are not replaying, and every page load asks, so "none" is a normal
+    answer rather than an error the browser console flags."""
+    session = await request.app.state.replay_store.get(user["id"])
+    if session is None:
+        return {"session": None, "range": {"start": None, "end": None}, "views": None}
     return await _state_payload(request, session)
 
 

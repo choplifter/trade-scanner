@@ -40,7 +40,13 @@ export function getReplayState(): Promise<ReplayStateResponse> {
  * caller needing its own try/catch. */
 export async function getReplayStateOrNull(): Promise<ReplayStateResponse | null> {
   try {
-    return await getReplayState();
+    const res = await getReplayState();
+    // The backend answers 200 with `session: null` when there is none.
+    if (!res.session) {
+      setReplaySession(null);
+      return null;
+    }
+    return res;
   } catch {
     setReplaySession(null);
     return null;
