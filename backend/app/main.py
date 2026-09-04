@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.ai.trade_idea_tracker import TradeIdeaTracker
+from app.market_data.earnings import EarningsCalendar
 from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import build_universe, list_active_equity_symbols
 from app.auth.dependency import get_current_user
@@ -55,6 +56,7 @@ from app.scanners.engine import ScannerEngine
 from app.scanners.history_store import ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
 from app.options.chain_fetch import ChainCache
+from app.options.iv_history_store import IvHistoryStore
 from app.options.monitor import run_options_trigger_loop
 from app.options.trigger_store import TriggerStore
 from app.trading.journal_store import JournalStore
@@ -134,10 +136,23 @@ async def lifespan(app: FastAPI):
     )
     app.state.trade_idea_tracker = TradeIdeaTracker()
     app.state.scanner_benchmark_tracker = ScannerBenchmarkTracker()
+    # Next-report dates for the options suggestion, on the FMP key the app
+    # already has. Without one it answers "not known" throughout, which is
+    # never read as "no earnings coming" -- see app.market_data.earnings.
+    app.state.earnings_calendar = EarningsCalendar(settings.fmp_api_key)
 
     scanner_history_store = ScannerHistoryStore(settings.scanner_history_db_path)
     await scanner_history_store.init_schema()
     app.state.scanner_history_store = scanner_history_store
+
+    # One ATM implied-vol reading per symbol per session, so an IV rank can
+    # eventually exist. Written as a side-effect of serving a suggestion, so
+    # history accumulates for the symbols actually being looked at -- and a
+    # real rank is simply unavailable until roughly a month of them exists.
+    # See app.options.iv_history_store.
+    iv_history_store = IvHistoryStore(settings.scanner_history_db_path)
+    await iv_history_store.init_schema()
+    app.state.iv_history_store = iv_history_store
 
     # Closed round trips with realized P&L. Same file as the scanner
     # history -- one thing to back up -- and the record that survives a

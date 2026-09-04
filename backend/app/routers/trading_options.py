@@ -11,7 +11,9 @@ import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
+from app.ai.options_suggest import suggest_options_ideas
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, SpreadTicket, TriggerCreate
 from app.options.service import OptionsService
@@ -282,3 +284,46 @@ async def cancel_trigger(trigger_id: str, request: Request, user: dict = Depends
     if not await _trigger_store(request).cancel(user["id"], trigger_id):
         raise HTTPException(status_code=404, detail="No such trigger")
     return {"cancelled": trigger_id}
+
+
+class IdeaRequest(BaseModel):
+    underlying: str = Field(min_length=1, max_length=12)
+
+
+@router.post("/idea")
+async def suggest_idea(
+    body: IdeaRequest, request: Request, service: OptionsService = Depends(_service)
+) -> dict:
+    """Options structures for one underlying, proposed by Claude and priced
+    here -- see app.ai.options_suggest for the four steps and why the
+    pricing is not the model's.
+
+    Lives on this router rather than its own so it inherits the account
+    resolution `_service` already does (this user's broker keys, paper or
+    live, the shared chain cache) and the same TradingError -> 422
+    convention; a separate router would have to duplicate all of it.
+
+    Read-only: nothing is ordered. The response carries a ready-made ticket
+    per idea for the frontend to load, and the user still submits it by
+    hand.
+    """
+    anthropic_client = getattr(request.app.state, "anthropic_client", None)
+    if anthropic_client is None:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
+
+    engine = getattr(request.app.state, "scanner_engine", None)
+    try:
+        return await suggest_options_ideas(
+            anthropic_client,
+            service,
+            request.app.state.alpaca_clients,
+            body.underlying,
+            gex_cache=getattr(engine, "gex_cache", None),
+            iv_store=getattr(request.app.state, "iv_history_store", None),
+            earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
+        )
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except Exception:
+        logger.exception("Options idea generation failed for %s", body.underlying)
+        raise HTTPException(status_code=502, detail="Failed to generate an options idea")
