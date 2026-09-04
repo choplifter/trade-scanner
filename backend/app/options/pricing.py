@@ -29,6 +29,17 @@ class SpreadRisk:
     collateral: float
 
 
+# The simulated book's market either side of a price that has no quote of
+# its own (a replayed bar close, a one-sided live quote): 2% of the
+# premium, at least a cent -- what a fill pays or gives up against it.
+SLIPPAGE_PCT = 0.02
+SLIPPAGE_MIN = 0.01
+
+
+def option_slippage(premium: float) -> float:
+    return round(max(SLIPPAGE_PCT * premium, SLIPPAGE_MIN), 4)
+
+
 def net_price(legs, use: Literal["mid", "natural"] = "mid") -> float | None:
     """The package's net price per spread, signed like Alpaca's MLEG limit:
     positive is a debit (you pay), negative a credit (you receive).

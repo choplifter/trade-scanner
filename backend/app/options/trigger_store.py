@@ -206,14 +206,22 @@ class TriggerStore:
         since = (now or datetime.now(UTC)) - timedelta(hours=include_finished_hours)
         return await asyncio.to_thread(self._list_for_user_sync, user_id, account, since)
 
-    def _all_active_sync(self) -> list[dict]:
+    def _all_active_sync(self, account: str | None) -> list[dict]:
         with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT {', '.join(_COLUMNS)} FROM option_underlying_triggers WHERE status = ? ORDER BY created_at",
-                (ACTIVE,),
-            ).fetchall()
+            if account is None:
+                rows = conn.execute(
+                    f"SELECT {', '.join(_COLUMNS)} FROM option_underlying_triggers WHERE status = ? ORDER BY created_at",
+                    (ACTIVE,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"SELECT {', '.join(_COLUMNS)} FROM option_underlying_triggers "
+                    "WHERE status = ? AND account = ? ORDER BY created_at",
+                    (ACTIVE, account),
+                ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
-    async def all_active(self) -> list[dict]:
-        """Every armed trigger across users and accounts -- the monitor's input."""
-        return await asyncio.to_thread(self._all_active_sync)
+    async def all_active(self, account: str | None = None) -> list[dict]:
+        """Every armed trigger across users (and accounts, unless one is
+        named) -- the monitor's input."""
+        return await asyncio.to_thread(self._all_active_sync, account)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { closeSpread, createTrigger, deleteTrigger, getOptionsAccount, getSpreads } from "../api/options";
+import { subscribeReplaySession } from "../api/replayMode";
 import type {
   CloseSpreadRequest,
   OptionsAccountResponse,
@@ -36,8 +37,9 @@ export interface SpreadsActions {
 const EMPTY: SpreadsState = { account: null, spreads: [], triggers: [], loading: true, error: null };
 
 /** Open spreads, their triggers and the options account, polled while the
- * Options widget is mounted. `enabled` false (Simulation mode) means no
- * requests at all -- there is nothing on the sim prefix to ask. */
+ * Options widget is mounted and refetched on every replay tick (the
+ * simulated book's marks move with the replay clock). `enabled` false
+ * means no requests at all. */
 export function useSpreads(enabled: boolean): SpreadsState & SpreadsActions {
   const [state, setState] = useState<SpreadsState>(EMPTY);
   const cancelledRef = useRef(false);
@@ -82,9 +84,16 @@ export function useSpreads(enabled: boolean): SpreadsState & SpreadsActions {
         void refresh();
       }
     }, HOT_POLL_MS);
+    let debounce: number | null = null;
+    const unsubscribe = subscribeReplaySession(() => {
+      if (debounce != null) window.clearTimeout(debounce);
+      debounce = window.setTimeout(() => void refresh(), 300);
+    });
     return () => {
       cancelledRef.current = true;
       clearInterval(timer);
+      unsubscribe();
+      if (debounce != null) window.clearTimeout(debounce);
     };
   }, [enabled, refresh]);
 

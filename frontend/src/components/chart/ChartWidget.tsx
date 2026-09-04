@@ -302,11 +302,6 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
       // Works for this session, just not remembered next time.
     }
   }
-  const intraday = useChartFeed(symbol);
-  const historical = useHistoricalBars(
-    symbol,
-    option.kind === "historical" ? (option.alpacaTimeframe ?? null) : null,
-  );
   // When the symbol on screen is part of the logged-in user's active
   // replay session, the chart switches its *intraday* bars (1m/5m/15m --
   // all clean multiples of replay's native 5-minute resolution via
@@ -317,16 +312,27 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // bars would need multi-day aggregation this doesn't have, and there's
   // little use for a weekly candle while replaying a single session.
   //
+  // An option contract replays whenever a session is active at all: its
+  // 1-minute premium bars for the replayed day come from the same
+  // endpoint (app.replay.options_engine), and neither the live option
+  // stream nor the live weekly/hourly bars are touched -- both would leak
+  // the future into the chart.
+  //
   // Trading against what's on screen needs no separate wiring here --
   // positions/orders (below) already come from Simulation Mode, whose own
   // price seam (see routers/trading_sim.py's _replay_seam) already fills
   // sim orders against this same replayed price. The chart just has to
   // show the same data the fill priced against.
   const replaySession = useReplaySession();
-  const isReplaySymbol = !!symbol && !!replaySession && replaySession.symbols.includes(symbol);
+  const isReplaySymbol = !!symbol && !!replaySession && (replaySession.symbols.includes(symbol) || contract != null);
   const usingReplayBars = isReplaySymbol && option.kind === "intraday";
+  const intraday = useChartFeed(usingReplayBars ? null : symbol);
+  const historical = useHistoricalBars(
+    symbol,
+    option.kind === "historical" && !(contract && replaySession) ? (option.alpacaTimeframe ?? null) : null,
+  );
   const replay = useReplayBars(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
-  const replayIndicators = useReplayIndicators(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
+  const replayIndicators = useReplayIndicators(usingReplayBars && !contract ? symbol : null, replaySession?.as_of ?? null);
   // GEX is only computed backend-side for a fixed symbol list (see
   // app.market_data.gamma_exposure.SYMBOLS) -- same conditional-fetch shape
   // as isReplaySymbol/usingReplayBars just above.
@@ -368,7 +374,14 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // Levels on the premium axis (option contracts only): bid/ask, the
   // session's high/low and previous close, entry multiples, intrinsic
   // value, plus the premium's own session VWAP.
-  const premium = usePremiumLevels(contract, intraday.bars, intraday.quote, entry, option.kind === "intraday");
+  const premium = usePremiumLevels(
+    contract,
+    usingReplayBars ? replay.bars : intraday.bars,
+    usingReplayBars ? null : intraday.quote,
+    entry,
+    option.kind === "intraday",
+    usingReplayBars ? (replaySession?.as_of ?? null) : null,
+  );
   // First time a premium chart shows, its levels start visible; after that
   // the Levels menu's own choices (persisted like every other indicator)
   // apply.
@@ -555,9 +568,9 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
         // spread-derived indicators remain unavailable either way.
         return aggregateBars(
           replay.bars,
-          vwapFromPremarket ? replayIndicators.vwapPremarket : replayIndicators.vwap,
+          contract ? premium.vwap : vwapFromPremarket ? replayIndicators.vwapPremarket : replayIndicators.vwap,
           option.minutes ?? 1,
-          replayIndicators.indicators,
+          contract ? [] : replayIndicators.indicators,
         );
       }
       return aggregateBars(
@@ -895,23 +908,17 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
           </button>
         </div>
       )}
-      {contract && symbol && !usingReplayBars && (
-        tradingMode.mode === "simulation" ? (
-          <div className="contract-ticket">
-            <span className="order-hint">Options trade on the Paper or Live account -- switch the mode to buy or sell this contract.</span>
-          </div>
-        ) : (
-          <ContractTicket
-            symbol={symbol}
-            contract={contract}
-            mode={tradingMode.mode}
-            lastPrice={lastPrice}
-            position={position}
-            orders={contractOrders}
-            onSubmitted={refreshTrading}
-            onTriggerLevels={setTriggerLevels}
-          />
-        )
+      {contract && symbol && (
+        <ContractTicket
+          symbol={symbol}
+          contract={contract}
+          mode={tradingMode.mode}
+          lastPrice={lastPrice}
+          position={position}
+          orders={contractOrders}
+          onSubmitted={refreshTrading}
+          onTriggerLevels={setTriggerLevels}
+        />
       )}
       <div className="widget-body">
         {!symbol ? (

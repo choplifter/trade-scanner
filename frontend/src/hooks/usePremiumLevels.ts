@@ -95,6 +95,9 @@ export function usePremiumLevels(
   quote: ChartQuoteMessage | null,
   entry: number | null,
   intraday: boolean,
+  /** The replay clock while the chart replays: the spot and the greeks
+   * are re-read on every tick and the time-based levels count from it. */
+  asOf: string | null = null,
 ): PremiumLevels {
   const [spot, setSpot] = useState<number | null>(null);
   const [greeks, setGreeks] = useState<LegQuote | null>(null);
@@ -123,7 +126,7 @@ export function usePremiumLevels(
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [underlying]);
+  }, [underlying, asOf]);
 
   // The contract's greeks and IV (Alpaca's snapshot; none close to expiry).
   useEffect(() => {
@@ -144,7 +147,7 @@ export function usePremiumLevels(
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [symbol]);
+  }, [symbol, asOf]);
 
   const vwap = useMemo<(number | null)[]>(() => {
     if (!contract) return [];
@@ -176,6 +179,7 @@ export function usePremiumLevels(
   const computed = useMemo<IndicatorResult[]>(() => {
     if (!contract) return [];
     const out: IndicatorResult[] = [];
+    const clock = asOf ? new Date(asOf) : new Date();
 
     if (bid != null || ask != null) {
       const series: Record<string, number> = {};
@@ -225,7 +229,7 @@ export function usePremiumLevels(
     // today" and "time to expiry") up or down, from delta and gamma --
     // a second-order estimate, not a repricing.
     if (spot != null && mid != null && greeks?.iv != null && greeks.delta != null) {
-      const now = new Date();
+      const now = clock;
       const horizonYears = Math.min(msToClose(now) / (365 * 24 * 3600 * 1000), yearsToExpiry(now, contract.expiry));
       if (horizonYears > 0) {
         const move = spot * greeks.iv * Math.sqrt(horizonYears);
@@ -244,7 +248,7 @@ export function usePremiumLevels(
     // Levels rather than a projected line: points in the future would
     // extend the time scale and push the viewport off the newest bar.
     if (intraday && mid != null && greeks?.theta != null && greeks.theta < 0) {
-      const remaining = msToClose(new Date());
+      const remaining = msToClose(clock);
       if (remaining > 0) {
         const day = 24 * 3600 * 1000;
         const series: Record<string, number> = {};
@@ -259,7 +263,7 @@ export function usePremiumLevels(
     return out;
     // palette: the entry-multiple colours are read at build time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contract, bars, bid, ask, entry, spot, greeks, mid, intraday, palette]);
+  }, [contract, bars, bid, ask, entry, spot, greeks, mid, intraday, palette, asOf]);
 
   // `bars` gets a new identity on every trade tick, which would hand
   // CandleChart a new indicator list (and a rebuild of every line) several

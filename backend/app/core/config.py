@@ -333,7 +333,10 @@ class Settings(BaseSettings):
     news_feed_refresh_interval: float = 60.0
     # How many recent items the feed keeps in memory (not persisted --
     # see NewsFeedTracker's own docstring).
-    news_feed_ring_buffer_size: int = 200
+    news_feed_ring_buffer_size: int = 500
+    # The market-wide news websocket (app.market_data.news_stream). Off
+    # leaves the once-a-minute poll as the feed's only source.
+    news_stream_enabled: bool = True
 
     # How often a symbol's trailing-window momentum (momentum_pct)
     # is refreshed while it stays in a ranked scanner view -- see

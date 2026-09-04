@@ -594,8 +594,19 @@ past dates.
   `scanner_history.sqlite3` (`trades` table), so the record survives a
   paper-account reset and the broker's 500-order history cap.
 
-- **Options widget** (full guide: [Options](#options) below. Paper and Live; Simulation shows a "not available"
-  banner because there is no simulated options book). Pick a symbol
+- **News Feed widget**: the newest articles across the whole market, live
+  from Alpaca's news websocket (wildcard-subscribed; a once-a-minute
+  market-wide poll backs it up and seeds the list after a restart -- the
+  header shows `● live` or `○ poll`). One row per article with the symbols
+  it names as chips (click to select, drag onto a chart); symbols
+  currently ranked in a fixed scanner view are highlighted, and the
+  **All / Ranked** toggle narrows the feed to those. Untagged market-wide
+  stories show a dash. Not persisted: a restart starts the feed over.
+
+- **Options widget** (full guide: [Options](#options) below. Paper, Live
+  and Simulation -- in Simulation mode the dashboard's own options book
+  fills the orders, live or at the replayed moment of a history replay).
+  Pick a symbol
   anywhere and the widget loads its expiries (next 60 days, with DTE) and
   the **option chain** for the selected one — calls left, puts right, OI /
   IV / delta / bid / mid / ask per side, in-the-money shading, a spot
@@ -833,9 +844,11 @@ version lives in the Options-widget bullet above; this is the long one.
 
 ### Accounts, approval levels and what runs where
 
-- Options trade on the **Paper** and **Live** accounts only. **Simulation**
-  has no options book, so the Options widget shows a banner there and no
-  option request is made at all.
+- Options trade on the **Paper** and **Live** accounts through Alpaca, and
+  in **Simulation** mode through the dashboard's own simulated options
+  book (see *Simulation & Replay: options* below) -- live prices, or the
+  replayed moment during a history replay. The same widget, ticket, chain
+  and triggers on all three; only where the fill happens differs.
 - Alpaca approves options per account in **levels**: level 2 buys calls
   and puts outright, level 3 is needed for every spread here. The widget
   header shows the account's level (`L3`), the ticket refuses a strategy
@@ -1145,7 +1158,8 @@ or by typing the OCC symbol into a pinned chart copy's header.
   order lists its legs. Clicking a single option order opens its premium
   chart, an MLEG parent the underlying. Cancel works as for stocks.
 - **Positions tab** shows stocks only and says where the option positions
-  are.
+  are (in Simulation mode the simulated book's contracts are part of the
+  same positions list, so the premium chart's ticket finds what is held).
 - **Trading Journal / Trades:** closed option round trips appear with the
   contract symbol and their P&L, per account.
 - The **Options widget follows the chart**: with a contract on the chart
@@ -1162,9 +1176,68 @@ or by typing the OCC symbol into a pinned chart copy's header.
 | `TRADING_OPTIONS_TRIGGER_CHECK_INTERVAL` | 2.0 s | Trigger loop cadence. |
 | `TRADING_OPTIONS_TRIGGER_SLIPPAGE` | 0.05 | How far a trigger's closing limit steps from the mid toward the natural price. |
 
+### Simulation & Replay: options
+
+Simulation mode has its own options book (`backend/app/trading/sim/
+options_book.py`), so every strategy the ticket offers can be practised
+without an Alpaca order -- and, in a **History Replay**, against a past
+day, which is how you rehearse a strategy at the weekend.
+
+- **Where the prices come from.** Live in Simulation mode: the same chain
+  and snapshots the paper account sees. In a replay: the contracts that
+  existed on the replayed day (Alpaca lists expired contracts, from
+  February 2024 on) and their **1-minute bars**, read at the replay clock
+  -- the last print at or before `as_of` is the price. Alpaca keeps no
+  historical bid/ask, IV, greeks or intraday open interest for options,
+  so a replayed chain is synthetic where it has to be: **Bid\*/Ask\*** are
+  the last print ± `max(2 %, $0.01)`, **IV** is solved from that print by
+  Black-Scholes (`implied_vol` in `app/options/payoff.py`), delta/gamma/
+  theta follow from it, **OI shows "—"**, and a print older than 30
+  minutes at the replay clock is drawn faded (its time is in the cell's
+  tooltip and in the ticket's warnings). The chain, the spreads, the
+  ticket preview and the risk charts refetch on every replay tick.
+- **Fills.** A package fills at the *natural* -- bought legs at the ask,
+  sold legs at the bid -- as one thing, no partial fills. The ticket's
+  default limit in Simulation mode is the natural, so a plain "Place"
+  fills at once; a limit the market has not reached rests as a **working
+  package** (listed above *Open spreads*, with a cancel) and is checked on
+  every tick of the sim fill loop, or on every replay step while
+  replaying. Where a leg has no quote on the side it needs (a one-sided
+  live quote), its mid or last plus the same slippage stands in.
+- **Positions, P&L, journal.** Contracts are held per contract, grouped
+  into spreads exactly like Alpaca's (bull put x2, iron condor...), marked
+  at the book's price; cash moves by premium x 100. Closing (the *Close*
+  button, the premium chart's *Sell*, or a fired trigger) writes the round
+  trip to the Trading Journal with the contract multiplier of 100 and --
+  in a replay -- the replayed day's date, so a rehearsed session reads
+  like one. Credit spreads reserve their collateral (width less the
+  credit, the strike for a cash-secured put) from the simulated buying
+  power; a covered call needs the shares in the simulated book.
+- **Expiry.** A contract still held at 16:00 ET on its expiry day settles
+  at intrinsic value against the underlying (no assignment into shares) --
+  in a replay, when the clock crosses that moment.
+- **Triggers** work as on the real accounts, stored with account `sim`,
+  and are checked by the book's own loops against the book's own prices
+  -- never by the live trigger loop against Alpaca positions. They need no
+  `TRADING_ENABLED`.
+- **The premium chart** of a contract replays too: 1-minute premium bars
+  of the replayed day up to the clock, levels and EMAs computed from them,
+  no live stream and no live higher-timeframe bars while a session is
+  active (either would show the future).
+- **Backend restart** during a replay: the session and the book survive
+  (sqlite); the option bars are fetched again on the next chain (cached on
+  disk under `backend/.cache/bars`, a finished day never changes).
+
 ### Limits worth knowing
 
-- No simulated options book; Simulation mode is equities only.
+- The simulated book fills at the last print ± slippage in a replay;
+  illiquid strikes far from the money may not have printed for hours, and
+  the fill uses that stale price. Stay near the money for realism.
+- No partial fills, no assignment into shares, no exercise: expired
+  contracts settle in cash at intrinsic value.
+- A replayed session needs the underlying's contracts and bars per
+  expiry: the first chain of a new expiry (or a new day in a multi-day
+  replay) takes a few seconds while they load.
 - Paper fills of an MLEG at the mid can rest a while; the trigger loop
   compensates with its stepped limit, manual closes do not.
 - Triggers are not broker-side orders: they fire only while the backend
@@ -1251,8 +1324,11 @@ or by typing the OCC symbol into a pinned chart copy's header.
   bulk file, which in practice runs noticeably behind FINRA's advertised
   publish schedule -- expect it to reflect a settlement date roughly 2-4
   weeks old, not this week's.
-- **Options**: no simulated options book — the Options widget is Paper
-  and Live only. Paper MLEG fills at the mid can rest unfilled for a
+- **Options**: the simulated book (Simulation mode, history replay) has
+  no historical bid/ask, IV or open interest to work from -- replay
+  quotes are the last print ± slippage with a solved IV, and an illiquid
+  strike's last print can be hours old (see *Simulation & Replay:
+  options*). Paper MLEG fills at the mid can rest unfilled for a
   while; the trigger loop compensates with a limit stepped toward the
   natural price, manual closes don't. Underlying-price triggers only fire
   during the regular session and only while the backend is running — they

@@ -11,6 +11,7 @@ import { formatExpiry, type ParsedOcc } from "../../utils/occ";
 import { ChainTable } from "./ChainTable";
 import { applyPick, defaultLegs, selectionOf, strategyKind, type Legs, type PickContext } from "./legPicker";
 import { OpenSpreads } from "./OpenSpreads";
+import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
 
 type Tab = "chain" | "spreads";
@@ -30,11 +31,12 @@ const STRATEGY_HOTKEYS: Strategy[] = ["bull_call", "bear_put", "bull_put", "bear
 const LONG_EXPIRY_MIN_GAP_DAYS = 7;
 
 /** The Options widget: the chain picker with the ticket beside it, and
- * the open positions with their close and trigger controls. Nothing here
- * runs in Simulation mode -- there is no sim options book -- and in Live
- * mode every action asks for the typed confirmation. */
+ * the open positions with their close and trigger controls. In Simulation
+ * mode the same widget trades the local options book (live prices, or the
+ * replayed moment during a history replay); in Live mode every action
+ * asks for the typed confirmation. */
 export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: OptionsWidgetProps) {
-  const enabled = mode !== "simulation";
+  const enabled = true;
   const [tab, setTab] = useState<Tab>("chain");
   const [strategy, setStrategy] = useState<Strategy>("bull_put");
   const [width, setWidth] = useState(2);
@@ -53,6 +55,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const longChainState = useOptionChain(symbol, enabled && isTime);
   const spreads = useSpreads(enabled);
   const badge = modeBadge(mode);
+  const replayFeed = spreads.account?.feed === "replay";
   const { chain, expiries, expiry, setExpiry } = chainState;
 
   // The long expiry: the first one a week or more after the short expiry,
@@ -215,7 +218,13 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     >
       <div className="widget-header">
         <h2>Options</h2>
-        <span className={`trading-mode-badge ${badge.className}`}>{badge.label}</span>
+        <span
+          className={`trading-mode-badge ${badge.className}`}
+          title={replayFeed ? `Simulated book priced from the replay clock${spreads.account?.replay_as_of ? ` (${new Date(spreads.account.replay_as_of).toLocaleString()})` : ""}` : undefined}
+        >
+          {badge.label}
+          {replayFeed ? " · REPLAY" : ""}
+        </span>
         <div className="timeframe-selector">
           <button type="button" className="timeframe-button" aria-pressed={tab === "chain"} onClick={() => setTab("chain")}>
             Chain
@@ -237,25 +246,23 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
         )}
       </div>
       <div className="widget-body">
-        {!enabled ? (
-          <div className="widget-empty">
-            Options trading is not available in Simulation mode. Switch to Paper (or Live) to see the chain and
-            trade spreads.
-          </div>
-        ) : tab === "spreads" ? (
-          <OpenSpreads
-            spreads={spreads.spreads}
-            triggers={spreads.triggers}
-            account={spreads.account}
-            mode={mode}
-            symbol={symbol}
-            loading={spreads.loading}
-            error={spreads.error}
-            onClose={spreads.close}
-            onArm={spreads.armTrigger}
-            onCancelTrigger={spreads.cancelTrigger}
-            onSelectSymbol={onSelectSymbol}
-          />
+        {tab === "spreads" ? (
+          <>
+            {mode === "simulation" && <OptionOrders onChanged={spreads.afterAction} />}
+            <OpenSpreads
+              spreads={spreads.spreads}
+              triggers={spreads.triggers}
+              account={spreads.account}
+              mode={mode}
+              symbol={symbol}
+              loading={spreads.loading}
+              error={spreads.error}
+              onClose={spreads.close}
+              onArm={spreads.armTrigger}
+              onCancelTrigger={spreads.cancelTrigger}
+              onSelectSymbol={onSelectSymbol}
+            />
+          </>
         ) : !symbol ? (
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
         ) : (

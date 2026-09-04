@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.auth.dependency import get_current_user
+from app.options.occ import try_parse_occ
 from app.trading.errors import TradingError
 from app.trading.models import OrderTicket
 from app.trading.sim.service import SimOrderService
@@ -69,6 +70,47 @@ async def _service(request: Request, user: dict) -> SimOrderService:
     )
 
 
+async def _options_service(request: Request, user: dict):
+    """The simulated options book for this user, or None when it cannot
+    price (no Alpaca data credentials) -- the equity endpoints below fold
+    its positions in so the trading panel shows the whole account."""
+    from app.trading.sim.options_service import make_sim_options_service
+
+    state = request.app.state
+    options_store = getattr(state, "sim_options_store", None)
+    if options_store is None or not state.settings.has_credentials:
+        return None
+    return make_sim_options_service(
+        state.alpaca_clients,
+        state.settings,
+        sim_store=state.sim_store,
+        options_store=options_store,
+        user_id=user["id"],
+        seam=await _replay_seam(request, user["id"]),
+        option_engines=getattr(state, "replay_option_engines", None),
+        chain_cache=getattr(state, "options_chain_cache", None),
+        engine=getattr(state, "scanner_engine", None),
+    )
+
+
+async def _option_marks(request: Request, user: dict) -> list[dict]:
+    options = await _options_service(request, user)
+    if options is None:
+        return []
+    try:
+        return await options.marked_positions()
+    except Exception:
+        logger.exception("Sim option positions failed")
+        return []
+
+
+def _num(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @router.get("/account")
 async def get_account(request: Request, user: dict = Depends(get_current_user)) -> dict:
     settings = request.app.state.settings
@@ -77,6 +119,16 @@ async def get_account(request: Request, user: dict = Depends(get_current_user)) 
     except Exception:
         logger.exception("Sim account fetch failed")
         raise HTTPException(status_code=502, detail="Failed to read the simulated account") from None
+    marks = await _option_marks(request, user)
+    if marks:
+        # Held contracts count toward equity like held shares do.
+        value = sum(_num(p.get("market_value")) for p in marks)
+        for key in ("equity", "last_equity", "portfolio_value"):
+            account[key] = f"{_num(account.get(key)) + value:.2f}"
+        longs = sum(_num(p.get("market_value")) for p in marks if _num(p.get("market_value")) > 0)
+        shorts = sum(_num(p.get("market_value")) for p in marks if _num(p.get("market_value")) < 0)
+        account["long_market_value"] = f"{_num(account.get('long_market_value')) + longs:.2f}"
+        account["short_market_value"] = f"{_num(account.get('short_market_value')) + shorts:.2f}"
     return {
         "account": account,
         "paper": True,
@@ -92,7 +144,9 @@ async def get_positions(request: Request, user: dict = Depends(get_current_user)
     except Exception:
         logger.exception("Sim positions fetch failed")
         raise HTTPException(status_code=502, detail="Failed to read simulated positions") from None
-    return {"positions": positions}
+    # Held option contracts ride along, per contract, the way Alpaca lists
+    # them -- so the Positions tab and the premium chart's ticket see them.
+    return {"positions": [*positions, *await _option_marks(request, user)]}
 
 
 @router.get("/orders")
@@ -248,7 +302,13 @@ async def close_position(
     user: dict = Depends(get_current_user),
 ) -> dict:
     try:
-        order = await (await _service(request, user)).close_position(symbol, qty)
+        if try_parse_occ(symbol.upper()) is not None:
+            options = await _options_service(request, user)
+            if options is None:
+                raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
+            order = await options.close_contract(symbol, int(qty) if qty is not None else None)
+        else:
+            order = await (await _service(request, user)).close_position(symbol, qty)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
@@ -264,6 +324,9 @@ async def reset_sim_account(request: Request, user: dict = Depends(get_current_u
     practice is meant to be restartable."""
     settings = request.app.state.settings
     try:
+        options_store = getattr(request.app.state, "sim_options_store", None)
+        if options_store is not None:
+            await options_store.reset(user["id"])
         account = await (await _service(request, user)).reset()
     except Exception:
         logger.exception("Sim account reset failed")

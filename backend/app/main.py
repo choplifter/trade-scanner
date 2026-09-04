@@ -21,9 +21,11 @@ from app.dash_app.state import bind as bind_dash_state
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.news_cache import NewsCache
 from app.market_data.news_feed import NewsFeedTracker
+from app.market_data.news_stream import NewsStreamManager
 from app.market_data.option_stream_manager import OptionStreamManager
 from app.market_data.stream_manager import StreamManager
 from app.replay.engine import ReplayEngineCache
+from app.replay.options_engine import ReplayOptionsEngineCache
 from app.replay.loop import run_replay_pacing_loop
 from app.replay.store import ReplayStore
 from app.routers import (
@@ -39,6 +41,7 @@ from app.routers import (
     trading,
     trading_options,
     trading_sim,
+    trading_sim_options,
     watchlist,
 )
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
@@ -50,6 +53,8 @@ from app.options.monitor import run_options_trigger_loop
 from app.options.trigger_store import TriggerStore
 from app.trading.journal_store import JournalStore
 from app.trading.sim.loop import run_sim_fill_loop
+from app.trading.sim.options_service import OptionsWiring
+from app.trading.sim.options_store import SimOptionsStore
 from app.trading.sim.store import SimStore
 from app.trading.trade_store import TradeStore
 from app.watchlist.store import WatchlistStore
@@ -113,6 +118,12 @@ async def lifespan(app: FastAPI):
     sim_store = SimStore(settings.scanner_history_db_path)
     await sim_store.init_schema()
     app.state.sim_store = sim_store
+    # The simulated options book: packages and contracts, same file (see
+    # app.trading.sim.options_store). Prices come from Alpaca's data API
+    # live, or from the replayed moment in a history replay.
+    sim_options_store = SimOptionsStore(settings.scanner_history_db_path)
+    await sim_options_store.init_schema()
+    app.state.sim_options_store = sim_options_store
 
     # History replay: an optional clock layered on top of Simulation Mode
     # (see app.replay's module docstrings). Session metadata is durable
@@ -122,6 +133,7 @@ async def lifespan(app: FastAPI):
     await replay_store.init_schema()
     app.state.replay_store = replay_store
     app.state.replay_engines = ReplayEngineCache()
+    app.state.replay_option_engines = ReplayOptionsEngineCache()
 
     # Per-user watchlist -- was localStorage-only before real users existed.
     watchlist_store = WatchlistStore(settings.scanner_history_db_path)
@@ -203,6 +215,16 @@ async def lifespan(app: FastAPI):
     options_trigger_store = TriggerStore(settings.scanner_history_db_path)
     await options_trigger_store.init_schema()
     app.state.options_trigger_store = options_trigger_store
+    # What the sim fill loop and the replay pacing loop need to run the
+    # simulated options book for a user (see app.trading.sim.options_service).
+    options_wiring = OptionsWiring(
+        options_store=sim_options_store,
+        trigger_store=options_trigger_store,
+        option_engines=app.state.replay_option_engines,
+        chain_cache=app.state.options_chain_cache,
+        scanner_engine=engine,
+    )
+    app.state.options_wiring = options_wiring
 
     try:
         # So a same-day restart (or a first-ever start after the open)
@@ -217,15 +239,26 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Latest-session rows backfill failed -- scanners may show empty when closed")
 
+    # The market-wide news websocket (see app.market_data.news_stream);
+    # the engine's once-a-minute poll remains the backstop.
+    news_stream = NewsStreamManager(settings, news_feed_tracker, manager)
+    app.state.news_stream = news_stream
+    if settings.has_credentials and settings.news_stream_enabled:
+        news_stream.start()
+
     scanner_task = asyncio.create_task(engine.run_loop())
-    sim_fill_task = asyncio.create_task(run_sim_fill_loop(clients, settings, sim_store))
+    sim_fill_task = asyncio.create_task(
+        run_sim_fill_loop(clients, settings, sim_store, replay_store=replay_store, wiring=options_wiring)
+    )
     options_trigger_task = asyncio.create_task(
         run_options_trigger_loop(
             clients, settings, options_trigger_store, app.state.options_chain_cache, engine
         )
     )
     replay_task = asyncio.create_task(
-        run_replay_pacing_loop(replay_store, sim_store, app.state.replay_engines, manager, clients, settings)
+        run_replay_pacing_loop(
+            replay_store, sim_store, app.state.replay_engines, manager, clients, settings, options_wiring
+        )
     )
 
     try:
@@ -235,6 +268,7 @@ async def lifespan(app: FastAPI):
         sim_fill_task.cancel()
         options_trigger_task.cancel()
         replay_task.cancel()
+        await news_stream.stop()
         await clients.stop_stream()
         await clients.stop_option_stream()
         await fundamentals.aclose()
@@ -285,6 +319,7 @@ app.include_router(
     dependencies=[*_auth_gate, Depends(trading.mark_live_account)],
 )
 app.include_router(trading_sim.router)
+app.include_router(trading_sim_options.router)
 app.include_router(replay.router)
 app.include_router(news_feed.router)
 app.include_router(watchlist.router)

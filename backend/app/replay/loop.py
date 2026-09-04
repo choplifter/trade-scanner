@@ -27,7 +27,9 @@ from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
 from app.replay.engine import ReplayEngineCache, load_replay_engine
 from app.replay.store import ReplayStore
+from app.options.sim_monitor import check_sim_triggers
 from app.trading.sim.broker import SimBroker
+from app.trading.sim.options_service import OptionsWiring, make_sim_options_service
 from app.trading.sim.store import SimStore
 from app.ws.connection_manager import ConnectionManager
 
@@ -54,6 +56,60 @@ def replay_update_payload(scanner: str, as_of, rows) -> dict:
     }
 
 
+async def run_side_effects(
+    user_id: int,
+    engine,
+    as_of: datetime,
+    sim_store: SimStore,
+    clients: AlpacaClients,
+    settings: Settings,
+    wiring: OptionsWiring | None = None,
+) -> None:
+    """What a moved replay clock does to the user's simulated books:
+    fills the working stock orders against the replayed price, then --
+    with the options wiring -- fills resting option packages, settles
+    contracts past their expiry and checks the book's exit triggers, all
+    at `as_of`. Shared by the pacing loop and the manual step/seek
+    endpoints, so stepping while paused fills exactly like playing."""
+    working = await sim_store.working_orders_by_symbol(user_id)
+    if working:
+        prices = {
+            symbol: price
+            for symbol in working
+            if (price := engine.reference_price(symbol, as_of)) is not None
+        }
+        if prices:
+            await SimBroker(sim_store, user_id).check_fills(prices)
+
+    if wiring is None:
+        return
+    has_orders = bool(await wiring.options_store.working_orders(user_id))
+    has_positions = bool(await wiring.options_store.list_positions(user_id))
+    has_triggers = any(int(t.get("user_id") or 0) == user_id for t in await wiring.trigger_store.all_active("sim"))
+    if not (has_orders or has_positions or has_triggers):
+        return
+    try:
+        service = make_sim_options_service(
+            clients,
+            settings,
+            sim_store=sim_store,
+            options_store=wiring.options_store,
+            user_id=user_id,
+            seam=(engine, as_of),
+            option_engines=wiring.option_engines,
+            chain_cache=wiring.chain_cache,
+            engine=wiring.scanner_engine,
+        )
+        if has_orders:
+            await service.book.check_fills(service.source, as_of)
+        if has_positions:
+            await service.book.settle_expired(service.source, as_of)
+        if has_triggers:
+            await check_sim_triggers(user_id, service, wiring.trigger_store, settings)
+    except Exception:
+        logger.exception("Replay options side effects failed for user %s", user_id)
+
+
 async def _advance_one(
     user_id: int,
     session: dict,
@@ -63,6 +119,7 @@ async def _advance_one(
     manager: ConnectionManager,
     clients: AlpacaClients,
     settings: Settings,
+    wiring: OptionsWiring | None = None,
 ) -> None:
     engine = engines.get(user_id)
     if engine is None:
@@ -87,15 +144,7 @@ async def _advance_one(
         if manager.has_subscribers(topic):
             await manager.broadcast(topic, replay_update_payload(scanner, as_of, rows))
 
-    working = await sim_store.working_orders_by_symbol(user_id)
-    if working:
-        prices = {
-            symbol: price
-            for symbol in working
-            if (price := engine.reference_price(symbol, as_of)) is not None
-        }
-        if prices:
-            await SimBroker(sim_store, user_id).check_fills(prices)
+    await run_side_effects(user_id, engine, as_of, sim_store, clients, settings, wiring)
 
 
 async def run_replay_pacing_loop(
@@ -105,6 +154,7 @@ async def run_replay_pacing_loop(
     manager: ConnectionManager,
     clients: AlpacaClients,
     settings: Settings,
+    wiring: OptionsWiring | None = None,
 ) -> None:
     next_due: dict[int, float] = {}
     while True:
@@ -122,7 +172,7 @@ async def run_replay_pacing_loop(
                     continue
                 try:
                     await _advance_one(
-                        user_id, session, replay_store, sim_store, engines, manager, clients, settings
+                        user_id, session, replay_store, sim_store, engines, manager, clients, settings, wiring
                     )
                 except Exception:
                     logger.exception("Replay pacing tick failed for user %s", user_id)

@@ -4,6 +4,7 @@ import { OrderRejectedError } from "../../api/http";
 import { getSpreadPayoff, previewCloseSpread } from "../../api/options";
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useSpreadLevelsContext } from "../../context/SpreadLevelsContext";
+import { useReplaySession } from "../../hooks/useReplaySession";
 import {
   STRATEGY_LABELS,
   type Payoff,
@@ -74,6 +75,8 @@ function GroupPayoff({ group }: { group: SpreadGroup }) {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
   const legsKey = group.legs.map((leg) => `${leg.symbol}:${leg.qty}`).join("|");
+  // A replay tick moves the legs' prices: the curve follows the clock.
+  const replayAsOf = useReplaySession()?.as_of ?? null;
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -96,7 +99,7 @@ function GroupPayoff({ group }: { group: SpreadGroup }) {
     };
     // legsKey stands in for group.legs (a new array every poll tick).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [legsKey, group.qty, group.net_entry, open]);
+  }, [legsKey, group.qty, group.net_entry, open, replayAsOf]);
   return (
     <div className="spread-risk">
       <button type="button" className="row-action" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }} aria-expanded={open}>
@@ -270,7 +273,7 @@ export function OpenSpreads({
   if (spreads.length === 0) {
     return (
       <div className="widget-empty">
-        No option spreads held on the {account?.account ?? "paper"} account.
+        No option spreads held on the {account?.account === "sim" ? "simulated" : (account?.account ?? "paper")} account.
         {triggers.some((t) => t.status !== "active") ? " Recent triggers are listed once a spread is open again." : ""}
       </div>
     );

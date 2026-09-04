@@ -35,12 +35,21 @@ function oi(value: number): string {
   return value >= 10_000 ? `${(value / 1000).toFixed(1)}k` : String(value);
 }
 
+/** A replayed print older than this at the replay clock is shown faded. */
+const STALE_MS = 30 * 60 * 1000;
+
+function lastPrintLabel(lastAt: string): string {
+  return new Date(lastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "America/New_York" });
+}
+
 function Side({
   quote,
   kind,
   itm,
   role,
   pickable,
+  replay,
+  asOfMs,
   onPick,
 }: {
   quote: LegQuote | null;
@@ -48,21 +57,29 @@ function Side({
   itm: boolean;
   role: LegRole | undefined;
   pickable: boolean;
+  /** A replayed chain: no open interest, synthetic bid/ask, stale prints. */
+  replay: boolean;
+  asOfMs: number;
   onPick: () => void;
 }) {
+  const lastAt = replay ? (quote?.last_at ?? null) : null;
+  const stale = lastAt != null && asOfMs - Date.parse(lastAt) > STALE_MS;
   const cls = [
     "chain-side",
     kind,
     itm ? "chain-itm" : "",
     role ? `chain-leg-${role === "body" ? "short chain-leg-body" : role}` : "",
     pickable && quote ? "chain-pickable" : "",
+    stale ? "chain-stale" : "",
   ]
     .filter(Boolean)
     .join(" ");
+  const oiCell = replay ? "—" : oi(quote?.open_interest ?? 0);
   const cells =
     kind === "call"
-      ? [oi(quote?.open_interest ?? 0), pct(quote?.iv ?? null), num(quote?.delta ?? null, 2), num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2)]
-      : [num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2), num(quote?.delta ?? null, 2), pct(quote?.iv ?? null), oi(quote?.open_interest ?? 0)];
+      ? [oiCell, pct(quote?.iv ?? null), num(quote?.delta ?? null, 2), num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2)]
+      : [num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2), num(quote?.delta ?? null, 2), pct(quote?.iv ?? null), oiCell];
+  const printNote = lastAt != null ? ` -- last print ${lastPrintLabel(lastAt)} ET${stale ? " (stale)" : ""}` : replay && quote ? " -- no print yet today" : "";
   return (
     <>
       {cells.map((cell, i) => (
@@ -72,7 +89,7 @@ function Side({
           onClick={pickable && quote ? onPick : undefined}
           title={
             quote
-              ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""} -- drag onto a chart for its premium chart`
+              ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""}${printNote} -- drag onto a chart for its premium chart`
               : "no contract"
           }
           {...(quote ? symbolDragProps(quote.symbol) : {})}
@@ -89,6 +106,10 @@ function Side({
  * a divider marks where spot sits; the selected legs are outlined by
  * role. Scrolls itself to spot when a new chain arrives. */
 export function ChainTable({ chain, selection, pickable, onPick }: ChainTableProps) {
+  const replay = chain.feed === "replay";
+  const asOfMs = Date.parse(chain.as_of);
+  const quoteTitle = replay ? "Replay: last print ± slippage (max(2%, 0.01)) -- the simulated fill price" : undefined;
+  const oiTitle = replay ? "Open interest is not known for a replayed day" : undefined;
   const spotRowRef = useRef<HTMLTableRowElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrolledFor = useRef<string | null>(null);
@@ -130,19 +151,19 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
             </th>
           </tr>
           <tr>
-            <th>OI</th>
-            <th>IV</th>
+            <th title={oiTitle}>OI</th>
+            <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV</th>
             <th>Δ</th>
-            <th>Bid</th>
-            <th>Mid</th>
-            <th>Ask</th>
+            <th title={quoteTitle}>Bid{replay ? "*" : ""}</th>
+            <th>{replay ? "Last" : "Mid"}</th>
+            <th title={quoteTitle}>Ask{replay ? "*" : ""}</th>
             <th className="chain-strike" />
-            <th>Bid</th>
-            <th>Mid</th>
-            <th>Ask</th>
+            <th title={quoteTitle}>Bid{replay ? "*" : ""}</th>
+            <th>{replay ? "Last" : "Mid"}</th>
+            <th title={quoteTitle}>Ask{replay ? "*" : ""}</th>
             <th>Δ</th>
-            <th>IV</th>
-            <th>OI</th>
+            <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV</th>
+            <th title={oiTitle}>OI</th>
           </tr>
         </thead>
         <tbody>
@@ -159,6 +180,8 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
                   itm={row.strike < chain.spot}
                   role={selection.get(legKey("call", row.strike))}
                   pickable={pickable !== "put"}
+                  replay={replay}
+                  asOfMs={asOfMs}
                   onPick={() => onPick("call", row.strike)}
                 />
                 <td className="chain-strike">{formatStrike(row.strike)}</td>
@@ -168,6 +191,8 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
                   itm={row.strike > chain.spot}
                   role={selection.get(legKey("put", row.strike))}
                   pickable={pickable !== "call"}
+                  replay={replay}
+                  asOfMs={asOfMs}
                   onPick={() => onPick("put", row.strike)}
                 />
               </tr>

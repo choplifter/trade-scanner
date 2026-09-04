@@ -1,8 +1,9 @@
 /**
  * /api/trading/options/* -- routed through tradingPath() like every other
- * trading call, so Paper and Live land on their own prefix. There is no
- * /trading/sim/options: the Options widget does not call any of this in
- * Simulation mode (see useSpreads' `enabled`).
+ * trading call, so Paper, Live and Simulation land on their own prefix.
+ * Simulation is served by the local options book (/trading/sim/options,
+ * backend app.trading.sim.options_service) with the same endpoints plus
+ * the two a local book needs: its resting packages and their cancel.
  */
 
 import { API_BASE, OrderRejectedError, checkUnauthorized, extractErrorMessage, getJson } from "./http";
@@ -23,7 +24,7 @@ import type {
   TriggerCreateRequest,
   UnderlyingTrigger,
 } from "../types/options";
-import type { TradingRejection } from "../types/trading";
+import type { Order, TradingRejection } from "../types/trading";
 
 /** POST/DELETE with the trading-rejection convention: a 422 carries a typed
  * detail the widget renders through one path. `confirm` is the typed LIVE
@@ -98,7 +99,17 @@ export function previewCloseSpread(body: CloseSpreadRequest): Promise<ClosePrevi
 }
 
 export function getSpreadPayoff(body: PayoffRequest): Promise<Payoff> {
-  return send<Payoff>("POST", tradingPath("/trading/options/spreads/payoff"), body);
+  return send<Payoff>("POST", "/trading/options/spreads/payoff", body);
+}
+
+/** The simulated book's packages -- Simulation mode only (Alpaca's own
+ * orders come through the trading widget). */
+export function getOptionOrders(status: "open" | "closed" | "all" = "open"): Promise<{ orders: Order[] }> {
+  return getJson<{ orders: Order[] }>(tradingPath(`/trading/options/orders?status=${status}`));
+}
+
+export function cancelOptionOrder(id: string): Promise<{ cancelled: string }> {
+  return send<{ cancelled: string }>("DELETE", `/trading/options/orders/${encodeURIComponent(id)}`);
 }
 
 export function closeSpread(body: CloseSpreadRequest, confirm?: string): Promise<OrderResponse> {

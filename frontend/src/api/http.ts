@@ -115,8 +115,13 @@ export function getScannerHistoryPerformance(days = 7): Promise<ScannerHistoryRe
 /** The live cross-symbol news feed's current buffer, newest first --
  * seeds a freshly mounted NewsFeedWidget; new items after that arrive
  * over /ws/news-feed instead (see api/ws.ts's newsFeedSocket). */
-export function getRecentNewsFeed(limit = 50): Promise<{ items: NewsFeedItem[] }> {
-  return getJson<{ items: NewsFeedItem[] }>(`/news-feed/recent?limit=${limit}`);
+export function getRecentNewsFeed(
+  limit = 50,
+  rankedOnly = false,
+): Promise<{ items: NewsFeedItem[]; stream_connected?: boolean }> {
+  return getJson<{ items: NewsFeedItem[]; stream_connected?: boolean }>(
+    `/news-feed/recent?limit=${limit}${rankedOnly ? "&ranked_only=true" : ""}`,
+  );
 }
 
 export function getSymbolBars(symbol: string, timeframe = "1Min", since?: number): Promise<SymbolBarsResponse> {

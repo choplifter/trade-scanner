@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getChain, getExpiries } from "../api/options";
+import { subscribeReplaySession } from "../api/replayMode";
 import type { ChainResponse, ExpiryInfo } from "../types/options";
 
 /** Matches the backend's chain TTL (app/options/chain_fetch.py): polling
  * faster would just be served the same cached chain. */
 const CHAIN_POLL_MS = 15_000;
+/** In a replay the chain moves with the clock: one refetch per tick, a
+ * short debounce so a fast playback does not stack requests. */
+const REPLAY_DEBOUNCE_MS = 250;
 
 export interface OptionChainState {
   expiries: ExpiryInfo[];
@@ -20,8 +24,9 @@ export interface OptionChainState {
 
 /** The picker's data: the expiry strip once per symbol (the nearest expiry
  * with at least a day left is preselected -- 0DTE only when there is
- * nothing else), and the selected expiry's chain re-polled while mounted.
- * Off entirely when `enabled` is false (Simulation mode, no symbol). */
+ * nothing else), and the selected expiry's chain re-polled while mounted
+ * and refetched on every replay tick. Off entirely when `enabled` is false
+ * (no symbol, or a calendar's second chain while no calendar is picked). */
 export function useOptionChain(underlying: string | null, enabled: boolean): OptionChainState {
   const [expiries, setExpiries] = useState<ExpiryInfo[]>([]);
   const [expiry, setExpiry] = useState<string | null>(null);
@@ -81,9 +86,16 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
     setLoading(true);
     load();
     const timer = setInterval(load, CHAIN_POLL_MS);
+    let debounce: number | null = null;
+    const unsubscribe = subscribeReplaySession(() => {
+      if (debounce != null) window.clearTimeout(debounce);
+      debounce = window.setTimeout(load, REPLAY_DEBOUNCE_MS);
+    });
     return () => {
       cancelled = true;
       clearInterval(timer);
+      unsubscribe();
+      if (debounce != null) window.clearTimeout(debounce);
     };
   }, [underlying, enabled, expiry, tick]);
 

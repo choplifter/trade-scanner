@@ -632,15 +632,13 @@ class ScannerEngine:
         )
 
     async def _refresh_news_feed(self, views: dict[str, list[ScannerRow]]) -> None:
-        """Poll for newly-published articles across the same canonical-view
-        symbol scope _record_new_appearances uses below (not ad hoc user
-        screens), broadcasting each new one over the "news:feed" WS topic
-        -- see app.market_data.news_feed.NewsFeedTracker. Its own, much
-        faster cadence (settings.news_feed_refresh_interval) than the
-        per-symbol NewsCache headline refresh above: that cache only needs
-        "the latest headline," this needs to actually notice a new article
-        arriving -- a real, accepted increase in API calls over the same
-        ~150 symbols, for a genuinely live feed.
+        """Tell the news feed which symbols are ranked right now (the same
+        canonical-view scope _record_new_appearances uses below, not ad hoc
+        user screens), then poll once, market-wide, for anything the news
+        websocket (app.market_data.news_stream) has not delivered --
+        broadcasting each new article over the "news:feed" WS topic. See
+        app.market_data.news_feed.NewsFeedTracker. One request per
+        settings.news_feed_refresh_interval, whatever the market does.
         """
         now = time.monotonic()
         if now - self._last_news_feed_refresh < self.settings.news_feed_refresh_interval:
@@ -655,11 +653,10 @@ class ScannerEngine:
             for view_name in ("gainers", "losers", "most_active", "moderate_movers")
             for row in views.get(view_name, [])
         }
-        if not symbols:
-            return
+        self.news_feed_tracker.set_ranked(symbols)
 
         try:
-            new_items = await self.news_feed_tracker.poll(self.clients, sorted(symbols))
+            new_items = await self.news_feed_tracker.poll(self.clients)
         except Exception:
             logger.exception("News feed poll failed")
             return

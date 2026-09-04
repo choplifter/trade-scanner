@@ -17,7 +17,7 @@ butterfly's body is 2). Either way `leg_specs_full()` gives the canonical
 legs, which is what pricing and the request builder read.
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -379,6 +379,8 @@ class SpreadLeg(BaseModel):
     gamma: float | None = None
     theta: float | None = None
     iv: float | None = None
+    # Replay: the time of the bar the price came from (see LegQuote.last_at).
+    last_at: datetime | None = None
 
 
 class Coverage(BaseModel):
@@ -537,6 +539,7 @@ def _leg_from_quote(quote: LegQuote, side: Side, intent: Intent, ratio: int = 1)
         gamma=quote.gamma,
         theta=quote.theta,
         iv=quote.iv,
+        last_at=quote.last_at,
     )
 
 

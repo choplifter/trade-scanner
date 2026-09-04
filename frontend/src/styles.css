@@ -2742,11 +2742,38 @@ a.symbol-news-headline {
   background: var(--row-selected);
 }
 
+.news-feed-symbols {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+  min-width: 56px;
+}
+
 .news-feed-symbol {
   flex-shrink: 0;
   font-weight: 600;
   font-size: 12px;
-  width: 56px;
+}
+
+.news-feed-symbol.ranked {
+  color: var(--accent, #2f6fed);
+}
+
+.news-feed-symbol.more,
+.news-feed-symbol.none {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.news-feed-stream {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.news-feed-stream.live {
+  color: var(--chart-up, #0ca30c);
 }
 
 .news-feed-headline {
@@ -3196,6 +3223,25 @@ a.news-feed-headline:hover {
 [draggable="true"].spread-leg,
 td[draggable="true"].chain-side {
   cursor: grab;
+}
+
+/* A replayed chain: a print older than half an hour at the replay clock. */
+td.chain-side.chain-stale {
+  opacity: 0.55;
+}
+
+/* The simulated book's resting packages, above the open spreads. */
+.option-orders {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.option-orders-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .chart-widget.drop-target {

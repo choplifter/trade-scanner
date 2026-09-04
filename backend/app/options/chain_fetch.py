@@ -174,6 +174,11 @@ class ChainCache:
             lock = self._locks[key] = asyncio.Lock()
         return lock
 
+    async def spot(self, underlying: str) -> float | None:
+        """The underlying's last price through the lookup this cache was
+        built with (see app.options.quote_source.LiveQuoteSource)."""
+        return await self._spot_fn(underlying.upper())
+
     def invalidate(self, underlying: str) -> None:
         self._contracts.pop(underlying, None)
         for key in [k for k in self._chains if k[0] == underlying]:

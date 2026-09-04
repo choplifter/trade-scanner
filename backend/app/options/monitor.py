@@ -98,13 +98,15 @@ async def check_one(
 
     # The gate, with the confirmation the user gave when arming: a live
     # trigger was confirmed then, it is not asked to type LIVE again at
-    # 14:32 on a stop. A refusal (switch turned off since) is final.
-    try:
-        assert_can_trade(settings, account, LIVE_CONFIRMATION)
-    except TradingError as exc:
-        await store.mark_failed(trigger_id, f"refused: {exc.message}", MAX_ATTEMPTS, final=True)
-        logger.warning("Trigger %s refused: %s", trigger_id, exc.message)
-        return
+    # 14:32 on a stop. A refusal (switch turned off since) is final. The
+    # simulated book has no gate: nothing it closes reaches a broker.
+    if account != "sim":
+        try:
+            assert_can_trade(settings, account, LIVE_CONFIRMATION)
+        except TradingError as exc:
+            await store.mark_failed(trigger_id, f"refused: {exc.message}", MAX_ATTEMPTS, final=True)
+            logger.warning("Trigger %s refused: %s", trigger_id, exc.message)
+            return
 
     attempts = int(trigger.get("attempts") or 0) + 1
     try:
@@ -138,7 +140,10 @@ async def run_options_trigger_loop(
     while True:
         try:
             if settings.has_credentials:
-                triggers = await store.all_active()
+                # The simulated book's triggers are checked by its own loops
+                # (app.trading.sim.loop, app.replay.loop) against its own
+                # prices -- never against Alpaca's positions here.
+                triggers = [t for t in await store.all_active() if t.get("account") != "sim"]
                 if triggers and current_session() == "regular":
                     prices = await batch_last_prices(clients, engine, sorted({t["underlying"] for t in triggers}))
                     # One snapshot call for every contract a premium trigger

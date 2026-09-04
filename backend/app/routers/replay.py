@@ -22,8 +22,11 @@ from app.indicators.context import build_context
 from app.indicators.loader import run_indicators
 from app.market_data.bars import get_historical_bars
 from app.market_data.vwap import SessionVwapState
+from app.options.occ import try_parse_occ
 from app.replay.engine import load_replay_engine
-from app.replay.loop import BAR_STEP
+from app.replay.loop import BAR_STEP, run_side_effects
+from app.replay.options_engine import day_of
+from app.trading.sim.options_service import replay_quote_source
 from app.routers.symbols import _bar_to_dict
 
 logger = logging.getLogger(__name__)
@@ -72,6 +75,29 @@ class StepRequest(BaseModel):
 
 class SpeedRequest(BaseModel):
     speed: float = Field(gt=0, le=50)
+
+
+async def _after_move(request: Request, user_id: int, session: dict | None) -> None:
+    """A manual clock move (seek/step) has the same consequences for the
+    user's simulated books as a pacing tick -- see run_side_effects."""
+    if session is None:
+        return
+    state = request.app.state
+    engine = state.replay_engines.get(user_id)
+    if engine is None:
+        return
+    try:
+        await run_side_effects(
+            user_id,
+            engine,
+            datetime.fromisoformat(session["as_of"]),
+            state.sim_store,
+            state.alpaca_clients,
+            state.settings,
+            getattr(state, "options_wiring", None),
+        )
+    except Exception:
+        logger.exception("Replay side effects after a clock move failed for user %s", user_id)
 
 
 def _session_or_404(session: dict | None) -> dict:
@@ -178,6 +204,7 @@ async def seek_replay(body: SeekRequest, request: Request, user: dict = Depends(
     _session_or_404(await request.app.state.replay_store.get(user["id"]))
     as_of = body.as_of if body.as_of.tzinfo else body.as_of.replace(tzinfo=UTC)
     session = await request.app.state.replay_store.update(user["id"], as_of=as_of.isoformat())
+    await _after_move(request, user["id"], session)
     return await _state_payload(request, session)
 
 
@@ -217,6 +244,7 @@ async def step_replay(body: StepRequest, request: Request, user: dict = Depends(
         as_of, body.direction, engine.start if engine else None, engine.end if engine else None
     )
     session = await request.app.state.replay_store.update(user["id"], as_of=new_as_of.isoformat(), playing=0)
+    await _after_move(request, user["id"], session)
     return await _state_payload(request, session)
 
 
@@ -247,6 +275,21 @@ async def get_replay_bars(symbol: str, request: Request, user: dict = Depends(ge
     if engine is None:
         return {"symbol": symbol.upper(), "bars": []}
     as_of = datetime.fromisoformat(session["as_of"])
+    parsed = try_parse_occ(symbol.upper())
+    if parsed is not None:
+        # An option contract: its 1-minute premium bars for the replayed
+        # day, clipped the same way (see app.replay.options_engine).
+        option_engines = getattr(request.app.state, "replay_option_engines", None)
+        if option_engines is None:
+            return {"symbol": parsed.symbol, "bars": []}
+        replay_quote_source(request.app.state.alpaca_clients, option_engines, user["id"], engine, as_of)
+        option_engine = option_engines.get(user["id"])
+        try:
+            await option_engine.ensure_symbols([parsed.symbol], day_of(as_of))
+        except Exception:
+            logger.exception("Replay option bars failed for %s", parsed.symbol)
+            return {"symbol": parsed.symbol, "bars": []}
+        return {"symbol": parsed.symbol, "bars": [_bar_to_dict(b) for b in option_engine.bars_up_to(parsed.symbol, as_of)]}
     bars = engine.bars_up_to(symbol.upper(), as_of)
     return {"symbol": symbol.upper(), "bars": [_bar_to_dict(b) for b in bars]}
 
@@ -331,4 +374,7 @@ async def get_replay_indicators(symbol: str, request: Request, user: dict = Depe
 async def stop_replay(request: Request, user: dict = Depends(get_current_user)) -> dict:
     await request.app.state.replay_store.stop(user["id"])
     request.app.state.replay_engines.discard(user["id"])
+    option_engines = getattr(request.app.state, "replay_option_engines", None)
+    if option_engines is not None:
+        option_engines.discard(user["id"])
     return {"stopped": True}

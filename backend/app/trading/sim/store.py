@@ -93,10 +93,15 @@ CREATE TABLE IF NOT EXISTS sim_trades (
     entry_order_id TEXT NOT NULL,
     exit_order_ids TEXT NOT NULL,
     fill_count INTEGER NOT NULL,
-    recorded_at TEXT NOT NULL
+    recorded_at TEXT NOT NULL,
+    multiplier INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_sim_trades_user_closed_at ON sim_trades(user_id, closed_at);
 """
+
+# Columns added after the table first shipped (see _init_schema_sync):
+# multiplier is 100 for an option contract's round trip, 1 for shares.
+_ADDED_TRADE_COLUMNS = {"multiplier": "INTEGER NOT NULL DEFAULT 1"}
 
 _ORDER_COLUMNS = (
     "id", "parent_id", "oco_group_id", "leg_role", "client_order_id",
@@ -113,7 +118,7 @@ _POSITION_COLUMNS = (
 _TRADE_COLUMNS = (
     "id", "symbol", "side", "opened_at", "closed_at", "qty", "entry_avg",
     "exit_avg", "pnl", "pnl_pct", "initial_stop", "risk_per_share",
-    "r_multiple", "entry_order_id", "exit_order_ids", "fill_count",
+    "r_multiple", "entry_order_id", "exit_order_ids", "fill_count", "multiplier",
 )
 
 # Mirrors OrderService's _WORKING_STATUSES concept: a "held" bracket child
@@ -137,6 +142,10 @@ class SimStore:
     def _init_schema_sync(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            present = {row[1] for row in conn.execute("PRAGMA table_info(sim_trades)")}
+            for column, kind in _ADDED_TRADE_COLUMNS.items():
+                if column not in present:
+                    conn.execute(f"ALTER TABLE sim_trades ADD COLUMN {column} {kind}")
 
     async def init_schema(self) -> None:
         """No longer seeds a singleton account row -- each user's
@@ -400,6 +409,7 @@ class SimStore:
     def _insert_trade_sync(self, user_id: int, trade: dict, now: str) -> None:
         d = dict(trade)
         d["exit_order_ids"] = json.dumps(d.get("exit_order_ids") or [])
+        d["multiplier"] = int(d.get("multiplier") or 1)
         columns = ("user_id", *_TRADE_COLUMNS)
         with self._connect() as conn:
             conn.execute(

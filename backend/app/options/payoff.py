@@ -72,6 +72,84 @@ def intrinsic(kind: str, spot: float, strike: float) -> float:
     return spot - strike  # stock: P&L per share against its reference price
 
 
+# Below this much time to expiry an implied volatility is not solvable in
+# any meaningful sense (a 0DTE contract at 15:59 is all intrinsic).
+MIN_YEARS = 15 / (365 * 24 * 60)
+# A price this close to intrinsic carries no time value to solve for.
+_IV_PRICE_FLOOR = 0.005
+
+
+def _norm_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def implied_vol(
+    kind: str,
+    price: float | None,
+    spot: float,
+    strike: float,
+    years: float,
+    *,
+    lo: float = 0.01,
+    hi: float = 5.0,
+    tol: float = 1e-6,
+    max_iter: int = 100,
+) -> float | None:
+    """The Black-Scholes volatility that reprices `price` (per share), by
+    bisection on bs_price -- what the replayed chain uses in place of the
+    IV Alpaca's snapshots carry live (option bars have none). None when the
+    price is at or below intrinsic, there is no time left, or no
+    volatility in [lo, hi] reaches the price (a stale print against a
+    moved spot)."""
+    if price is None or price <= 0 or spot <= 0 or strike <= 0 or years <= MIN_YEARS:
+        return None
+    if price <= intrinsic(kind, spot, strike) + _IV_PRICE_FLOOR:
+        return None
+    if bs_price(kind, spot, strike, years, lo) - price > 0:
+        return None
+    if bs_price(kind, spot, strike, years, hi) - price < 0:
+        return None
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2
+        diff = bs_price(kind, spot, strike, years, mid) - price
+        if abs(diff) < tol or (hi - lo) < tol:
+            return round(mid, 6)
+        if diff > 0:
+            hi = mid
+        else:
+            lo = mid
+    return round((lo + hi) / 2, 6)
+
+
+def bs_greeks(
+    kind: str, spot: float, strike: float, years: float, sigma: float, rate: float = 0.0
+) -> tuple[float, float, float]:
+    """(delta, gamma, theta per day) of a European call/put -- the same
+    three greeks the chain shows from Alpaca's snapshot, computed here for
+    a replayed contract from its solved IV. Theta is per calendar day and
+    negative for a long option, like Alpaca's."""
+    if years <= 0 or sigma <= 0 or spot <= 0:
+        if kind == "call":
+            delta = 1.0 if spot > strike else 0.0
+        else:
+            delta = -1.0 if spot < strike else 0.0
+        return delta, 0.0, 0.0
+    sqrt_t = math.sqrt(years)
+    d1 = (math.log(spot / strike) + (rate + 0.5 * sigma * sigma) * years) / (sigma * sqrt_t)
+    d2 = d1 - sigma * sqrt_t
+    pdf = _norm_pdf(d1)
+    gamma = pdf / (spot * sigma * sqrt_t)
+    theta_year = -(spot * pdf * sigma) / (2.0 * sqrt_t)
+    discount = math.exp(-rate * years)
+    if kind == "call":
+        delta = _norm_cdf(d1)
+        theta_year -= rate * strike * discount * _norm_cdf(d2)
+    else:
+        delta = _norm_cdf(d1) - 1.0
+        theta_year += rate * strike * discount * _norm_cdf(-d2)
+    return round(delta, 4), round(gamma, 6), round(theta_year / 365.0, 4)
+
+
 def _expiry_moment(expiry: date) -> datetime:
     return datetime.combine(expiry, time(16, 0), tzinfo=ET)
 

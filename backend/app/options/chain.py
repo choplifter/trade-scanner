@@ -51,9 +51,14 @@ class LegQuote:
     iv: float | None
     open_interest: int
     tradable: bool
+    # When the price is a bar close rather than a live quote (replay): the
+    # bar's own time, so a stale print on an illiquid strike can be told
+    # from a fresh one. None on a live snapshot.
+    last_at: datetime | None = None
 
     def to_dict(self) -> dict:
         return {
+            "last_at": self.last_at.isoformat() if self.last_at is not None else None,
             "symbol": self.symbol,
             "strike": self.strike,
             "kind": self.kind,

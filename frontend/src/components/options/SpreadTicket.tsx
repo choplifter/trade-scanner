@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { OrderRejectedError } from "../../api/http";
 import { previewSpread, submitSpread } from "../../api/options";
+import { useReplaySession } from "../../hooks/useReplaySession";
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useSpreadLevelsContext } from "../../context/SpreadLevelsContext";
 import {
@@ -238,7 +239,9 @@ export function SpreadTicket({
     setPlaced(null);
   }, [symbol, expiry, strategy, legsKey]);
 
-  // Debounced server preview on every change.
+  // Debounced server preview on every change -- and on every replay tick,
+  // since the legs' prices move with the clock.
+  const replayAsOf = useReplaySession()?.as_of ?? null;
   useEffect(() => {
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
     if (!legs || !qtyOk) {
@@ -276,7 +279,7 @@ export function SpreadTicket({
     // legsKey stands in for `legs` (rebuilt objects with equal values);
     // ctx.timeKind for the kind a calendar trades.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, expiry, strategy, legsKey, qtyNum, qtyOk, limit, limitEdited, ctx.timeKind]);
+  }, [symbol, expiry, strategy, legsKey, qtyNum, qtyOk, limit, limitEdited, ctx.timeKind, replayAsOf]);
 
   // The strikes on the chart, for as long as this ticket is showing them.
   useEffect(() => {

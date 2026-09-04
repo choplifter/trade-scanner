@@ -203,8 +203,8 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
         <>
           {tradingMode.mode !== "simulation" && (
             <div className="widget-empty">
-              Switch to Simulation Mode (top right) to trade against replayed history --
-              the scanner below still shows real historical data either way.
+              Switch to Simulation Mode (top right) to trade stocks and options against replayed
+              history -- the scanner below still shows real historical data either way.
             </div>
           )}
           <div className="replay-controls">

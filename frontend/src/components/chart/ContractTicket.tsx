@@ -50,7 +50,10 @@ function randomUUID(): string {
  * Options widget's long call/put path (level 2, same preview, limits and
  * confirmation); selling is the close path and only offered for what is
  * held -- there is no naked writing here. Each button fetches its preview
- * once and opens the confirm dialog with the limit prefilled at the mid. */
+ * once and opens the confirm dialog with the limit prefilled at the mid
+ * (the natural in Simulation mode, so it fills at once). In Simulation
+ * mode everything lands in the local options book -- at the replayed
+ * moment during a history replay. */
 export function ContractTicket({
   symbol,
   contract,
@@ -73,7 +76,7 @@ export function ContractTicket({
   // Premium triggers on this contract: the same store and poll the Options
   // widget uses (its own hook instance, only while a contract is on the
   // chart).
-  const spreads = useSpreads(mode !== "simulation");
+  const spreads = useSpreads(true);
   const [premBelow, setPremBelow] = useState("");
   const [premAbove, setPremAbove] = useState("");
   const [armTyped, setArmTyped] = useState("");

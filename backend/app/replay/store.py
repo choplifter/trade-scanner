@@ -132,6 +132,17 @@ class ReplayStore:
         the same way SimStore.all_working_orders drives the fill loop."""
         return await asyncio.to_thread(self._all_playing_sync)
 
+    def _all_sessions_sync(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM replay_sessions").fetchall()
+        return [_row_to_session(r) for r in rows]
+
+    async def all_sessions(self) -> list[dict]:
+        """Every session, playing or paused -- the live sim fill loop skips
+        these users, whose orders price against the replayed moment (see
+        routers/trading_sim.py's _replay_seam for why paused counts)."""
+        return await asyncio.to_thread(self._all_sessions_sync)
+
     def _stop_sync(self, user_id: int) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM replay_sessions WHERE user_id = ?", (user_id,))

@@ -4,6 +4,9 @@
 
 import type { Order, TradingAccount } from "./trading";
 
+/** Where a spread lives: an Alpaca account, or the simulated book. */
+export type OptionsAccount = TradingAccount | "sim";
+
 export type Strategy =
   | "long_call"
   | "long_put"
@@ -123,15 +126,21 @@ export interface Coverage {
 }
 
 export interface OptionsAccountResponse {
-  account: TradingAccount;
+  account: OptionsAccount;
   options_buying_power: number | null;
   buying_power: number | null;
   equity: number | null;
   options_approved_level: number | null;
   options_trading_level: number | null;
   can_submit: boolean;
-  feed: "opra" | "indicative";
-  limits: { account: TradingAccount; max_contracts: number; max_order_notional: number };
+  /** "opra" / "indicative" live; "replay" while the simulated book prices
+   * from a history replay. */
+  feed: string;
+  /** The replay clock the simulated book is priced at, if any. */
+  replay_as_of?: string | null;
+  option_market_value?: number;
+  reserved_collateral?: number;
+  limits: { account: OptionsAccount; max_contracts: number; max_order_notional: number };
 }
 
 export interface ExpiryInfo {
@@ -163,6 +172,8 @@ export interface LegQuote {
   iv: number | null;
   open_interest: number;
   tradable: boolean;
+  /** Replay: when the bar this price comes from printed (null live). */
+  last_at?: string | null;
 }
 
 export interface StrikeRow {
@@ -237,7 +248,7 @@ export interface ResolvedSpread {
   options_buying_power: number | null;
   dte: number;
   options_level: number | null;
-  account: TradingAccount;
+  account: OptionsAccount;
   warnings: string[];
   client_order_id: string | null;
   coverage: Coverage | null;
@@ -247,7 +258,7 @@ export interface ResolvedSpread {
 export interface SpreadPreview {
   spread: ResolvedSpread;
   can_submit: boolean;
-  limits: { account: TradingAccount; max_contracts: number; max_order_notional: number };
+  limits: { account: OptionsAccount; max_contracts: number; max_order_notional: number };
 }
 
 export interface SpreadPositionLeg {
@@ -279,7 +290,7 @@ export interface SpreadGroup {
   market_value: number;
   unrealized_pl: number;
   broken: boolean;
-  account: TradingAccount;
+  account: OptionsAccount;
   /** The later expiry of a calendar/diagonal. */
   long_expiry: string | null;
   /** Shares backing a covered call. */
@@ -298,7 +309,7 @@ export type TriggerStatus = "active" | "fired" | "cancelled" | "failed" | "orpha
 export interface UnderlyingTrigger {
   id: string;
   user_id: number;
-  account: TradingAccount;
+  account: OptionsAccount;
   underlying: string;
   expiry: string;
   legs: { symbol: string; qty: number }[];

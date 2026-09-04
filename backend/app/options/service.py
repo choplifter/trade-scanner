@@ -8,12 +8,11 @@ builder is a pure function with its own tests.
 
 import asyncio
 import logging
-from datetime import datetime
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
 from app.options.chain import Chain
-from app.options.chain_fetch import ChainCache, fetch_leg_quotes
+from app.options.chain_fetch import ChainCache
 from app.options.guards import assert_options_level
 from app.options.models import (
     STRATEGY_LABELS,
@@ -32,6 +31,7 @@ from app.options.models import (
 from app.options.occ import try_parse_occ
 from app.options.payoff import PayoffLeg, payoff_curve
 from app.options.positions import SpreadGroup, group_spreads
+from app.options.quote_source import LiveQuoteSource, QuoteSource
 from app.options.pricing import (
     alpaca_limit,
     assert_spread_within_limits,
@@ -39,7 +39,6 @@ from app.options.pricing import (
     net_price,
     spread_risk,
 )
-from app.services.market_clock import ET
 from app.trading.errors import OrderRejected, rejection_from_api_error
 from app.trading.guards import Account, assert_can_trade, limits_for
 from app.trading.service import OrderService, _number, _plain
@@ -109,12 +108,21 @@ class OptionsService:
         engine=None,
         chain_cache: ChainCache | None = None,
         account: Account = "paper",
+        source: QuoteSource | None = None,
     ) -> None:
+        """`source` is where prices and the clock come from (see
+        app.options.quote_source): Alpaca now by default, a replayed
+        moment for the simulated book."""
         self._clients = clients
         self._settings = settings
         self._engine = engine
         self._account: Account = account
-        self._chain_cache = chain_cache or ChainCache(clients, self.spot)
+        self._chain_cache = chain_cache or ChainCache(clients, self._live_spot)
+        self._source: QuoteSource = source or LiveQuoteSource(clients, self._chain_cache, self._live_spot)
+
+    @property
+    def source(self) -> QuoteSource:
+        return self._source
 
     @property
     def account_name(self) -> Account:
@@ -143,8 +151,12 @@ class OptionsService:
         }
 
     async def spot(self, underlying: str) -> float | None:
-        """The underlying's last price -- the scanner engine's row first,
-        Alpaca's latest trade otherwise, exactly as the equity ticket does."""
+        """The underlying's last price as of the source's moment."""
+        return await self._source.spot(underlying.upper())
+
+    async def _live_spot(self, underlying: str) -> float | None:
+        """Alpaca now: the scanner engine's row first, the latest trade
+        otherwise, exactly as the equity ticket does."""
         try:
             return await OrderService(self._clients, self._settings, engine=self._engine).reference_price(
                 underlying.upper()
@@ -155,7 +167,7 @@ class OptionsService:
 
     async def expiries(self, underlying: str) -> dict:
         try:
-            spot, _contracts, expiries = await self._chain_cache.contracts(underlying)
+            spot, expiries = await self._source.expiries(underlying)
         except LookupError as exc:
             raise OrderRejected(str(exc), field="underlying") from exc
         return {
@@ -166,7 +178,7 @@ class OptionsService:
 
     async def chain(self, underlying: str, expiry) -> Chain:
         try:
-            return await self._chain_cache.chain(underlying, expiry)
+            return await self._source.chain(underlying, expiry)
         except LookupError as exc:
             raise OrderRejected(str(exc), field="expiry") from exc
 
@@ -251,7 +263,7 @@ class OptionsService:
         if payoff is not None and payoff.today is None:
             warnings.append("No IV on at least one leg: the risk chart shows the expiry curve only.")
 
-        dte = (ticket.expiry - datetime.now(ET).date()).days
+        dte = (ticket.expiry - self._source.now().date()).days
         if dte <= 0:
             warnings.append("Expires today: Alpaca closes same-day-expiry option positions around 15:15 ET.")
         if any(leg.delta is None for leg in legs):
@@ -287,9 +299,8 @@ class OptionsService:
             payoff=payoff,
         )
 
-    @staticmethod
     def _payoff(
-        legs: list[SpreadLeg], qty: int, net_price: float, spot: float, strategy: str | None = None
+        self, legs: list[SpreadLeg], qty: int, net_price: float, spot: float, strategy: str | None = None
     ) -> Payoff | None:
         """The risk chart for `legs` (a covered call gets its share leg at
         the spot). None when the curve cannot be built."""
@@ -300,7 +311,7 @@ class OptionsService:
         if strategy == "covered_call":
             payoff_legs.append(PayoffLeg(kind="stock", strike=spot, side="buy"))
         try:
-            return Payoff(**payoff_curve(payoff_legs, qty, net_price, spot, datetime.now(ET)))
+            return Payoff(**payoff_curve(payoff_legs, qty, net_price, spot, self._source.now()))
         except (ValueError, ZeroDivisionError):
             logger.debug("No payoff curve", exc_info=True)
             return None
@@ -313,11 +324,12 @@ class OptionsService:
         for leg in held:
             leg.side = "buy" if leg.side == "sell" else "sell"
             leg.position_intent = "buy_to_open" if leg.side == "buy" else "sell_to_open"
-        quotes = await fetch_leg_quotes(self._clients, [leg.symbol for leg in held])
+        quotes = await self._source.leg_quotes([leg.symbol for leg in held])
         for leg in held:
             quote = quotes.get(leg.symbol)
             if quote is not None:
                 leg.bid, leg.ask, leg.mid, leg.delta, leg.iv = quote.bid, quote.ask, quote.mid, quote.delta, quote.iv
+                leg.gamma, leg.theta, leg.last_at = quote.gamma, quote.theta, quote.last_at
         parsed = try_parse_occ(held[0].symbol)
         spot = await self.spot(parsed.underlying) if parsed else None
         if spot is None:
@@ -334,11 +346,12 @@ class OptionsService:
 
     async def _priced_close(self, req: CloseSpreadRequest) -> tuple[list[SpreadLeg], str, float, float | None]:
         legs = closing_legs(req.legs)
-        quotes = await fetch_leg_quotes(self._clients, [leg.symbol for leg in legs])
+        quotes = await self._source.leg_quotes([leg.symbol for leg in legs])
         for leg in legs:
             quote = quotes.get(leg.symbol)
             if quote is not None:
                 leg.bid, leg.ask, leg.mid, leg.delta = quote.bid, quote.ask, quote.mid, quote.delta
+                leg.gamma, leg.theta, leg.iv, leg.last_at = quote.gamma, quote.theta, quote.iv, quote.last_at
         signed_mid = net_price(legs, "mid")
         if signed_mid is None:
             raise OrderRejected("No market on at least one leg right now", field="legs")
