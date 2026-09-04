@@ -2448,6 +2448,30 @@ a.symbol-news-headline {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
 }
 
+/* A dialog with real content (Settings): wider, capped by the viewport,
+   its body scrolls instead of the panel growing past the screen. */
+.modal-panel.modal-panel-wide {
+  width: min(840px, 94vw);
+  max-width: none;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.modal-panel-wide .modal-panel-header {
+  padding: 16px 32px;
+}
+
+.modal-panel-wide .modal-panel-header h2 {
+  font-size: 14px;
+}
+
+.modal-panel-wide .modal-close {
+  font-size: 22px;
+}
+
 .modal-panel-header {
   display: flex;
   align-items: center;
@@ -3420,41 +3444,63 @@ td.chain-side.chain-stale {
 
 /* --- Settings dialog ------------------------------------------------------- */
 
+/* The Settings dialog: sized by .modal-panel-wide (see .modal-panel); the
+   content pads itself and scrolls inside the panel, never past it. */
 .settings-dialog {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  min-width: 520px;
-  max-width: 720px;
+  gap: 20px;
+  padding: 24px 32px 22px;
+  min-height: 0;
+  font-size: 13px;
+  color: var(--text-primary);
 }
 
 .settings-tabs {
   align-self: flex-start;
 }
 
+.settings-dialog .timeframe-button {
+  font-size: 12.5px;
+  padding: 5px 12px;
+}
+
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 18px;
+  /* A floor so switching tabs does not resize and re-centre the dialog. */
+  min-height: min(300px, 50vh);
+  max-height: 62vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.settings-section > .order-hint {
+  margin: 0;
+  font-size: 12.5px;
 }
 
 .settings-row {
   display: grid;
-  grid-template-columns: 150px 1fr;
-  gap: 12px;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
 }
 
 .settings-row-label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
+  gap: 3px;
+  font-size: 13px;
   font-weight: 600;
+  line-height: 1.35;
 }
 
 .settings-row-label small {
+  font-size: 12px;
   font-weight: 400;
+  line-height: 1.4;
   color: var(--text-muted);
 }
 
@@ -3462,75 +3508,114 @@ td.chain-side.chain-stale {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
 }
 
+/* The colour schemes: a grid that fits the dialog's width -- five tiles
+   in one row at full size, wrapping evenly on a narrower screen. */
 .settings-themes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 10px;
+  width: 100%;
 }
 
 .settings-theme {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 6px;
+  padding: 10px 8px 8px;
+  min-width: 0;
   font: inherit;
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--text-secondary);
-  background: var(--surface);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+
+.settings-theme span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-theme:hover {
   background: var(--row-hover);
+  border-color: var(--text-muted);
 }
 
 .settings-theme[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  font-weight: 600;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .settings-swatch {
-  width: 52px;
-  height: 36px;
+  width: 72px;
+  height: 48px;
   background: var(--page);
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
 }
 
 .settings-hotkeys {
-  max-height: 60vh;
-  overflow-y: auto;
+  gap: 12px;
 }
 
 .settings-hotkey-group h3 {
-  margin: 8px 0 2px;
-  font-size: 12px;
+  margin: 4px 0 4px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.settings-hotkey-group .performance-table {
+  font-size: 12.5px;
+}
+
+.settings-hotkey-group .performance-table td {
+  padding: 5px 8px;
+  text-align: left;
+  color: var(--text-primary);
 }
 
 .settings-hotkey-keys {
   white-space: nowrap;
-  width: 150px;
+  width: 170px;
 }
 
 .settings-hotkey-keys kbd {
   font: inherit;
-  font-size: 11px;
-  padding: 1px 6px;
+  font-size: 12px;
+  padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface-raised);
 }
 
 .settings-footer {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-top: 8px;
+  gap: 14px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.settings-footer .row-action {
+  font-size: 12.5px;
+  padding: 5px 12px;
+}
+
+.settings-footer .order-hint {
+  font-size: 12.5px;
 }

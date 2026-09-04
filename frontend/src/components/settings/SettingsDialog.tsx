@@ -86,7 +86,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => update({ [key]: value } as Partial<AppSettings>);
 
   return (
-    <Modal open={open} title="Settings" onClose={onClose}>
+    <Modal open={open} title="Settings" onClose={onClose} className="modal-panel-wide">
       <div className="settings-dialog">
         <div className="timeframe-selector settings-tabs">
           {TABS.map((t) => (

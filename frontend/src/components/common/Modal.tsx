@@ -6,6 +6,9 @@ interface ModalProps {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  /** Extra class on the panel, for a dialog that needs its own size
+   * (the Settings dialog is wider than an order confirmation). */
+  className?: string;
 }
 
 /** A backdrop and a panel. Shares its look with AlarmsOverlay, which predates
@@ -31,7 +34,7 @@ interface ModalProps {
  * autofocuses either: for an order ticket, accidental confirmation is the
  * dangerous direction and accidental dismissal is free.
  */
-export function Modal({ open, title, onClose, children }: ModalProps) {
+export function Modal({ open, title, onClose, children, className }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -46,7 +49,7 @@ export function Modal({ open, title, onClose, children }: ModalProps) {
   return createPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal-panel"
+        className={`modal-panel${className ? ` ${className}` : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
