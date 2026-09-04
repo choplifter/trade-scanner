@@ -1,9 +1,38 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
 
 from app.market_data.momentum import MOMENTUM_WINDOW_MINUTES
+from app.routers.admin import require_admin
 from app.scanners.benchmark_tracker import compute_performance
 
 router = APIRouter(prefix="/api/scanners", tags=["scanners"])
+
+SCANNER_PAUSED_KEY = "scanner_paused"
+
+
+@router.get("/status")
+async def get_scanner_status(request: Request) -> dict:
+    """Whether the operator has paused market-wide scanning (see
+    ScannerEngine.paused): the views then hold their last rows, no
+    history snapshots are written and the API budget goes to the charts."""
+    engine = request.app.state.scanner_engine
+    return {"paused": bool(engine.paused), "session": engine.session}
+
+
+class PauseRequest(BaseModel):
+    paused: bool
+
+
+@router.post("/pause")
+async def set_scanner_pause(body: PauseRequest, request: Request, _admin: dict = Depends(require_admin)) -> dict:
+    """Admins only: a server-wide switch, persisted so it survives a
+    restart."""
+    engine = request.app.state.scanner_engine
+    engine.paused = body.paused
+    kv = getattr(request.app.state, "kv_store", None)
+    if kv is not None:
+        await kv.set(SCANNER_PAUSED_KEY, body.paused)
+    return {"paused": bool(engine.paused), "session": engine.session}
 
 
 @router.get("/benchmark-performance")

@@ -116,6 +116,17 @@ backend on port 8000, so both must be running.
 
 ## What's included
 
+- **Scanner pause** (admins, the `⏸ / ⏵` button in the scanner header;
+  `POST /api/scanners/pause`, persisted): stops market-wide polling, the
+  backstop movers and the history snapshots while you trade one symbol,
+  so the API budget and the database go to the charts. Market
+  conditions, GEX and the news feed keep running; the views hold their
+  last rows and every login sees the paused state.
+- **Journal stats** (Trading Journal → Stats): for one underlying (SPY by
+  default), where the P&L came from -- entry time of day in ET in
+  half-hour windows around the open, calls vs puts, days to expiry at
+  entry, weekday -- with trade count, win rate, total and average P&L,
+  computed from the journal's own closed trades.
 - **Live screener** (one widget — the scanner *is* the screener). Build your
   own filters over the fields in [Filter parameters](#filter-parameters)
   below, sort by any of them, and the results update on every poll tick over

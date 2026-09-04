@@ -269,6 +269,11 @@ class ScannerEngine:
         self._merger_actions: dict[str, MergerAction] = {}
         self._last_merger_refresh: float = 0.0
         self._last_news_feed_refresh: float = 0.0
+        # The operator's pause switch (Settings / scanner header, persisted
+        # in app_kv): no market-wide polling, no history snapshots, no
+        # backstop movers while set. Market conditions, GEX and the news
+        # feed keep running -- they serve the charts, not the scanner.
+        self.paused: bool = False
 
     def _session_volume_fraction(self, at: datetime) -> float | None:
         """Time-of-day RVOL denominator, or None to leave RVOL un-normalized.
@@ -1236,8 +1241,9 @@ class ScannerEngine:
                 self.session != "closed"
                 and bool(self.universe)
                 and self.clients.settings.has_credentials
+                and not self.paused
             )
-            has_backstop_data = bool(self.universe) and self.clients.settings.has_credentials
+            has_backstop_data = bool(self.universe) and self.clients.settings.has_credentials and not self.paused
 
             # Not gated on can_poll -- see _refresh_movers_backstop for why
             # this needs to keep running while the market's closed too.
@@ -1272,9 +1278,11 @@ class ScannerEngine:
             # would show blank float/market cap/short interest columns until
             # the next live poll, instead of the fallback's real fundamentals.
             views = self._build_views()
-            await self._record_new_appearances(views)
+            if not self.paused:
+                await self._record_new_appearances(views)
             await self._refresh_news_feed(views)
-            await self._write_periodic_snapshots()
+            if not self.paused:
+                await self._write_periodic_snapshots()
 
             # History recording above deliberately runs first and only over the
             # four canonical views: scanner_history is what the drift report,

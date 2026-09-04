@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import type { ReactNode } from "react";
 
+import { setCurrentUser } from "./api/currentUser";
 import { subscribeOpenSettings, type SettingsTab } from "./api/settingsDialog";
 
 import { TradeIdeasWidget } from "./components/ai/TradeIdeasWidget";
@@ -70,6 +71,11 @@ function AppShell({ user, onLogout }: AppShellProps) {
   // widget asks for a tab (the "connect your broker" panels).
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+  // Widgets read the user (admin or not) through api/currentUser.ts.
+  useEffect(() => {
+    setCurrentUser(user);
+    return () => setCurrentUser(null);
+  }, [user]);
   useEffect(
     () =>
       subscribeOpenSettings((tab) => {

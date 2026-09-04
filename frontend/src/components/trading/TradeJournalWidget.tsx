@@ -6,6 +6,7 @@ import { useTradingMode } from "../../hooks/useTradingMode";
 import type { ChartFocus } from "../../types/screener";
 import { formatPrice } from "../../utils/format";
 import { signedNumber, tradeTime } from "./TradingWidget";
+import { TradeStats } from "./TradeStats";
 import { formatLeg } from "../../utils/occ";
 
 /** Same intraday-vs-daily heuristic ScreenBacktestPanel uses for a backtest
@@ -176,6 +177,7 @@ export function TradeJournalWidget({ onSelectPick }: { onSelectPick: (focus: Cha
             login. Switch to Simulation Mode for a trade history that's only yours.
           </p>
         )}
+        {rows.length > 0 && <TradeStats trades={rows} />}
         {loading && rows.length === 0 ? (
           <div className="widget-empty">Loading…</div>
         ) : error ? (

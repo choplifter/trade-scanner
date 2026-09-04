@@ -6,6 +6,8 @@ import { useScreenFeed } from "../../hooks/useScreenFeed";
 import type { ChartFocus, FieldSpec, Preset, Screen } from "../../types/screener";
 import { ScannerFilterBar } from "../screener/ScannerFilterBar";
 import { ScreenBacktestPanel } from "../screener/ScreenBacktestPanel";
+import { useCurrentUser } from "../../api/currentUser";
+import { useScannerStatus } from "../../hooks/useScannerStatus";
 import { ScannerHeatmap } from "./ScannerHeatmap";
 import { ScannerTable } from "./ScannerTable";
 import { StrategySwitchPanel } from "./StrategySwitchPanel";
@@ -80,6 +82,10 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
   // Both hooks always run -- hooks can't be conditional -- but each is fed
   // null when its tab isn't active, so only one feed is actually subscribed.
   const frozenFeed = useScannerFeed(frozenActive ? FROZEN_VIEW : null);
+  // The operator's pause switch: shown to everyone, toggled by admins.
+  const scannerStatus = useScannerStatus();
+  const isAdmin = !!useCurrentUser()?.is_admin;
+  const paused = scannerStatus.status?.paused === true;
   const screenFeed = useScreenFeed(frozenActive ? null : screen);
 
   const rows = frozenActive ? frozenFeed.rows : screenFeed.rows;
@@ -126,6 +132,24 @@ export function ScannerWidget({ selectedSymbol, onSelectSymbol, onSelectPick }: 
           {activePreset === null && <span className="tab custom-tab">Custom</span>}
         </div>
         <div className="scanner-header-actions">
+          {(paused || isAdmin) && (
+            <button
+              type="button"
+              className={`tab scanner-pause${paused ? " paused" : ""}`}
+              aria-pressed={paused}
+              disabled={!isAdmin}
+              title={
+                paused
+                  ? "Scanning is paused by the operator: rows hold their last values, no history is recorded, the API budget goes to the charts."
+                  : "Pause market-wide scanning (admin): saves API calls and database growth while you trade one symbol."
+              }
+              onClick={() => {
+                if (isAdmin) void scannerStatus.setPaused(!paused).catch(() => {});
+              }}
+            >
+              {paused ? "⏸ Paused" : "⏵ Scanning"}
+            </button>
+          )}
           {!frozenActive && (
             <button
               type="button"

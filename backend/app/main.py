@@ -18,6 +18,7 @@ from app.broker.crypto import secret_box_from_settings
 from app.broker.resolver import BrokerResolver, operator_data_credentials
 from app.broker.store import BrokerStore, key_hint
 from app.core.config import get_settings
+from app.core.kv_store import KeyValueStore
 from app.core.logging import setup_logging
 from app.dash_app import dash_app
 from app.dash_app.state import bind as bind_dash_state
@@ -234,6 +235,14 @@ async def lifespan(app: FastAPI):
     )
     engine.screen_subscriptions = screen_subscriptions
     app.state.scanner_engine = engine
+    # Server-wide switches (app.core.kv_store): the scanner pause survives
+    # a restart, so a deliberately quiet deployment stays quiet.
+    kv_store = KeyValueStore(settings.scanner_history_db_path)
+    await kv_store.init_schema()
+    app.state.kv_store = kv_store
+    engine.paused = await kv_store.get_bool("scanner_paused", False)
+    if engine.paused:
+        logger.info("Scanner is paused by the operator (POST /api/scanners/pause to resume)")
     bind_dash_state(app)
 
     # Options: one chain cache for every widget (market data, so it is

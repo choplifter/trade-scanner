@@ -3373,6 +3373,69 @@ td.chain-side.chain-stale {
   flex-wrap: wrap;
 }
 
+/* The scanner's pause switch (operator), in the scanner header. */
+.scanner-pause.paused {
+  color: var(--chart-down, #d03b3b);
+  font-weight: 600;
+}
+
+.scanner-pause:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+/* Trading Journal → Stats: where one underlying's P&L came from. */
+.trade-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.trade-stats-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.trade-stats-head select {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.trade-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 16px;
+}
+
+.trade-stats-block h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.trade-stats-table td,
+.trade-stats-table th {
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.trade-stats-table td:first-child,
+.trade-stats-table th:first-child {
+  text-align: left;
+}
+
 /* Settings → Users (admins). */
 .users-table td,
 .users-table th {
