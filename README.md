@@ -54,8 +54,9 @@ Everything below is optional — the app runs fine without any of it, just
 with fewer annotations/columns.
 
 - **`ANTHROPIC_API_KEY`** — powers the "AI Trade Ideas" widget (Claude picks
-  and annotates the 3 most notable scanner setups). Get a key at
-  https://console.anthropic.com → API Keys.
+  and annotates the 3 most notable scanner setups) and the Options widget's
+  **Idea** tab (Claude proposes option structures on the selected symbol's
+  chain). Get a key at https://console.anthropic.com → API Keys.
 - **`TRADING_ENABLED=true`** — arms the trading panel's *write* paths
   (ticket, cancel, close, stop moves, partial sells, spreads). Ships off so
   merging the feature changes nothing until you opt in. The read side
@@ -84,7 +85,10 @@ with fewer annotations/columns.
   with FINRA's free public short-interest data — no separate key needed for
   FINRA itself. This same key also powers the **market-conditions traffic
   light** (real VIX index + economic calendar — Alpaca has no index-data
-  endpoint at all).
+  endpoint at all) and the **next-earnings date** the Options widget's Idea
+  tab reasons over (whether a structure would be held through the report).
+  Without it that field is simply absent, which is never read as "no
+  earnings coming".
 
 ## 2. Run the backend
 
@@ -1241,6 +1245,71 @@ or by typing the OCC symbol into a pinned chart copy's header.
 - On a cheap contract the axis can show values below zero: the bottom
   fifth of the pane is reserved for volume and the library extends the
   scale linearly.
+
+### Idea: Claude on this chain (needs `ANTHROPIC_API_KEY`)
+
+The Options widget's third tab asks Claude for up to three **option
+structures** on the selected underlying — strategy, expiry and strikes,
+concrete enough to trade — and one click loads any of them into the ticket
+beside it. Nothing is ordered: the ticket still needs the usual submit (and
+the usual typed confirmation in Live mode).
+
+**The model chooses the shape; the server decides what it costs.** Four
+steps, and only the first is the model's:
+
+1. `app/ai/options_context.py` gathers what a structure decision actually
+   turns on: the chain across three candidate expiries (~7 / ~21 / ~45 DTE,
+   never 0DTE — Alpaca cannot compute greeks for a contract expiring today),
+   condensed to strikes that are listed, tradable, quoted on both sides, not
+   absurdly wide and actually held; GEX with the sample behind it; the
+   underlying's VWAP, 30-minute move, prior-week move and average daily
+   range; the chart's own horizontal levels from hourly bars; the latest
+   headline; implied vol; and the next earnings date.
+2. `app/ai/options_idea.py` asks Claude (`claude-opus-5`) for structures as
+   plain leg lists, with a reason and a **risk note** each.
+3. `app/ai/options_resolve.py` snaps every proposed strike onto one that is
+   really listed and restores the ordering each strategy requires — a
+   deterministic repair, not a second round trip: re-asking is slower,
+   costs another call and is no likelier to land on a real strike.
+4. `OptionsService.preview` prices the result through the same path the
+   ticket uses.
+
+So every number on a card — net debit or credit, max profit, max loss,
+breakevens, collateral, the warnings — is the options stack's, computed
+against the live chain and checked against your account's options level and
+the notional/contract ceilings. The only thing taken on trust is the choice
+of structure.
+
+**Proposals that don't survive are shown, not dropped.** "Iron condor —
+options level 3 required" is useful; a quietly shorter list would read as
+"nothing appeals today", which is a different and wrong statement. Each
+card also carries a **Support N/10** — how well the available data backs
+that structure over the alternatives, *not* a probability of profit — and
+the tab says in one line what the model could actually see (GEX? news?
+earnings? how many days of IV history?), because a suggestion made with all
+of it looks identical in prose to one made with none.
+
+**On implied vol, the honest split.** The term structure (ATM IV per
+expiry), the skew, and implied over 20-day realised volatility are all
+computable from one snapshot and are in the payload from the first run — a
+front expiry standing well above the ones behind it is an event being
+priced into that week, which is what decides debit versus credit before any
+direction does. A real **IV rank is not**: it measures today's IV against
+its own trailing range, and that range has to be accumulated. The app now
+records one ATM reading per symbol per session (`app/options/
+iv_history_store.py`, same SQLite file as everything else) as a side effect
+of serving a suggestion, so history builds for the symbols you actually
+look at — and `iv_rank` stays `null` until roughly a month of sessions
+exists. The prompt is told explicitly that null means *not yet known*,
+never "IV is not elevated"; the same rule applies to every other field that
+can be absent.
+
+Not offered in **Simulation mode**: a replayed chain is synthetic (bid/ask
+derived from the last print, IV solved back out of it, no open interest), so
+a structure suggested on it would look far better founded than it is.
+
+Framed as descriptive annotation, not investment advice — the same line the
+AI Trade Ideas widget and the GEX plan draw.
 
 ### Options elsewhere
 

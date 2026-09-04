@@ -22,6 +22,7 @@ import type {
   SpreadTicketRequest,
   SpreadsResponse,
   TriggerCreateRequest,
+  OptionsIdeaResponse,
   UnderlyingTrigger,
 } from "../types/options";
 import type { Order, TradingRejection } from "../types/trading";
@@ -126,4 +127,13 @@ export function createTrigger(body: TriggerCreateRequest, confirm?: string): Pro
 
 export function deleteTrigger(id: string): Promise<{ cancelled: string }> {
   return send<{ cancelled: string }>("DELETE", `/trading/options/triggers/${encodeURIComponent(id)}`);
+}
+
+/** Ask Claude for option structures on this underlying. Slow by nature --
+ * it loads three expiries of chain, gathers the context around them and
+ * then reasons over it -- so callers need a real pending state, not a
+ * spinner that flashes. Read-only: nothing is ordered, and the ideas come
+ * back with a ready-made ticket the user still submits by hand. */
+export function suggestOptionsIdeas(underlying: string): Promise<OptionsIdeaResponse> {
+  return send<OptionsIdeaResponse>("POST", "/trading/options/idea", { underlying });
 }

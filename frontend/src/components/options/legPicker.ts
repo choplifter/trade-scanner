@@ -6,11 +6,13 @@
 import {
   DEBIT_STRATEGIES,
   INCOME_STRATEGIES,
+  LEGS_STRATEGIES,
   SINGLE_LEG_STRATEGIES,
   TIME_STRATEGIES,
   type ChainResponse,
   type OptionKind,
   type ShortTarget,
+  type SpreadTicketRequest,
   type StrikeRow,
   type Strategy,
 } from "../../types/options";
@@ -490,4 +492,77 @@ export function legLevels(strategy: Strategy, legs: Legs, ctx: PickContext = {})
     { label: `Long ${legs.long}`, price: legs.long, role: "long" },
     { label: `Short ${legs.short}`, price: legs.short, role: "short" },
   ];
+}
+
+
+/** The inverse of SpreadTicket's `ticketFor`: a wire ticket back into the
+ * widget's own leg state, so a structure that came from somewhere else --
+ * today the AI suggestion -- can be loaded into the ticket instead of being
+ * re-picked by hand.
+ *
+ * Returns the long expiry alongside, because a calendar or diagonal needs
+ * the widget to load a second chain before its legs mean anything. `null`
+ * when the ticket does not describe the strategy it claims to; the caller
+ * treats that as "cannot load" rather than guessing, since a half-applied
+ * structure is worse than none. */
+export function legsFromTicket(
+  strategy: Strategy,
+  ticket: SpreadTicketRequest,
+): { legs: Legs; longExpiry?: string } | null {
+  if (!LEGS_STRATEGIES.has(strategy)) {
+    if (SINGLE_LEG_STRATEGIES.has(strategy)) {
+      return ticket.long_strike != null ? { legs: { strike: ticket.long_strike } } : null;
+    }
+    if (strategy === "iron_condor") {
+      const { put_long_strike, put_short_strike, call_short_strike, call_long_strike } = ticket;
+      if (put_long_strike == null || put_short_strike == null || call_short_strike == null || call_long_strike == null) {
+        return null;
+      }
+      return {
+        legs: {
+          put_long: put_long_strike,
+          put_short: put_short_strike,
+          call_short: call_short_strike,
+          call_long: call_long_strike,
+        },
+      };
+    }
+    if (ticket.long_strike == null || ticket.short_strike == null) return null;
+    return { legs: { long: ticket.long_strike, short: ticket.short_strike } };
+  }
+
+  const list = ticket.legs ?? [];
+  const strikeOf = (kind: OptionKind, side: "buy" | "sell") =>
+    list.find((leg) => leg.kind === kind && leg.side === side)?.strike;
+
+  if (strategy === "long_straddle" || strategy === "covered_call" || strategy === "cash_secured_put") {
+    const strike = list[0]?.strike;
+    return strike == null ? null : { legs: { strike } };
+  }
+  if (strategy === "long_strangle") {
+    const put = strikeOf("put", "buy");
+    const call = strikeOf("call", "buy");
+    return put == null || call == null ? null : { legs: { put, call } };
+  }
+  if (strategy === "call_butterfly" || strategy === "put_butterfly") {
+    const strikes = list.map((leg) => leg.strike).sort((a, b) => a - b);
+    if (strikes.length !== 3) return null;
+    return { legs: { low: strikes[0], mid: strikes[1], high: strikes[2] } };
+  }
+  if (strategy === "iron_butterfly") {
+    const put_long = strikeOf("put", "buy");
+    const body = strikeOf("put", "sell");
+    const call_long = strikeOf("call", "buy");
+    return put_long == null || body == null || call_long == null ? null : { legs: { put_long, body, call_long } };
+  }
+  if (TIME_STRATEGIES.has(strategy)) {
+    const short = list.find((leg) => leg.side === "sell");
+    const long = list.find((leg) => leg.side === "buy");
+    if (!short || !long || !long.expiry) return null;
+    return {
+      legs: { short_strike: short.strike, long_strike: long.strike, long_expiry: long.expiry },
+      longExpiry: long.expiry,
+    };
+  }
+  return null;
 }

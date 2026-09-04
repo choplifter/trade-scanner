@@ -416,3 +416,53 @@ export function triggerBoundsLabel(t: {
 export interface OrderResponse {
   order: Order;
 }
+
+
+/** One structure Claude proposed, already snapped onto listed strikes and
+ * priced by the backend -- see backend app/ai/options_suggest.py. The
+ * numbers in `spread` come from the same pricing path the ticket uses, not
+ * from the model; `ticket` is what "Load into ticket" applies. */
+export interface OptionsIdea {
+  strategy: Strategy;
+  strategy_label: string;
+  headline: string;
+  reason: string;
+  risk_note: string;
+  /** 1-10: how well the data supports this structure over the alternatives.
+   * Not a probability of profit and not a recommendation strength. */
+  conviction: number;
+  ticket: SpreadTicketRequest;
+  spread: ResolvedSpread;
+}
+
+/** A structure that was proposed but could not be built or priced -- shown
+ * rather than dropped, so a shorter list never silently reads as "nothing
+ * appeals today". */
+export interface RejectedOptionsIdea {
+  strategy: Strategy;
+  strategy_label: string;
+  expiry: string;
+  headline: string;
+  reason: string;
+  rejected_because: string;
+}
+
+/** What the model could actually see. Without it a suggestion made with
+ * GEX, news and an IV rank looks identical to one made with none of them. */
+export interface OptionsIdeaContextUsed {
+  expiries: string[];
+  has_gex: boolean;
+  has_news: boolean;
+  has_earnings: boolean;
+  iv_rank_samples: number;
+}
+
+/** POST /api/trading/options/idea */
+export interface OptionsIdeaResponse {
+  underlying: string;
+  spot: number;
+  ideas: OptionsIdea[];
+  rejected: RejectedOptionsIdea[];
+  disclaimer: string;
+  context_used: OptionsIdeaContextUsed;
+}

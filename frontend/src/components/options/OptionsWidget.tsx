@@ -18,14 +18,24 @@ import {
 } from "../../types/options";
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatExpiry, type ParsedOcc } from "../../utils/occ";
+import type { OptionsIdea } from "../../types/options";
+import { AiIdeaTab } from "./AiIdeaTab";
 import { ChainTable } from "./ChainTable";
-import { applyPick, defaultLegs, selectionOf, strategyKind, type Legs, type PickContext } from "./legPicker";
+import {
+  applyPick,
+  defaultLegs,
+  legsFromTicket,
+  selectionOf,
+  strategyKind,
+  type Legs,
+  type PickContext,
+} from "./legPicker";
 import { BrokerMissing } from "../common/BrokerMissing";
 import { OpenSpreads } from "./OpenSpreads";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
 
-type Tab = "chain" | "spreads";
+type Tab = "chain" | "spreads" | "idea";
 
 interface OptionsWidgetProps {
   symbol: string | null;
@@ -165,6 +175,48 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     pendingFocusRef.current = null;
   }, [chain]);
 
+  // Loading a suggested structure (the Idea tab) is the same three-step
+  // dance as following the chart's contract above, and for the same reason:
+  // the auto-pick effect clears manualRef on every strategy/expiry change,
+  // so the legs can only be planted once the chain for that expiry is
+  // actually in. Setting them any earlier means watching the auto-pick
+  // overwrite them a render later.
+  const pendingIdeaRef = useRef<{ legs: Legs; expiry: string; longExpiry?: string } | null>(null);
+  const loadIdea = (idea: OptionsIdea): boolean => {
+    if (!symbol || idea.ticket.underlying !== symbol) return false;
+    const resolved = legsFromTicket(idea.strategy, idea.ticket);
+    if (!resolved) return false;
+    if (!expiries.some((e) => e.expiry === idea.ticket.expiry)) return false;
+
+    pendingIdeaRef.current = { ...resolved, expiry: idea.ticket.expiry };
+    // A calendar or diagonal is traded in one kind; the ticket's legs say
+    // which, and the widget's own toggle has to agree or the pick context
+    // describes a different spread.
+    if (TIME_STRATEGIES.has(idea.strategy) && idea.ticket.legs?.[0]) {
+      setTimeKind(idea.ticket.legs[0].kind);
+    }
+    setStrategy(idea.strategy);
+    setTab("chain");
+    return true;
+  };
+  useEffect(() => {
+    const pending = pendingIdeaRef.current;
+    if (!pending) return;
+    if (expiry !== pending.expiry) setExpiry(pending.expiry);
+    if (pending.longExpiry && longChainState.expiry !== pending.longExpiry) {
+      longChainState.setExpiry(pending.longExpiry);
+    }
+  }, [expiry, setExpiry, longChainState]);
+  useEffect(() => {
+    const pending = pendingIdeaRef.current;
+    if (!pending || !chain || chain.expiry !== pending.expiry || chain.underlying !== symbol) return;
+    // A time spread also needs its far chain, or its legs mean nothing.
+    if (pending.longExpiry && longChainState.chain?.expiry !== pending.longExpiry) return;
+    manualRef.current = true;
+    setLegs(pending.legs);
+    pendingIdeaRef.current = null;
+  }, [chain, symbol, longChainState.chain]);
+
   const selection = useMemo(() => selectionOf(strategy, legs, ctx), [strategy, legs, ctx]);
 
   // The chain on screen: the long expiry's while picking the long leg of
@@ -276,6 +328,21 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           >
             Open spreads{openCount > 0 ? ` (${openCount})` : ""}
           </button>
+          {/* Not offered in Simulation mode: a replayed chain is synthetic
+            * (bid/ask derived from the last print, IV solved back out of it,
+            * no open interest), so a structure suggested on it would look
+            * far better founded than it is. */}
+          {mode !== "simulation" && (
+            <button
+              type="button"
+              className="timeframe-button"
+              aria-pressed={tab === "idea"}
+              onClick={() => setTab("idea")}
+              title="Ask Claude for option structures on this chain"
+            >
+              Idea
+            </button>
+          )}
         </div>
         {spreads.account && (
           <span className="widget-count" title="Options buying power · options trading level · data feed">
@@ -304,6 +371,8 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               onSelectSymbol={onSelectSymbol}
             />
           </>
+        ) : tab === "idea" ? (
+          <AiIdeaTab symbol={symbol} onLoad={loadIdea} />
         ) : !symbol ? (
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
         ) : (
