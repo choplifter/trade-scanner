@@ -250,10 +250,10 @@ function candleOptions(palette: ChartPalette, hollow: boolean) {
     upColor: hollow ? "transparent" : palette.up,
     downColor: palette.down,
     borderVisible: hollow,
-    borderUpColor: palette.up,
-    borderDownColor: palette.down,
-    wickUpColor: palette.up,
-    wickDownColor: palette.down,
+    borderUpColor: palette.wickUp ?? palette.up,
+    borderDownColor: palette.wickDown ?? palette.down,
+    wickUpColor: palette.wickUp ?? palette.up,
+    wickDownColor: palette.wickDown ?? palette.down,
   };
 }
 

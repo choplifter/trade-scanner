@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 
-import { CHART_THEMES, type ChartThemeId } from "../../api/chartTheme";
-import { isDark, resetSettings, type AppSettings } from "../../api/settings";
+import {
+  CHART_THEMES,
+  CUSTOM_COLOR_FIELDS,
+  CUSTOM_THEME_META,
+  customColorsFrom,
+  type ChartPalette,
+  type ChartThemeId,
+  type CustomColors,
+} from "../../api/chartTheme";
+import { getCustomPalette, isDark, resetSettings, type AppSettings } from "../../api/settings";
 import type { SettingsTab } from "../../api/settingsDialog";
 import { useSettings } from "../../hooks/useSettings";
 import { TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
@@ -32,18 +40,76 @@ interface SettingsDialogProps {
   currentUserId?: number;
 }
 
-/** Two candles in a theme's colours, for the scheme tiles. */
+/** Two candles in a theme's colours, for the scheme tiles. The Custom
+ * tile draws the colours being edited, so a picker change shows at once. */
 function ThemeSwatch({ id }: { id: ChartThemeId }) {
-  const theme = CHART_THEMES.find((t) => t.id === id)!;
-  const p = isDark() ? theme.dark : theme.light;
+  let p: ChartPalette;
+  if (id === "custom") {
+    p = getCustomPalette();
+  } else {
+    const theme = CHART_THEMES.find((t) => t.id === id)!;
+    p = isDark() ? theme.dark : theme.light;
+  }
   const hollow = p.forceHollow === true;
+  const wickUp = p.wickUp ?? p.up;
+  const wickDown = p.wickDown ?? p.down;
   return (
     <svg className="settings-swatch" viewBox="0 0 40 28" aria-hidden="true">
-      <line x1="12" y1="3" x2="12" y2="25" stroke={p.up} strokeWidth="1.5" />
-      <rect x="7" y="8" width="10" height="12" fill={hollow ? "transparent" : p.up} stroke={p.up} strokeWidth="1.5" />
-      <line x1="28" y1="4" x2="28" y2="26" stroke={p.down} strokeWidth="1.5" />
-      <rect x="23" y="9" width="10" height="12" fill={p.down} stroke={p.down} strokeWidth="1.5" />
+      <line x1="12" y1="3" x2="12" y2="25" stroke={wickUp} strokeWidth="1.5" />
+      <rect x="7" y="8" width="10" height="12" fill={hollow ? "transparent" : p.up} stroke={wickUp} strokeWidth="1.5" />
+      <line x1="28" y1="4" x2="28" y2="26" stroke={wickDown} strokeWidth="1.5" />
+      <rect x="23" y="9" width="10" height="12" fill={p.down} stroke={wickDown} strokeWidth="1.5" />
     </svg>
+  );
+}
+
+const THEME_TILES: { id: ChartThemeId; label: string; description: string }[] = [
+  ...CHART_THEMES.map((t) => ({ id: t.id, label: t.label, description: t.description })),
+  CUSTOM_THEME_META,
+];
+
+/** The Custom scheme's colour pickers, plus "start from" a preset. */
+function CustomColorsEditor({
+  colors,
+  onChange,
+}: {
+  colors: CustomColors;
+  onChange: (next: CustomColors) => void;
+}) {
+  return (
+    <div className="settings-custom">
+      <div className="settings-custom-grid">
+        {CUSTOM_COLOR_FIELDS.map((field) => (
+          <label key={field.key} className="settings-color" title={field.hint}>
+            <input
+              type="color"
+              value={colors[field.key]}
+              onChange={(e) => onChange({ ...colors, [field.key]: e.target.value })}
+            />
+            <span>{field.label}</span>
+            <code>{colors[field.key]}</code>
+          </label>
+        ))}
+      </div>
+      <div className="settings-custom-presets">
+        <span className="order-hint">Start from</span>
+        {CHART_THEMES.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className="row-action"
+            onClick={() => onChange(customColorsFrom(t, isDark()))}
+            title={`Copy ${t.label}'s colours into the pickers`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <p className="order-hint">
+        Same colours in light and dark mode. Wicks and borders can differ from the bodies (TradingView-style
+        schemes often use a darker wick); volume is drawn half-transparent.
+      </p>
+    </div>
   );
 }
 
@@ -120,7 +186,7 @@ export function SettingsDialog({
           <div className="settings-section">
             <Row label="Chart colour scheme" hint="Candles, wicks, volume, position lines, the risk chart and the tables' up/down colours.">
               <div className="settings-themes">
-                {CHART_THEMES.map((t) => (
+                {THEME_TILES.map((t) => (
                   <button
                     key={t.id}
                     type="button"
@@ -135,6 +201,11 @@ export function SettingsDialog({
                 ))}
               </div>
             </Row>
+            {settings.chartTheme === "custom" && (
+              <Row label="Custom colours" hint="Pick each colour, or start from a preset and adjust.">
+                <CustomColorsEditor colors={settings.customColors} onChange={(next) => set("customColors", next)} />
+              </Row>
+            )}
             <Row label="Candle style" hint="Monochrome always draws rising candles hollow.">
               <Segmented
                 value={settings.candleStyle}

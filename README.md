@@ -696,7 +696,10 @@ past dates.
 - **Settings** (the header's ⚙ button; closed until clicked, remembered
   in the browser under `app:settings`): **Appearance** -- a chart colour
   scheme from five presets (Classic, TradingView, Monochrome with hollow
-  rising candles, Colour-blind blue/orange, Muted), applied at once to
+  rising candles, Colour-blind blue/orange, Muted) or **Custom** -- eight
+  colour pickers for up/down candle bodies, wicks and borders, volume and
+  the tables' positive/negative text, with "start from" any preset (for a
+  TradingView user's own scheme) -- applied at once to
   candles, wicks, volume, position and order lines, the GEX/spread/premium
   levels, the balance curve, the risk chart's areas and the tables' up/down
   colours; filled or hollow rising candles; Light / Dark / System (System

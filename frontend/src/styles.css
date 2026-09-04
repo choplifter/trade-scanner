@@ -3694,9 +3694,64 @@ td.chain-side.chain-stale {
    in one row at full size, wrapping evenly on a narrower screen. */
 .settings-themes {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
   gap: 10px;
   width: 100%;
+}
+
+/* The Custom scheme's editor: eight pickers in a grid, presets to copy. */
+.settings-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.settings-custom-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 12px;
+}
+
+.settings-color {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.settings-color input[type="color"] {
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+
+.settings-color span {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.settings-color code {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.settings-custom-presets {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .settings-theme {

@@ -6,7 +6,15 @@
  * here too, so the tables and the risk chart follow the same values the
  * charts read. */
 
-import { chartTheme, type ChartPalette, type ChartThemeId } from "./chartTheme";
+import {
+  chartTheme,
+  customPalette,
+  DEFAULT_CUSTOM_COLORS,
+  isHexColor,
+  type ChartPalette,
+  type ChartThemeId,
+  type CustomColors,
+} from "./chartTheme";
 
 export type ColorMode = "system" | "light" | "dark";
 export type CandleStyle = "filled" | "hollow";
@@ -29,6 +37,8 @@ export interface AppSettings {
   /** Width of the Options widget's ticket column in px; dragged at the
    * splitter between the chain and the ticket. */
   optionsTicketWidth: number;
+  /** The "Custom" scheme's colours (used when chartTheme is "custom"). */
+  customColors: CustomColors;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -43,6 +53,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   numberFormat: "auto",
   riskChartHeight: 200,
   optionsTicketWidth: 360,
+  customColors: { ...DEFAULT_CUSTOM_COLORS },
 };
 
 export const TICKET_MIN_WIDTH = 280;
@@ -54,7 +65,18 @@ export const RISK_CHART_MAX_HEIGHT = 800;
 const STORAGE_KEY = "app:settings";
 const VERSION = 1;
 
-const THEME_IDS: ChartThemeId[] = ["classic", "tradingview", "monochrome", "colorblind", "muted"];
+const THEME_IDS: ChartThemeId[] = ["classic", "tradingview", "monochrome", "colorblind", "muted", "custom"];
+
+function parseCustomColors(value: unknown): CustomColors {
+  const out = { ...DEFAULT_CUSTOM_COLORS };
+  if (value && typeof value === "object") {
+    for (const key of Object.keys(out) as (keyof CustomColors)[]) {
+      const candidate = (value as Record<string, unknown>)[key];
+      if (isHexColor(candidate)) out[key] = candidate;
+    }
+  }
+  return out;
+}
 
 type Listener = (settings: AppSettings) => void;
 const listeners = new Set<Listener>();
@@ -88,6 +110,7 @@ function load(): AppSettings {
         typeof parsed.optionsTicketWidth === "number" && Number.isFinite(parsed.optionsTicketWidth)
           ? Math.min(TICKET_MAX_WIDTH, Math.max(TICKET_MIN_WIDTH, Math.round(parsed.optionsTicketWidth)))
           : DEFAULT_SETTINGS.optionsTicketWidth,
+      customColors: parseCustomColors(parsed.customColors),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -110,8 +133,15 @@ export function isDark(): boolean {
 }
 
 export function getPalette(): ChartPalette {
+  if (settings.chartTheme === "custom") return customPalette(settings.customColors);
   const theme = chartTheme(settings.chartTheme);
   return isDark() ? theme.dark : theme.light;
+}
+
+/** The custom colours as a palette regardless of the selected scheme --
+ * the Custom tile's preview. */
+export function getCustomPalette(): ChartPalette {
+  return customPalette(settings.customColors);
 }
 
 /** Whether rising candles draw hollow: the style setting, or the theme's
