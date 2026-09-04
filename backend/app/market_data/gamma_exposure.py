@@ -78,6 +78,12 @@ class GexReading:
     contracts_used: int
     as_of: datetime
     by_strike: list[StrikeGex]  # ascending by strike -- the "gamma wall" profile
+    # Total open interest behind the number. contracts_used says how many
+    # strikes carried usable greeks; this says how much is actually held on
+    # them -- together they are what tells a real gamma wall from three
+    # contracts on an illiquid name. Defaulted so the older callers that
+    # build a reading by hand (tests) keep working.
+    open_interest_used: int = 0
 
 
 def compute_gex(
@@ -127,6 +133,7 @@ def compute_gex(
         contracts_used=len(contracts),
         as_of=as_of,
         by_strike=strike_rows,
+        open_interest_used=sum(open_interest for _, open_interest, _, _ in contracts),
     )
 
 

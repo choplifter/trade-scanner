@@ -297,6 +297,19 @@ body {
   gap: 4px;
 }
 
+/* What the reading rests on. Shown for every symbol, not only thin ones --
+   a wall built on 40,000 open contracts is worth knowing about too -- and
+   only coloured when the sample is small enough that the numbers deserve
+   the caveat. See isThin() in GexPlanWidget. */
+.gex-plan-support {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.gex-plan-support[data-thin] {
+  color: var(--status-warning);
+}
+
 /* Panels mode places this widget outside the resizable splits (like
    .replay-collapsed) rather than inline .widget's flex:1, which needs a
    bounded parent height it doesn't have there. */

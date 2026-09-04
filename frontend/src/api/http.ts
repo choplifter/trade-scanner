@@ -195,12 +195,17 @@ export function getMarketConditions(): Promise<MarketConditionsResponse> {
   return getJson<MarketConditionsResponse>("/meta/market-conditions");
 }
 
-export function getGex(): Promise<GexResponse> {
-  return getJson<GexResponse>("/meta/gex");
+/** Without `symbol`, every reading the backend currently holds; with one,
+ * that symbol alone -- computed there and then if it is not cached, which
+ * on a cold symbol takes seconds rather than milliseconds. */
+export function getGex(symbol?: string | null): Promise<GexResponse> {
+  return getJson<GexResponse>(symbol ? `/meta/gex?symbol=${encodeURIComponent(symbol)}` : "/meta/gex");
 }
 
-export function getGexPlan(): Promise<GexPlanResponse> {
-  return getJson<GexPlanResponse>("/meta/gex-plan");
+export function getGexPlan(symbol?: string | null): Promise<GexPlanResponse> {
+  return getJson<GexPlanResponse>(
+    symbol ? `/meta/gex-plan?symbol=${encodeURIComponent(symbol)}` : "/meta/gex-plan",
+  );
 }
 
 export interface StrategySwitch {

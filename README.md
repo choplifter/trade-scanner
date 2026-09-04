@@ -745,6 +745,31 @@ past dates.
   picks above) gets logged the moment it first appears, then tracked live against
   SPY from that instant. In-memory only, resets on restart — see **Scanner
   match history** below for the persistent version of this same check.
+- **GEX Plan** (needs Alpaca credentials): net dealer gamma exposure for
+  the **currently selected symbol** -- regime (dealers net long or short
+  gamma), the approximate gamma-flip strike, and the call/put walls, with a
+  plain-language playbook of what that regime conventionally tends to mean.
+  The same walls draw as levels on the main chart and feed a Net GEX badge
+  in its header.
+  Readings used to exist only for a hardcoded five (SPY, QQQ, TSLA, NVDA,
+  PLTR) that a background loop precomputed every 300 s; every other symbol
+  simply had no GEX. **Any optionable symbol works now.** A bigger fixed
+  list was never the answer -- one reading paginates the contract listing
+  *and* pulls the chain snapshots, which does not scale to a scanner
+  universe on a five-minute loop -- so the loop stopped being the only way
+  in: those five stay warm, and everything else is computed the first time
+  somebody looks at it and then cached for the same 300 s the loop used
+  (`app/market_data/gex_cache.py`, TTL plus one lock per symbol so a burst
+  of widgets on one ticker costs one fetch). A symbol nobody has looked at
+  before therefore takes a couple of seconds on first view, which the
+  widget says rather than showing an empty state; a symbol with no usable
+  chain is left alone for a minute before being tried again.
+  Every reading carries **what it rests on** -- the number of strikes with
+  usable greeks and the total open interest across them -- and the widget
+  marks a thin one as such. Deliberately no minimum-liquidity threshold:
+  on an illiquid name a "gamma wall" really can be a handful of contracts,
+  and reporting the sample beside the number is honest in a way that
+  silently suppressing it below some invented cutoff is not.
 - **Scanner match history**: a SQLite-backed log of every scanner match,
   keyed per symbol per trading day, so it survives backend restarts and
   accumulates over weeks instead of resetting. Tracks performance at

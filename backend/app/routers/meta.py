@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 
 from app.market_data.gamma_exposure import call_wall, gamma_flip_strike, put_wall, top_walls
 from app.market_data.gex_plan import compute_gex_plan
@@ -63,31 +63,59 @@ async def market_conditions(request: Request) -> dict:
     }
 
 
-@router.get("/gex")
-async def gex(request: Request) -> dict:
-    """Net dealer gamma exposure for each covered symbol (see
-    app.market_data.gamma_exposure.SYMBOLS) plus each symbol's top-5
-    gamma-wall strikes by |net_gex|, explicit call/put wall strikes, and the
-    approximate gamma-flip strike. Feeds the main chart's "GEX" level
-    indicator (frontend only draws it when the charted symbol is one of the
-    covered ones). `available: false` before the first refresh has
-    completed, same framing as /market-conditions.
+def _wall(row) -> dict | None:
+    return {"strike": row.strike, "net_gex": row.net_gex} if row is not None else None
+
+
+async def _readings(request: Request, symbol: str | None) -> dict:
+    """The readings a /gex or /gex-plan call is about.
+
+    Without `symbol`: everything currently held, which is what the two
+    endpoints have always returned. With one: that symbol alone, computed
+    on demand if the cache has nothing fresh -- so GEX is no longer limited
+    to app.market_data.gamma_exposure.SYMBOLS. A cold symbol costs a real
+    fetch (seconds), which is why the caller has to ask for it by name
+    rather than getting it as part of a bulk response.
     """
     engine = request.app.state.scanner_engine
-    readings = engine.gex if engine is not None else {}
+    if engine is None:
+        return {}
+    if symbol is None:
+        return engine.gex
+    reading = await engine.gex_cache.reading(symbol)
+    return {} if reading is None else {reading.symbol: reading}
 
-    def _wall(row) -> dict | None:
-        return {"strike": row.strike, "net_gex": row.net_gex} if row is not None else None
+
+@router.get("/gex")
+async def gex(request: Request, symbol: str | None = Query(default=None)) -> dict:
+    """Net dealer gamma exposure plus each symbol's top-5 gamma-wall strikes
+    by |net_gex|, explicit call/put wall strikes, and the approximate
+    gamma-flip strike. Feeds the main chart's "GEX" level indicator.
+
+    `symbol` asks for one ticker and computes it if it is not already
+    cached -- any optionable symbol, not just the warmed ones. Omitting it
+    returns every reading held, unchanged from before. `available: false`
+    when there is nothing to report (no engine yet, or the symbol has no
+    usable options chain), same framing as /market-conditions.
+
+    Each reading carries `contracts_used` and `open_interest_used`: on a
+    thin chain a "gamma wall" can rest on a handful of contracts, and the
+    number is reported with what it rests on rather than suppressed by a
+    liquidity threshold this app cannot defend.
+    """
+    readings = await _readings(request, symbol)
 
     return {
         "available": bool(readings),
         "symbols": {
-            symbol: {
+            symbol_: {
                 "spot_price": reading.spot_price,
                 "as_of": reading.as_of.isoformat(),
                 "net_gex": reading.net_gex,
                 "call_gex": reading.call_gex,
                 "put_gex": reading.put_gex,
+                "contracts_used": reading.contracts_used,
+                "open_interest_used": reading.open_interest_used,
                 "top_walls": [
                     {"strike": row.strike, "net_gex": row.net_gex}
                     for row in top_walls(reading.by_strike, n=5)
@@ -96,32 +124,31 @@ async def gex(request: Request) -> dict:
                 "put_wall": _wall(put_wall(reading.by_strike)),
                 "gamma_flip_strike": gamma_flip_strike(reading.by_strike),
             }
-            for symbol, reading in readings.items()
+            for symbol_, reading in readings.items()
         },
     }
 
 
 @router.get("/gex-plan")
-async def gex_plan(request: Request) -> dict:
+async def gex_plan(request: Request, symbol: str | None = Query(default=None)) -> dict:
     """Rule-based GEX playbook per symbol -- see app.market_data.gex_plan.
-    Same source data and `available: false` framing as /gex, just shaped
-    into a regime + plain-language playbook instead of chart levels.
+    Same source data, same on-demand `symbol` behaviour and same
+    `available: false` framing as /gex, just shaped into a regime +
+    plain-language playbook instead of chart levels.
     """
-    engine = request.app.state.scanner_engine
-    readings = engine.gex if engine is not None else {}
-
-    def _wall(row) -> dict | None:
-        return {"strike": row.strike, "net_gex": row.net_gex} if row is not None else None
+    readings = await _readings(request, symbol)
 
     symbols: dict = {}
-    for symbol, reading in readings.items():
+    for symbol_, reading in readings.items():
         plan = compute_gex_plan(reading)
-        symbols[symbol] = {
+        symbols[symbol_] = {
             "regime": plan.regime,
             "near_flip": plan.near_flip,
             "gamma_flip_strike": plan.gamma_flip_strike,
             "call_wall": _wall(plan.call_wall),
             "put_wall": _wall(plan.put_wall),
             "playbook": plan.playbook,
+            "contracts_used": reading.contracts_used,
+            "open_interest_used": reading.open_interest_used,
         }
     return {"available": bool(readings), "symbols": symbols}

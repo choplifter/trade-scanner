@@ -5,15 +5,6 @@ import { getPalette } from "../api/settings";
 import type { IndicatorResult } from "../types/alpaca";
 import type { GexSymbolReading } from "../types/gex";
 
-// Mirrors backend app.market_data.gamma_exposure.SYMBOLS -- kept as one
-// list here rather than duplicating the check in both ChartWidget and
-// GexPlanWidget, so the two can't drift apart.
-const GEX_SYMBOLS = new Set(["SPY", "QQQ", "TSLA", "NVDA", "PLTR"]);
-
-export function isGexSymbol(symbol: string | null): symbol is string {
-  return symbol != null && GEX_SYMBOLS.has(symbol);
-}
-
 const REFRESH_MS = 5 * 60_000; // matches backend's gex_refresh_interval (300s)
 // Matches the light-theme hex values CandleChart's own position lines use
 // (POSITION_TARGET_COLOR/POSITION_STOP_COLOR) -- this chart's price-line
@@ -31,13 +22,18 @@ export function negativeColor(): string {
 export const FLIP_COLOR = "#8a6fd6";
 
 /**
- * The current GEX reading for `symbol` (only computed for a fixed symbol
- * list -- see backend app.market_data.gamma_exposure.SYMBOLS, and
- * isGexSymbol below), or `null` for any other symbol. Fetches the whole
- * /api/meta/gex response (every covered symbol) and picks out `symbol`'s
- * row -- one-shot-fetch-on-symbol-change like useSymbolInfo, plus a poll
- * interval so a chart that stays mounted on a covered symbol far longer than
- * the server's refresh cadence still picks up new readings.
+ * The current GEX reading for `symbol`, asked for by name so the backend
+ * computes it if it has nothing cached -- any optionable ticker, not the
+ * five that used to be precomputed. One-shot-fetch-on-symbol-change like
+ * useSymbolInfo, plus a poll interval so a chart left on one symbol far
+ * longer than the server's refresh cadence still picks up new readings.
+ *
+ * `loading` matters here in a way it did not before: a symbol the backend
+ * has never computed costs a real chain fetch, so the first answer is
+ * seconds away rather than milliseconds, and a consumer that renders
+ * nothing while it waits looks broken. A poll refresh does not set it --
+ * only the first fetch for a symbol, so a live chart doesn't flicker every
+ * five minutes.
  *
  * Extracted out of useGexLevels so a consumer that wants the raw numbers
  * (e.g. a net-GEX readout) doesn't have to unpack them back out of an
@@ -45,25 +41,38 @@ export const FLIP_COLOR = "#8a6fd6";
  * consumer, same as every other small per-widget hook in this app (e.g.
  * useMarketConditions).
  */
-export function useGexReading(symbol: string | null): GexSymbolReading | null {
+export function useGexReading(symbol: string | null): {
+  reading: GexSymbolReading | null;
+  loading: boolean;
+} {
   const [reading, setReading] = useState<GexSymbolReading | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!symbol) {
       setReading(null);
+      setLoading(false);
       return;
     }
 
     let cancelled = false;
-    const fetchGex = () => {
-      getGex()
+    // The previous symbol's walls are not this symbol's; clear them rather
+    // than leaving them on the chart while the new ones are fetched.
+    setReading(null);
+    setLoading(true);
+    const fetchGex = (first: boolean) => {
+      getGex(symbol)
         .then((res) => {
-          if (!cancelled) setReading(res.symbols[symbol] ?? null);
+          if (cancelled) return;
+          setReading(res.symbols[symbol] ?? null);
+          if (first) setLoading(false);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (!cancelled && first) setLoading(false);
+        });
     };
-    fetchGex();
-    const interval = setInterval(fetchGex, REFRESH_MS);
+    fetchGex(true);
+    const interval = setInterval(() => fetchGex(false), REFRESH_MS);
 
     return () => {
       cancelled = true;
@@ -71,7 +80,7 @@ export function useGexReading(symbol: string | null): GexSymbolReading | null {
     };
   }, [symbol]);
 
-  return reading;
+  return { reading, loading };
 }
 
 /**
@@ -86,7 +95,16 @@ export function useGexReading(symbol: string | null): GexSymbolReading | null {
  * with the more specific label, not twice at the same price.
  */
 export function useGexLevels(symbol: string | null): IndicatorResult | null {
-  const reading = useGexReading(symbol);
+  const { reading } = useGexReading(symbol);
+  return gexLevelsFrom(reading);
+}
+
+/** The level set for a reading already in hand. Pure, so a consumer that
+ * already calls useGexReading (for the net-GEX readout, say) builds its
+ * levels from that one reading instead of running a second poller -- which
+ * now that readings are fetched per symbol on demand would mean a second
+ * round trip on every symbol change, not just a duplicated parse. */
+export function gexLevelsFrom(reading: GexSymbolReading | null): IndicatorResult | null {
   if (!reading) return null;
 
   const series: Record<string, number> = {};

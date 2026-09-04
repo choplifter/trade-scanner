@@ -4,7 +4,18 @@ export interface GexWall {
   net_gex: number;
 }
 
-export interface GexSymbolReading {
+/** What a reading rests on. On a thinly-traded chain a "gamma wall" can be
+ * a handful of contracts, so the numbers come with their own sample size
+ * rather than being suppressed by a liquidity threshold -- see the backend
+ * note in app/market_data/gex_cache.py. */
+export interface GexSupport {
+  /** Strikes that carried usable greeks. */
+  contracts_used: number;
+  /** Total open interest across them. */
+  open_interest_used: number;
+}
+
+export interface GexSymbolReading extends GexSupport {
   spot_price: number;
   as_of: string;
   net_gex: number;
@@ -18,14 +29,16 @@ export interface GexSymbolReading {
   gamma_flip_strike: number | null;
 }
 
-/** GET /api/meta/gex -- fixed symbol list, see app.market_data.gamma_exposure.SYMBOLS. */
+/** GET /api/meta/gex. Without `symbol` every reading currently held; with
+ * one, that symbol alone, computed on demand -- any optionable ticker, not
+ * a fixed list. */
 export interface GexResponse {
   available: boolean;
   symbols: Record<string, GexSymbolReading>;
 }
 
 /** One symbol's rule-based playbook -- see backend app.market_data.gex_plan.GexPlan. */
-export interface GexPlanSymbol {
+export interface GexPlanSymbol extends GexSupport {
   regime: "positive" | "negative";
   near_flip: boolean;
   gamma_flip_strike: number | null;
@@ -34,7 +47,8 @@ export interface GexPlanSymbol {
   playbook: string[];
 }
 
-/** GET /api/meta/gex-plan -- same symbol list and availability framing as GexResponse. */
+/** GET /api/meta/gex-plan -- same on-demand `symbol` behaviour and
+ * availability framing as GexResponse. */
 export interface GexPlanResponse {
   available: boolean;
   symbols: Record<string, GexPlanSymbol>;

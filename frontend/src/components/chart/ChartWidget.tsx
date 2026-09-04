@@ -11,8 +11,7 @@ import { useSpreadLevels } from "../../hooks/useSpreadLevels";
 import { useTradingMode } from "../../hooks/useTradingMode";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import {
-  isGexSymbol,
-  useGexLevels,
+  gexLevelsFrom,
   useGexReading,
 } from "../../hooks/useGexLevels";
 import type { ChartFocus } from "../../types/screener";
@@ -333,15 +332,18 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   );
   const replay = useReplayBars(usingReplayBars ? symbol : null, replaySession?.as_of ?? null);
   const replayIndicators = useReplayIndicators(usingReplayBars && !contract ? symbol : null, replaySession?.as_of ?? null);
-  // GEX is only computed backend-side for a fixed symbol list (see
-  // app.market_data.gamma_exposure.SYMBOLS) -- same conditional-fetch shape
-  // as isReplaySymbol/usingReplayBars just above.
-  const symbolHasGex = isGexSymbol(symbol);
-  const gexLevels = useGexLevels(symbolHasGex ? symbol : null);
+  // Any optionable underlying has a GEX reading now -- the backend computes
+  // one on request rather than only for a fixed list. Skipped while the
+  // chart shows a contract's premium: the walls belong to the underlying's
+  // price axis, and asking for an OCC symbol would only buy a failed fetch.
+  // Same conditional-fetch shape as isReplaySymbol/usingReplayBars above.
+  const { reading: gexReading } = useGexReading(contract ? null : symbol);
+  // One reading, both consumers: the chart levels and the net-GEX badge
+  // below. Two hooks here would mean two round trips per symbol change.
+  const gexLevels = gexLevelsFrom(gexReading);
   // The Options widget's strikes and armed underlying bounds, drawn like
   // the GEX walls (see useSpreadLevels).
   const spreadLevels = useSpreadLevels(symbol);
-  const gexReading = useGexReading(symbolHasGex ? symbol : null);
   // Shared with SymbolInfoWidget via context rather than a second
   // useSymbolInfo(symbol) call here -- the chart marks the same news on its
   // timeline (newsMarkers below), and two hook callers would double-fetch.

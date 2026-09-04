@@ -252,7 +252,9 @@ def _gex_wall_figure(reading) -> go.Figure:
 
 def _gex_section(gex: dict) -> html.Div:
     intro = html.P(
-        "Net dealer gamma exposure (GEX) for SPY, QQQ, TSLA, NVDA, and PLTR -- a rough gauge of how "
+        "Net dealer gamma exposure (GEX) for every symbol a reading has been "
+        "computed for -- SPY, QQQ, TSLA, NVDA and PLTR are kept warm here; the "
+        "rest are computed on request from the React dashboard. A rough gauge of how "
         "options-market positioning tends to affect moves in the underlying. "
         "Positive means dealers are estimated net long gamma and tend to dampen "
         "moves (buy dips, sell rips); negative means dealers are estimated net "

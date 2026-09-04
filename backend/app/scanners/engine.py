@@ -19,7 +19,7 @@ from app.core.config import Settings
 from app.fundamentals.cache import FundamentalsCache
 from app.market_data.bars import today_premarket_start_utc
 from app.market_data.gamma_exposure import SYMBOLS as GEX_SYMBOLS
-from app.market_data.gamma_exposure import GexReading, fetch_gex
+from app.market_data.gex_cache import GexCache
 from app.market_data.market_conditions import (
     MarketConditions,
     compute_market_conditions,
@@ -246,7 +246,11 @@ class ScannerEngine:
         self.volume_profile = VolumeProfileCache(clients)
         self.market_conditions: MarketConditions | None = None
         self._last_market_conditions_refresh: float = 0.0
-        self.gex: dict[str, GexReading] = {}
+        # Readings by symbol, computed on demand and shared with the API
+        # (routers/meta.py) -- the loop below only warms the handful that
+        # sit on the chart most often. See app.market_data.gex_cache for
+        # why a bigger fixed list was not the answer.
+        self.gex_cache = GexCache(clients, ttl=settings.gex_refresh_interval)
         self._last_gex_refresh: float = 0.0
         self.benchmark_symbol = "SPY"
         self.benchmark_price: float | None = None
@@ -708,12 +712,21 @@ class ScannerEngine:
 
         self.market_conditions = compute_market_conditions(vix, events, breadth_pct)
 
+    @property
+    def gex(self):
+        """Every GEX reading currently held -- the warmed symbols below plus
+        whatever the API has computed on demand. A property over the cache
+        rather than its own dict so the two cannot disagree."""
+        return self.gex_cache.cached()
+
     async def _refresh_gex(self) -> None:
-        """Refresh net dealer gamma exposure for each covered symbol -- see
-        app.market_data.gamma_exposure.SYMBOLS. Same not-gated-on-can_poll, slow-
-        cadence reasoning as _refresh_market_conditions; gated on
-        has_credentials (Alpaca, not FMP) since this rides entirely on
-        Alpaca's options endpoints.
+        """Keep the handful of symbols in app.market_data.gamma_exposure.SYMBOLS
+        warm -- they are the ones most often on the chart, and pre-computing
+        them means the common case never waits on a cold fetch. Every other
+        symbol is computed on request through the same cache. Same
+        not-gated-on-can_poll, slow-cadence reasoning as
+        _refresh_market_conditions; gated on has_credentials (Alpaca, not
+        FMP) since this rides entirely on Alpaca's options endpoints.
         """
         if not self.settings.has_credentials:
             return
@@ -722,13 +735,12 @@ class ScannerEngine:
             return
         self._last_gex_refresh = now
 
-        # fetch_gex is itself best-effort (catches and logs internally,
-        # returns None rather than raising), so one symbol's failure can't
-        # take the other down -- no return_exceptions needed here.
-        readings = await asyncio.gather(*(fetch_gex(self.clients, symbol) for symbol in GEX_SYMBOLS))
-        for symbol, reading in zip(GEX_SYMBOLS, readings):
-            if reading is not None:
-                self.gex[symbol] = reading
+        # The cache's refresh is best-effort all the way down (fetch_gex
+        # catches and logs internally, returning None rather than raising),
+        # so one symbol's failure can't take the others down -- no
+        # return_exceptions needed here, and a failed refresh leaves the
+        # previous reading in place.
+        await asyncio.gather(*(self.gex_cache.refresh(symbol) for symbol in GEX_SYMBOLS))
 
     async def _merge_backstop_into_fallback(self, new_symbols: dict[str, UniverseSymbol]) -> None:
         """Fold freshly backstop-admitted symbols into the closed-market
