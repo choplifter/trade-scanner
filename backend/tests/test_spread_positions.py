@@ -156,3 +156,50 @@ def test_covered_call_needs_the_shares():
     # Shares of another symbol do not count.
     other = group_spreads([short_call], equity_positions=[_pos("QQQ", 500, "700", asset_class="us_equity")], today=TODAY)[0]
     assert other.strategy == "broken"
+
+
+def test_a_condor_plus_a_later_long_put_are_two_groups_not_five_legs():
+    # The five-leg "custom" row this used to make broke every downstream
+    # request (payoff, close, triggers), which take four legs at most.
+    groups = group_spreads(
+        [
+            _pos("SPY260908P00755000", 1, "0.5"),
+            _pos("SPY260908P00760000", -1, "1.0"),
+            _pos("SPY260908C00780000", -1, "1.0"),
+            _pos("SPY260908C00785000", 1, "0.5"),
+            _pos("SPY260908P00770000", 1, "2.4"),
+        ],
+        today=TODAY,
+    )
+    assert [(g.strategy, len(g.legs), g.qty, g.broken) for g in groups] == [
+        ("iron_condor", 4, 1, False),
+        ("long_put", 1, 1, False),
+    ]
+    assert [g.id for g in groups] == ["SPY:2026-09-08", "SPY:2026-09-08:1"]
+    assert groups[0].net_entry == -1.0 and groups[1].net_entry == 2.4
+
+
+def test_a_vertical_plus_a_stray_long_leg_is_peeled_apart():
+    groups = group_spreads(
+        [
+            _pos("SPY260918P00745000", -2, "2.10"),
+            _pos("SPY260918P00740000", 2, "1.10"),
+            _pos("SPY260918C00760000", 1, "0.9"),
+        ],
+        today=TODAY,
+    )
+    assert [(g.strategy, g.qty) for g in groups] == [("bull_put", 2), ("long_call", 1)]
+
+
+def test_unrecognisable_legs_stay_one_group_up_to_four_then_split_singly():
+    # Two short calls without shares: no known shape, still one row.
+    groups = group_spreads(
+        [_pos("SPY260918C00745000", -1, "3"), _pos("SPY260918C00750000", -1, "1")], today=TODAY
+    )
+    assert len(groups) == 1 and groups[0].strategy == "custom"
+    # Five long calls at different strikes: no structure, one row each.
+    groups = group_spreads(
+        [_pos(f"SPY260918C00{strike}000", 1, "1") for strike in (740, 745, 750, 755, 760)], today=TODAY
+    )
+    assert len(groups) == 5 and all(g.strategy == "long_call" for g in groups)
+    assert len({g.id for g in groups}) == 5

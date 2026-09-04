@@ -17,6 +17,7 @@ testable without the SDK.
 import math
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from itertools import combinations
 
 from app.options.occ import Kind, try_parse_occ
 from app.services.market_clock import ET
@@ -170,6 +171,54 @@ def classify(legs: list[SpreadPositionLeg]) -> tuple[str, int, bool]:
     if not balanced:
         return "broken", qty, True
     return "custom", qty, False
+
+
+def _sorted(legs) -> list[SpreadPositionLeg]:
+    return sorted(legs, key=lambda leg: (leg.strike, leg.kind))
+
+
+def split_by_shape(legs: list[SpreadPositionLeg]) -> list[tuple[list[SpreadPositionLeg], str, int, bool]]:
+    """One expiry's legs as the structures they were opened as: [(legs,
+    strategy, qty, broken), ...].
+
+    The legs of one expiry used to be one group whatever their shape. An
+    iron condor plus a long put bought later then showed as one five-leg
+    "custom" row -- and nothing downstream (the payoff, the close ticket,
+    an MLEG order) takes more than four legs. So when the legs as a whole
+    are no known structure, peel recognised ones off (largest first, so a
+    condor is found before its two verticals), and keep whatever is left as
+    one custom/broken group as before, or as single-leg groups if even that
+    would be too many legs."""
+    legs = _sorted(legs)
+    strategy, qty, broken = classify(legs)
+    if len(legs) <= 1 or (not broken and strategy != "custom"):
+        return [(legs, strategy, qty, broken)]
+
+    parts: list[tuple[list[SpreadPositionLeg], str, int, bool]] = []
+    remaining = list(legs)
+    for size in (4, 3, 2):
+        found = True
+        while found and len(remaining) >= size:
+            found = False
+            for combo in combinations(remaining, size):
+                part = _sorted(combo)
+                part_strategy, part_qty, part_broken = classify(part)
+                if part_broken or part_strategy == "custom":
+                    continue
+                parts.append((part, part_strategy, part_qty, part_broken))
+                taken = {leg.symbol for leg in part}
+                remaining = [leg for leg in remaining if leg.symbol not in taken]
+                found = True
+                break
+    if not parts and len(remaining) <= 4:
+        return [(legs, strategy, qty, broken)]
+    if remaining:
+        if len(remaining) <= 4:
+            parts.append((remaining, *classify(remaining)))
+        else:
+            parts.extend(([leg], *classify([leg])) for leg in remaining)
+    parts.sort(key=lambda part: (part[0][0].strike, part[0][0].kind))
+    return parts
 
 
 def _leg_from_position(position: dict) -> SpreadPositionLeg | None:
@@ -327,10 +376,14 @@ def group_spreads(
             if leg.expiry is not None:
                 per_expiry.setdefault(leg.expiry, []).append(leg)
         for expiry, expiry_legs in sorted(per_expiry.items()):
-            expiry_legs.sort(key=lambda leg: (leg.strike, leg.kind))
-            strategy, qty, broken = classify(expiry_legs)
-            groups.append(
-                _group(underlying, expiry_legs[0].root, expiry, expiry_legs, strategy, qty, broken, today, account)
-            )
+            for index, (part, strategy, qty, broken) in enumerate(split_by_shape(expiry_legs)):
+                # The first part keeps the id an expiry's single group always
+                # had; the others are told apart by their position.
+                groups.append(
+                    _group(
+                        underlying, part[0].root, expiry, part, strategy, qty, broken, today, account,
+                        id_suffix=f":{index}" if index else "",
+                    )
+                )
     groups.sort(key=lambda g: (g.underlying, g.expiry, g.id))
     return groups
