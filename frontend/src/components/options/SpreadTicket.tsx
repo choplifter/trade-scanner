@@ -204,8 +204,17 @@ export function prefillLimit(mid: number, natural: number | null, mode = getSett
   return mode === "natural" && natural != null ? natural : mid;
 }
 
-/** Mid | Natural: which price the tickets prefill. Persists in settings. */
-export function LimitModeToggle({ onChange }: { onChange?: (mode: "mid" | "natural") => void }) {
+/** Mid | Natural: which price the tickets prefill. Persists in settings.
+ * `disabled` while there is no priced preview to read a mid or natural
+ * from: a click then has nothing to fill, and a button that does nothing
+ * reads as broken where a greyed one reads as "not yet". */
+export function LimitModeToggle({
+  onChange,
+  disabled = false,
+}: {
+  onChange?: (mode: "mid" | "natural") => void;
+  disabled?: boolean;
+}) {
   const [mode, setMode] = useState(getSettings().optionsLimitMode);
   const pick = (next: "mid" | "natural") => {
     updateSettings({ optionsLimitMode: next });
@@ -217,12 +226,16 @@ export function LimitModeToggle({ onChange }: { onChange?: (mode: "mid" | "natur
       className="short-target-mode"
       role="group"
       aria-label="Limit prefill"
-      title="Mid: better price, may rest unfilled on paper. Natural: bid/ask, fills at once."
+      title={
+        disabled
+          ? "Waiting for the preview -- there is no mid or natural to fill in yet."
+          : "Mid: better price, may rest unfilled on paper. Natural: bid/ask, fills at once."
+      }
     >
-      <button type="button" aria-pressed={mode === "mid"} onClick={() => pick("mid")}>
+      <button type="button" aria-pressed={mode === "mid"} disabled={disabled} onClick={() => pick("mid")}>
         Mid
       </button>
-      <button type="button" aria-pressed={mode === "natural"} onClick={() => pick("natural")}>
+      <button type="button" aria-pressed={mode === "natural"} disabled={disabled} onClick={() => pick("natural")}>
         Natural
       </button>
     </span>
@@ -571,6 +584,7 @@ export function SpreadTicket({
           />
         </label>
         <LimitModeToggle
+          disabled={!spread}
           onChange={(mode) => {
             // Switching the mode also re-prefills, even after a manual edit:
             // the click is the "put me at the mid / the natural" request.

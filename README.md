@@ -1270,7 +1270,11 @@ steps, and only the first is the model's:
 3. `app/ai/options_resolve.py` snaps every proposed strike onto one that is
    really listed and restores the ordering each strategy requires — a
    deterministic repair, not a second round trip: re-asking is slower,
-   costs another call and is no likelier to land on a real strike.
+   costs another call and is no likelier to land on a real strike. The
+   same step reads a calendar or diagonal off its sold leg's expiry when
+   the model stated the two expiries the other way round (a restatement of
+   one structure, not a different one); a bought leg dated *earlier* than
+   the sold one is a reverse calendar and is refused as such.
 4. `OptionsService.preview` prices the result through the same path the
    ticket uses.
 
@@ -1303,6 +1307,13 @@ look at — and `iv_rank` stays `null` until roughly a month of sessions
 exists. The prompt is told explicitly that null means *not yet known*,
 never "IV is not elevated"; the same rule applies to every other field that
 can be absent.
+
+One answer takes a while — three expiries of chain plus the context, then
+`claude-opus-5` over all of it, non-streaming — so the request is owned by
+the Options widget, not the tab: "Load into ticket" switches to the Chain
+tab and the cards are still there when you come back, and a request still
+in flight lands wherever you have gone meanwhile (the tab reads **Idea…**
+until it does).
 
 Not offered in **Simulation mode**: a replayed chain is synthetic (bid/ask
 derived from the last print, IV solved back out of it, no open interest), so

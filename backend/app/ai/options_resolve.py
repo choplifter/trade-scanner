@@ -92,8 +92,15 @@ class ProposedLeg(BaseModel):
     strike: float = Field(gt=0)
     side: Literal["buy", "sell"]
     # None means the idea's own expiry; a calendar/diagonal names the long
-    # leg's expiry here.
-    expiry: date | None = None
+    # leg's expiry here. A description, not just a comment: this is in the
+    # schema the model is shown.
+    expiry: date | None = Field(
+        default=None,
+        description=(
+            "Only for a calendar or diagonal: this leg's own expiry when it differs from the idea's. "
+            "The bought leg carries the later one. Omit for every other structure."
+        ),
+    )
     ratio: int = Field(default=1, ge=1, le=4)
 
 
@@ -312,6 +319,24 @@ def _one_of_kind(legs: list[ProposedLeg], kind: Kind, what: str) -> ProposedLeg:
     if len(matching) != 1:
         raise IdeaUnresolvable(f"{what}: expected exactly one {kind} leg, got {len(matching)}")
     return matching[0]
+
+
+def time_spread_expiry(legs: Sequence[ProposedLeg], strategy: Strategy, expiry: date) -> date:
+    """The expiry a time spread's ticket is written on -- the sold leg's.
+
+    The model is told that `expiry` is the sold leg's and that the bought
+    leg names its own, later one; when it puts an expiry on the sold leg
+    instead (the far month in `expiry`, the near one on the leg), the two
+    statements still describe one unambiguous structure, so read it rather
+    than reject it. A bought leg dated *earlier* than the sold one is a
+    different trade (a reverse calendar) and is left for _snap_time_spread
+    to refuse; and a non-time strategy has one expiry and keeps it."""
+    if strategy not in TIME_STRATEGIES:
+        return expiry
+    sold = [leg for leg in legs if leg.side == "sell" and leg.expiry is not None]
+    if len(sold) == 1:
+        return sold[0].expiry  # type: ignore[return-value]
+    return expiry
 
 
 def _snap_time_spread(

@@ -54,9 +54,16 @@ MAX_IDEAS = 3
 
 class OptionsIdea(BaseModel):
     strategy: Strategy
-    # For a calendar or diagonal this is the *short* leg's expiry, as
-    # SpreadTicket defines it; the long leg names its own.
-    expiry: date
+    # A Field description rather than a comment: this is the JSON schema
+    # the model is handed, and a comment here would never reach it. The
+    # first live run proposed a calendar with `expiry` set to the far month
+    # and nothing further out to buy, because nothing had told it otherwise.
+    expiry: date = Field(
+        description=(
+            "The structure's expiry. For a calendar or diagonal this is the SOLD (near) leg's expiry; "
+            "the bought leg names its own, later expiry on the leg itself."
+        )
+    )
     legs: list[ProposedLeg] = Field(min_length=1, max_length=4)
     headline: str
     reason: str
@@ -78,6 +85,8 @@ _SYSTEM_PROMPT = f"""You annotate the options chain of a single stock on a perso
 {_STRATEGY_LIST}
 
 Describe every structure as an explicit list of legs (kind, strike, side, and ratio where it differs from 1). Do not worry about which of these the ticket describes with strike fields and which with a legs list -- that translation is done for you afterwards, and so is the exact contract lookup. Two consequences worth knowing: a strike you name that is not listed will be moved to the nearest one that is, so name the strike you actually mean rather than a round number near it; and the sides and kinds implied by the strategy always win, so a "bull_call" is bought low and sold high no matter which order you list the legs in.
+
+A calendar or diagonal spans two of the offered expiries: put the earlier one in `expiry` (that is where the sold leg sits) and give the bought leg its own later `expiry` on the leg. Both must be expiries from the payload -- there is nothing beyond the last one offered to buy.
 
 Only propose strikes that appear in the chain you were given. Strikes outside it were removed for a reason -- untradable, one-sided, far too wide to fill, or nothing held on them -- and are not available at any price.
 

@@ -14,6 +14,7 @@ from app.ai.options_resolve import (
     condense_chain,
     snap_legs,
     ticket_from_legs,
+    time_spread_expiry,
 )
 from app.options.chain import Chain, LegQuote, StrikeRow
 from app.options.models import LEGS_STRATEGIES
@@ -352,6 +353,52 @@ def test_snap_legs_rejects_a_time_spread_whose_long_leg_is_not_further_out():
     ]
     with pytest.raises(IdeaUnresolvable):
         snap_legs(legs, _both(chain), "calendar", EXPIRY)
+
+
+def test_time_spread_expiry_reads_a_near_expiry_the_model_put_on_the_sold_leg():
+    # `expiry` was the far month and the sold leg carried the near one: the
+    # same structure, stated the other way round -- read it, don't reject it.
+    legs = [
+        ProposedLeg(kind="call", strike=750.0, side="sell", expiry=EXPIRY),
+        ProposedLeg(kind="call", strike=750.0, side="buy", expiry=FAR_EXPIRY),
+    ]
+    near = _chain(strikes=(745, 750, 755))
+    far = _chain(strikes=(745, 750, 755), expiry=FAR_EXPIRY)
+
+    expiry = time_spread_expiry(legs, "calendar", FAR_EXPIRY)
+    assert expiry == EXPIRY
+    short, long = snap_legs(legs, _both(near, far), "calendar", expiry)
+    assert short.expiry == EXPIRY and long.expiry == FAR_EXPIRY
+
+
+def test_time_spread_expiry_keeps_the_ideas_expiry_when_the_sold_leg_names_none():
+    legs = [
+        ProposedLeg(kind="call", strike=750.0, side="sell"),
+        ProposedLeg(kind="call", strike=750.0, side="buy", expiry=FAR_EXPIRY),
+    ]
+    assert time_spread_expiry(legs, "diagonal", EXPIRY) == EXPIRY
+
+
+def test_time_spread_expiry_ignores_leg_expiries_on_a_single_expiry_strategy():
+    legs = [
+        ProposedLeg(kind="put", strike=745.0, side="buy", expiry=FAR_EXPIRY),
+        ProposedLeg(kind="put", strike=750.0, side="sell", expiry=FAR_EXPIRY),
+    ]
+    assert time_spread_expiry(legs, "bull_put", EXPIRY) == EXPIRY
+
+
+def test_a_reverse_calendar_is_still_refused_after_normalising():
+    # Sold far, bought near is a different trade, not a restatement.
+    legs = [
+        ProposedLeg(kind="call", strike=750.0, side="sell", expiry=FAR_EXPIRY),
+        ProposedLeg(kind="call", strike=750.0, side="buy", expiry=EXPIRY),
+    ]
+    near = _chain(strikes=(745, 750, 755))
+    far = _chain(strikes=(745, 750, 755), expiry=FAR_EXPIRY)
+    expiry = time_spread_expiry(legs, "calendar", EXPIRY)
+    assert expiry == FAR_EXPIRY
+    with pytest.raises(IdeaUnresolvable):
+        snap_legs(legs, _both(near, far), "calendar", expiry)
 
 
 def test_snap_legs_rejects_an_expiry_that_was_never_offered():

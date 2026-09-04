@@ -26,7 +26,7 @@ import logging
 
 from app.ai.options_context import IdeaContext, gather_context
 from app.ai.options_idea import MAX_IDEAS, OptionsIdea, generate_options_ideas
-from app.ai.options_resolve import IdeaUnresolvable, snap_legs, ticket_from_legs
+from app.ai.options_resolve import IdeaUnresolvable, snap_legs, ticket_from_legs, time_spread_expiry
 from app.options.models import STRATEGY_LABELS
 from app.trading.errors import TradingError
 
@@ -51,9 +51,12 @@ def _rejected(idea: OptionsIdea, reason: str) -> dict:
 
 async def _price_one(service, context: IdeaContext, idea: OptionsIdea, qty: int) -> tuple[dict | None, dict | None]:
     """(priced idea, rejection). Exactly one of the two is not None."""
+    # A calendar's ticket is written on its sold leg's expiry; the model may
+    # have put that on the leg rather than in `expiry` (see time_spread_expiry).
+    expiry = time_spread_expiry(idea.legs, idea.strategy, idea.expiry)
     try:
-        legs = snap_legs(idea.legs, context.strikes, idea.strategy, idea.expiry)
-        ticket = ticket_from_legs(context.underlying, idea.strategy, idea.expiry, legs, qty)
+        legs = snap_legs(idea.legs, context.strikes, idea.strategy, expiry)
+        ticket = ticket_from_legs(context.underlying, idea.strategy, expiry, legs, qty)
     except IdeaUnresolvable as exc:
         return None, _rejected(idea, str(exc))
     except ValueError as exc:

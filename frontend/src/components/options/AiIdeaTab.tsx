@@ -1,11 +1,14 @@
 import { useState } from "react";
 
-import { suggestOptionsIdeas } from "../../api/options";
+import type { OptionsIdeasState } from "../../hooks/useOptionsIdeas";
 import { formatMoney, formatPrice } from "../../utils/format";
 import type { OptionsIdea, OptionsIdeaResponse } from "../../types/options";
 
 interface AiIdeaTabProps {
   symbol: string | null;
+  /** The request and its answer, owned by the widget so they outlive this
+   * tab (see hooks/useOptionsIdeas). */
+  ideas: OptionsIdeasState;
   /** Applies an idea's ticket to the widget's own strategy/expiry/legs
    * state. Returns false when the structure could not be loaded (a
    * calendar whose long expiry is not in the strip, say) so the card can
@@ -103,19 +106,10 @@ function IdeaCard({ idea, onLoad }: { idea: OptionsIdea; onLoad: (idea: OptionsI
  * annotation, not advice -- and the numbers below are the options stack's,
  * not the model's.
  */
-export function AiIdeaTab({ symbol, onLoad }: AiIdeaTabProps) {
-  const [result, setResult] = useState<OptionsIdeaResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+export function AiIdeaTab({ symbol, ideas, onLoad }: AiIdeaTabProps) {
+  const { result, loading, error } = ideas;
   const generate = () => {
-    if (!symbol) return;
-    setLoading(true);
-    setError(null);
-    suggestOptionsIdeas(symbol)
-      .then((res) => setResult(res))
-      .catch((err) => setError(String(err instanceof Error ? err.message : err)))
-      .finally(() => setLoading(false));
+    if (symbol) ideas.generate(symbol);
   };
 
   if (!symbol) {

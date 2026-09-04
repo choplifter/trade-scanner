@@ -4,6 +4,7 @@ import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, clampShortTarget, getSettings, updateSettings } from "../../api/settings";
 import { modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useOptionChain } from "../../hooks/useOptionChain";
+import { useOptionsIdeas } from "../../hooks/useOptionsIdeas";
 import { useSpreads } from "../../hooks/useSpreads";
 import {
   SHORT_DELTA_MAX,
@@ -59,6 +60,9 @@ const LONG_EXPIRY_MIN_GAP_DAYS = 7;
 export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: OptionsWidgetProps) {
   const enabled = true;
   const [tab, setTab] = useState<Tab>("chain");
+  // The Idea tab's request lives here so "Load into ticket" (which shows
+  // the Chain tab) does not throw away an answer that took minutes.
+  const ideas = useOptionsIdeas();
   const [strategy, setStrategy] = useState<Strategy>("bull_put");
   const [width, setWidth] = useState(2);
   const [legs, setLegs] = useState<Legs | null>(null);
@@ -339,8 +343,9 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               aria-pressed={tab === "idea"}
               onClick={() => setTab("idea")}
               title="Ask Claude for option structures on this chain"
+              aria-busy={ideas.loading}
             >
-              Idea
+              {ideas.loading ? "Idea…" : "Idea"}
             </button>
           )}
         </div>
@@ -372,7 +377,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             />
           </>
         ) : tab === "idea" ? (
-          <AiIdeaTab symbol={symbol} onLoad={loadIdea} />
+          <AiIdeaTab symbol={symbol} ideas={ideas} onLoad={loadIdea} />
         ) : !symbol ? (
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
         ) : (
