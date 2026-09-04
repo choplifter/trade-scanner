@@ -140,6 +140,24 @@ class BrokerResolver:
         return out
 
 
+async def operator_data_credentials(user_store, store: BrokerStore) -> BrokerCredentials | None:
+    """The key pair market data runs on: the first admin's stored *paper*
+    pair (Settings → Broker), so the operator never has to touch .env to
+    rotate keys. None means .env decides. The data subscription is bound
+    to the account, which is the same one either way."""
+    admins = [u for u in await user_store.list_users() if u.get("is_admin")]
+    if not admins:
+        return None
+    admin = min(admins, key=lambda u: int(u["id"]))
+    row = await store.get(int(admin["id"]), "paper")
+    if row is None:
+        return None
+    return BrokerCredentials(
+        key_id=row["api_key_id"], secret=row["api_secret_key"], paper=True, source="user",
+        key_hint=row["key_hint"], verified_account_number=row.get("verified_account_number"),
+    )
+
+
 def account_summary(raw) -> dict:
     """The few account fields the broker tab shows."""
     get = (lambda k: getattr(raw, k, None)) if not isinstance(raw, dict) else raw.get

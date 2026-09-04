@@ -25,5 +25,15 @@ export interface BrokerStatusResponse {
   is_admin: boolean;
   trading_enabled: boolean;
   trading_allow_live: boolean;
-  market_data_source: "operator";
+  /** Which key pair the running backend built its market-data clients
+   * from: the first admin's stored paper pair ("admin") or backend/.env
+   * ("env"). `restart_required` when the stored admin pair differs from
+   * the running one -- market data switches at the next restart. */
+  market_data: {
+    source: "admin" | "env";
+    key_hint: string | null;
+    restart_required: boolean;
+    next_source: "admin" | "env";
+    next_key_hint: string | null;
+  };
 }

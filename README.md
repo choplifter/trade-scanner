@@ -861,9 +861,15 @@ typed 503, `broker_not_connected`) until they enter their own key pair in
   when the owner has no keys for that account). The trading widget's badge
   shows the connected keys (`PAPER · …ABCD`).
 - **What stays the operator's:** all market data -- bars, streams, chains,
-  snapshots, news, screener, the universe, GEX -- runs on the `.env` data
-  subscription. Contract lists via the trading endpoint
-  (`get_option_contracts`, assets) do too; they are reference data.
+  snapshots, news, screener, the universe, GEX -- runs on the operator's
+  key pair: the **first admin's stored paper pair** from Settings → Broker
+  when there is one, else the `.env` keys. Chosen once at startup (the
+  data clients and websocket streams live for the process), so after
+  rotating keys in the dialog the Broker tab says "restart the backend"
+  for market data; trading uses the new keys at once. With stored admin
+  keys the `.env` pair is optional. Contract lists via the trading
+  endpoint (`get_option_contracts`, assets) use the same pair; they are
+  reference data.
 - **Storage:** `user_broker_keys` in the same sqlite file, the secret
   encrypted with Fernet under a key derived (HKDF) from
   `BROKER_ENCRYPTION_KEY`, or from `SESSION_SECRET_KEY` when that is not

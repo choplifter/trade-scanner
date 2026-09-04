@@ -52,12 +52,35 @@ async def broker_status(request: Request, user: dict = Depends(get_current_user)
         except Exception:
             logger.exception("Broker status failed for %s", account)
             accounts[account] = {"account": account, "connected": False, "source": None, "key_hint": None, "error": "status check failed"}
+    # Market data: which pair the running process was built with, and
+    # whether a restart would pick up a different one (the first admin's
+    # stored paper pair, else .env -- see main.py).
+    running = dict(getattr(request.app.state, "market_data_keys", {}) or {})
+    running_hint = running.get("key_hint")
+    wanted_hint = None
+    wanted_source = "env"
+    try:
+        from app.broker.resolver import operator_data_credentials
+
+        creds = await operator_data_credentials(request.app.state.user_store, request.app.state.broker_store)
+        if creds is not None:
+            wanted_hint, wanted_source = creds.key_hint, "admin"
+        elif getattr(request.app.state, "env_data_key_hint", None):
+            wanted_hint = request.app.state.env_data_key_hint
+    except Exception:
+        logger.exception("Market data key lookup failed")
     return {
         "accounts": accounts,
         "is_admin": bool(user.get("is_admin")),
         "trading_enabled": settings.trading_enabled,
         "trading_allow_live": settings.trading_allow_live,
-        "market_data_source": "operator",
+        "market_data": {
+            "source": running.get("source", "env"),
+            "key_hint": running_hint,
+            "restart_required": wanted_source == "admin" and wanted_hint != running_hint,
+            "next_source": wanted_source,
+            "next_key_hint": wanted_hint,
+        },
     }
 
 

@@ -212,3 +212,33 @@ def test_live_availability_overrides_the_env_answer():
     assert_can_trade(env_live, "live", "LIVE")
     with pytest.raises(LiveTradingRefused):
         assert_can_trade(env_live, "live", "LIVE", live_available=False)
+
+
+# --- market data keys ---------------------------------------------------------------
+
+
+def test_market_data_runs_on_the_first_admins_stored_paper_pair(store):
+    from app.broker.resolver import operator_data_credentials
+
+    class _Users:
+        def __init__(self, users):
+            self._users = users
+
+        async def list_users(self):
+            return self._users
+
+    nobody = _Users([GUEST])
+    assert asyncio.run(operator_data_credentials(nobody, store)) is None
+    admins = _Users([{**GUEST, "id": 2}, {**ADMIN, "id": 5}, {**ADMIN, "id": 3, "username": "first"}])
+    # No stored pair yet: .env decides.
+    assert asyncio.run(operator_data_credentials(admins, store)) is None
+    asyncio.run(store.set(5, "paper", "PKLATER00005555", "s5"))
+    later = asyncio.run(operator_data_credentials(admins, store))
+    assert later is None  # the first admin (id 3) has none -> still .env, not another admin's
+    asyncio.run(store.set(3, "paper", "PKFIRST00003333", "s3"))
+    creds = asyncio.run(operator_data_credentials(admins, store))
+    assert creds is not None and creds.key_id == "PKFIRST00003333" and creds.paper is True and creds.source == "user"
+    # A live pair alone does not drive market data.
+    asyncio.run(store.delete(3, "paper"))
+    asyncio.run(store.set(3, "live", "AKFIRST00003333", "s3"))
+    assert asyncio.run(operator_data_credentials(admins, store)) is None

@@ -227,6 +227,27 @@ export function BrokerTab() {
       {!status && !error && <p className="order-hint">Checking…</p>}
       {status && (
         <>
+          <div className="broker-card broker-data">
+            <div className="broker-card-head">
+              <span className="broker-card-title">Market data</span>
+              <span className={`broker-state${status.market_data.key_hint ? " connected" : ""}`}>
+                {status.market_data.key_hint
+                  ? `● keys …${status.market_data.key_hint} (${status.market_data.source === "admin" ? "admin's stored paper pair" : "backend/.env"})`
+                  : "○ no keys"}
+              </span>
+            </div>
+            <p className="order-hint">
+              Charts, chains, news and the scanner run on the operator's key pair: the first admin's paper keys
+              from this dialog, or backend/.env when none are stored. The data subscription is tied to that
+              account.
+            </p>
+            {status.market_data.restart_required && (
+              <p className="order-rejection">
+                Restart the backend to switch market data to the stored admin keys (…
+                {status.market_data.next_key_hint}). Trading already uses them.
+              </p>
+            )}
+          </div>
           <AccountCard
             account="paper"
             status={status.accounts.paper ?? null}

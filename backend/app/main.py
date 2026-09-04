@@ -15,8 +15,8 @@ from app.alpaca.universe import build_universe, list_active_equity_symbols
 from app.auth.dependency import get_current_user
 from app.auth.store import UserStore
 from app.broker.crypto import secret_box_from_settings
-from app.broker.resolver import BrokerResolver
-from app.broker.store import BrokerStore
+from app.broker.resolver import BrokerResolver, operator_data_credentials
+from app.broker.store import BrokerStore, key_hint
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.dash_app import dash_app
@@ -91,6 +91,26 @@ async def lifespan(app: FastAPI):
     broker_store = BrokerStore(settings.scanner_history_db_path, secret_box_from_settings(settings))
     await broker_store.init_schema()
     app.state.broker_store = broker_store
+
+    # Market data runs on the operator's key pair: the first admin's paper
+    # keys from Settings → Broker when there are any, else backend/.env.
+    # Chosen once here -- the data clients and streams below are built
+    # from it and live for the process, so a key change in the dialog
+    # takes effect for market data at the next restart (the broker tab
+    # says so). Trading uses new keys at once (app.broker.resolver).
+    data_creds = await operator_data_credentials(user_store, broker_store)
+    if data_creds is not None:
+        settings = settings.model_copy(
+            update={"alpaca_api_key_id": data_creds.key_id, "alpaca_api_secret_key": data_creds.secret}
+        )
+        app.state.market_data_keys = {"source": "admin", "key_hint": data_creds.key_hint}
+        logger.info("Market data keys: the admin's stored paper pair (…%s)", data_creds.key_hint)
+    else:
+        app.state.market_data_keys = {
+            "source": "env",
+            "key_hint": key_hint(settings.alpaca_api_key_id) if settings.has_credentials else None,
+        }
+    app.state.settings = settings
     app.state.broker_resolver = BrokerResolver(settings, broker_store)
 
     clients = AlpacaClients(settings)
