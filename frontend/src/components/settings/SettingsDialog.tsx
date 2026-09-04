@@ -8,6 +8,7 @@ import { TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
 import { Modal } from "../common/Modal";
 import { BrokerTab } from "./BrokerTab";
 import { HOTKEY_GROUPS } from "./hotkeys";
+import { UsersTab } from "./UsersTab";
 
 type Tab = SettingsTab;
 
@@ -16,6 +17,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "chart", label: "Chart" },
   { key: "display", label: "Display" },
   { key: "broker", label: "Broker" },
+  { key: "users", label: "Users" },
   { key: "hotkeys", label: "Hotkeys" },
 ];
 
@@ -25,6 +27,9 @@ interface SettingsDialogProps {
   /** The tab to show when opened by a widget (see api/settingsDialog.ts);
    * null keeps whatever was open last. */
   initialTab?: Tab | null;
+  /** Admins get the Users tab (user management). */
+  isAdmin?: boolean;
+  currentUserId?: number;
 }
 
 /** Two candles in a theme's colours, for the scheme tiles. */
@@ -86,7 +91,13 @@ const SAMPLE = 1234.56;
 /** The Settings dialog. Every control writes straight into the settings
  * store (api/settings.ts); nothing is staged, there is no Save button,
  * and every open chart and table follows at once. */
-export function SettingsDialog({ open, onClose, initialTab = null }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onClose,
+  initialTab = null,
+  isAdmin = false,
+  currentUserId = 0,
+}: SettingsDialogProps) {
   const [settings, update] = useSettings();
   const [tab, setTab] = useState<Tab>("appearance");
   useEffect(() => {
@@ -98,7 +109,7 @@ export function SettingsDialog({ open, onClose, initialTab = null }: SettingsDia
     <Modal open={open} title="Settings" onClose={onClose} className="modal-panel-wide">
       <div className="settings-dialog">
         <div className="timeframe-selector settings-tabs">
-          {TABS.map((t) => (
+          {TABS.filter((t) => t.key !== "users" || isAdmin).map((t) => (
             <button key={t.key} type="button" className="timeframe-button" aria-pressed={tab === t.key} onClick={() => setTab(t.key)}>
               {t.label}
             </button>
@@ -218,6 +229,8 @@ export function SettingsDialog({ open, onClose, initialTab = null }: SettingsDia
         )}
 
         {tab === "broker" && <BrokerTab />}
+
+        {tab === "users" && isAdmin && <UsersTab currentUserId={currentUserId} />}
 
         {tab === "hotkeys" && (
           <div className="settings-section settings-hotkeys">

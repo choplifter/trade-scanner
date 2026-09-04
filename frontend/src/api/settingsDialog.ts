@@ -8,7 +8,7 @@
  *   waiting for their next poll.
  */
 
-export type SettingsTab = "appearance" | "chart" | "display" | "broker" | "hotkeys";
+export type SettingsTab = "appearance" | "chart" | "display" | "broker" | "users" | "hotkeys";
 
 type OpenListener = (tab: SettingsTab | null) => void;
 const openListeners = new Set<OpenListener>();

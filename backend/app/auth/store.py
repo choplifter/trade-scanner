@@ -137,6 +137,36 @@ class UserStore:
     async def set_admin(self, user_id: int, is_admin: bool) -> None:
         await asyncio.to_thread(self._set_admin_sync, user_id, is_admin)
 
+    def _set_display_name_sync(self, user_id: int, display_name: str) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (display_name, user_id))
+
+    async def set_display_name(self, user_id: int, display_name: str) -> None:
+        await asyncio.to_thread(self._set_display_name_sync, user_id, display_name)
+
+    def _set_password_sync(self, user_id: int, password: str) -> None:
+        password_hash, salt = hash_password(password)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?", (password_hash, salt, user_id)
+            )
+
+    async def set_password(self, user_id: int, password: str) -> None:
+        """An admin resetting someone's password (Settings → Users); the
+        old one is not needed, there is no self-service change."""
+        await asyncio.to_thread(self._set_password_sync, user_id, password)
+
+    def _delete_sync(self, user_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            return cur.rowcount > 0
+
+    async def delete_user(self, user_id: int) -> bool:
+        """Removes the login. Its session cookie dies with it (the auth
+        dependency resolves the id on every request); its rows elsewhere
+        (journal, sim book, watchlist) stay, orphaned and unreachable."""
+        return await asyncio.to_thread(self._delete_sync, user_id)
+
     async def verify_login(self, username: str, password: str) -> dict | None:
         row = await self.get_by_username(username)
         if row is None:

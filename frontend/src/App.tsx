@@ -333,6 +333,8 @@ function AppShell({ user, onLogout }: AppShellProps) {
             <SettingsDialog
               open={settingsOpen}
               initialTab={settingsTab}
+              isAdmin={!!user.is_admin}
+              currentUserId={user.id}
               onClose={() => {
                 setSettingsOpen(false);
                 setSettingsTab(null);

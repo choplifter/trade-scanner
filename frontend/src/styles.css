@@ -2749,10 +2749,14 @@ a.symbol-news-headline {
   flex-direction: column;
 }
 
+/* Three columns -- symbols, headline, source/age -- so the symbols line
+   up in their own column instead of pushing every headline to a
+   different start. */
 .news-feed-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px 10px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
@@ -2767,10 +2771,13 @@ a.symbol-news-headline {
 }
 
 .news-feed-symbols {
-  flex-shrink: 0;
   display: flex;
-  gap: 4px;
-  min-width: 56px;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  padding-right: 8px;
+  align-self: stretch;
 }
 
 .news-feed-symbol {
@@ -3364,6 +3371,79 @@ td.chain-side.chain-stale {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+/* Settings → Users (admins). */
+.users-table td,
+.users-table th {
+  text-align: left;
+  padding: 6px 8px;
+}
+
+.users-table td.row-actions {
+  white-space: nowrap;
+}
+
+.users-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.users-inline input {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.users-create {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.users-create-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.users-create-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.users-create-form label.users-check {
+  flex-direction: row;
+  align-items: center;
+  padding-bottom: 6px;
+}
+
+.users-create-form input[type="text"],
+.users-create-form input[type="password"] {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-primary);
+  width: 180px;
 }
 
 .chart-widget.drop-target {

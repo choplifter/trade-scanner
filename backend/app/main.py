@@ -32,6 +32,7 @@ from app.replay.options_engine import ReplayOptionsEngineCache
 from app.replay.loop import run_replay_pacing_loop
 from app.replay.store import ReplayStore
 from app.routers import (
+    admin,
     auth,
     broker,
     meta,
@@ -332,6 +333,7 @@ app.include_router(
     dependencies=[*_auth_gate, Depends(trading.mark_live_account)],
 )
 app.include_router(broker.router)
+app.include_router(admin.router)
 app.include_router(trading_sim.router)
 app.include_router(trading_sim_options.router)
 app.include_router(replay.router)
