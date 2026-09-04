@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS trades (
     exit_order_ids TEXT NOT NULL,
     fill_count INTEGER NOT NULL,
     recorded_at TEXT NOT NULL,
-    account TEXT NOT NULL DEFAULT 'paper'
+    account TEXT NOT NULL DEFAULT 'paper',
+    multiplier INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_trades_closed_at ON trades(closed_at);
 """
@@ -57,6 +58,7 @@ _COLUMNS = (
     "exit_order_ids",
     "fill_count",
     "account",
+    "multiplier",
 )
 
 
@@ -76,6 +78,11 @@ class TradeStore:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(trades)")}
             if "account" not in columns:
                 conn.execute("ALTER TABLE trades ADD COLUMN account TEXT NOT NULL DEFAULT 'paper'")
+            # Shares per unit of qty (100 for an option contract); rows from
+            # before it existed are stocks, or get corrected by the next
+            # sync's upsert.
+            if "multiplier" not in columns:
+                conn.execute("ALTER TABLE trades ADD COLUMN multiplier INTEGER NOT NULL DEFAULT 1")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_trades_account_closed_at ON trades(account, closed_at)"
             )
