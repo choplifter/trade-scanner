@@ -1359,6 +1359,67 @@ refuses a call that arrives anyway (`replay_active`).
 Framed as descriptive annotation, not investment advice — the same line the
 AI Trade Ideas widget and the GEX plan draw.
 
+### Optimizer: structures for a price target
+
+The Options widget's fourth tab is OptionStrat's optimizer on this app's
+own pipeline. Name a **target** (one price or a range), a **horizon** (a
+listed expiry, or a date -- expiries before it are left out), a **budget**
+(the most the account puts up per position: a debit, or a credit
+structure's collateral) and a **max loss**, tick the strategy families to
+search, and the account answers with the structures that pay best if the
+target is reached -- each with the ticket the widget loads and the preview
+that ticket would show.
+
+Four steps, three of them pure and tested without I/O
+(`app/options/optimizer.py`; `app/options/optimize.py` orchestrates):
+
+1. **Chains.** The horizon's expiry and two later ones, condensed to the
+   strikes that are listed, tradable, quoted on both sides, not absurdly
+   wide and actually held -- the same `condense_chain` the Idea tab feeds
+   the model. The chain cache holds ±10 % of spot and 60 days, so a target
+   further away than that has nothing to build on, and the response says
+   so rather than staying quiet.
+2. **Enumerate.** Long calls and puts; verticals up to three strikes wide in
+   both orientations; iron condors with short deltas 0.10–0.40 and equal
+   wings; call, put and iron flies around the target; straddles and
+   strangles; calendars where a later expiry is loaded. Income shapes only
+   when asked for (they need shares or cash the optimizer cannot see); no
+   diagonals. About a thousand candidates on a dense SPY chain, the cap
+   counted rather than silent.
+3. **Price and rank.** Each candidate's net price from the mids, its risk
+   from `pricing.spread_risk` (the ticket's own closed forms -- a debit at
+   or above the width is a mispriced shape and is dropped as such), its
+   P/L at every point of the target on the horizon date from
+   `payoff.leg_value`, the risk chart's own Black-Scholes with each leg's IV
+   held still. **Return on risk** is the P/L at the *worst* point of the
+   target over what the account puts up -- "wherever in your range it
+   lands, at least this" -- then the budget and max-loss filters, and at
+   most three per strategy and expiry so a list is not twelve bull calls
+   one strike apart.
+4. **Preview.** Only the dozen finalists go through `OptionsService.preview`,
+   with the account fetched once and passed in (`preview(ticket,
+   account=)`). The card's numbers are recomputed from the previewed legs
+   and the ticket's own limit, so a card can never disagree with the
+   ticket it loads into.
+
+**Everything dropped is counted with its reason** -- the line under the
+cards reads like "798 candidates · 786 priced · 361 lose at the target · 8
+mispriced shape · 4 quoted the wrong way" -- because "nothing reaches this
+target" and "everything was over budget" are different answers. Finalists
+the account refuses land in `rejected` with the message, as the Idea tab's
+do.
+
+`POST /api/trading/options/optimize` (and `/live/`, `/sim/`). The
+simulation endpoint runs during a **history replay**, unlike `/idea`:
+nothing enters the ranking but the chain the ticket itself is priced from
+at the replayed moment, so there is no look-ahead to refuse -- but the
+response carries a warning saying what a replayed chain is (bid/ask from
+the last print, IV solved back out of it).
+
+Return on risk is not a probability and the response says so in as many
+words. Nothing here recommends; it describes what each shape pays if the
+target is reached, and what it costs.
+
 ### Options elsewhere
 
 - **Orders tab:** option orders show as `SPY 4 Sep 765C`; a multi-leg
@@ -1421,7 +1482,25 @@ day, which is how you rehearse a strategy at the weekend.
   slider notch costs no request. Same model as the today curve -- constant
   IV per leg, no skew, no dividends, no rate -- and honest about it: the
   point is the size of what time and vol do to a short-dated option before
-  the move arrives, not the fill. The **?** button in the widget header
+  the move arrives, not the fill. A **Chart | Table** switch above the chart
+  (remembered as `riskView`) shows the same position as OptionStrat's
+  profit/loss table: rows are prices around the spot with the spot's own
+  row marked, columns the trading days from now to expiry (closes, 16:00
+  New York, shown in the display zone; weekends skipped, exchange holidays
+  not -- no calendar of them is loaded, so a holiday reads as one more day
+  of decay), each cell the model P/L there with the IV slider applied,
+  coloured on the app's heatmap scale, with a $ / % of risk switch. The
+  Time slider hides in table view because the columns are its axis.
+- **The strike rail.** Between the expiry strip and the chain: a tick per
+  listed strike, the spot marked, one draggable handle per leg coloured
+  like the chain's cells. A drag snaps to the nearest strike quoted for
+  that leg's kind and goes through `legPicker.moveLeg`, which repairs the
+  ordering the way a chain click does -- the moved leg wins, the leg it
+  would cross is pushed a strike out of the way, an iron fly's body carries
+  its wings, a calendar's strikes stay equal. Shift-drag moves every leg by
+  whole strikes with the offsets kept (`shiftLegs`; it stops at the chain's
+  edge rather than bunching), arrow keys nudge a focused handle, Shift +
+  arrows all of them. Like a click, a drag switches the auto-pick off. The **?** button in the widget header
   opens a reference for every term on the widget, from the expiry strip to
   Min credit, Mid/Natural and the sliders, plus one entry per strategy:
   what is held, debit or credit, where it makes and loses money at expiry,

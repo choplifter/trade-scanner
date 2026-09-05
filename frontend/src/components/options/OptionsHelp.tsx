@@ -30,11 +30,11 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             accounts; Simulation is the dashboard's own practice book with live prices and simulated fills. During a
             history replay the badge reads SIMULATION · REPLAY and every price is the replayed moment's.
           </dd>
-          <dt>Chain · Open spreads · Idea</dt>
+          <dt>Chain · Open spreads · Idea · Optimizer</dt>
           <dd>
-            The three views. Chain is the picker and ticket. Open spreads lists what the account holds, grouped into
+            The four views. Chain is the picker and ticket. Open spreads lists what the account holds, grouped into
             the structures they were opened as. Idea asks Claude for structures on this chain (not offered during a
-            replay).
+            replay). Optimizer searches the chain for the structures that pay best at a price target you name.
           </dd>
           <dt>BP · L3 · opra</dt>
           <dd>
@@ -51,6 +51,29 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dd>
             Every listed expiration within the next ~60 days, with days to expiry. Click one to load its chain; [ and
             ] step through them. 0d is a contract expiring today: no greeks from the feed, fastest time decay.
+          </dd>
+        </dl>
+
+        <h3>Strike rail</h3>
+        <dl>
+          <dt>Ticks · spot</dt>
+          <dd>
+            The rail under the expiry strip is the chain's price axis: one tick per listed strike, the ends labelled,
+            the spot marked in amber. It shows the expiry the chain shows.
+          </dd>
+          <dt>Handles</dt>
+          <dd>
+            One per leg of the current strategy, coloured like the chain's cells: green bought, red sold, the fly's
+            body outlined. Hover one for its name and strike. Drag it and it snaps to the nearest strike quoted for
+            that leg's kind; the ticket reprices as it moves. A leg dragged into another pushes that one a strike
+            out of the way rather than crossing it, the same rule a chain click follows.
+          </dd>
+          <dt>Shift-drag · arrows</dt>
+          <dd>
+            Hold Shift while dragging and every leg moves together by whole strikes, widths kept; the move stops at
+            the chain's edge rather than bunching the legs. With a handle focused, ← → nudge it one strike, Shift + ←
+            → nudge all of them. Like a click, a drag switches the auto-pick off until the strategy or expiry
+            changes.
           </dd>
         </dl>
 
@@ -335,6 +358,15 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
           <dt>Hover</dt>
           <dd>The readout gives the three values at the hovered price. Drag the bottom edge to resize the chart.</dd>
+          <dt>Chart · Table</dt>
+          <dd>
+            The same position as a table: rows are prices around the spot (the spot's own row marked), columns the
+            trading days from now to expiry, each cell the model P/L there with the IV slider applied, coloured on
+            the heatmap scale. Columns are closes (16:00 New York, shown in your zone); weekends are skipped,
+            exchange holidays are not, so a holiday reads as one more day of decay. The $ / % of risk switch relates
+            each cell to the position's defined maximum loss where it has one. The Time slider hides in table view,
+            since the columns are its axis.
+          </dd>
           <dt>Clock</dt>
           <dd>
             The slider's target time, the chain's last-print times and every other clock in the app are shown in the
@@ -362,6 +394,57 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dd>
             Server-side rules that close a position when the underlying crosses a price or the position's own premium
             crosses a level (a stop or a take-profit). Not broker orders: they fire only while the backend runs.
+          </dd>
+        </dl>
+
+        <h3>Optimizer</h3>
+        <dl>
+          <dt>Target · Horizon</dt>
+          <dd>
+            Where you expect the underlying, as one price or a range, and when: a listed expiry, or a date (expiries
+            before it are then left out). The target starts at the spot; the horizon must be after today, because a
+            contract expiring today has no implied volatility to price a horizon on.
+          </dd>
+          <dt>Budget · Max loss</dt>
+          <dd>
+            Per position, in dollars. Budget caps what the account puts up: the debit of a bought structure, the
+            collateral of a credit one. Max loss caps the defined maximum loss; a structure whose loss is unbounded
+            never passes it.
+          </dd>
+          <dt>Families</dt>
+          <dd>
+            Which shapes to search. Income shapes start unticked because they need shares or cash the optimizer
+            cannot see; diagonals are not searched at all (the ticket builds one by hand in a moment).
+          </dd>
+          <dt>What it does</dt>
+          <dd>
+            Loads the horizon's expiry and two later ones, keeps the strikes that are listed, tradable and quoted on
+            both sides, and enumerates every shape within sensible bounds: verticals up to three strikes wide,
+            condors with short deltas 0.10–0.40 and equal wings, flies around the target, straddles and strangles,
+            calendars where a later expiry is loaded — about a thousand candidates on a dense chain. Each is priced
+            from the mids, its risk taken from the same closed forms the ticket shows, its P/L at every point of the
+            target on the horizon date computed with the risk chart's own Black-Scholes, each leg's IV held still.
+            The dozen best then go through the ticket's own preview, and the cards show that preview's numbers.
+          </dd>
+          <dt>Return on risk</dt>
+          <dd>
+            The P/L at the worst point of the target divided by what the account puts up — "wherever in your range
+            it lands, at least this many times the risk". A ranking of payoff if you are right, at one price and
+            date with IV unchanged. It is not a probability, and the optimizer does not say how likely the target
+            is.
+          </dd>
+          <dt>The line below the cards</dt>
+          <dd>
+            Every shape that was enumerated is either on a card or counted there with its reason: over budget, lose
+            at the target, no market, no IV, quoted the wrong way, mispriced, or beyond the candidate cap. "Nothing
+            reaches this target" and "everything was over budget" are different answers. Finalists the account
+            refuses (an options level, a ceiling) are listed with the refusal.
+          </dd>
+          <dt>In a replay</dt>
+          <dd>
+            Offered, unlike Idea: nothing enters the ranking but the chain the ticket itself is priced from at the
+            replayed moment. That chain is synthetic — bid/ask derived from the last print, IV solved back out of it
+            — and a warning above the cards says so.
           </dd>
         </dl>
 
