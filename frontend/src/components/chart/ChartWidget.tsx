@@ -970,8 +970,12 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
             focusTrade={focus && focus.symbol === symbol ? (focus.trade ?? null) : null}
             // News markers only where a bar is finer than a session: the
             // list covers the last few days, so on daily+ charts every
-            // story would pile onto the newest one or two candles.
-            news={option.kind === "intraday" ? newsMarkers : []}
+            // story would pile onto the newest one or two candles. And
+            // none while replaying: the headlines are today's, the bars
+            // end at the replay clock, so every story is "newer than the
+            // last bar" and clamps to it -- a pin that walks forward one
+            // candle per tick, about news the replayed day never had.
+            news={option.kind === "intraday" && !usingReplayBars ? newsMarkers : []}
             onNewsClick={onNewsClick}
           />
         )}
