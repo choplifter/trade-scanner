@@ -17,9 +17,11 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.ai.options_suggest import suggest_options_ideas
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, SpreadTicket, TriggerCreate
 from app.options.occ import try_parse_occ
+from app.routers.trading_options import IdeaRequest
 from app.routers.trading_sim import _replay_seam
 from app.trading.errors import TradingError
 from app.trading.guards import limits_for
@@ -236,6 +238,60 @@ async def close_spread(body: CloseSpreadRequest, request: Request, user: dict = 
 
 
 # --- triggers -----------------------------------------------------------------
+
+
+@router.post("/idea")
+async def suggest_idea(body: IdeaRequest, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """The options suggestion over the simulated book -- same four steps
+    as routers/trading_options.py's /idea (see app.ai.options_suggest),
+    priced through this service so collateral and level are the sim
+    book's. Simulation without a replay shows the live chain, so a
+    structure proposed here is as well founded as one on the paper
+    account; only the fill is simulated.
+
+    Refused during a history replay: that chain is synthetic (bid/ask
+    derived from the last print, IV solved back out of it, no open
+    interest) and the rest of the context -- GEX, news, earnings, IV
+    history -- is today's, which for a past date is look-ahead. A
+    suggestion built on that would read far better founded than it is.
+    The widget hides the tab while a session is active; this is the same
+    answer for a call that arrives anyway.
+    """
+    anthropic_client = getattr(request.app.state, "anthropic_client", None)
+    if anthropic_client is None:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
+    if await _replay_seam(request, user["id"]) is not None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "replay_active",
+                "message": (
+                    "Not offered during a history replay: the replayed chain is synthetic and the "
+                    "market context would be today's, not the replayed day's."
+                ),
+                "field": None,
+            },
+        )
+
+    service = await _service(request, user)
+    engine = getattr(request.app.state, "scanner_engine", None)
+    try:
+        return await suggest_options_ideas(
+            anthropic_client,
+            service,
+            request.app.state.alpaca_clients,
+            body.underlying,
+            gex_cache=getattr(engine, "gex_cache", None),
+            iv_store=getattr(request.app.state, "iv_history_store", None),
+            earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
+        )
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Sim options idea generation failed for %s", body.underlying)
+        raise HTTPException(status_code=502, detail="Failed to generate an options idea")
 
 
 @router.get("/triggers")

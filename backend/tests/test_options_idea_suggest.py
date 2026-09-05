@@ -364,3 +364,55 @@ def test_the_endpoint_rejects_a_missing_underlying(api):
     app, _ = api
 
     assert TestClient(app).post("/api/trading/options/idea", json={}).status_code == 422
+
+
+# --- the simulation endpoint ---------------------------------------------
+
+
+@pytest.fixture
+def sim_api(monkeypatch):
+    """routers/trading_sim_options mounted with its service and replay seam
+    stubbed: `_service` there is a plain coroutine, not a Depends, so it is
+    patched on the module rather than overridden."""
+    from app.auth.dependency import get_current_user
+    from app.routers import trading_sim_options
+
+    service = _Service()
+    seam = {"value": None}
+
+    async def _fake_service(request, user):
+        return service
+
+    async def _fake_seam(request, user_id):
+        return seam["value"]
+
+    monkeypatch.setattr(trading_sim_options, "_service", _fake_service)
+    monkeypatch.setattr(trading_sim_options, "_replay_seam", _fake_seam)
+    app = FastAPI()
+    app.include_router(trading_sim_options.router)
+    app.dependency_overrides[get_current_user] = lambda: {"id": 1, "username": "t"}
+    app.state.anthropic_client = _Anthropic(_response(_idea()))
+    app.state.alpaca_clients = _NoClients()
+    app.state.scanner_engine = None
+    return app, service, seam
+
+
+def test_the_sim_endpoint_prices_ideas_through_the_sim_service(sim_api):
+    app, service, _ = sim_api
+    body = TestClient(app).post("/api/trading/sim/options/idea", json={"underlying": "x"}).json()
+
+    assert body["underlying"] == "X"
+    assert body["ideas"][0]["spread"]["net_mid"] == 1.23
+    assert len(service.previewed) == 1
+
+
+def test_the_sim_endpoint_refuses_during_a_replay(sim_api):
+    app, service, seam = sim_api
+    seam["value"] = (object(), datetime.now(timezone.utc))
+
+    resp = TestClient(app).post("/api/trading/sim/options/idea", json={"underlying": "x"})
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "replay_active"
+    # Nothing was asked of the model or the pricer.
+    assert service.previewed == []

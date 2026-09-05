@@ -1315,9 +1315,14 @@ tab and the cards are still there when you come back, and a request still
 in flight lands wherever you have gone meanwhile (the tab reads **Idea…**
 until it does).
 
-Not offered in **Simulation mode**: a replayed chain is synthetic (bid/ask
-derived from the last print, IV solved back out of it, no open interest), so
-a structure suggested on it would look far better founded than it is.
+Offered on all three accounts -- in **Simulation mode** the chain is the
+live one and only the fill is simulated, so the suggestion is as well founded
+there as on paper, priced against the simulated book's collateral and level.
+Not offered during a **History Replay**: that chain is synthetic (bid/ask
+derived from the last print, IV solved back out of it, no open interest) and
+GEX, news, earnings and IV history would be today's, which for a past date is
+look-ahead. The tab disappears while a session is active, and the endpoint
+refuses a call that arrives anyway (`replay_active`).
 
 Framed as descriptive annotation, not investment advice — the same line the
 AI Trade Ideas widget and the GEX plan draw.

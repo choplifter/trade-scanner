@@ -69,6 +69,12 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // reads as "the chain does not move". Say so, and offer the switch.
   const replaySession = useReplaySession();
   const replayButLive = replaySession !== null && mode !== "simulation";
+  // The Idea tab goes away when a replay starts (see the button below); a
+  // widget left on it would otherwise keep showing cards for a live chain
+  // beside a replayed one.
+  useEffect(() => {
+    if (replaySession !== null && tab === "idea") setTab("chain");
+  }, [replaySession, tab]);
   const [strategy, setStrategy] = useState<Strategy>("bull_put");
   const [width, setWidth] = useState(2);
   const [legs, setLegs] = useState<Legs | null>(null);
@@ -338,11 +344,13 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           >
             Open spreads{openCount > 0 ? ` (${openCount})` : ""}
           </button>
-          {/* Not offered in Simulation mode: a replayed chain is synthetic
+          {/* Not offered during a history replay: that chain is synthetic
             * (bid/ask derived from the last print, IV solved back out of it,
-            * no open interest), so a structure suggested on it would look
-            * far better founded than it is. */}
-          {mode !== "simulation" && (
+            * no open interest) and GEX/news/earnings would be today's, so a
+            * structure suggested on it would look far better founded than
+            * it is. Plain Simulation mode shows the live chain and is fine;
+            * only the fill is simulated. */}
+          {replaySession === null && (
             <button
               type="button"
               className="timeframe-button"
