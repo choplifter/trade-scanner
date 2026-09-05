@@ -451,6 +451,85 @@ export interface OptionsIdea {
   spread: ResolvedSpread;
 }
 
+/** What "Load into ticket" actually needs of a structure -- an OptionsIdea
+ * and an OptimizerResult both are one. */
+export interface LoadableStructure {
+  strategy: Strategy;
+  ticket: SpreadTicketRequest;
+}
+
+/** POST /trading/options/optimize -- see backend app/options/optimize.py.
+ * Exactly one of horizon_expiry / horizon_date; budget and max_loss are per
+ * position in dollars; strategies null = every family except income. */
+export interface OptimizeRequest {
+  underlying: string;
+  target_low: number;
+  target_high?: number | null;
+  horizon_expiry?: string | null;
+  horizon_date?: string | null;
+  budget?: number | null;
+  max_loss?: number | null;
+  strategies?: Strategy[] | null;
+  top_n?: number;
+}
+
+/** One ranked structure: the pipeline's numbers (`spread`, the preview the
+ * ticket would show) plus the optimizer's own -- P/L at the target on the
+ * horizon date with IV unchanged, and that divided by the risk. Not a
+ * probability. */
+export interface OptimizerResult {
+  rank: number;
+  strategy: Strategy;
+  strategy_label: string;
+  expiry: string;
+  legs_label: string;
+  direction: "debit" | "credit";
+  /** Per share, signed like the ticket: positive paid, negative received. */
+  net_price: number;
+  /** What the account puts up per position -- the denominator. */
+  risk: number;
+  pnl_at_target: number;
+  pnl_min: number;
+  pnl_mean: number;
+  pnl_max: number;
+  return_on_risk: number;
+  max_profit: number | null;
+  max_loss: number | null;
+  breakevens: number[];
+  ticket: SpreadTicketRequest;
+  spread: ResolvedSpread;
+}
+
+export interface OptimizerRejected {
+  strategy: Strategy;
+  strategy_label: string;
+  expiry: string;
+  legs_label: string;
+  rejected_because: string;
+}
+
+/** Every shape that was enumerated is either scored or counted here with
+ * its reason -- "nothing reaches this target" and "everything was over
+ * budget" are different answers. */
+export interface OptimizeSkipped {
+  total: number;
+  scored: number;
+  reasons: Record<string, number>;
+}
+
+export interface OptimizeResponse {
+  underlying: string;
+  spot: number;
+  as_of: string;
+  target: { low: number; high: number };
+  horizon: { date: string; expiries_considered: string[] };
+  results: OptimizerResult[];
+  rejected: OptimizerRejected[];
+  skipped: OptimizeSkipped;
+  warnings: string[];
+  disclaimer: string;
+}
+
 /** A structure that was proposed but could not be built or priced -- shown
  * rather than dropped, so a shorter list never silently reads as "nothing
  * appeals today". */

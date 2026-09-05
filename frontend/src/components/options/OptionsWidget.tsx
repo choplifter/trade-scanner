@@ -5,6 +5,7 @@ import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, clampShortTarget, getSettings, upda
 import { modeBadge, setTradingMode, type TradingMode } from "../../api/tradingMode";
 import { useOptionChain } from "../../hooks/useOptionChain";
 import { useOptionsIdeas } from "../../hooks/useOptionsIdeas";
+import { useOptionsOptimizer } from "../../hooks/useOptionsOptimizer";
 import { useReplaySession } from "../../hooks/useReplaySession";
 import { useSpreads } from "../../hooks/useSpreads";
 import {
@@ -21,8 +22,9 @@ import {
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatExpiry, weekdayOf, type ParsedOcc } from "../../utils/occ";
 import { formatDateTime } from "../../utils/time";
-import type { OptionsIdea } from "../../types/options";
+import type { LoadableStructure } from "../../types/options";
 import { AiIdeaTab } from "./AiIdeaTab";
+import { OptimizerTab } from "./OptimizerTab";
 import { ChainTable } from "./ChainTable";
 import {
   applyPick,
@@ -39,7 +41,7 @@ import { OptionsHelp } from "./OptionsHelp";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
 
-type Tab = "chain" | "spreads" | "idea";
+type Tab = "chain" | "spreads" | "idea" | "optimizer";
 
 interface OptionsWidgetProps {
   symbol: string | null;
@@ -66,6 +68,9 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // The Idea tab's request lives here so "Load into ticket" (which shows
   // the Chain tab) does not throw away an answer that took minutes.
   const ideas = useOptionsIdeas();
+  // Same arrangement for the Optimizer: the answer outlives the tab switch
+  // that "Load into ticket" causes.
+  const optimizer = useOptionsOptimizer();
   const [helpOpen, setHelpOpen] = useState(false);
   // A replay only reaches this widget in Simulation mode: Paper and Live
   // keep showing the real account's chain, which next to a replayed chart
@@ -201,7 +206,9 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // actually in. Setting them any earlier means watching the auto-pick
   // overwrite them a render later.
   const pendingIdeaRef = useRef<{ legs: Legs; expiry: string; longExpiry?: string } | null>(null);
-  const loadIdea = (idea: OptionsIdea): boolean => {
+  // One loader for anything that arrives as {strategy, ticket}: the Idea
+  // tab's suggestions and the Optimizer's results.
+  const loadStructure = (idea: LoadableStructure): boolean => {
     if (!symbol || idea.ticket.underlying !== symbol) return false;
     const resolved = legsFromTicket(idea.strategy, idea.ticket);
     if (!resolved) return false;
@@ -365,6 +372,19 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               {ideas.loading ? "Idea…" : "Idea"}
             </button>
           )}
+          {/* Offered in a replay too, unlike Idea: nothing enters the ranking
+            * but the chain the ticket itself is priced from at the replayed
+            * moment, and the response says what that chain is. */}
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={tab === "optimizer"}
+            onClick={() => setTab("optimizer")}
+            title="Structures for a price target, ranked by return on risk"
+            aria-busy={optimizer.loading}
+          >
+            {optimizer.loading ? "Optimizer…" : "Optimizer"}
+          </button>
           <button
             type="button"
             className="timeframe-button options-help-button"
@@ -413,7 +433,9 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             />
           </>
         ) : tab === "idea" ? (
-          <AiIdeaTab symbol={symbol} ideas={ideas} onLoad={loadIdea} />
+          <AiIdeaTab symbol={symbol} ideas={ideas} onLoad={loadStructure} />
+        ) : tab === "optimizer" ? (
+          <OptimizerTab symbol={symbol} spot={chain?.spot ?? null} expiries={expiries} optimizer={optimizer} onLoad={loadStructure} />
         ) : !symbol ? (
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
         ) : (

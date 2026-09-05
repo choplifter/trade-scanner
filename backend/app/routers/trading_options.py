@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.ai.options_suggest import suggest_options_ideas
+from app.options.optimize import OptimizeRequest, optimize_structures
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, SpreadTicket, TriggerCreate
 from app.options.service import OptionsService
@@ -284,6 +285,26 @@ async def cancel_trigger(trigger_id: str, request: Request, user: dict = Depends
     if not await _trigger_store(request).cancel(user["id"], trigger_id):
         raise HTTPException(status_code=404, detail="No such trigger")
     return {"cancelled": trigger_id}
+
+
+@router.post("/optimize")
+async def optimize(body: OptimizeRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
+    """Structures for a price target on a horizon date, enumerated from the
+    listed chain, priced through the ticket's own path and ranked by return
+    on risk -- see app.options.optimize. No model involved, so no Anthropic
+    key needed; otherwise wired like /idea: this user's account, the shared
+    chain cache, TradingError -> 422.
+
+    Read-only: every result carries a ready-made ticket the user still
+    submits by hand.
+    """
+    try:
+        return await optimize_structures(service, body.underlying, body)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except Exception:
+        logger.exception("Options optimizer failed for %s", body.underlying)
+        raise HTTPException(status_code=502, detail="Failed to optimize structures")
 
 
 class IdeaRequest(BaseModel):

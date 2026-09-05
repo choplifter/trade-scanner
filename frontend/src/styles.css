@@ -4227,3 +4227,69 @@ td.chain-side.chain-stale {
   font-weight: 600;
   letter-spacing: 0.03em;
 }
+
+/* --- Optimizer tab (OptionsWidget) ----------------------------------------- */
+
+.optimizer-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.optimizer-form label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.optimizer-form input[type="number"] {
+  width: 84px;
+}
+
+.optimizer-form input[type="date"],
+.optimizer-form select {
+  font-size: 11px;
+}
+
+.optimizer-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.optimizer-families {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 0 8px 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.optimizer-family {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+}
+
+.optimizer-rank {
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-right: 2px;
+}
+
+.optimizer-ror {
+  font-variant-numeric: tabular-nums;
+}
+
+.optimizer-skipped {
+  margin: 4px 8px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}

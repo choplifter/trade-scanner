@@ -205,10 +205,14 @@ class OptionsService:
 
     # --- pricing ------------------------------------------------------------
 
-    async def preview(self, ticket: SpreadTicket) -> ResolvedSpread:
+    async def preview(self, ticket: SpreadTicket, *, account: dict | None = None) -> ResolvedSpread:
         """What the ticket would become. Ungated, like the equity preview:
         seeing the risk of a spread you may not place is useful, not
-        dangerous. The options level is reported, not enforced, here."""
+        dangerous. The options level is reported, not enforced, here.
+
+        `account` lets a caller that previews many tickets in one go (the
+        optimizer's finalists) fetch the account once and pass it in; left
+        out, it is fetched here as before."""
         chains = {expiry: await self.chain(ticket.underlying, expiry) for expiry in ticket.expiries}
         chain = chains[ticket.expiry]
         legs = resolve_legs(ticket, chains)
@@ -232,7 +236,7 @@ class OptionsService:
         price = round(ticket.limit_price if ticket.limit_price is not None else net_mid, 2)
         risk = spread_risk(ticket.strategy, ticket.strikes, price, ticket.qty, stock_price=chain.spot)
 
-        account = await self.account()
+        account = account if account is not None else await self.account()
         limits = limits_for(self._settings, self._account)
         assert_spread_within_limits(
             qty=ticket.qty,

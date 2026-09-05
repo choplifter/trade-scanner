@@ -18,6 +18,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.ai.options_suggest import suggest_options_ideas
+from app.options.optimize import OptimizeRequest, optimize_structures
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, SpreadTicket, TriggerCreate
 from app.options.occ import try_parse_occ
@@ -292,6 +293,34 @@ async def suggest_idea(body: IdeaRequest, request: Request, user: dict = Depends
     except Exception:
         logger.exception("Sim options idea generation failed for %s", body.underlying)
         raise HTTPException(status_code=502, detail="Failed to generate an options idea")
+
+
+@router.post("/optimize")
+async def optimize(body: OptimizeRequest, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """The optimizer over the simulated book -- see routers/trading_options.py.
+
+    Allowed during a history replay, unlike /idea: nothing enters the ranking
+    but the chain the ticket itself is priced from at the replayed moment,
+    so there is no look-ahead to refuse. What a replayed chain is, though,
+    is synthetic -- bid/ask derived from the last print, IV solved back out
+    of it -- and the response says so in `warnings`.
+    """
+    warnings: list[str] = []
+    if await _replay_seam(request, user["id"]) is not None:
+        warnings.append(
+            "Replay chain: bid/ask are derived from each contract's last print and the implied volatility "
+            "is solved back out of it -- the ranking is only as good as those prints."
+        )
+    service = await _service(request, user)
+    try:
+        return await optimize_structures(service, body.underlying, body, warnings=warnings)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Sim options optimizer failed for %s", body.underlying)
+        raise HTTPException(status_code=502, detail="Failed to optimize structures")
 
 
 @router.get("/triggers")

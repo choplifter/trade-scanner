@@ -250,8 +250,8 @@ class SimOptionsService(OptionsService):
 
     # --- pricing ------------------------------------------------------------
 
-    async def preview(self, ticket: SpreadTicket) -> ResolvedSpread:
-        resolved = await super().preview(ticket)
+    async def preview(self, ticket: SpreadTicket, *, account: dict | None = None) -> ResolvedSpread:
+        resolved = await super().preview(ticket, account=account)
         resolved.account = SIM_ACCOUNT
         # The default limit is the natural, so a submit with no limit typed
         # fills at once -- the mid would rest until the market came to it.

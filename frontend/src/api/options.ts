@@ -23,6 +23,8 @@ import type {
   SpreadsResponse,
   TriggerCreateRequest,
   OptionsIdeaResponse,
+  OptimizeRequest,
+  OptimizeResponse,
   UnderlyingTrigger,
 } from "../types/options";
 import type { Order, TradingRejection } from "../types/trading";
@@ -136,4 +138,12 @@ export function deleteTrigger(id: string): Promise<{ cancelled: string }> {
  * back with a ready-made ticket the user still submits by hand. */
 export function suggestOptionsIdeas(underlying: string): Promise<OptionsIdeaResponse> {
   return send<OptionsIdeaResponse>("POST", "/trading/options/idea", { underlying });
+}
+
+/** Structures for a price target on a horizon date, enumerated from the
+ * listed chain and priced through the ticket's own path -- see backend
+ * app/options/optimize.py. A few seconds: three expiries of chain, a
+ * thousand candidates priced, a dozen previewed. Read-only. */
+export function optimizeStructures(body: OptimizeRequest): Promise<OptimizeResponse> {
+  return send<OptimizeResponse>("POST", "/trading/options/optimize", body);
 }
