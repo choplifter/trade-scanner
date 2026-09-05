@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { formatDateTime } from "../../utils/time";
 
 import {
   getReplayStateOrNull,
@@ -282,7 +283,7 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
               />
             )}
             <span className="replay-as-of">
-              {currentAsOf ? new Date(currentAsOf).toLocaleString() : "—"}
+              {currentAsOf ? formatDateTime(currentAsOf) : "—"}
             </span>
             <button
               type="button"

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { formatDateTimeNumeric, timeZoneLabel } from "../../utils/time";
 
 import { BacktestRefusedError, backtestScreen } from "../../api/http";
 import type {
@@ -25,24 +26,11 @@ function pickTime(pick: BacktestPick): number {
   return Math.floor(new Date(iso).getTime() / 1000);
 }
 
-/** Local time, matching the chart — CandleChart formats its axis and
- * crosshair with Intl.DateTimeFormat(undefined, …), so a pick shown in any
- * other zone would disagree with the chart it loads. */
-const LOCAL_DATETIME = new Intl.DateTimeFormat(undefined, {
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
-/** The viewer's zone, e.g. "GMT+2" — shown once beside the table rather than
- * on every row, so the times aren't ambiguous the way they were when a local
- * time sat next to an ET date with neither labelled. */
-const LOCAL_ZONE =
-  new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
-    .formatToParts(new Date())
-    .find((part) => part.type === "timeZoneName")?.value ?? "local";
+// Times here follow the app-wide zone setting, the same one the chart's
+// axis and crosshair use (utils/time.ts) -- so a pick agrees with the chart
+// it loads. The zone's name is shown once beside the table rather than on
+// every row, so the times are not ambiguous the way they were when a local
+// time sat next to an ET date with neither labelled.
 
 /**
  * Entry label.
@@ -60,7 +48,7 @@ const LOCAL_ZONE =
  */
 function pickLabel(pick: BacktestPick): string {
   if (!pick.timestamp) return pick.trading_date;
-  return LOCAL_DATETIME.format(new Date(pick.timestamp)).replace(",", "");
+  return formatDateTimeNumeric(pick.timestamp);
 }
 
 const LOOKBACK_OPTIONS = [60, 120, 180, 365];
@@ -367,7 +355,7 @@ export function ScreenBacktestPanel({ screen, onClose, onSelectPick }: Props) {
                   ? `${result.picks.length} picks sampled evenly across the whole period (every statistic above used all ${result.sample_size}).`
                   : `${result.picks.length} picks.`}{" "}
                 {result.resolution === "intraday"
-                  ? `Newest first, times in your local timezone (${LOCAL_ZONE}) to match the chart.`
+                  ? `Newest first, times in your local timezone (${timeZoneLabel()}) to match the chart.`
                   : "Newest first, dated by trading session."}{" "}
                 Click one to load its chart at the entry.
               </p>

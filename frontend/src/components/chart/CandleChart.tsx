@@ -23,6 +23,7 @@ import {
 
 import { isMarkerSeries, isPointSeries } from "../../types/alpaca";
 import { getPalette } from "../../api/settings";
+import { useSettings } from "../../hooks/useSettings";
 import type { ChartPalette } from "../../api/chartTheme";
 import type { Bar, IndicatorResult, IndicatorStyle } from "../../types/alpaca";
 import { crosshairTimeFormatter, tickMarkFormatter } from "../../utils/chartTime";
@@ -492,6 +493,10 @@ export function CandleChart({
   const paletteRef = useRef<ChartPalette>(palette);
   const hollowRef = useRef<boolean>(hollowCandles);
   const localeRef = useRef<string | undefined>(locale);
+  // The time zone the axis is labelled in (Settings -> Display). Only its
+  // change matters here: the formatters read the zone themselves.
+  const [appSettings] = useSettings();
+  const timeZone = appSettings.timeZone;
   const barsRef = useRef<Bar[]>(bars);
   const positionLinesRef = useRef<IPriceLine[]>([]);
   const orderLinesRef = useRef<IPriceLine[]>([]);
@@ -1632,7 +1637,11 @@ export function CandleChart({
     chart.applyOptions({
       layout: { textColor },
       grid: { vertLines: { color: gridColor }, horzLines: { color: gridColor } },
-      localization: { locale },
+      // Fresh function references: the formatters read the zone on every
+      // call, but the library only relabels when an option actually
+      // changed, and a same-reference function does not count.
+      localization: { locale, timeFormatter: crosshairTimeFormatter.bind(null) },
+      timeScale: { tickMarkFormatter: tickMarkFormatter.bind(null) },
     });
     const priceSeries = priceSeriesRef.current;
     if (priceSeries) {
@@ -1645,7 +1654,7 @@ export function CandleChart({
     // read positionTargetColor()/positionStopColor() on their next run,
     // and a re-render of the parent (the settings hook) triggers one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [palette, hollowCandles, dark, locale, chartType]);
+  }, [palette, hollowCandles, dark, locale, chartType, timeZone]);
 
   useEffect(() => {
     void 0;
@@ -1666,7 +1675,11 @@ export function CandleChart({
     chart.applyOptions({
       layout: { textColor },
       grid: { vertLines: { color: gridColor }, horzLines: { color: gridColor } },
-      localization: { locale },
+      // Fresh function references: the formatters read the zone on every
+      // call, but the library only relabels when an option actually
+      // changed, and a same-reference function does not count.
+      localization: { locale, timeFormatter: crosshairTimeFormatter.bind(null) },
+      timeScale: { tickMarkFormatter: tickMarkFormatter.bind(null) },
     });
     const priceSeries = priceSeriesRef.current;
     if (priceSeries) {
@@ -1679,7 +1692,7 @@ export function CandleChart({
     // read positionTargetColor()/positionStopColor() on their next run,
     // and a re-render of the parent (the settings hook) triggers one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [palette, hollowCandles, dark, locale, chartType]);
+  }, [palette, hollowCandles, dark, locale, chartType, timeZone]);
 
   useEffect(() => {
     void 0;

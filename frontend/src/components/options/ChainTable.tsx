@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 import type { ChainResponse, LegQuote, OptionKind, StrikeRow } from "../../types/options";
 import { formatStrike } from "../../utils/occ";
+import { formatClock, timeZoneLabel } from "../../utils/time";
 import { symbolDragProps } from "../../utils/dragSymbol";
 
 /** `body` is a butterfly's doubled short. */
@@ -39,7 +40,7 @@ function oi(value: number): string {
 const STALE_MS = 30 * 60 * 1000;
 
 function lastPrintLabel(lastAt: string): string {
-  return new Date(lastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "America/New_York" });
+  return formatClock(lastAt);
 }
 
 function Side({
@@ -79,7 +80,7 @@ function Side({
     kind === "call"
       ? [oiCell, pct(quote?.iv ?? null), num(quote?.delta ?? null, 2), num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2)]
       : [num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2), num(quote?.delta ?? null, 2), pct(quote?.iv ?? null), oiCell];
-  const printNote = lastAt != null ? ` -- last print ${lastPrintLabel(lastAt)} ET${stale ? " (stale)" : ""}` : replay && quote ? " -- no print yet today" : "";
+  const printNote = lastAt != null ? ` -- last print ${lastPrintLabel(lastAt)} ${timeZoneLabel()}${stale ? " (stale)" : ""}` : replay && quote ? " -- no print yet today" : "";
   return (
     <>
       {cells.map((cell, i) => (

@@ -28,6 +28,11 @@ export type ColorMode = "system" | "light" | "dark";
 export type CandleStyle = "filled" | "hollow";
 export type NumberFormat = "auto" | "point" | "comma";
 export type VwapAnchor = "session" | "premarket";
+/** Which zone every clock in the app is shown in: the browser's, or New
+ * York's. Display only -- session boundaries and the journal's entry
+ * windows are market concepts and stay computed in New York time. */
+export type TimeZoneMode = "local" | "market";
+export const MARKET_TIME_ZONE = "America/New_York";
 export type DefaultChartType = "candles" | "line";
 
 export interface AppSettings {
@@ -53,6 +58,7 @@ export interface AppSettings {
   /** What the option tickets prefill as the limit: the mid (better price,
    * often rests on paper) or the natural (fills at once). */
   optionsLimitMode: "mid" | "natural";
+  timeZone: TimeZoneMode;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -74,6 +80,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     strangle: { ...DEFAULT_SHORT_TARGETS.strangle },
   },
   optionsLimitMode: "natural",
+  timeZone: "local",
 };
 
 /** One short target from storage, clamped to the picker's range. */
@@ -155,6 +162,7 @@ function load(): AppSettings {
       customColors: parseCustomColors(parsed.customColors),
       optionsShortTargets: parseShortTargets(parsed.optionsShortTargets),
       optionsLimitMode: oneOf(parsed.optionsLimitMode, ["mid", "natural"] as const, DEFAULT_SETTINGS.optionsLimitMode),
+      timeZone: oneOf(parsed.timeZone, ["local", "market"] as const, DEFAULT_SETTINGS.timeZone),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -192,6 +200,12 @@ export function getCustomPalette(): ChartPalette {
  * own rule (monochrome). */
 export function hollowCandles(): boolean {
   return settings.candleStyle === "hollow" || getPalette().forceHollow === true;
+}
+
+/** The IANA zone clocks are shown in; undefined = the browser's. Read at
+ * call time by utils/time.ts and utils/chartTime.ts. */
+export function displayTimeZone(): string | undefined {
+  return settings.timeZone === "market" ? MARKET_TIME_ZONE : undefined;
 }
 
 /** The locale numbers are formatted in; undefined = the browser's. */

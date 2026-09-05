@@ -723,7 +723,14 @@ past dates.
   line, auto-scroll, VWAP anchor (the buttons in a chart still change only
   that chart). **Display** -- number format: the browser's, point
   (1,234.56) or comma (1.234,56), for money and quantities and the chart
-  axes; price inputs keep the point. **Hotkeys** -- every shortcut in one
+  axes; price inputs keep the point. Time zone: every clock in the app --
+  chart axis and crosshair, fills, alarms, last prints, the replay clock,
+  the journal's entry windows, the risk chart's time slider -- in the
+  browser's zone or New York's (`frontend/src/utils/time.ts`; the zone
+  name is shown where a table of times needs it). Display only: session
+  boundaries, the trading windows and the journal's buckets are market
+  concepts and stay computed in New York time, their labels are converted.
+  **Hotkeys** -- every shortcut in one
   list. "Reset to defaults" puts everything back. The risk chart's height
   is dragged at its bottom edge, the Options ticket's width (and with it
   the risk chart's) at the splitter between the chain and the ticket

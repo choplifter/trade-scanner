@@ -25,6 +25,7 @@ import { PREMIUM_LEVEL_NAMES, usePremiumLevels, usePremiumSeries } from "../../h
 import { formatPrice, newsAge } from "../../utils/format";
 import { CandleChart, POSITION_ENTRY_COLOR, positionStopColor, positionTargetColor, type OrderLevel } from "./CandleChart";
 import { getSettings } from "../../api/settings";
+import { formatClock, formatDateTime } from "../../utils/time";
 import { useChartPalette, useSettings } from "../../hooks/useSettings";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
 
@@ -722,7 +723,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
           {usingReplayBars && replaySession && (
             <span
               className="replay-chart-badge"
-              title={`Showing replayed bars as of ${new Date(replaySession.as_of).toLocaleString()} -- not live`}
+              title={`Showing replayed bars as of ${formatDateTime(replaySession.as_of)} -- not live`}
             >
               REPLAY
             </span>
@@ -979,7 +980,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
             <div className="chart-news-popover-header">
               <strong>
                 {openStories.length === 1 ? "News" : `${openStories.length} stories`} ·{" "}
-                {new Date(openStories[0].published_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                {formatClock(openStories[0].published_at)}
               </strong>
               <button type="button" className="row-action" onClick={() => setOpenNews(null)} title="Close (Esc)">
                 ✕

@@ -207,6 +207,11 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
           <dt>Hover</dt>
           <dd>The readout gives the three values at the hovered price. Drag the bottom edge to resize the chart.</dd>
+          <dt>Clock</dt>
+          <dd>
+            The slider's target time, the chain's last-print times and every other clock in the app are shown in the
+            zone chosen under Settings → Display → Time zone: your browser's, or New York's.
+          </dd>
           <dt>Model caveats</dt>
           <dd>
             Constant IV per leg, no skew, no dividends, no rate. The curves show direction and size, not the fill you

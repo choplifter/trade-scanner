@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { browserTimeZoneName } from "../../utils/time";
 
 import {
   CHART_THEMES,
@@ -294,6 +295,19 @@ export function SettingsDialog({
                   { key: "comma", label: SAMPLE.toLocaleString("de-DE") },
                 ]}
                 onChange={(v) => set("numberFormat", v)}
+              />
+            </Row>
+            <Row
+              label="Time zone"
+              hint="Every clock in the app: chart axis and crosshair, fills, alarms, last prints, the replay clock, the journal's entry windows. Session boundaries are computed in New York time either way."
+            >
+              <Segmented
+                value={settings.timeZone}
+                options={[
+                  { key: "local", label: `Browser (${browserTimeZoneName()})` },
+                  { key: "market", label: "New York (ET)" },
+                ]}
+                onChange={(v) => set("timeZone", v)}
               />
             </Row>
           </div>

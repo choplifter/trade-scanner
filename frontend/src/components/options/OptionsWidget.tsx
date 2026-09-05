@@ -20,6 +20,7 @@ import {
 } from "../../types/options";
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatExpiry, weekdayOf, type ParsedOcc } from "../../utils/occ";
+import { formatDateTime } from "../../utils/time";
 import type { OptionsIdea } from "../../types/options";
 import { AiIdeaTab } from "./AiIdeaTab";
 import { ChainTable } from "./ChainTable";
@@ -329,7 +330,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
         <h2>Options</h2>
         <span
           className={`trading-mode-badge ${badge.className}`}
-          title={replayFeed ? `Simulated book priced from the replay clock${spreads.account?.replay_as_of ? ` (${new Date(spreads.account.replay_as_of).toLocaleString()})` : ""}` : undefined}
+          title={replayFeed ? `Simulated book priced from the replay clock${spreads.account?.replay_as_of ? ` (${formatDateTime(spreads.account.replay_as_of)})` : ""}` : undefined}
         >
           {badge.label}
           {replayFeed ? " · REPLAY" : ""}

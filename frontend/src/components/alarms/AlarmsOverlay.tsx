@@ -1,4 +1,5 @@
 import type { AlarmEntry } from "../../hooks/useAlarms";
+import { formatClockSeconds } from "../../utils/time";
 import { formatPct, formatPrice } from "../../utils/format";
 
 interface AlarmsOverlayProps {
@@ -52,11 +53,7 @@ export function AlarmsOverlay({
                 {momentumWindowMinutes ? ` / ${momentumWindowMinutes}m` : ""}
               </span>
               <span className="alarms-time">
-                {new Date(firstSeenAt).toLocaleTimeString(undefined, {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                })}
+                {formatClockSeconds(firstSeenAt)}
               </span>
             </li>
           ))}

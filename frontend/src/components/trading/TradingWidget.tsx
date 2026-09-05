@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { formatDateTime } from "../../utils/time";
 
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { resetSimAccount } from "../../api/http";
@@ -1110,19 +1111,11 @@ function LimitCell({
   );
 }
 
-const FILL_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
 function fillTime(order: Order): string {
   const stamp = order.filled_at ?? order.submitted_at ?? order.created_at;
   if (!stamp) return "—";
   const parsed = Date.parse(stamp);
-  return Number.isFinite(parsed) ? FILL_TIME_FORMAT.format(new Date(parsed)) : "—";
+  return Number.isFinite(parsed) ? formatDateTime(parsed) : "—";
 }
 
 /** The Orders tab: working orders you can still cancel, or the fills that
@@ -1302,7 +1295,7 @@ function FillsTable({
  * same display convention. */
 export function tradeTime(stamp: string): string {
   const parsed = Date.parse(stamp);
-  return Number.isFinite(parsed) ? FILL_TIME_FORMAT.format(new Date(parsed)) : "—";
+  return Number.isFinite(parsed) ? formatDateTime(parsed) : "—";
 }
 
 /** Closed round trips, newest first, with the totals underneath. R is the

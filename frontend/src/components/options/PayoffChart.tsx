@@ -4,6 +4,7 @@ import type { MouseEvent } from "react";
 import type { Payoff } from "../../types/options";
 import { formatNum } from "../../utils/format";
 import { hoursToExpiry, meanIv, scenarioCurve } from "../../utils/blackScholes";
+import { dayKey, formatClock, formatWeekdayDateTime } from "../../utils/time";
 import { getSettings, updateSettings } from "../../api/settings";
 import { useSettings } from "../../hooks/useSettings";
 
@@ -26,12 +27,12 @@ interface PayoffChartProps {
   expiryLabel?: string;
 }
 
-/** "today 15:00" within the day, "Tue 08.09 15:00" beyond it. */
+/** "today 15:00" within the day, "Tue 08.09. 15:00" beyond it -- in the
+ * zone the settings show every other clock in (utils/time.ts). */
 function whenLabel(asOf: string, hoursAhead: number): string {
   const target = new Date(Date.parse(asOf) + hoursAhead * 3600 * 1000);
-  const time = target.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  if (hoursAhead < 24 && target.getDate() === new Date(asOf).getDate()) return `today ${time}`;
-  return `${target.toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "2-digit" })} ${time}`;
+  if (hoursAhead < 24 && dayKey(target) === dayKey(asOf)) return `today ${formatClock(target)}`;
+  return formatWeekdayDateTime(target);
 }
 
 /** The risk chart: P&L (y) over the underlying's price (x). A solid line

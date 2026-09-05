@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import type { Trade } from "../../types/trading";
 import { formatMoney } from "../../utils/format";
 import { parseOcc } from "../../utils/occ";
+import { clockFromMinutes, marketMinutesToDisplay, timeZoneLabel } from "../../utils/time";
 
 const ET = "America/New_York";
 
@@ -41,23 +42,33 @@ function etParts(iso: string): { minutes: number; weekday: string; date: string 
   return { minutes: hour * 60 + minute, weekday: get("weekday"), date: `${get("year")}-${get("month")}-${get("day")}` };
 }
 
-const ENTRY_WINDOWS: { key: string; label: string; from: number; to: number }[] = [
-  { key: "pre", label: "before 09:30", from: 0, to: 9 * 60 + 30 },
-  { key: "0930", label: "09:30 – 10:00", from: 9 * 60 + 30, to: 10 * 60 },
-  { key: "1000", label: "10:00 – 10:30", from: 10 * 60, to: 10 * 60 + 30 },
-  { key: "1030", label: "10:30 – 11:00", from: 10 * 60 + 30, to: 11 * 60 },
-  { key: "1100", label: "11:00 – 12:00", from: 11 * 60, to: 12 * 60 },
-  { key: "1200", label: "12:00 – 14:00", from: 12 * 60, to: 14 * 60 },
-  { key: "1400", label: "14:00 – 15:30", from: 14 * 60, to: 15 * 60 + 30 },
-  { key: "1530", label: "15:30 – 16:00", from: 15 * 60 + 30, to: 16 * 60 },
-  { key: "post", label: "after 16:00", from: 16 * 60, to: 24 * 60 },
+// The windows are market time: the bell, the first half hour, lunch, the
+// close. Their labels are shown in whatever zone the settings display
+// (utils/time.ts), so a Berlin viewer reads "15:30 – 16:00" for the open.
+const ENTRY_WINDOWS: { key: string; from: number; to: number }[] = [
+  { key: "pre", from: 0, to: 9 * 60 + 30 },
+  { key: "0930", from: 9 * 60 + 30, to: 10 * 60 },
+  { key: "1000", from: 10 * 60, to: 10 * 60 + 30 },
+  { key: "1030", from: 10 * 60 + 30, to: 11 * 60 },
+  { key: "1100", from: 11 * 60, to: 12 * 60 },
+  { key: "1200", from: 12 * 60, to: 14 * 60 },
+  { key: "1400", from: 14 * 60, to: 15 * 60 + 30 },
+  { key: "1530", from: 15 * 60 + 30, to: 16 * 60 },
+  { key: "post", from: 16 * 60, to: 24 * 60 },
 ];
+
+function windowLabel(w: { key: string; from: number; to: number }): string {
+  const at = (minutes: number) => clockFromMinutes(marketMinutesToDisplay(minutes));
+  if (w.key === "pre") return `before ${at(w.to)}`;
+  if (w.key === "post") return `after ${at(w.from)}`;
+  return `${at(w.from)} – ${at(w.to)}`;
+}
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 function entryWindow(minutes: number): Keyed {
   const w = ENTRY_WINDOWS.find((x) => minutes >= x.from && minutes < x.to) ?? ENTRY_WINDOWS[ENTRY_WINDOWS.length - 1];
-  return { key: w.key, label: w.label };
+  return { key: w.key, label: windowLabel(w) };
 }
 
 function dteBucket(expiry: string, openedDate: string): Keyed {
@@ -197,7 +208,7 @@ export function TradeStats({ trades }: { trades: Trade[] }) {
         <span className="order-hint">
           {selected.length} trades · {selected.length ? Math.round((stats.wins / selected.length) * 100) : 0}% winners ·{" "}
           <span className={stats.total >= 0 ? "delta-up" : "delta-down"}>{formatMoney(stats.total)}</span> · entry
-          times in ET
+          times in {timeZoneLabel()}
         </span>
       </div>
       {open && (

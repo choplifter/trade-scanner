@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { formatClockSeconds } from "../../utils/time";
 
 import { CopyButton } from "../common/CopyButton";
 import type { ScannerRow } from "../../types/alpaca";
@@ -289,7 +290,7 @@ export function ScannerTable({
                   className={
                     signal.side === "short" ? "badge-strategy short" : "badge-strategy"
                   }
-                  title={`${signal.strategy} (${signal.side}) at ${new Date(signal.fired_at).toLocaleTimeString()} -- ${signal.reason}. Entry ${signal.entry_price}, stop ${signal.stop_price}, target ${signal.target_price}. This is the session's last setup, not necessarily one firing right now. Open the chart to check it: the scanner sees fewer level sources than the chart does.`}
+                  title={`${signal.strategy} (${signal.side}) at ${formatClockSeconds(signal.fired_at)} -- ${signal.reason}. Entry ${signal.entry_price}, stop ${signal.stop_price}, target ${signal.target_price}. This is the session's last setup, not necessarily one firing right now. Open the chart to check it: the scanner sees fewer level sources than the chart does.`}
                 >
                   {/* The arrow repeats what the colour says, on purpose: with
                       the LONG/SHORT word gone, colour alone would be the only
