@@ -12,7 +12,7 @@
 
 import { MARKET_TIME_ZONE, displayTimeZone } from "../api/settings";
 
-type Kind = "clock" | "clockSeconds" | "dateTime" | "dateTimeNumeric" | "weekdayDateTime" | "dayKey" | "zoneName";
+type Kind = "clock" | "clockSeconds" | "dateTime" | "dateTimeNumeric" | "weekdayDateTime" | "weekdayDate" | "dayKey" | "zoneName";
 
 const OPTIONS: Record<Kind, Intl.DateTimeFormatOptions> = {
   clock: { hour: "2-digit", minute: "2-digit", hour12: false },
@@ -20,6 +20,7 @@ const OPTIONS: Record<Kind, Intl.DateTimeFormatOptions> = {
   dateTime: { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false },
   dateTimeNumeric: { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false },
   weekdayDateTime: { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false },
+  weekdayDate: { weekday: "short", day: "2-digit", month: "2-digit" },
   dayKey: { year: "numeric", month: "2-digit", day: "2-digit" },
   zoneName: { timeZoneName: "short" },
 };
@@ -63,6 +64,11 @@ export function formatDateTimeNumeric(value: string | number | Date): string {
 /** "Tue 08.09. 15:49" */
 export function formatWeekdayDateTime(value: string | number | Date): string {
   return formatter("weekdayDateTime", displayTimeZone()).format(toDate(value)).replace(",", "");
+}
+
+/** "Tue 08.09." -- the day alone, for a column of closes. */
+export function formatWeekdayDate(value: string | number | Date): string {
+  return formatter("weekdayDate", displayTimeZone()).format(toDate(value)).replace(/,/g, "");
 }
 
 /** "2026-09-08" in the display zone -- for "is this the same day" checks. */

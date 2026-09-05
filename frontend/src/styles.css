@@ -4293,3 +4293,92 @@ td.chain-side.chain-stale {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* --- Risk view: the date x price table (PayoffTable) ---------------------- */
+
+.payoff-view-toggle {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 2px;
+}
+
+.payoff-table-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+}
+
+.payoff-table-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.payoff-table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.payoff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.payoff-table th {
+  position: sticky;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-weight: 500;
+  padding: 2px 4px;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.payoff-table thead th {
+  top: 0;
+}
+
+.payoff-table tbody th {
+  left: 0;
+  text-align: right;
+}
+
+.payoff-table th.expiry {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.payoff-table tr.spot th {
+  color: #c08a2e;
+  font-weight: 600;
+}
+
+.payoff-table tr.spot td {
+  box-shadow: inset 0 1px 0 #c08a2e, inset 0 -1px 0 #c08a2e;
+}
+
+.payoff-table td {
+  text-align: right;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.payoff-table td.strong {
+  color: #fff;
+}
+
+.payoff-table-modes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 11px;
+}

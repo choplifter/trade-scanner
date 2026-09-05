@@ -62,6 +62,8 @@ export interface AppSettings {
   optionsLimitMode: "mid" | "natural";
   timeZone: TimeZoneMode;
   chainGreek: ChainGreek;
+  /** The ticket's risk view: the payoff chart, or the date x price table. */
+  riskView: "chart" | "table";
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -85,6 +87,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   optionsLimitMode: "natural",
   timeZone: "local",
   chainGreek: "delta",
+  riskView: "chart",
 };
 
 /** One short target from storage, clamped to the picker's range. */
@@ -168,6 +171,7 @@ function load(): AppSettings {
       optionsLimitMode: oneOf(parsed.optionsLimitMode, ["mid", "natural"] as const, DEFAULT_SETTINGS.optionsLimitMode),
       timeZone: oneOf(parsed.timeZone, ["local", "market"] as const, DEFAULT_SETTINGS.timeZone),
       chainGreek: oneOf(parsed.chainGreek, ["delta", "gamma", "theta"] as const, DEFAULT_SETTINGS.chainGreek),
+      riskView: oneOf(parsed.riskView, ["chart", "table"] as const, DEFAULT_SETTINGS.riskView),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

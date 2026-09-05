@@ -58,19 +58,73 @@ function legValue(leg: PayoffLegOut, spot: number, atMs: number, ivFactor: numbe
  * null then too) or the payoff predates the fields this needs.
  */
 export function scenarioCurve(payoff: Payoff, hoursAhead: number, ivFactor: number): number[] | null {
-  if (!payoff.as_of || !payoff.legs || payoff.legs.length === 0 || payoff.net_price == null) return null;
+  if (!payoff.as_of) return null;
   const atMs = Date.parse(payoff.as_of) + hoursAhead * 3600 * 1000;
   const out: number[] = [];
   for (const price of payoff.prices) {
-    let total = 0;
-    for (const leg of payoff.legs) {
-      const value = legValue(leg, price, atMs, ivFactor);
-      if (value == null) return null;
-      total += (leg.side === "buy" ? 1 : -1) * leg.ratio * value;
-    }
-    out.push(Math.round((total - payoff.net_price) * payoff.multiplier * 100) / 100);
+    const pnl = positionPnl(payoff, price, atMs, ivFactor);
+    if (pnl == null) return null;
+    out.push(pnl);
   }
   return out;
+}
+
+/** The position's P/L at one price and one moment -- the single cell the
+ * scenario curve and the date x price table are both made of. Null when a
+ * leg still has time and no IV, or the payoff predates the fields. */
+export function positionPnl(payoff: Payoff, price: number, atMs: number, ivFactor: number): number | null {
+  if (!payoff.legs || payoff.legs.length === 0 || payoff.net_price == null) return null;
+  let total = 0;
+  for (const leg of payoff.legs) {
+    const value = legValue(leg, price, atMs, ivFactor);
+    if (value == null) return null;
+    total += (leg.side === "buy" ? 1 : -1) * leg.ratio * value;
+  }
+  return Math.round((total - payoff.net_price) * payoff.multiplier * 100) / 100;
+}
+
+const DAY_MS = 24 * 3600 * 1000;
+
+/** The table's columns: the valuation moment itself ("now"), then each
+ * weekday's close up to and including the expiry. Thinned to every k-th
+ * day when there are more than `maxColumns`, keeping now and the expiry.
+ * Exchange holidays are not skipped -- no calendar of them is loaded --
+ * so a holiday shows as a column with one more day of decay, which is
+ * wrong by a day and said so in the help. */
+export function dateGrid(asOfMs: number, expiry: string, maxColumns = 30): number[] {
+  const end = expiryMoment(expiry);
+  if (!Number.isFinite(end) || end <= asOfMs) return [asOfMs];
+  const days: number[] = [];
+  // First close strictly after "now": the same day's 20:00 Z if still ahead.
+  let day = new Date(asOfMs);
+  day = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 20, 0, 0));
+  if (day.getTime() <= asOfMs) day = new Date(day.getTime() + DAY_MS);
+  while (day.getTime() < end) {
+    const weekday = day.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) days.push(day.getTime());
+    day = new Date(day.getTime() + DAY_MS);
+  }
+  const inner = days.filter((t) => t < end);
+  const budget = Math.max(1, maxColumns - 2);
+  const step = inner.length > budget ? Math.ceil(inner.length / budget) : 1;
+  const thinned = inner.filter((_, i) => i % step === 0);
+  return [asOfMs, ...thinned, end];
+}
+
+/** The table's rows: `rows` prices spread evenly over the payoff's own
+ * grid, with the one nearest the spot replaced by the spot itself so the
+ * table has a row for "unchanged". */
+export function priceGrid(payoff: Payoff, rows = 15): number[] {
+  const lo = payoff.prices[0];
+  const hi = payoff.prices[payoff.prices.length - 1];
+  if (!(hi > lo) || rows < 2) return [payoff.spot];
+  const out: number[] = [];
+  for (let i = 0; i < rows; i++) out.push(Math.round((lo + ((hi - lo) * i) / (rows - 1)) * 100) / 100);
+  let nearest = 0;
+  for (let i = 1; i < out.length; i++) if (Math.abs(out[i] - payoff.spot) < Math.abs(out[nearest] - payoff.spot)) nearest = i;
+  out[nearest] = Math.round(payoff.spot * 100) / 100;
+  // Highest price first, the way a price axis reads.
+  return out.sort((a, b) => b - a);
 }
 
 /** Whole hours from the payoff's valuation moment to its first expiry. */

@@ -7,6 +7,7 @@ import { hoursToExpiry, meanIv, scenarioCurve } from "../../utils/blackScholes";
 import { dayKey, formatClock, formatWeekdayDateTime } from "../../utils/time";
 import { getSettings, updateSettings } from "../../api/settings";
 import { useSettings } from "../../hooks/useSettings";
+import { PayoffTable } from "./PayoffTable";
 
 const WIDTH = 560;
 const HEIGHT = 200;
@@ -140,6 +141,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
         }
       : null;
 
+  const view = settings.riskView;
   const ivPct = Math.round((ivFactor - 1) * 100);
   const ivLabel =
     baseIv != null
@@ -148,6 +150,28 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
 
   return (
     <div className="payoff-chart">
+      <div className="payoff-view-toggle">
+        <span className="timeframe-selector" role="group" aria-label="Risk view">
+          <button type="button" className="timeframe-button" aria-pressed={view === "chart"} onClick={() => updateSettings({ riskView: "chart" })}>
+            Chart
+          </button>
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={view === "table"}
+            disabled={!canScenario}
+            title={canScenario ? "P/L by price and date, every trading day to expiry" : "Needs a payoff with IV and time left"}
+            onClick={() => updateSettings({ riskView: "table" })}
+          >
+            Table
+          </button>
+        </span>
+      </div>
+      {view === "table" && canScenario ? (
+        <div style={{ height: settings.riskChartHeight }} className="payoff-table-frame">
+          <PayoffTable payoff={payoff} ivFactor={ivFactor} expiryLabel={expiryLabel?.startsWith("at ") ? expiryLabel.slice(3) : expiryLabel} />
+        </div>
+      ) : (
       <div className="payoff-frame" ref={frameRef} style={{ height: settings.riskChartHeight }} title="Drag the bottom edge to resize">
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
@@ -200,6 +224,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
         )}
       </svg>
       </div>
+      )}
       <div className="payoff-legend">
         <span>
           <i className="payoff-swatch expiry" /> {expiryLabel ?? "at expiry"}
@@ -229,6 +254,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
       </div>
       {canScenario && (
         <div className="payoff-scenario-controls">
+          {view !== "table" && (
           <label title="Reprice the position this many hours from now, everything else unchanged. Shows what waiting costs: the time value that leaves before your move arrives.">
             Time
             <input
@@ -243,6 +269,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
               {hoursAhead > 0 ? whenLabel(payoff.as_of!, Math.min(hoursAhead, maxHours)) : "now"}
             </span>
           </label>
+          )}
           <label title="Scale every leg's implied volatility. A vol drop after the open or a data release takes value from long premium even when the underlying goes your way.">
             IV
             <input
