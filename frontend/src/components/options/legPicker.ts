@@ -130,7 +130,7 @@ export function strategyKind(strategy: Strategy, timeKind: OptionKind = "call"):
   return "put";
 }
 
-function quoted(rows: StrikeRow[], kind: OptionKind): StrikeRow[] {
+export function quoted(rows: StrikeRow[], kind: OptionKind): StrikeRow[] {
   return rows.filter((r) => (kind === "call" ? r.call : r.put) !== null);
 }
 
@@ -565,4 +565,226 @@ export function legsFromTicket(
     };
   }
   return null;
+}
+
+
+// --- the strike rail's view of the legs -----------------------------------------
+
+/** A leg as a draggable handle: the `Legs` field it lives in (so a drag can
+ * write exactly that field), the kind whose quoted strikes it snaps to
+ * ("both" for a straddle's strike and an iron fly's body, which need a call
+ * and a put at one strike), where it is, and how the chain colours it. */
+export type LegHandleId =
+  | "long"
+  | "short"
+  | "put_long"
+  | "put_short"
+  | "call_short"
+  | "call_long"
+  | "strike"
+  | "put"
+  | "call"
+  | "low"
+  | "mid"
+  | "high"
+  | "body"
+  | "short_strike"
+  | "long_strike";
+
+export interface LegHandle {
+  id: LegHandleId;
+  kind: OptionKind | "both";
+  strike: number;
+  role: "long" | "short" | "body";
+  label: string;
+}
+
+/** Like legLevels, but with the field id and the snap kind -- what the
+ * StrikeRail draws and drags. legLevels stays as it is for the chart. */
+export function legHandles(strategy: Strategy, legs: Legs, ctx: PickContext = {}): LegHandle[] {
+  if (isCondor(legs)) {
+    return [
+      { id: "put_long", kind: "put", strike: legs.put_long, role: "long", label: "Put long" },
+      { id: "put_short", kind: "put", strike: legs.put_short, role: "short", label: "Put short" },
+      { id: "call_short", kind: "call", strike: legs.call_short, role: "short", label: "Call short" },
+      { id: "call_long", kind: "call", strike: legs.call_long, role: "long", label: "Call long" },
+    ];
+  }
+  if (isIronButterfly(legs)) {
+    return [
+      { id: "put_long", kind: "put", strike: legs.put_long, role: "long", label: "Put wing" },
+      { id: "body", kind: "both", strike: legs.body, role: "body", label: "Body" },
+      { id: "call_long", kind: "call", strike: legs.call_long, role: "long", label: "Call wing" },
+    ];
+  }
+  if (isButterfly(legs)) {
+    const kind = strategyKind(strategy) as OptionKind;
+    return [
+      { id: "low", kind, strike: legs.low, role: "long", label: "Lower wing" },
+      { id: "mid", kind, strike: legs.mid, role: "body", label: "Body" },
+      { id: "high", kind, strike: legs.high, role: "long", label: "Upper wing" },
+    ];
+  }
+  if (isStrangle(legs)) {
+    return [
+      { id: "put", kind: "put", strike: legs.put, role: "long", label: "Put" },
+      { id: "call", kind: "call", strike: legs.call, role: "long", label: "Call" },
+    ];
+  }
+  if (isTime(legs)) {
+    const kind = ctx.timeKind ?? "call";
+    return [
+      { id: "short_strike", kind, strike: legs.short_strike, role: "short", label: "Short (near)" },
+      { id: "long_strike", kind, strike: legs.long_strike, role: "long", label: "Long (far)" },
+    ];
+  }
+  if (isSingle(legs)) {
+    const kind = strategyKind(strategy);
+    const role = INCOME_STRATEGIES.has(strategy) ? "short" : "long";
+    return [{ id: "strike", kind, strike: legs.strike, role, label: role === "short" ? "Short" : "Long" }];
+  }
+  const kind = strategyKind(strategy) as OptionKind;
+  return [
+    { id: "long", kind, strike: legs.long, role: "long", label: "Long" },
+    { id: "short", kind, strike: legs.short, role: "short", label: "Short" },
+  ];
+}
+
+function rowsFor(kind: OptionKind | "both", chain: ChainResponse): number[] {
+  if (kind === "both") return bothQuoted(chain.rows).map((r) => r.strike);
+  return quoted(chain.rows, kind).map((r) => r.strike);
+}
+
+/** Keep `order` strictly ascending after `movedId` changed: legs after it
+ * that it caught up with are pushed to the next quoted strike above their
+ * predecessor, legs before it to the next below their successor. Null when
+ * a push runs off the chain -- the caller leaves the legs as they were. */
+function repairAscending(
+  legs: Record<string, number>,
+  order: { id: LegHandleId; rows: number[] }[],
+  movedId: LegHandleId,
+): Record<string, number> | null {
+  const arr = order.map((o) => legs[o.id]);
+  const i = order.findIndex((o) => o.id === movedId);
+  for (let k = i + 1; k < arr.length; k++) {
+    if (arr[k] <= arr[k - 1]) {
+      const next = order[k].rows.find((s) => s > arr[k - 1]);
+      if (next == null) return null;
+      arr[k] = next;
+    }
+  }
+  for (let k = i - 1; k >= 0; k--) {
+    if (arr[k] >= arr[k + 1]) {
+      const below = [...order[k].rows].reverse().find((s) => s < arr[k + 1]);
+      if (below == null) return null;
+      arr[k] = below;
+    }
+  }
+  const out = { ...legs };
+  order.forEach((o, k) => {
+    out[o.id] = arr[k];
+  });
+  return out;
+}
+
+/**
+ * Move exactly one leg to `strike` -- the rail's drag -- and repair the
+ * ordering the way a chain click would (applyPick): the moved leg wins,
+ * the leg it would cross is pushed one quoted strike out of its way. A
+ * strike not quoted for that leg's kind is a no-op, as in applyPick. An
+ * iron fly's body keeps its wings at their distances (applyPick's rule);
+ * a calendar's two strikes stay equal; a diagonal's may not coincide.
+ */
+export function moveLeg(
+  strategy: Strategy,
+  legs: Legs | null,
+  chain: ChainResponse,
+  id: LegHandleId,
+  strike: number,
+  ctx: PickContext = {},
+): Legs | null {
+  if (!legs) return legs;
+  const handle = legHandles(strategy, legs, ctx).find((h) => h.id === id);
+  if (!handle) return legs;
+  const source = id === "long_strike" && ctx.longChain ? ctx.longChain : chain;
+  const rows = rowsFor(handle.kind, source);
+  if (!rows.includes(strike)) return legs;
+  const current = legs as unknown as Record<string, number>;
+  if (current[id] === strike) return legs;
+
+  if (isSingle(legs)) return { strike };
+
+  if (isTime(legs)) {
+    if (strategy === "calendar") return { ...legs, short_strike: strike, long_strike: strike };
+    const other = id === "short_strike" ? legs.long_strike : legs.short_strike;
+    if (other === strike) return legs;
+    return { ...legs, [id]: strike } as Legs;
+  }
+
+  if (isIronButterfly(legs) && id === "body") {
+    const below = legs.body - legs.put_long;
+    const above = legs.call_long - legs.body;
+    return { put_long: strike - below, body: strike, call_long: strike + above };
+  }
+
+  const kind = strategyKind(strategy);
+  const k = (kind === "both" ? "call" : kind) as OptionKind;
+  let order: { id: LegHandleId; rows: number[] }[];
+  if (isCondor(legs)) {
+    order = [
+      { id: "put_long", rows: rowsFor("put", chain) },
+      { id: "put_short", rows: rowsFor("put", chain) },
+      { id: "call_short", rows: rowsFor("call", chain) },
+      { id: "call_long", rows: rowsFor("call", chain) },
+    ];
+  } else if (isIronButterfly(legs)) {
+    order = [
+      { id: "put_long", rows: rowsFor("put", chain) },
+      { id: "body", rows: rowsFor("both", chain) },
+      { id: "call_long", rows: rowsFor("call", chain) },
+    ];
+  } else if (isButterfly(legs)) {
+    order = [
+      { id: "low", rows: rowsFor(k, chain) },
+      { id: "mid", rows: rowsFor(k, chain) },
+      { id: "high", rows: rowsFor(k, chain) },
+    ];
+  } else if (isStrangle(legs)) {
+    order = [
+      { id: "put", rows: rowsFor("put", chain) },
+      { id: "call", rows: rowsFor("call", chain) },
+    ];
+  } else {
+    const longBelow = strategy === "bull_call" || strategy === "bull_put";
+    order = longBelow
+      ? [
+          { id: "long", rows: rowsFor(k, chain) },
+          { id: "short", rows: rowsFor(k, chain) },
+        ]
+      : [
+          { id: "short", rows: rowsFor(k, chain) },
+          { id: "long", rows: rowsFor(k, chain) },
+        ];
+  }
+  const repaired = repairAscending({ ...current, [id]: strike }, order, id);
+  return repaired ? (repaired as unknown as Legs) : legs;
+}
+
+/**
+ * Move every leg by `deltaSteps` quoted strikes of its own kind -- the
+ * rail's Shift-drag. Offsets are the invariant: if any leg would run off
+ * its chain the legs are returned unchanged rather than bunched at the edge.
+ */
+export function shiftLegs(strategy: Strategy, legs: Legs, chain: ChainResponse, deltaSteps: number, ctx: PickContext = {}): Legs {
+  if (deltaSteps === 0) return legs;
+  const out = { ...(legs as unknown as Record<string, number | string>) };
+  for (const handle of legHandles(strategy, legs, ctx)) {
+    const source = handle.id === "long_strike" && ctx.longChain ? ctx.longChain : chain;
+    const rows = rowsFor(handle.kind, source);
+    const i = rows.indexOf(handle.strike);
+    const j = i + deltaSteps;
+    if (i === -1 || j < 0 || j >= rows.length) return legs;
+    out[handle.id] = rows[j];
+  }
+  return out as unknown as Legs;
 }

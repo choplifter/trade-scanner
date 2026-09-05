@@ -30,11 +30,15 @@ import {
   applyPick,
   defaultLegs,
   legsFromTicket,
+  moveLeg,
   selectionOf,
+  shiftLegs,
   strategyKind,
+  type LegHandleId,
   type Legs,
   type PickContext,
 } from "./legPicker";
+import { StrikeRail } from "./StrikeRail";
 import { BrokerMissing } from "../common/BrokerMissing";
 import { OpenSpreads } from "./OpenSpreads";
 import { OptionsHelp } from "./OptionsHelp";
@@ -256,6 +260,18 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     setLegs((current) => applyPick(strategy, current, target, kind, strike, ctx));
   };
 
+  // The strike rail's drags: one leg to a strike, or every leg by a step.
+  // Manual like a chain click, so the auto-pick leaves the result alone.
+  const moveHandle = (id: LegHandleId, strike: number) => {
+    if (!shownChain) return;
+    manualRef.current = true;
+    setLegs((current) => moveLeg(strategy, current, shownChain, id, strike, ctx));
+  };
+  const shiftHandles = (deltaSteps: number) => {
+    if (!shownChain) return;
+    manualRef.current = true;
+    setLegs((current) => (current ? shiftLegs(strategy, current, shownChain, deltaSteps, ctx) : current));
+  };
   const resetLegs = () => {
     manualRef.current = false;
     if (chain) setLegs(defaultLegs(strategy, chain, width, ctx));
@@ -454,9 +470,20 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                 </button>
               ))}
               {mode !== "live" && (
-                <span className="order-hint">[ ] expiry · 5–9 strategy · + − width</span>
+                <span className="order-hint">[ ] expiry · 5–9 strategy · + − width · drag a leg on the rail, ⇧ moves all</span>
               )}
             </div>
+            {shownChain && (
+              <StrikeRail
+                chain={shownChain}
+                longChain={isTime ? longChainState.chain : null}
+                strategy={strategy}
+                legs={legs}
+                ctx={ctx}
+                onMove={moveHandle}
+                onShift={shiftHandles}
+              />
+            )}
             {chainState.error && <p className="order-rejection">{chainState.error}</p>}
             {isTime && longChainState.error && <p className="order-rejection">{longChainState.error}</p>}
             <div

@@ -4382,3 +4382,78 @@ td.chain-side.chain-stale {
   margin-top: 3px;
   font-size: 11px;
 }
+
+/* --- Strike rail (StrikeRail) ------------------------------------------------ */
+
+.strike-rail {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin: 2px 0 4px;
+  touch-action: none;
+  user-select: none;
+  overflow: visible;
+}
+
+.strike-rail-base {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.strike-rail-tick {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.strike-rail-spot {
+  stroke: #c08a2e;
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.strike-rail-label {
+  font-size: 9px;
+  fill: var(--text-muted);
+}
+
+.strike-rail-spot-label {
+  fill: #c08a2e;
+}
+
+.strike-rail-handle {
+  cursor: ew-resize;
+  outline: none;
+}
+
+.strike-rail-handle circle {
+  stroke: var(--surface);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.strike-rail-handle.long circle {
+  fill: var(--delta-up);
+}
+
+.strike-rail-handle.short circle {
+  fill: var(--delta-down);
+}
+
+.strike-rail-handle.body circle {
+  fill: var(--row-selected);
+  stroke: var(--delta-down);
+}
+
+.strike-rail-handle-label {
+  font-size: 9px;
+  font-weight: 600;
+  fill: var(--text-primary);
+}
+
+.strike-rail-handle:focus-visible circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
