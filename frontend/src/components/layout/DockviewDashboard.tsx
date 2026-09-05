@@ -131,6 +131,18 @@ function loadDockLayout(): SerializedDockview | null {
 
 function saveDockLayout(layout: SerializedDockview) {
   try {
+    // A layout with no panels at all is almost never what the user built:
+    // it is what dockview is left holding after a panel component threw
+    // while the saved layout was being restored (seen 2026-09-05: a stale
+    // module during hot reload crashed ChartWidget, fromJSON dropped every
+    // panel, and the debounced write here replaced a hand-arranged dock
+    // with the empty shell). Closing the last panel by hand is the one
+    // legitimate way to reach zero, and that case loses nothing by keeping
+    // the previous arrangement on disk: a reload then brings it back.
+    if (Object.keys(layout.panels ?? {}).length === 0) {
+      const previous = loadDockLayout();
+      if (previous && Object.keys(previous.panels ?? {}).length > 0) return;
+    }
     localStorage.setItem(DOCK_LAYOUT_KEY, JSON.stringify({ version: DOCK_LAYOUT_VERSION, layout } satisfies StoredDockLayout));
   } catch {
     // Storage disabled -- the session still works, it just won't be
@@ -186,9 +198,21 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
 
   const onReady = (event: DockviewReadyEvent) => {
     const saved = loadDockLayout();
+    let restored = false;
     if (saved) {
-      event.api.fromJSON(saved);
-    } else {
+      try {
+        event.api.fromJSON(saved);
+        restored = event.api.panels.length > 0;
+      } catch (err) {
+        // A component that throws during restore must not cost the layout:
+        // fall back to the default for this session and leave the saved
+        // arrangement on disk for the next load (saveDockLayout refuses to
+        // overwrite it with an empty one).
+        console.error("Dock layout restore failed, using the default layout", err);
+      }
+    }
+    if (!restored) {
+      event.api.clear();
       buildDefaultLayout(event.api);
     }
     setContainerApi(event.api);

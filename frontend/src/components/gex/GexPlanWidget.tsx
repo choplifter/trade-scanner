@@ -1,5 +1,7 @@
 import { useGexPlan } from "../../hooks/useGexPlan";
+import { nearTag } from "../../hooks/useGexLevels";
 import type { GexPlanSymbol, GexSupport } from "../../types/gex";
+import { weekdayOf } from "../../utils/occ";
 
 /** Below this the profile rests on so little that saying so alongside the
  * numbers is the honest thing -- it is a legibility hint, not a threshold
@@ -55,6 +57,62 @@ function SymbolPlan({ symbol, plan }: { symbol: string; plan: GexPlanSymbol | un
           </span>
         )}
       </div>
+      {/* The nearest expiry on its own and the move the market prices to
+        * it -- the two numbers an intraday reader looks at first. The
+        * 45-day walls above are the month's positioning; these are the
+        * day's, and they move during the day. */}
+      {(plan.expected_move || plan.near) && (
+        <div className="gex-plan-near">
+          {plan.expected_move && (
+            <div
+              className="gex-plan-levels"
+              title="The at-the-money straddle's mid to this expiry: what the option market prices as the average absolute move. One sigma (68% of outcomes) is the straddle times 1.25. Symmetric around spot; skew is ignored."
+            >
+              <span>
+                Expected move to {weekdayOf(plan.expected_move.expiry)} {plan.expected_move.expiry.slice(5)}{" "}
+                <strong>±{plan.expected_move.move.toFixed(2)}</strong>
+              </span>
+              <span>
+                1σ <strong>±{plan.expected_move.one_sigma.toFixed(2)}</strong>
+              </span>
+              <span>
+                Band <strong>{plan.expected_move.low.toFixed(2)} – {plan.expected_move.high.toFixed(2)}</strong>
+              </span>
+            </div>
+          )}
+          {plan.near && (
+            <div
+              className="gex-plan-levels"
+              title={
+                plan.near.source === "solved"
+                  ? "This expiry's gamma profile. Alpaca computes no greeks for a contract expiring today, so gamma here is solved from each contract's own quote (the same Black-Scholes solver the replayed chain uses). Open interest is last night's; today's new 0DTE positions are not in it."
+                  : "This expiry's gamma profile, from the feed's greeks."
+              }
+            >
+              <span className="gex-plan-near-tag">{nearTag(plan.near)} GEX</span>
+              {plan.near.call_wall && (
+                <span>
+                  Call wall <strong>{plan.near.call_wall.strike.toFixed(2)}</strong>
+                </span>
+              )}
+              {plan.near.put_wall && (
+                <span>
+                  Put wall <strong>{plan.near.put_wall.strike.toFixed(2)}</strong>
+                </span>
+              )}
+              {plan.near.gamma_flip_strike != null && (
+                <span>
+                  Flip <strong>{plan.near.gamma_flip_strike.toFixed(2)}</strong>
+                </span>
+              )}
+              <span className="order-hint">
+                net {plan.near.net_gex >= 0 ? "+" : "-"}${(Math.abs(plan.near.net_gex) / 1e6).toFixed(0)}M ·{" "}
+                {plan.near.source === "solved" ? "gamma solved from quotes" : "feed greeks"}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
       <ul className="gex-plan-playbook">
         {plan.playbook.map((line, i) => (
           <li key={i}>{line}</li>

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { getGex } from "../api/http";
 import { getPalette } from "../api/settings";
 import type { IndicatorResult } from "../types/alpaca";
-import type { GexSymbolReading } from "../types/gex";
+import type { GexSymbolReading, NearExpiryGex } from "../types/gex";
 
 const REFRESH_MS = 5 * 60_000; // matches backend's gex_refresh_interval (300s)
 // Matches the light-theme hex values CandleChart's own position lines use
@@ -20,6 +20,16 @@ export function negativeColor(): string {
 // Neither support nor resistance, so it gets its own neutral color rather
 // than borrowing the positive/negative convention above.
 export const FLIP_COLOR = "#8a6fd6";
+// The expected-move band is a range, not a side: one muted colour for both
+// edges, distinct from the wall colours so the eye separates "where the
+// market prices the day's reach" from "where dealers hedge".
+export const EXPECTED_MOVE_COLOR = "#5f8f9a";
+
+/** "0DTE" while today's expiry trades, else "1d", "3d" -- the tag every
+ * near-expiry label carries so it cannot be mistaken for a 45-day wall. */
+export function nearTag(near: NearExpiryGex): string {
+  return near.is_today ? "0DTE" : `${near.dte}d`;
+}
 
 /**
  * The current GEX reading for `symbol`, asked for by name so the backend
@@ -141,4 +151,54 @@ export function gexLevelsFrom(reading: GexSymbolReading | null): IndicatorResult
 
   if (Object.keys(series).length === 0) return null;
   return { name: "GEX", kind: "level", series, colors };
+}
+
+
+/**
+ * The nearest expiry's walls and flip as their own level set, tagged with
+ * the expiry ("0DTE Call Wall", "1d Flip") so they read apart from the
+ * 45-day walls above. A separate IndicatorResult, not folded into "GEX":
+ * the Levels checklist toggles by name, and one may want the day's walls
+ * without the month's, or the reverse.
+ */
+export function nearGexLevelsFrom(reading: GexSymbolReading | null): IndicatorResult | null {
+  const near = reading?.near;
+  if (!near) return null;
+  const tag = nearTag(near);
+  const series: Record<string, number> = {};
+  const colors: Record<string, string> = {};
+  if (near.call_wall) {
+    series[`${tag} Call Wall`] = near.call_wall.strike;
+    colors[`${tag} Call Wall`] = positiveColor();
+  }
+  if (near.put_wall) {
+    series[`${tag} Put Wall`] = near.put_wall.strike;
+    colors[`${tag} Put Wall`] = negativeColor();
+  }
+  if (near.gamma_flip_strike != null) {
+    series[`${tag} Flip`] = near.gamma_flip_strike;
+    colors[`${tag} Flip`] = FLIP_COLOR;
+  }
+  if (Object.keys(series).length === 0) return null;
+  return { name: "Near GEX", kind: "level", series, colors, style: { dash: "dashed" } };
+}
+
+/**
+ * The expected-move band as two levels, spot +/- the ATM straddle to the
+ * nearest expiry. Labelled with the expiry tag so "EM 0DTE +" is read as
+ * the day's priced reach, and "EM 3d +" as the reach to Tuesday.
+ */
+export function expectedMoveLevelsFrom(reading: GexSymbolReading | null): IndicatorResult | null {
+  const em = reading?.expected_move;
+  if (!em) return null;
+  const tag = em.dte === 0 ? "0DTE" : `${em.dte}d`;
+  return {
+    name: "EM band",
+    kind: "level",
+    // Keys start with the set's name so the chart label reads "EM band 3d +"
+    // rather than "EM band EM 3d +" (CandleChart prefixes the name otherwise).
+    series: { [`EM band ${tag} +`]: em.high, [`EM band ${tag} −`]: em.low },
+    colors: { [`EM band ${tag} +`]: EXPECTED_MOVE_COLOR, [`EM band ${tag} −`]: EXPECTED_MOVE_COLOR },
+    style: { dash: "sparse-dotted" },
+  };
 }

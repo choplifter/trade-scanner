@@ -781,6 +781,31 @@ past dates.
   on an illiquid name a "gamma wall" really can be a handful of contracts,
   and reporting the sample beside the number is honest in a way that
   silently suppressing it below some invented cutoff is not.
+  **The nearest expiry on its own, and the expected move.** The 45-day
+  profile is the month's positioning and moves slowly; intraday the
+  contracts expiring today or tomorrow carry many times the gamma per
+  contract and their walls shift during the day. Every reading therefore
+  also carries the nearest expiry's own profile (`near`: today's while it
+  trades, after the close or on a weekend the next listed one, tagged with
+  its days) -- its call wall, put wall and flip draw on the chart as
+  dashed "0DTE …" / "3d …" levels ("Near GEX" in the Levels checklist).
+  Alpaca computes no greeks for a contract expiring today
+  (Black-Scholes divides by time to expiry), so for 0DTE the gamma is
+  **solved from each contract's own quote** with the same solver the
+  replayed chain uses (`app/options/payoff.py`), and the reading says so
+  (`source: "solved"`). Open interest is last night's, so positions opened
+  today are not in it -- a busy 0DTE strike is understated, not invented.
+  The **expected move** (`expected_move`) is read off the at-the-money
+  straddle to that expiry: call mid plus put mid at the strike nearest
+  spot. Under Black-Scholes the ATM straddle's price *is* the expected
+  absolute move (E|X| of a normal is σ·√(2/π), which is exactly what the
+  straddle prices), so the band drawn on the chart is spot ± straddle
+  ("EM 0DTE ±", "EM 3d ±"; "EM band" in the Levels checklist), and
+  `one_sigma` = straddle × √(π/2) ≈ 1.25×
+  is the 68 % band, shown in the chart badge's tooltip and the GEX Plan.
+  Symmetric by construction; skew is ignored, as every straddle-based
+  expected move ignores it. The 45-day aggregate itself is unchanged by
+  all this: it still leaves today's expiry out, as it always has.
 - **Scanner match history**: a SQLite-backed log of every scanner match,
   keyed per symbol per trading day, so it survives backend restarts and
   accumulates over weeks instead of resetting. Tracks performance at

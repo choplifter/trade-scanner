@@ -4,17 +4,23 @@ no real Alpaca calls.
 """
 
 import asyncio
+
+import pytest
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from alpaca.trading.enums import ContractType
 
 from app.market_data.gamma_exposure import (
+    OptionRow,
     StrikeGex,
     _fetch_contracts,
     call_wall,
+    compute_expected_move,
     compute_gex,
+    compute_near_expiry_gex,
     gamma_flip_strike,
+    nearest_expiry,
     put_wall,
     top_walls,
 )
@@ -155,6 +161,7 @@ class _Contract:
     open_interest: int | None
     type: object
     strike_price: float
+    expiration_date: date = date(2026, 10, 16)
 
 
 @dataclass
@@ -200,9 +207,101 @@ def test_fetch_contracts_paginates_and_treats_none_oi_as_zero():
     )
 
     assert contracts == {
-        "SPY_A": (5, True, 400.0),
-        "SPY_B": (0, False, 420.0),
-        "SPY_C": (10, True, 450.0),
+        "SPY_A": (5, True, 400.0, date(2026, 10, 16)),
+        "SPY_B": (0, False, 420.0, date(2026, 10, 16)),
+        "SPY_C": (10, True, 450.0, date(2026, 10, 16)),
     }
     assert len(clients.trading.requests) == 2
     assert clients.trading.requests[1].page_token == "page2"
+
+
+# --- the nearest expiry and the expected move --------------------------------
+
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _row(expiry, strike, is_call, *, oi=1000, gamma=None, bid=None, ask=None):
+    return OptionRow(f"X{strike:g}{'C' if is_call else 'P'}", expiry, strike, is_call, oi, gamma, bid, ask)
+
+
+def test_nearest_expiry_is_today_while_the_session_trades():
+    today = date(2026, 9, 4)
+    expiries = [today, date(2026, 9, 8), date(2026, 9, 11)]
+    at_noon = datetime(2026, 9, 4, 12, 0, tzinfo=_ET)
+    after_close = datetime(2026, 9, 4, 16, 30, tzinfo=_ET)
+
+    assert nearest_expiry(expiries, at_noon) == today
+    assert nearest_expiry(expiries, after_close) == date(2026, 9, 8)
+    # Saturday: the next listed expiry.
+    assert nearest_expiry(expiries, datetime(2026, 9, 5, 10, 0, tzinfo=_ET)) == date(2026, 9, 8)
+    assert nearest_expiry([], at_noon) is None
+
+
+def test_near_expiry_gex_solves_gamma_from_the_quote_when_the_feed_has_none():
+    # A 0DTE chain: Alpaca hands back no greeks, only quotes.
+    today = date(2026, 9, 4)
+    now = datetime(2026, 9, 4, 10, 0, tzinfo=_ET)
+    rows = [
+        _row(today, 100.0, True, bid=1.00, ask=1.10),
+        _row(today, 100.0, False, bid=1.00, ask=1.10),
+        _row(today, 105.0, True, bid=0.05, ask=0.10, oi=5000),
+        _row(date(2026, 9, 11), 100.0, True, gamma=0.02),  # another expiry: ignored
+    ]
+
+    near = compute_near_expiry_gex(100.0, today, rows, now)
+
+    assert near is not None
+    assert near.is_today and near.dte == 0
+    assert near.source == "solved"
+    assert near.contracts_used == 3
+    assert [r.strike for r in near.by_strike] == [100.0, 105.0]
+    # Equal call and put at the money cancel; the 105 call leaves the net positive.
+    assert near.net_gex > 0
+
+
+def test_near_expiry_gex_prefers_feed_gammas_and_says_so():
+    expiry = date(2026, 9, 8)
+    now = datetime(2026, 9, 5, 10, 0, tzinfo=_ET)
+    rows = [_row(expiry, 100.0, True, gamma=0.03), _row(expiry, 95.0, False, gamma=0.02)]
+
+    near = compute_near_expiry_gex(100.0, expiry, rows, now)
+
+    assert near is not None
+    assert near.source == "alpaca"
+    assert not near.is_today and near.dte == 3
+    assert near.contracts_used == 2
+
+
+def test_near_expiry_gex_is_none_without_a_usable_contract():
+    expiry = date(2026, 9, 8)
+    now = datetime(2026, 9, 5, 10, 0, tzinfo=_ET)
+    assert compute_near_expiry_gex(100.0, expiry, [_row(expiry, 100.0, True)], now) is None
+
+
+def test_expected_move_is_the_atm_straddle_and_one_sigma_scales_it():
+    expiry = date(2026, 9, 8)
+    now = datetime(2026, 9, 5, 10, 0, tzinfo=_ET)
+    rows = [
+        _row(expiry, 99.0, True, bid=1.90, ask=2.10),
+        _row(expiry, 99.0, False, bid=0.90, ask=1.10),
+        _row(expiry, 100.0, True, bid=1.40, ask=1.60),   # nearest spot, both sides quoted
+        _row(expiry, 100.0, False, bid=1.40, ask=1.60),
+        _row(expiry, 101.0, True, bid=1.00, ask=1.20),   # no put quote: not a candidate
+    ]
+
+    em = compute_expected_move(100.2, expiry, rows, now)
+
+    assert em is not None
+    assert em.strike == 100.0
+    assert em.straddle_mid == 3.0 and em.move == 3.0
+    assert em.one_sigma == pytest.approx(3.0 * 1.2533, abs=1e-3)
+    assert (em.low, em.high) == (97.2, 103.2)
+    assert em.dte == 3
+
+
+def test_expected_move_needs_a_strike_quoted_on_both_sides():
+    expiry = date(2026, 9, 8)
+    now = datetime(2026, 9, 5, 10, 0, tzinfo=_ET)
+    assert compute_expected_move(100.0, expiry, [_row(expiry, 100.0, True, bid=1, ask=1.2)], now) is None

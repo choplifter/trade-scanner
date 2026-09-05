@@ -29,14 +29,17 @@ exchange.
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+import math
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta, timezone
 
 from alpaca.data.requests import OptionChainRequest, StockLatestTradeRequest
 from alpaca.trading.enums import ContractType
 from alpaca.trading.requests import GetOptionContractsRequest
 
 from app.alpaca.client import AlpacaClients
+from app.options.payoff import bs_greeks, implied_vol, years_between
+from app.services.market_clock import ET
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,80 @@ class GexReading:
     # contracts on an illiquid name. Defaulted so the older callers that
     # build a reading by hand (tests) keep working.
     open_interest_used: int = 0
+    # The nearest expiry on its own (today's while it trades) and the
+    # straddle-implied expected move to it -- see compute_near_expiry_gex /
+    # compute_expected_move below. None when the chain gave nothing usable.
+    near: "NearExpiryGex | None" = None
+    expected_move: "ExpectedMove | None" = None
+
+
+@dataclass
+class OptionRow:
+    """One contract as fetched: listing (strike, side, expiry, open
+    interest) joined with its snapshot (Alpaca's gamma when it has one,
+    the latest quote). What the near-expiry and expected-move steps read;
+    the 45-day aggregate keeps using the (gamma, oi, is_call, strike)
+    tuples compute_gex always took."""
+
+    symbol: str
+    expiry: date
+    strike: float
+    is_call: bool
+    open_interest: int
+    gamma: float | None
+    bid: float | None
+    ask: float | None
+
+    @property
+    def mid(self) -> float | None:
+        if self.bid is None or self.ask is None or self.ask <= 0:
+            return None
+        if self.bid <= 0:
+            # A one-sided quote: half the ask is the best guess the ticket
+            # itself would make for a contract with no bid.
+            return self.ask / 2
+        return (self.bid + self.ask) / 2
+
+
+@dataclass
+class NearExpiryGex:
+    """The gamma profile of one expiry -- the nearest one, today's while it
+    still trades. The 45-day profile is dominated by long-dated open
+    interest; intraday the contracts expiring today or tomorrow carry a
+    gamma many times sharper per contract, and their walls move during
+    the day. Alpaca computes no greeks for a contract expiring today
+    (Black-Scholes divides by time to expiry), so for 0DTE the gamma is
+    solved here from the contract's own quote -- the same solver the
+    replayed chain uses -- and `source` says so."""
+
+    expiry: date
+    dte: int
+    is_today: bool
+    source: str  # "alpaca" (feed greeks) | "solved" (gamma from quotes, at least in part)
+    net_gex: float
+    contracts_used: int
+    open_interest_used: int
+    by_strike: list[StrikeGex] = field(default_factory=list)
+
+
+@dataclass
+class ExpectedMove:
+    """What the option market prices as the underlying's move to `expiry`,
+    read off the at-the-money straddle. Under Black-Scholes the ATM
+    straddle's price *is* the expected absolute move (E|X| of a normal is
+    sigma * sqrt(2/pi), and the straddle prices exactly that), so `move` is
+    the straddle mid itself and `one_sigma` = move * sqrt(pi/2) is the 68%
+    band. The band is symmetric around spot; skew is ignored, as every
+    straddle-based expected move ignores it."""
+
+    expiry: date
+    dte: int
+    strike: float
+    straddle_mid: float
+    move: float
+    one_sigma: float
+    low: float
+    high: float
 
 
 def compute_gex(
@@ -195,6 +272,106 @@ def gamma_flip_strike(by_strike: list[StrikeGex]) -> float | None:
     return None
 
 
+_SQRT_HALF_PI = math.sqrt(math.pi / 2)
+_CLOSE_ET = time(16, 0)
+
+
+def nearest_expiry(expiries: "set[date] | list[date]", now: datetime) -> date | None:
+    """Today's expiry while the session still trades (before 16:00 New
+    York), else the first expiry after today. `now` may be any zone."""
+    if not expiries:
+        return None
+    now_et = now.astimezone(ET)
+    today = now_et.date()
+    candidates = sorted(set(expiries))
+    if today in candidates and now_et.time() < _CLOSE_ET:
+        return today
+    for expiry in candidates:
+        if expiry > today:
+            return expiry
+    return None
+
+
+def solve_gamma(is_call: bool, mid: float | None, spot: float, strike: float, years: float) -> float | None:
+    """Gamma from a quote: solve the implied volatility that reprices the
+    mid, then Black-Scholes gamma at it. None when the quote does not pin
+    a volatility (no price, no time, deep in the money with no time value)."""
+    if mid is None or mid <= 0 or years <= 0 or spot <= 0:
+        return None
+    kind = "call" if is_call else "put"
+    sigma = implied_vol(kind, mid, spot, strike, years)
+    if sigma is None or sigma <= 0:
+        return None
+    return bs_greeks(kind, spot, strike, years, sigma)[1]
+
+
+def compute_near_expiry_gex(spot: float, expiry: date, rows: list[OptionRow], now: datetime) -> NearExpiryGex | None:
+    """The gamma profile of `expiry` alone. Feed gammas where the feed has
+    them; solved from the quote where it does not (0DTE, or a strike whose
+    solver Alpaca gave up on). Same dollar-gamma convention as compute_gex,
+    so a 0DTE wall and a 45-day wall are in the same units."""
+    years = years_between(now, expiry)
+    matched: list[tuple[float, int, bool, float]] = []
+    solved = False
+    for row in rows:
+        if row.expiry != expiry:
+            continue
+        gamma = row.gamma
+        if gamma is None:
+            gamma = solve_gamma(row.is_call, row.mid, spot, row.strike, years)
+            if gamma is None:
+                continue
+            solved = True
+        matched.append((gamma, row.open_interest, row.is_call, row.strike))
+    if not matched:
+        return None
+    reading = compute_gex("", spot, matched, now)
+    today_et = now.astimezone(ET).date()
+    return NearExpiryGex(
+        expiry=expiry,
+        dte=max(0, (expiry - today_et).days),
+        is_today=expiry == today_et,
+        source="solved" if solved else "alpaca",
+        net_gex=reading.net_gex,
+        contracts_used=reading.contracts_used,
+        open_interest_used=reading.open_interest_used,
+        by_strike=reading.by_strike,
+    )
+
+
+def compute_expected_move(spot: float, expiry: date, rows: list[OptionRow], now: datetime) -> ExpectedMove | None:
+    """The straddle-implied move to `expiry`: the strike nearest spot that
+    has both a call and a put quote, call mid plus put mid. None when no
+    strike is quoted on both sides."""
+    calls: dict[float, float] = {}
+    puts: dict[float, float] = {}
+    for row in rows:
+        if row.expiry != expiry:
+            continue
+        mid = row.mid
+        if mid is None:
+            continue
+        (calls if row.is_call else puts)[row.strike] = mid
+    both = sorted(set(calls) & set(puts), key=lambda k: (abs(k - spot), k))
+    if not both:
+        return None
+    strike = both[0]
+    straddle = calls[strike] + puts[strike]
+    if straddle <= 0:
+        return None
+    today_et = now.astimezone(ET).date()
+    return ExpectedMove(
+        expiry=expiry,
+        dte=max(0, (expiry - today_et).days),
+        strike=strike,
+        straddle_mid=round(straddle, 4),
+        move=round(straddle, 4),
+        one_sigma=round(straddle * _SQRT_HALF_PI, 4),
+        low=round(spot - straddle, 2),
+        high=round(spot + straddle, 2),
+    )
+
+
 async def _spot_price(clients: AlpacaClients, symbol: str) -> float | None:
     try:
         request = StockLatestTradeRequest(symbol_or_symbols=symbol, feed=clients.feed)
@@ -213,15 +390,15 @@ async def _fetch_contracts(
     expiration_lte: date,
     strike_gte: float,
     strike_lte: float,
-) -> dict[str, tuple[int, bool, float]]:
-    """Contract symbol -> (open_interest, is_call, strike_price).
+) -> dict[str, tuple[int, bool, float, date]]:
+    """Contract symbol -> (open_interest, is_call, strike_price, expiry).
 
     open_interest reads as 0 when Alpaca reports None for a contract -- a
     real "no open interest on this strike" answer, observed live to appear
     interleaved with populated values within the very same chain, not a
     signal that data is unavailable.
     """
-    contracts: dict[str, tuple[int, bool, float]] = {}
+    contracts: dict[str, tuple[int, bool, float, date]] = {}
     page_token: str | None = None
     for _ in range(_MAX_CONTRACT_PAGES):
         request = GetOptionContractsRequest(
@@ -242,11 +419,20 @@ async def _fetch_contracts(
                 int(contract.open_interest or 0),
                 contract.type == ContractType.CALL,
                 float(contract.strike_price),
+                _as_date(contract.expiration_date),
             )
         page_token = page.next_page_token
         if not page_token:
             break
     return contracts
+
+
+def _as_date(value) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
 
 
 async def _fetch_gammas(
@@ -256,13 +442,15 @@ async def _fetch_gammas(
     expiration_lte: date,
     strike_gte: float,
     strike_lte: float,
-) -> dict[str, float]:
-    """Contract symbol -> gamma. Skips any contract whose snapshot has no
-    greeks -- 0DTE is already excluded by the date bounds, but this also
-    covers the "implied-volatility solver didn't converge" case Alpaca's
-    docs describe for deep OTM or near-expiry contracts; best-effort, same
-    "fewer data points this cycle, not a failed call" posture as every other
-    market-data fetch in this app (e.g. news_feed.py's per-batch handling).
+) -> dict[str, tuple[float | None, float | None, float | None]]:
+    """Contract symbol -> (gamma, bid, ask). gamma is None where the
+    snapshot has no greeks: every contract expiring today (Alpaca computes
+    none for 0DTE), and the "implied-volatility solver didn't converge"
+    case its docs describe for deep OTM or near-expiry contracts. The
+    45-day aggregate skips those; the near-expiry profile solves its own
+    gamma from the quote instead (compute_near_expiry_gex). Best-effort,
+    same "fewer data points this cycle, not a failed call" posture as every
+    other market-data fetch in this app.
     """
     request = OptionChainRequest(
         underlying_symbol=symbol,
@@ -273,7 +461,14 @@ async def _fetch_gammas(
         strike_price_lte=strike_lte,
     )
     chain = await asyncio.to_thread(clients.options.get_option_chain, request)
-    return {sym: snap.greeks.gamma for sym, snap in chain.items() if snap.greeks is not None}
+    out: dict[str, tuple[float | None, float | None, float | None]] = {}
+    for sym, snap in chain.items():
+        gamma = snap.greeks.gamma if getattr(snap, "greeks", None) is not None else None
+        quote = getattr(snap, "latest_quote", None)
+        bid = float(quote.bid_price) if quote is not None and quote.bid_price is not None else None
+        ask = float(quote.ask_price) if quote is not None and quote.ask_price is not None else None
+        out[sym] = (gamma, bid, ask)
+    return out
 
 
 async def fetch_gex(clients: AlpacaClients, symbol: str) -> GexReading | None:
@@ -285,23 +480,40 @@ async def fetch_gex(clients: AlpacaClients, symbol: str) -> GexReading | None:
         if spot_price is None:
             return None
 
-        today = date.today()
-        expiration_gte = today + timedelta(days=1)  # excludes 0DTE -- see module docstring
+        now = datetime.now(timezone.utc)
+        today = now.astimezone(ET).date()
+        # The window starts today so the nearest expiry (0DTE while it
+        # trades) is in hand for the near-expiry profile and the expected
+        # move; the 45-day aggregate below still leaves today's expiry out,
+        # as it always has (see module docstring), so its numbers do not
+        # move with this addition.
+        expiration_gte = today
         expiration_lte = today + timedelta(days=_EXPIRATION_DAYS_AHEAD)
         strike_gte = spot_price * (1 - _STRIKE_PCT_RANGE)
         strike_lte = spot_price * (1 + _STRIKE_PCT_RANGE)
 
-        contracts, gammas = await asyncio.gather(
+        contracts, snapshots = await asyncio.gather(
             _fetch_contracts(clients, symbol, expiration_gte, expiration_lte, strike_gte, strike_lte),
             _fetch_gammas(clients, symbol, expiration_gte, expiration_lte, strike_gte, strike_lte),
         )
 
+        rows: list[OptionRow] = []
+        for sym, (open_interest, is_call, strike, expiry) in contracts.items():
+            gamma, bid, ask = snapshots.get(sym, (None, None, None))
+            rows.append(OptionRow(sym, expiry, strike, is_call, open_interest, gamma, bid, ask))
+
         matched = [
-            (gammas[sym], open_interest, is_call, strike)
-            for sym, (open_interest, is_call, strike) in contracts.items()
-            if sym in gammas
+            (row.gamma, row.open_interest, row.is_call, row.strike)
+            for row in rows
+            if row.gamma is not None and row.expiry > today
         ]
-        return compute_gex(symbol, spot_price, matched, datetime.now(timezone.utc))
+        reading = compute_gex(symbol, spot_price, matched, now)
+
+        near_expiry = nearest_expiry([row.expiry for row in rows], now)
+        if near_expiry is not None:
+            reading.near = compute_near_expiry_gex(spot_price, near_expiry, rows, now)
+            reading.expected_move = compute_expected_move(spot_price, near_expiry, rows, now)
+        return reading
     except Exception:
         logger.exception("GEX fetch failed for %s", symbol)
         return None

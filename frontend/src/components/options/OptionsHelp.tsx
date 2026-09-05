@@ -240,6 +240,43 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
         </dl>
 
+        <h3>Levels the chart draws from this chain</h3>
+        <dl>
+          <dt>Call Wall · Put Wall · Flip</dt>
+          <dd>
+            Dealer gamma exposure (GEX) summed over every expiry in the next 45 days, ±15 % around spot: open
+            interest × gamma per strike, calls positive, puts negative, under the usual assumption that dealers are
+            short the calls and long the puts. The Call Wall is the strike with the most positive gamma (their
+            hedging sells into a rise there, so it acts as resistance), the Put Wall the most negative (support), the
+            Flip the price where net gamma changes sign: above it dealers dampen moves, below it they amplify them.
+            Month-scale positioning, moves slowly. The GEX Plan widget spells out the regime.
+          </dd>
+          <dt>0DTE Call Wall · 0DTE Put Wall · 0DTE Flip</dt>
+          <dd>
+            The same profile for the nearest expiry alone, today's while it still trades (after the close, or on a
+            weekend, the next one, tagged with its days: "3d Flip"). Per contract a same-day option carries many
+            times the gamma of a monthly, so these are the walls that matter for the day, and they shift as the day
+            goes on. Alpaca computes no greeks for a contract expiring today, so 0DTE gamma is solved here from each
+            contract's own quote, the same Black-Scholes solver the replayed chain uses; the GEX Plan says "gamma
+            solved from quotes" when that happened. Open interest is last night's, so positions opened today are not
+            in it yet, which understates a busy 0DTE strike.
+          </dd>
+          <dt>EM + / EM −</dt>
+          <dd>
+            The expected move to the nearest expiry, read off the at-the-money straddle: call mid plus put mid at the
+            strike nearest spot. Under Black-Scholes the straddle's price <em>is</em> the market's expected absolute
+            move, so the band is spot ± straddle; one sigma (68 % of outcomes) is the straddle × 1.25 and appears in
+            the badge's tooltip and in the GEX Plan. Symmetric by construction, skew is ignored. Use it to judge a
+            breakeven: a long option whose breakeven lies outside the band needs a bigger day than the market is
+            pricing.
+          </dd>
+          <dt>Levels menu</dt>
+          <dd>
+            Each set ("GEX", "Near GEX", "EM band") is a separate entry in the chart's Levels checklist and can
+            be shown or hidden on its own.
+          </dd>
+        </dl>
+
         <h3>Idea</h3>
         <dl>
           <dt>Suggest structures</dt>

@@ -11,8 +11,11 @@ import { useSpreadLevels } from "../../hooks/useSpreadLevels";
 import { useTradingMode } from "../../hooks/useTradingMode";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import {
+  expectedMoveLevelsFrom,
   gexLevelsFrom,
+  nearGexLevelsFrom,
   useGexReading,
+  EXPECTED_MOVE_COLOR,
 } from "../../hooks/useGexLevels";
 import type { ChartFocus } from "../../types/screener";
 import { useHistoricalBars } from "../../hooks/useHistoricalBars";
@@ -56,6 +59,12 @@ const DEFAULT_TIMEFRAME_KEY = "5m";
 // row's checked state has to read directly off this.
 const VISIBLE_INDICATORS_KEY = "chart:visibleIndicators";
 const PREMIUM_LEVELS_SEEDED_KEY = "chart:premiumLevelsSeeded";
+// The option-derived level sets that arrived after the checklist existed.
+// Same seeding as the premium levels: a name the reader has never seen is
+// switched on once, then it is theirs to turn off -- an unseeded name would
+// simply never draw, and nothing on screen would say why.
+const GEX_LEVELS_SEEDED_KEY = "chart:gexLevelsSeeded";
+const GEX_LEVEL_NAMES = ["Near GEX", "EM band"] as const;
 
 type TradeLevelKey = "entry" | "stop" | "target";
 const ALL_TRADE_LEVEL_KEYS: TradeLevelKey[] = ["entry", "stop", "target"];
@@ -345,6 +354,10 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // One reading, both consumers: the chart levels and the net-GEX badge
   // below. Two hooks here would mean two round trips per symbol change.
   const gexLevels = gexLevelsFrom(gexReading);
+  // The nearest expiry's own walls and the straddle-implied expected move,
+  // from the same reading -- each its own entry in the Levels checklist.
+  const nearGexLevels = nearGexLevelsFrom(gexReading);
+  const expectedMoveLevels = expectedMoveLevelsFrom(gexReading);
   // The Options widget's strikes and armed underlying bounds, drawn like
   // the GEX walls (see useSpreadLevels).
   const spreadLevels = useSpreadLevels(symbol);
@@ -418,6 +431,27 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
       return next;
     });
   }, [contract]);
+  useEffect(() => {
+    let seeded: string[];
+    try {
+      seeded = JSON.parse(localStorage.getItem(GEX_LEVELS_SEEDED_KEY) ?? "[]") as string[];
+    } catch {
+      seeded = [];
+    }
+    const fresh = GEX_LEVEL_NAMES.filter((name) => !seeded.includes(name));
+    if (fresh.length === 0) return;
+    try {
+      localStorage.setItem(GEX_LEVELS_SEEDED_KEY, JSON.stringify([...seeded, ...fresh]));
+    } catch {
+      return;
+    }
+    setVisibleIndicators((current) => {
+      const next = new Set(current);
+      for (const name of fresh) next.add(name);
+      persistLevelSet(VISIBLE_INDICATORS_KEY, next);
+      return next;
+    });
+  }, []);
   const exits = position ? exitsForPosition(position, orders) : null;
   const positionSide: "long" | "short" = position?.side === "short" ? "short" : "long";
   // Memoized on the extracted primitives, not on `positions`/`orders`
@@ -631,11 +665,11 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // up with the candles at any timeframe.
   const premiumSeries = usePremiumSeries(contract, displayed.bars);
   const indicatorsWithGex = useMemo(() => {
-    const extra = [gexLevels, spreadLevels, ...premium.levels, premiumSeries].filter(
+    const extra = [gexLevels, nearGexLevels, expectedMoveLevels, spreadLevels, ...premium.levels, premiumSeries].filter(
       (i): i is NonNullable<typeof i> => i !== null,
     );
     return extra.length > 0 ? [...displayed.indicators, ...extra] : displayed.indicators;
-  }, [displayed.indicators, gexLevels, spreadLevels, premium.levels, premiumSeries]);
+  }, [displayed.indicators, gexLevels, nearGexLevels, expectedMoveLevels, spreadLevels, premium.levels, premiumSeries]);
   // Memoized rather than filtered inline at the prop: CandleChart's
   // indicators effect tears down and rebuilds every price line whenever
   // this reference changes, and this component re-renders on every trade
@@ -821,6 +855,16 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
               title="Net dealer gamma exposure -- see the GEX Plan widget for what this regime tends to mean"
             >
               Net GEX {gexReading.net_gex >= 0 ? "+" : "-"}${(Math.abs(gexReading.net_gex) / 1e9).toFixed(2)}B
+            </span>
+          )}
+          {gexReading?.expected_move && (
+            <span
+              className="gex-net-badge"
+              style={{ color: EXPECTED_MOVE_COLOR }}
+              title={`Expected move to ${gexReading.expected_move.expiry}: the at-the-money straddle's mid (${gexReading.expected_move.straddle_mid.toFixed(2)} at the ${gexReading.expected_move.strike} strike) -- what the option market prices as the average absolute move. One sigma (68% of outcomes) is ±${gexReading.expected_move.one_sigma.toFixed(2)}. Drawn as the EM lines.`}
+            >
+              EM {gexReading.expected_move.dte === 0 ? "0DTE" : `${gexReading.expected_move.dte}d`} ±
+              {gexReading.expected_move.move.toFixed(2)}
             </span>
           )}
           <div className="levels-dropdown" ref={levelsButtonRef}>

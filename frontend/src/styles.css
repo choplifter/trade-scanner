@@ -4209,3 +4209,21 @@ td.chain-side.chain-stale {
 .chain-greek-toggle:hover {
   color: var(--text-primary);
 }
+
+/* GEX Plan: the nearest expiry's block sits between the 45-day levels and
+   the playbook, set off by a hairline so the two profiles are not read as
+   one. */
+.gex-plan-near {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.gex-plan-near-tag {
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}

@@ -67,6 +67,42 @@ def _wall(row) -> dict | None:
     return {"strike": row.strike, "net_gex": row.net_gex} if row is not None else None
 
 
+def _near_payload(reading) -> dict | None:
+    """The nearest expiry's own profile -- see gamma_exposure.NearExpiryGex."""
+    near = getattr(reading, "near", None)
+    if near is None:
+        return None
+    return {
+        "expiry": near.expiry.isoformat(),
+        "dte": near.dte,
+        "is_today": near.is_today,
+        "source": near.source,
+        "net_gex": near.net_gex,
+        "contracts_used": near.contracts_used,
+        "open_interest_used": near.open_interest_used,
+        "top_walls": [{"strike": row.strike, "net_gex": row.net_gex} for row in top_walls(near.by_strike, n=3)],
+        "call_wall": _wall(call_wall(near.by_strike)),
+        "put_wall": _wall(put_wall(near.by_strike)),
+        "gamma_flip_strike": gamma_flip_strike(near.by_strike),
+    }
+
+
+def _expected_move_payload(reading) -> dict | None:
+    em = getattr(reading, "expected_move", None)
+    if em is None:
+        return None
+    return {
+        "expiry": em.expiry.isoformat(),
+        "dte": em.dte,
+        "strike": em.strike,
+        "straddle_mid": em.straddle_mid,
+        "move": em.move,
+        "one_sigma": em.one_sigma,
+        "low": em.low,
+        "high": em.high,
+    }
+
+
 async def _readings(request: Request, symbol: str | None) -> dict:
     """The readings a /gex or /gex-plan call is about.
 
@@ -123,6 +159,8 @@ async def gex(request: Request, symbol: str | None = Query(default=None)) -> dic
                 "call_wall": _wall(call_wall(reading.by_strike)),
                 "put_wall": _wall(put_wall(reading.by_strike)),
                 "gamma_flip_strike": gamma_flip_strike(reading.by_strike),
+                "near": _near_payload(reading),
+                "expected_move": _expected_move_payload(reading),
             }
             for symbol_, reading in readings.items()
         },
@@ -150,5 +188,7 @@ async def gex_plan(request: Request, symbol: str | None = Query(default=None)) -
             "playbook": plan.playbook,
             "contracts_used": reading.contracts_used,
             "open_interest_used": reading.open_interest_used,
+            "near": _near_payload(reading),
+            "expected_move": _expected_move_payload(reading),
         }
     return {"available": bool(readings), "symbols": symbols}

@@ -15,6 +15,36 @@ export interface GexSupport {
   open_interest_used: number;
 }
 
+/** The nearest expiry's own gamma profile -- today's while it trades --
+ * see backend gamma_exposure.NearExpiryGex. `source` is "solved" when at
+ * least one gamma had to be solved from the contract's quote (Alpaca
+ * computes none for a contract expiring today). */
+export interface NearExpiryGex extends GexSupport {
+  expiry: string;
+  dte: number;
+  is_today: boolean;
+  source: "alpaca" | "solved";
+  net_gex: number;
+  top_walls: GexWall[];
+  call_wall: GexWall | null;
+  put_wall: GexWall | null;
+  gamma_flip_strike: number | null;
+}
+
+/** The straddle-implied move to the nearest expiry -- see backend
+ * gamma_exposure.ExpectedMove. `move` is the ATM straddle's mid (the
+ * market's expected absolute move); `one_sigma` = move * sqrt(pi/2). */
+export interface ExpectedMove {
+  expiry: string;
+  dte: number;
+  strike: number;
+  straddle_mid: number;
+  move: number;
+  one_sigma: number;
+  low: number;
+  high: number;
+}
+
 export interface GexSymbolReading extends GexSupport {
   spot_price: number;
   as_of: string;
@@ -27,6 +57,8 @@ export interface GexSymbolReading extends GexSupport {
   put_wall: GexWall | null;
   /** Approximate zero-gamma crossing -- see backend's gamma_flip_strike(). */
   gamma_flip_strike: number | null;
+  near?: NearExpiryGex | null;
+  expected_move?: ExpectedMove | null;
 }
 
 /** GET /api/meta/gex. Without `symbol` every reading currently held; with
@@ -45,6 +77,8 @@ export interface GexPlanSymbol extends GexSupport {
   call_wall: GexWall | null;
   put_wall: GexWall | null;
   playbook: string[];
+  near?: NearExpiryGex | null;
+  expected_move?: ExpectedMove | null;
 }
 
 /** GET /api/meta/gex-plan -- same on-demand `symbol` behaviour and
