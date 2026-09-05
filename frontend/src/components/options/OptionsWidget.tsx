@@ -19,7 +19,7 @@ import {
   type Strategy,
 } from "../../types/options";
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
-import { formatExpiry, type ParsedOcc } from "../../utils/occ";
+import { formatExpiry, weekdayOf, type ParsedOcc } from "../../utils/occ";
 import type { OptionsIdea } from "../../types/options";
 import { AiIdeaTab } from "./AiIdeaTab";
 import { ChainTable } from "./ChainTable";
@@ -427,7 +427,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   onClick={() => setExpiry(e.expiry)}
                   title={`${e.expiry} · ${e.contract_count} contracts${isTime ? " (short leg)" : ""}`}
                 >
-                  {formatExpiry(e.expiry)} <small>{e.dte}d</small>
+                  <small>{weekdayOf(e.expiry)}</small> {formatExpiry(e.expiry)} <small>{e.dte}d</small>
                 </button>
               ))}
               {mode !== "live" && (

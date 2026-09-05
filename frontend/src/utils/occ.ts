@@ -32,6 +32,16 @@ export function formatExpiry(expiry: string): string {
   return `${Number(d)} ${month}`;
 }
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Mon" for an ISO date. Built from the date's own fields, not from a
+ * parsed Date in local time: an expiry is a calendar day, and "2026-09-08"
+ * parsed as UTC midnight is still Sunday evening west of Greenwich. */
+export function weekdayOf(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] ?? "";
+}
+
 export function formatStrike(strike: number): string {
   return Number.isInteger(strike) ? String(strike) : strike.toFixed(2).replace(/0$/, "");
 }
