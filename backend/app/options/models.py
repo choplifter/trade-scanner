@@ -392,6 +392,18 @@ class Coverage(BaseModel):
     ok: bool
 
 
+class PayoffLegOut(BaseModel):
+    """One leg as the payoff valued it -- what the browser needs to value
+    it again at another hour or IV (see payoff_curve)."""
+
+    kind: Literal["call", "put", "stock"]
+    strike: float
+    side: Literal["buy", "sell"]
+    ratio: int = 1
+    expiry: date | None = None
+    iv: float | None = None
+
+
 class Payoff(BaseModel):
     """P&L per position (x 100 x qty) over a grid of underlying prices --
     see app.options.payoff."""
@@ -405,6 +417,11 @@ class Payoff(BaseModel):
     spot: float
     expiry: date
     multiplier: int
+    legs: list[PayoffLegOut] = Field(default_factory=list)
+    # Per share, signed like the ticket: positive paid, negative received.
+    net_price: float | None = None
+    # The moment the today curve was valued at.
+    as_of: datetime | None = None
 
 
 class ResolvedSpread(BaseModel):

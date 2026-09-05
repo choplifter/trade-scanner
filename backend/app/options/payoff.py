@@ -215,7 +215,10 @@ def payoff_curve(
     negative received. Returns prices, at_expiry, today (None if a leg lacks
     IV), breakevens, max_profit/max_loss (None = unbounded on the upside/
     downside beyond the grid), spot, expiry (the evaluation date of the
-    at-expiry curve) and the multiplier."""
+    at-expiry curve) and the multiplier -- plus the legs as valued, the
+    net price and the valuation moment, so the risk chart's what-if
+    sliders (frontend utils/blackScholes.ts) can reprice the same
+    position at a later hour or a shifted IV without a round trip."""
     option_legs = [leg for leg in legs if leg.kind != "stock" and leg.expiry is not None]
     if not option_legs:
         raise ValueError("a payoff needs at least one option leg")
@@ -277,4 +280,10 @@ def payoff_curve(
         "spot": spot,
         "expiry": first_expiry,
         "multiplier": multiplier,
+        "legs": [
+            {"kind": leg.kind, "strike": leg.strike, "side": leg.side, "ratio": leg.ratio, "expiry": leg.expiry, "iv": leg.iv}
+            for leg in legs
+        ],
+        "net_price": net_price,
+        "as_of": now,
     }

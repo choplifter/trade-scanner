@@ -3,12 +3,17 @@ import type { MouseEvent } from "react";
 
 import type { Payoff } from "../../types/options";
 import { formatNum } from "../../utils/format";
+import { hoursToExpiry, meanIv, scenarioCurve } from "../../utils/blackScholes";
 import { getSettings, updateSettings } from "../../api/settings";
 import { useSettings } from "../../hooks/useSettings";
 
 const WIDTH = 560;
 const HEIGHT = 200;
 const PAD = { top: 14, right: 12, bottom: 24, left: 52 };
+
+const IV_FACTOR_MIN = 0.5;
+const IV_FACTOR_MAX = 1.5;
+const IV_FACTOR_STEP = 0.05;
 
 function money(value: number): string {
   return formatNum(value, 0);
@@ -21,12 +26,35 @@ interface PayoffChartProps {
   expiryLabel?: string;
 }
 
+/** "today 15:00" within the day, "Tue 08.09 15:00" beyond it. */
+function whenLabel(asOf: string, hoursAhead: number): string {
+  const target = new Date(Date.parse(asOf) + hoursAhead * 3600 * 1000);
+  const time = target.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (hoursAhead < 24 && target.getDate() === new Date(asOf).getDate()) return `today ${time}`;
+  return `${target.toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "2-digit" })} ${time}`;
+}
+
 /** The risk chart: P&L (y) over the underlying's price (x). A solid line
  * at expiry with the profit and loss areas tinted, a dashed line for
  * today's model value, the zero line, the spot, the breakevens. Plain
- * SVG: the numbers all come from the backend (app/options/payoff.py). */
+ * SVG: the numbers all come from the backend (app/options/payoff.py).
+ *
+ * Two what-if sliders under it add a third, dotted line: the same legs
+ * repriced some hours later and at a shifted implied volatility
+ * (utils/blackScholes.ts, in the browser). They answer the question the
+ * today curve quietly assumes away -- right direction, an hour early,
+ * vola drops: what is the position worth then? Both reset when the
+ * structure changes, so a stale scenario never sits under a new spread. */
 export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
   const [hover, setHover] = useState<number | null>(null);
+  const [hoursAhead, setHoursAhead] = useState(0);
+  const [ivFactor, setIvFactor] = useState(1);
+  const structureKey = `${payoff.expiry}:${(payoff.legs ?? []).map((l) => `${l.side}${l.kind}${l.strike}`).join("|")}`;
+  useEffect(() => {
+    setHoursAhead(0);
+    setIvFactor(1);
+  }, [structureKey]);
+
   // The frame is CSS-resizable (drag its bottom edge); the height it ends
   // up at is remembered in the settings so every risk chart shares it.
   const [settings] = useSettings();
@@ -48,9 +76,21 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
     };
   }, []);
 
+  const maxHours = useMemo(() => hoursToExpiry(payoff), [payoff]);
+  const canScenario = payoff.today != null && maxHours > 0 && (payoff.legs?.length ?? 0) > 0;
+  const scenarioActive = canScenario && (hoursAhead > 0 || ivFactor !== 1);
+  const scenario = useMemo(
+    () => (scenarioActive ? scenarioCurve(payoff, Math.min(hoursAhead, maxHours), ivFactor) : null),
+    [payoff, scenarioActive, hoursAhead, maxHours, ivFactor],
+  );
+  const baseIv = useMemo(() => meanIv(payoff), [payoff]);
+  // Whole hours up to three days, then quarter days: a 28-day spread does
+  // not need 672 notches.
+  const hourStep = maxHours <= 72 ? 1 : 6;
+
   const geometry = useMemo(() => {
     const xs = payoff.prices;
-    const ys = payoff.today ? [...payoff.at_expiry, ...payoff.today] : payoff.at_expiry;
+    const ys = [...payoff.at_expiry, ...(payoff.today ?? []), ...(scenario ?? [])];
     const xMin = xs[0];
     const xMax = xs[xs.length - 1];
     let yMin = Math.min(0, ...ys);
@@ -76,7 +116,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
     const ticksX = [xMin, (xMin + xMax) / 2, xMax];
     const ticksY = [yMax - padY, 0, yMin + padY].filter((v, i, arr) => arr.indexOf(v) === i);
     return { x, y, path, area, zeroY, ticksX, ticksY, xMin, xMax };
-  }, [payoff]);
+  }, [payoff, scenario]);
 
   const onMove = (e: MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -89,7 +129,21 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
   };
 
   const { x, y, path, area, zeroY, ticksX, ticksY } = geometry;
-  const hovered = hover != null ? { price: payoff.prices[hover], expiry: payoff.at_expiry[hover], today: payoff.today?.[hover] ?? null } : null;
+  const hovered =
+    hover != null
+      ? {
+          price: payoff.prices[hover],
+          expiry: payoff.at_expiry[hover],
+          today: payoff.today?.[hover] ?? null,
+          scenario: scenario?.[hover] ?? null,
+        }
+      : null;
+
+  const ivPct = Math.round((ivFactor - 1) * 100);
+  const ivLabel =
+    baseIv != null
+      ? `IV ${(baseIv * ivFactor * 100).toFixed(1)}%${ivPct !== 0 ? ` (${ivPct > 0 ? "+" : ""}${ivPct}%)` : ""}`
+      : `IV ×${ivFactor.toFixed(2)}`;
 
   return (
     <div className="payoff-chart">
@@ -119,6 +173,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
           </text>
         ))}
         {payoff.today && <path className="payoff-today" d={path(payoff.today)} />}
+        {scenario && <path className="payoff-scenario" d={path(scenario)} />}
         <path className="payoff-expiry" d={path(payoff.at_expiry)} />
         <line className="payoff-spot" x1={x(payoff.spot)} x2={x(payoff.spot)} y1={PAD.top} y2={HEIGHT - PAD.bottom} />
         <text className="payoff-tick payoff-spot-label" x={x(payoff.spot)} y={PAD.top - 3} textAnchor="middle">
@@ -137,6 +192,9 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
             <line className="payoff-hover" x1={x(hovered.price)} x2={x(hovered.price)} y1={PAD.top} y2={HEIGHT - PAD.bottom} />
             <circle className="payoff-hover-dot" cx={x(hovered.price)} cy={y(hovered.expiry)} r={3} />
             {hovered.today != null && <circle className="payoff-hover-dot today" cx={x(hovered.price)} cy={y(hovered.today)} r={3} />}
+            {hovered.scenario != null && (
+              <circle className="payoff-hover-dot scenario" cx={x(hovered.price)} cy={y(hovered.scenario)} r={3} />
+            )}
           </g>
         )}
       </svg>
@@ -152,15 +210,64 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
         ) : (
           <span className="order-hint">no IV: expiry curve only</span>
         )}
+        {scenario && (
+          <span>
+            <i className="payoff-swatch scenario" /> {whenLabel(payoff.as_of!, Math.min(hoursAhead, maxHours))}
+            {ivFactor !== 1 ? `, ${ivLabel}` : ""}
+          </span>
+        )}
         <span>max profit {payoff.max_profit == null ? "unlimited" : money(payoff.max_profit)}</span>
         <span>max loss {payoff.max_loss == null ? "unbounded" : money(payoff.max_loss)}</span>
         {hovered && (
           <span className="payoff-readout">
             at {hovered.price.toFixed(2)}: {money(hovered.expiry)}
             {hovered.today != null ? ` / today ${money(hovered.today)}` : ""}
+            {hovered.scenario != null ? ` / then ${money(hovered.scenario)}` : ""}
           </span>
         )}
       </div>
+      {canScenario && (
+        <div className="payoff-scenario-controls">
+          <label title="Reprice the position this many hours from now, everything else unchanged. Shows what waiting costs: the time value that leaves before your move arrives.">
+            Time
+            <input
+              type="range"
+              min={0}
+              max={maxHours}
+              step={hourStep}
+              value={Math.min(hoursAhead, maxHours)}
+              onChange={(e) => setHoursAhead(Number(e.target.value))}
+            />
+            <span className="payoff-scenario-value">
+              {hoursAhead > 0 ? whenLabel(payoff.as_of!, Math.min(hoursAhead, maxHours)) : "now"}
+            </span>
+          </label>
+          <label title="Scale every leg's implied volatility. A vol drop after the open or a data release takes value from long premium even when the underlying goes your way.">
+            IV
+            <input
+              type="range"
+              min={IV_FACTOR_MIN}
+              max={IV_FACTOR_MAX}
+              step={IV_FACTOR_STEP}
+              value={ivFactor}
+              onChange={(e) => setIvFactor(Number(e.target.value))}
+            />
+            <span className="payoff-scenario-value">{ivLabel}</span>
+          </label>
+          {scenarioActive && (
+            <button
+              type="button"
+              className="row-action"
+              onClick={() => {
+                setHoursAhead(0);
+                setIvFactor(1);
+              }}
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

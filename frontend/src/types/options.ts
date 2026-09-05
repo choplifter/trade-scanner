@@ -135,6 +135,17 @@ export interface TicketLeg {
 }
 
 /** The risk chart's numbers, per position (x 100 x qty). */
+/** One leg as the backend valued it -- enough to value it again in the
+ * browser at another hour or IV (utils/blackScholes.ts). */
+export interface PayoffLegOut {
+  kind: "call" | "put" | "stock";
+  strike: number;
+  side: "buy" | "sell";
+  ratio: number;
+  expiry: string | null;
+  iv: number | null;
+}
+
 export interface Payoff {
   prices: number[];
   at_expiry: number[];
@@ -145,6 +156,11 @@ export interface Payoff {
   spot: number;
   expiry: string;
   multiplier: number;
+  legs?: PayoffLegOut[];
+  /** Per share, signed like the ticket: positive paid, negative received. */
+  net_price?: number | null;
+  /** The moment the today curve was valued at (ISO). */
+  as_of?: string | null;
 }
 
 export interface Coverage {

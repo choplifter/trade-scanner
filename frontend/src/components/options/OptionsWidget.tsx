@@ -34,6 +34,7 @@ import {
 } from "./legPicker";
 import { BrokerMissing } from "../common/BrokerMissing";
 import { OpenSpreads } from "./OpenSpreads";
+import { OptionsHelp } from "./OptionsHelp";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
 
@@ -64,6 +65,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // The Idea tab's request lives here so "Load into ticket" (which shows
   // the Chain tab) does not throw away an answer that took minutes.
   const ideas = useOptionsIdeas();
+  const [helpOpen, setHelpOpen] = useState(false);
   // A replay only reaches this widget in Simulation mode: Paper and Live
   // keep showing the real account's chain, which next to a replayed chart
   // reads as "the chain does not move". Say so, and offer the switch.
@@ -362,7 +364,17 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               {ideas.loading ? "Idea…" : "Idea"}
             </button>
           )}
+          <button
+            type="button"
+            className="timeframe-button options-help-button"
+            onClick={() => setHelpOpen(true)}
+            title="What everything in this widget means"
+            aria-label="Help"
+          >
+            ?
+          </button>
         </div>
+        <OptionsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
         {spreads.account && (
           <span className="widget-count" title="Options buying power · options trading level · data feed">
             BP {spreads.account.options_buying_power?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? "—"} ·

@@ -4108,3 +4108,92 @@ td.chain-side.chain-stale {
 .replay-mode-hint .row-action {
   margin: 0 0.15rem;
 }
+
+/* --- Risk chart what-if sliders (PayoffChart) ------------------------------- */
+
+.payoff-scenario {
+  fill: none;
+  stroke: #c0672e;
+  stroke-width: 1.5;
+  stroke-dasharray: 2 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.payoff-swatch.scenario {
+  border-top: 2px dotted #c0672e;
+}
+
+.payoff-hover-dot.scenario {
+  fill: #c0672e;
+}
+
+.payoff-scenario-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.payoff-scenario-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.payoff-scenario-controls input[type="range"] {
+  width: 120px;
+  margin: 0;
+}
+
+.payoff-scenario-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  min-width: 6em;
+}
+
+/* --- Options help dialog ---------------------------------------------------- */
+
+.options-help {
+  padding: 0 1rem 1rem;
+  max-height: 75vh;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.options-help-intro {
+  margin: 0 0 0.75rem;
+  color: var(--text-secondary);
+}
+
+.options-help h3 {
+  margin: 1rem 0 0.35rem;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.options-help dl {
+  display: grid;
+  grid-template-columns: minmax(10rem, 13rem) 1fr;
+  gap: 5px 14px;
+  margin: 0;
+}
+
+.options-help dt {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.options-help dd {
+  margin: 0;
+}
+
+.options-help-button {
+  min-width: 1.6em;
+  font-weight: 600;
+}

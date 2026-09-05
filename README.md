@@ -1380,6 +1380,18 @@ day, which is how you rehearse a strategy at the weekend.
   and clipped to the clock like everything else. The option chain already
   worked this way (the replay option engine fetches an underlying's own
   bars when the session lacks it).
+- **The risk chart's what-if sliders.** Under the ticket's payoff chart,
+  *Time* moves the model's clock forward by hours and *IV* scales every
+  leg's implied volatility (±50 %); a dotted third line shows the position
+  repriced there, and the hover readout gives all three values. The
+  repricing runs in the browser (`frontend/src/utils/blackScholes.ts`) on
+  the legs, net price and valuation moment the payoff now carries, so a
+  slider notch costs no request. Same model as the today curve -- constant
+  IV per leg, no skew, no dividends, no rate -- and honest about it: the
+  point is the size of what time and vol do to a short-dated option before
+  the move arrives, not the fill. The **?** button in the widget header
+  opens a reference for every term on the widget, from the expiry strip to
+  Min credit, Mid/Natural and the sliders.
 - **Where the prices come from.** Live in Simulation mode: the same chain
   and snapshots the paper account sees. In a replay: the contracts that
   existed on the replayed day (Alpaca lists expired contracts, from

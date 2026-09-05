@@ -106,3 +106,20 @@ def test_covered_call_uses_a_stock_leg():
 def test_payoff_needs_an_option_leg():
     with pytest.raises(ValueError):
         payoff_curve([PayoffLeg("stock", 100.0, "buy")], qty=1, net_price=0.0, spot=100.0, now=NOW)
+
+
+def test_the_curve_carries_the_legs_and_moment_for_client_side_repricing():
+    now = datetime(2026, 9, 4, 14, 0, tzinfo=timezone.utc)
+    legs = [
+        PayoffLeg(kind="put", strike=95.0, side="buy", expiry=date(2026, 9, 18), iv=0.25),
+        PayoffLeg(kind="put", strike=100.0, side="sell", expiry=date(2026, 9, 18), iv=0.22),
+    ]
+    curve = payoff_curve(legs, 2, -1.10, 100.0, now)
+
+    assert curve["as_of"] == now
+    assert curve["net_price"] == -1.10
+    assert [(l["side"], l["kind"], l["strike"], l["iv"]) for l in curve["legs"]] == [
+        ("buy", "put", 95.0, 0.25),
+        ("sell", "put", 100.0, 0.22),
+    ]
+    assert curve["multiplier"] == 200
