@@ -11,6 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.ai.trade_idea_tracker import TradeIdeaTracker
 from app.market_data.earnings import EarningsCalendar
+from app.market_data.macro_calendar import MacroCalendar
 from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import build_universe, list_active_equity_symbols
 from app.auth.dependency import get_current_user
@@ -140,6 +141,9 @@ async def lifespan(app: FastAPI):
     # already has. Without one it answers "not known" throughout, which is
     # never read as "no earnings coming" -- see app.market_data.earnings.
     app.state.earnings_calendar = EarningsCalendar(settings.fmp_api_key)
+    # The coming weeks' FOMC/CPI/NFP/PCE/GDP dates for the expiry strip and
+    # the Optimizer -- same key, same posture (app.market_data.macro_calendar).
+    app.state.macro_calendar = MacroCalendar(settings.fmp_api_key)
 
     scanner_history_store = ScannerHistoryStore(settings.scanner_history_db_path)
     await scanner_history_store.init_schema()

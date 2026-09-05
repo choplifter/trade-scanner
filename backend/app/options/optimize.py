@@ -90,6 +90,10 @@ class OptimizeRequest(BaseModel):
     budget: float | None = Field(default=None, gt=0)
     max_loss: float | None = Field(default=None, gt=0)
     strategies: list[Strategy] | None = None
+    # Leave out every expiry on or after the next earnings report, so no
+    # structure is held through it. Needs the earnings calendar; without
+    # one the switch is a no-op and the response says so.
+    avoid_earnings: bool = False
     top_n: int = Field(default=8, ge=1, le=FINALISTS)
 
     @model_validator(mode="after")
@@ -199,6 +203,7 @@ async def optimize_structures(
     today: date | None = None,
     now: datetime | None = None,
     warnings: list[str] | None = None,
+    earnings_calendar=None,
 ) -> dict:
     """Ranked structures for `req.target` on `req.horizon`, each with the
     ticket the widget loads and the preview the ticket would show.
@@ -210,6 +215,7 @@ async def optimize_structures(
     underlying = underlying.upper()
     now = now or datetime.now(timezone.utc)
     today = today or now.astimezone(ET).date()
+    warnings = list(warnings or [])
 
     spot = await service.spot(underlying)
     if not spot:
@@ -225,6 +231,10 @@ async def optimize_structures(
         )
     if req.horizon_expiry is not None and req.horizon_expiry not in {e.expiry for e in infos}:
         raise OrderRejected(f"{req.horizon_expiry.isoformat()} is not a listed expiry for {underlying}", field="horizon")
+
+    # Earnings inside the horizon: said, or -- on request -- avoided by
+    # dropping every expiry the report falls on or before.
+    earnings_block, infos = await _apply_earnings(earnings_calendar, underlying, horizon, infos, req.avoid_earnings, warnings)
     expiries = choose_expiries(infos, horizon, today)
     if not expiries:
         raise OrderRejected(f"No listed expiry on or after {horizon.isoformat()} for {underlying}", field="horizon")
@@ -347,12 +357,57 @@ async def optimize_structures(
         "implied_move": implied_move,
         "atm_iv": round(sigma, 4) if sigma else None,
         "horizon": {"date": horizon.isoformat(), "expiries_considered": [e.isoformat() for e in expiries]},
+        "earnings": earnings_block,
         "results": results,
         "rejected": rejected,
         "skipped": skipped.to_dict(),
-        "warnings": list(warnings or []),
+        "warnings": warnings,
         "disclaimer": DISCLAIMER,
     }
+
+
+async def _apply_earnings(calendar, underlying: str, horizon: date, infos: list[ExpiryInfo], avoid: bool, warnings: list[str]):
+    """(earnings block, expiries to consider). With the calendar silent the
+    block is None and the list is untouched; `avoid` then cannot do
+    anything, and the warning says so rather than letting the switch look
+    honoured."""
+    if calendar is None:
+        if avoid:
+            warnings.append("Avoid earnings was asked for, but no earnings calendar is configured; nothing was excluded.")
+        return None, infos
+    try:
+        earnings = await calendar.next_earnings(underlying)
+    except Exception:
+        logger.exception("Earnings lookup failed for %s", underlying)
+        earnings = None
+    if earnings is None:
+        if avoid:
+            warnings.append("Avoid earnings: no upcoming report is known for this symbol; nothing was excluded.")
+        return None, infos
+    held_through = earnings.before(horizon)
+    block = {**earnings.to_dict(), "held_through": held_through, "avoided": False}
+    if not avoid:
+        if held_through:
+            warnings.append(
+                f"Earnings on {earnings.report_date.isoformat()} fall inside this horizon: every structure below is held "
+                "through the report, and the IV in its price will not survive it."
+            )
+        return block, infos
+    if held_through:
+        raise OrderRejected(
+            f"The horizon {horizon.isoformat()} is on or after the earnings report on {earnings.report_date.isoformat()}; "
+            "pick an earlier expiry, or allow holding through earnings.",
+            field="horizon",
+        )
+    kept = [e for e in infos if not earnings.before(e.expiry)]
+    dropped = len(infos) - len(kept)
+    block["avoided"] = True
+    if dropped:
+        warnings.append(
+            f"Avoid earnings: {dropped} expir{'y' if dropped == 1 else 'ies'} on or after the report on "
+            f"{earnings.report_date.isoformat()} left out."
+        )
+    return block, kept
 
 
 def _ticket_legs(spread):

@@ -993,6 +993,24 @@ contracts. The first expiry with at least one day left is preselected, so a
 cached for five minutes; the selected expiry's quotes refresh every 15 s
 (server-side cache of 15 s, so two viewers share one fetch).
 
+**Events on the strip.** A red `E` marks the first expiry held through the
+next earnings report, a purple tag (`FOMC`, `CPI`, `NFP`, `PCE`,
+`GDP`) the first expiry held through a scheduled US release; the line
+beneath gives the report date, the stock's typical move over its past
+reports (median of the close-to-close move from the close before each
+report date to the first close after it -- two sessions, because FMP's
+before/after-market field is unreliable -- over up to eight reports, with
+the largest), the macro dates, and the **IV rank** (today's ATM IV between
+the lowest and highest recorded for the symbol over the past year of
+sessions; needs twenty recorded sessions). All of it comes from
+`GET /api/trading/options/events/{underlying}` (`app/options/events.py`),
+which reads the FMP earnings calendar (`app/market_data/earnings.py`, now
+caching every report date), the new macro calendar
+(`app/market_data/macro_calendar.py`, FMP's economic calendar filtered by
+release name, US only, 70 days ahead, cached six hours), Alpaca daily
+bars for the moves, and the IV history store. Every block is nullable and
+says why: "no key" is not "nothing scheduled".
+
 Hotkeys inside the widget (not in Live): `[` / `]` previous / next expiry,
 `5`–`9` the five spread strategies in button order, `+` / `−` width. The
 two outright longs have no key because `0`–`4` belong to the equity
@@ -1372,6 +1390,28 @@ card with its return on risk, chance of profit, profit and risk in dollars,
 a small payoff chart, the ticket the widget loads and the preview that
 ticket would show. "More options" adds a max loss and the family
 checkboxes.
+
+**Events.** The expiry chips carry the strip's marks, and a line beneath
+them the events with a **hold through earnings** switch: off sends
+`avoid_earnings: true`, and the backend leaves out every expiry on or after
+the report (a horizon on or after it is refused as a contradiction); on,
+the response warns that the IV in every price includes the report. With
+earnings inside the horizon the tab reads the **report's own implied
+move** off two chains -- the horizon expiry's implied variance (ATM IV² ×
+T) less the last pre-report expiry's, the ordinary days cancelling, as a
+percentage of spot -- and compares it with the stock's median move over
+its past reports, naming the side that has been cheaper: Directional when
+the stock usually moved more than is priced, Neutral when less, with a
+button that applies the view. Without a pre-report expiry or its chain the
+note states the past moves only. The **IV rank light** beside the implied
+move offers credit families when premium is rich (rank above 60 %) and
+debit families when cheap (below 30 %). Every scanner row has an **Opt**
+button that selects the symbol, opens the tab and runs the view the day's
+move suggests (up: Bullish, down: Bearish, "Very" beyond ten percent) --
+a module-level intent bus (`components/options/optimizerIntent.ts`), since
+the scanner and the widget share no parent that should know about option
+outlooks. The response carries `earnings {report_date, days_until,
+held_through, avoided}`.
 
 The outlook buttons work in **implied moves**: one standard deviation of
 the move the market prices to the chosen expiry, spot × ATM IV × √T (shown

@@ -4583,6 +4583,169 @@ td.chain-side.chain-stale {
   white-space: nowrap;
 }
 
+/* --- Events: earnings / macro marks on expiries, IV-rank light ----------- */
+
+.opt-tab,
+.expiry-strip,
+.expiry-events {
+  --event-earnings: #d03b3b;
+  --event-macro: #8e5bd6;
+}
+
+.expiry-mark {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 12px;
+  vertical-align: middle;
+  color: #fff;
+}
+
+.expiry-mark.earnings {
+  background: var(--event-earnings);
+}
+
+.expiry-mark.macro {
+  background: var(--event-macro);
+}
+
+.expiry-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  padding: 0 2px 4px;
+}
+
+.expiry-event {
+  white-space: nowrap;
+}
+
+.opt-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+
+.opt-dot.earnings {
+  background: var(--event-earnings);
+}
+
+.opt-dot.macro {
+  background: var(--event-macro);
+}
+
+.opt-expiry-day.has-earnings {
+  border-color: var(--event-earnings);
+}
+
+.opt-expiry-day.has-macro:not(.has-earnings) {
+  border-color: var(--event-macro);
+}
+
+.opt-expiry-day.blocked,
+.opt-expiry-day:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+.opt-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.opt-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.opt-event input[type="checkbox"] {
+  margin: 0 2px 0 0;
+}
+
+.opt-suggestion {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 2px 8px 4px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--event-earnings);
+  border-radius: 4px;
+  background: var(--bg-elevated, rgba(127, 127, 127, 0.06));
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.opt-suggestion.plain {
+  border-left-color: var(--event-macro);
+}
+
+.opt-suggestion strong {
+  color: var(--text-primary);
+}
+
+.opt-ivrank {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.opt-ivrank-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.opt-ivrank.rich .opt-ivrank-dot,
+.expiry-event.ivrank.rich .opt-ivrank-dot {
+  background: var(--opt-bull, #1f9d55);
+}
+
+.opt-ivrank.mid .opt-ivrank-dot,
+.expiry-event.ivrank.mid .opt-ivrank-dot {
+  background: var(--opt-mid, #d6a11c);
+}
+
+.opt-ivrank.cheap .opt-ivrank-dot,
+.expiry-event.ivrank.cheap .opt-ivrank-dot {
+  background: #3b82d0;
+}
+
+.scanner-options-button {
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.scanner-options-button:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
 /* --- Risk view: the date x price table (PayoffTable) ---------------------- */
 
 .payoff-view-toggle {

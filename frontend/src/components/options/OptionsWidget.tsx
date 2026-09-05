@@ -4,6 +4,7 @@ import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, clampShortTarget, getSettings, updateSettings } from "../../api/settings";
 import { modeBadge, setTradingMode, type TradingMode } from "../../api/tradingMode";
 import { useOptionChain } from "../../hooks/useOptionChain";
+import { useOptionEvents } from "../../hooks/useOptionEvents";
 import { useOptionsIdeas } from "../../hooks/useOptionsIdeas";
 import { useOptionsOptimizer } from "../../hooks/useOptionsOptimizer";
 import { useReplaySession } from "../../hooks/useReplaySession";
@@ -19,12 +20,15 @@ import {
   type ShortTargetGroup,
   type Strategy,
 } from "../../types/options";
+import { atmIv } from "../../utils/atmIv";
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatExpiry, weekdayOf, type ParsedOcc } from "../../utils/occ";
 import { formatDateTime } from "../../utils/time";
 import type { LoadableStructure } from "../../types/options";
 import { AiIdeaTab } from "./AiIdeaTab";
 import { OptimizerTab } from "./OptimizerTab";
+import { earningsSentence, eventMarks, ivRankSentence, ivTone, macroInWindow, macroSentence } from "./eventMarks";
+import { subscribeOptimizerIntent, type OptimizerIntent } from "./optimizerIntent";
 import { ChainTable } from "./ChainTable";
 import {
   applyPick,
@@ -106,6 +110,24 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const badge = modeBadge(mode);
   const replayFeed = spreads.account?.feed === "replay";
   const { chain, expiries, expiry, setExpiry } = chainState;
+  // What the expiries are held through (earnings, FOMC, CPI) and where the
+  // chain's ATM IV sits in its history; the strip and the Optimizer show it.
+  const eventsState = useOptionEvents(symbol, atmIv(chain), expiries.find((e) => e.expiry === chain?.expiry)?.dte ?? null);
+  const events = eventsState.events && eventsState.events.underlying === symbol ? eventsState.events : null;
+  const marks = useMemo(() => eventMarks(expiries, events), [expiries, events]);
+  const macroShown = useMemo(() => macroInWindow(events?.macro ?? [], expiries), [events, expiries]);
+  // A scanner row's "Options" button: open the Optimizer on that symbol with
+  // the view the move suggests. The tab receives it and runs once the
+  // chain is in; the symbol itself arrives through props from App.
+  const [intent, setIntent] = useState<OptimizerIntent | null>(null);
+  useEffect(
+    () =>
+      subscribeOptimizerIntent((next) => {
+        setIntent(next);
+        setTab("optimizer");
+      }),
+    [],
+  );
 
   // The long expiry: the first one a week or more after the short expiry,
   // unless the user chose one that still lies after the short expiry.
@@ -451,7 +473,16 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
         ) : tab === "idea" ? (
           <AiIdeaTab symbol={symbol} ideas={ideas} onLoad={loadStructure} />
         ) : tab === "optimizer" ? (
-          <OptimizerTab symbol={symbol} chain={chain} expiries={expiries} optimizer={optimizer} onLoad={loadStructure} />
+          <OptimizerTab
+            symbol={symbol}
+            chain={chain}
+            expiries={expiries}
+            events={events}
+            optimizer={optimizer}
+            intent={intent}
+            onIntentHandled={(seq) => setIntent((cur) => (cur && cur.seq === seq ? null : cur))}
+            onLoad={loadStructure}
+          />
         ) : !symbol ? (
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
         ) : (
@@ -464,15 +495,48 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   className="timeframe-button"
                   aria-pressed={e.expiry === expiry}
                   onClick={() => setExpiry(e.expiry)}
-                  title={`${e.expiry} · ${e.contract_count} contracts${isTime ? " (short leg)" : ""}`}
+                  title={[
+                    `${e.expiry} · ${e.contract_count} contracts${isTime ? " (short leg)" : ""}`,
+                    marks.get(e.expiry)?.earnings && events?.earnings?.report_date
+                      ? `first expiry held through earnings on ${formatExpiry(events.earnings.report_date)}`
+                      : null,
+                    ...(marks.get(e.expiry)?.macro ?? []).map((m) => `${m.label} ${formatExpiry(m.date)} (${m.event})`),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 >
                   <small>{weekdayOf(e.expiry)}</small> {formatExpiry(e.expiry)} <small>{e.dte}d</small>
+                  {marks.get(e.expiry)?.earnings && <span className="expiry-mark earnings">E</span>}
+                  {marks.get(e.expiry)?.macro.map((m) => (
+                    <span key={`${m.date}-${m.label}`} className="expiry-mark macro">
+                      {m.label}
+                    </span>
+                  ))}
                 </button>
               ))}
               {mode !== "live" && (
                 <span className="order-hint">[ ] expiry · 5–9 strategy · + − width · drag a leg on the rail, ⇧ moves all</span>
               )}
             </div>
+            {events && (events.earnings || events.macro.length > 0 || events.iv.atm_iv != null) && (
+              <div className="expiry-events order-hint">
+                {events.earnings && (
+                  <span className="expiry-event" title="The next report FMP lists, and the stock's close-to-close move across its past reports (the close before to the first close after, so a before-open and an after-close report are measured alike).">
+                    <span className="expiry-mark earnings">E</span> {earningsSentence(events.earnings)}
+                  </span>
+                )}
+                {macroShown.length > 0 && (
+                  <span className="expiry-event" title="Scheduled US releases in the strip's window: FOMC decision, CPI, payrolls, PCE, GDP. Marked on the first expiry held through each.">
+                    <span className="expiry-mark macro">M</span> {macroSentence(macroShown)}
+                  </span>
+                )}
+                {events.iv.atm_iv != null && (
+                  <span className={`expiry-event ivrank ${ivTone(events.iv.rank?.percent) ?? "none"}`} title="Where today's at-the-money IV sits between the lowest and highest recorded over the past year of sessions. Above 60 % premium is rich against its own history, below 30 % cheap. A comparison with the past, not a forecast.">
+                    <span className="opt-ivrank-dot" aria-hidden="true" /> {ivRankSentence(events.iv)}
+                  </span>
+                )}
+              </div>
+            )}
             {shownChain && (
               <StrikeRail
                 chain={shownChain}

@@ -313,7 +313,13 @@ async def optimize(body: OptimizeRequest, request: Request, user: dict = Depends
         )
     service = await _service(request, user)
     try:
-        return await optimize_structures(service, body.underlying, body, warnings=warnings)
+        return await optimize_structures(
+            service,
+            body.underlying,
+            body,
+            warnings=warnings,
+            earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
+        )
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:

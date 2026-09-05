@@ -474,6 +474,8 @@ export interface OptimizeRequest {
   outlook?: OptimizerOutlook | null;
   /** 0 ranks by return on risk, 1 by chance of profit, between blends. */
   preference?: number;
+  /** Leave out every expiry on or after the next earnings report. */
+  avoid_earnings?: boolean;
   horizon_expiry?: string | null;
   horizon_date?: string | null;
   budget?: number | null;
@@ -541,11 +543,57 @@ export interface OptimizeResponse {
   implied_move: number | null;
   atm_iv: number | null;
   horizon: { date: string; expiries_considered: string[] };
+  /** The next report against the horizon; null when no calendar or no report is known. */
+  earnings: { report_date: string; days_until: number; held_through: boolean; avoided: boolean } | null;
   results: OptimizerResult[];
   rejected: OptimizerRejected[];
   skipped: OptimizeSkipped;
   warnings: string[];
   disclaimer: string;
+}
+
+/** One past report and the stock's close-to-close move across it (the
+ * close before the report date to the first close after -- two sessions,
+ * because FMP's before/after-market timing is unreliable). */
+export interface EarningsMoveOut {
+  report_date: string;
+  close_before: number;
+  close_after: number;
+  move_pct: number;
+}
+
+export interface EarningsEvents {
+  /** The next report, or null when none is upcoming in FMP's rows. */
+  report_date: string | null;
+  days_until: number | null;
+  history: EarningsMoveOut[];
+  samples: number;
+  median_abs_pct: number | null;
+  mean_abs_pct: number | null;
+  max_abs_pct: number | null;
+  /** Why the history is empty, when it is. */
+  history_note: string | null;
+}
+
+export interface MacroEventOut {
+  date: string;
+  /** FOMC · CPI · NFP · PCE · GDP · Jobs */
+  label: string;
+  event: string;
+}
+
+/** GET /trading/options/events/{underlying} -- see backend app/options/events.py. */
+export interface OptionEventsResponse {
+  underlying: string;
+  today: string;
+  earnings: EarningsEvents | null;
+  macro: MacroEventOut[];
+  iv: {
+    atm_iv: number | null;
+    rank: { percent: number; samples: number; low: number; high: number } | null;
+    samples: number;
+  };
+  sources: { earnings: boolean; macro: boolean; iv_rank: boolean };
 }
 
 /** A structure that was proposed but could not be built or priced -- shown

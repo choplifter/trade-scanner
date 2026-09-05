@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { getChain } from "../../api/options";
 import type { OptimizerState } from "../../hooks/useOptionsOptimizer";
 import {
   STRATEGY_GROUPS,
@@ -7,12 +8,17 @@ import {
   type ExpiryInfo,
   type LoadableStructure,
   type OptimizeRequest,
+  type OptimizerOutlook,
   type OptimizerResult,
+  type OptionEventsResponse,
   type Payoff,
   type Strategy,
 } from "../../types/options";
+import { atmIv, impliedMove as impliedMoveOf } from "../../utils/atmIv";
 import { formatMoney, formatNum, formatPrice } from "../../utils/format";
 import { formatExpiry, weekdayOf } from "../../utils/occ";
+import { earningsSentence, eventMarks, heldThroughEarnings, ivRankSentence, ivTone, macroInWindow, macroSentence } from "./eventMarks";
+import type { OptimizerIntent } from "./optimizerIntent";
 
 interface OptimizerTabProps {
   symbol: string | null;
@@ -20,13 +26,19 @@ interface OptimizerTabProps {
    * sizes the implied move the outlook buttons work in. */
   chain: ChainResponse | null;
   expiries: ExpiryInfo[];
+  /** Earnings, macro releases and IV rank for the symbol (useOptionEvents). */
+  events: OptionEventsResponse | null;
   optimizer: OptimizerState;
+  /** A scanner row asked for this symbol with a view; run it once the chain
+   * is in, then report the seq back so it is not run twice. */
+  intent: OptimizerIntent | null;
+  onIntentHandled: (seq: number) => void;
   /** Applies a result's ticket to the widget's own strategy/expiry/legs.
    * Returns false when it could not be loaded, so the card can say so. */
   onLoad: (structure: LoadableStructure) => boolean;
 }
 
-type Outlook = "very_bearish" | "bearish" | "neutral" | "directional" | "bullish" | "very_bullish";
+type Outlook = OptimizerOutlook;
 
 /** OptionStrat's six views. `move` is in implied moves: the target sits
  * that many one-sigma moves from the spot (both sides for directional). */
@@ -50,6 +62,11 @@ const OUTLOOK_STRATEGIES: Record<Outlook, Strategy[]> = {
   very_bullish: ["long_call", "bull_call"],
 };
 
+/** What the IV-rank light offers: the shapes that sell premium when it is
+ * rich, the shapes that buy it when it is cheap. */
+const CREDIT_STRATEGIES: Strategy[] = ["bull_put", "bear_call", "iron_condor", "iron_butterfly"];
+const DEBIT_STRATEGIES: Strategy[] = ["long_call", "long_put", "bull_call", "bear_put", "long_straddle", "long_strangle", "calendar"];
+
 /** Diagonals are not enumerated (see backend optimizer.py). */
 const NOT_OFFERED = new Set<Strategy>(["diagonal"]);
 
@@ -72,16 +89,6 @@ function OutlookIcon({ tone, move }: { tone: string; move: number }) {
       <path d={d} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
-}
-
-/** The at-the-money implied volatility of the chain on screen: the mean of
- * call and put IV at the strike nearest the spot. */
-function atmIv(chain: ChainResponse | null): number | null {
-  if (!chain || chain.rows.length === 0) return null;
-  let best = chain.rows[0];
-  for (const r of chain.rows) if (Math.abs(r.strike - chain.spot) < Math.abs(best.strike - chain.spot)) best = r;
-  const ivs = [best.call?.iv, best.put?.iv].filter((v): v is number => v != null && v > 0);
-  return ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : null;
 }
 
 /** "Buy 486C · Sell 496C" from the backend's "+486C −496C". */
@@ -284,9 +291,25 @@ function labelFor(s: Strategy): string {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Expiries as OptionStrat lays them out: a month band with its days. */
-function ExpiryChips({ expiries, value, onChange }: { expiries: ExpiryInfo[]; value: string; onChange: (e: string) => void }) {
+/** Expiries as OptionStrat lays them out: a month band with its days. An
+ * expiry that is the first to be held through the earnings report or a
+ * macro release carries a dot; with "hold through earnings" off, the ones
+ * on or after the report are greyed out. */
+function ExpiryChips({
+  expiries,
+  value,
+  events,
+  allowThroughEarnings,
+  onChange,
+}: {
+  expiries: ExpiryInfo[];
+  value: string;
+  events: OptionEventsResponse | null;
+  allowThroughEarnings: boolean;
+  onChange: (e: string) => void;
+}) {
   const usable = expiries.filter((e) => e.dte >= 1);
+  const marks = eventMarks(usable, events);
   const groups: { month: string; items: ExpiryInfo[] }[] = [];
   for (const e of usable) {
     const key = `${MONTHS[Number(e.expiry.slice(5, 7)) - 1]} ${e.expiry.slice(0, 4)}`;
@@ -300,23 +323,85 @@ function ExpiryChips({ expiries, value, onChange }: { expiries: ExpiryInfo[]; va
         <div key={g.month} className="opt-expiry-month">
           <div className="opt-expiry-month-label">{g.month.slice(0, 3)}</div>
           <div className="opt-expiry-days">
-            {g.items.map((e) => (
-              <button
-                key={e.expiry}
-                type="button"
-                className="opt-expiry-day"
-                aria-pressed={e.expiry === value}
-                title={`${weekdayOf(e.expiry)} ${formatExpiry(e.expiry)} · ${e.dte}d`}
-                onClick={() => onChange(e.expiry)}
-              >
-                {Number(e.expiry.slice(8, 10))}
-              </button>
-            ))}
+            {g.items.map((e) => {
+              const m = marks.get(e.expiry);
+              const through = heldThroughEarnings(e.expiry, events?.earnings);
+              const blocked = through && !allowThroughEarnings;
+              const notes = [
+                `${weekdayOf(e.expiry)} ${formatExpiry(e.expiry)} · ${e.dte}d`,
+                through && events?.earnings?.report_date ? `held through earnings on ${formatExpiry(events.earnings.report_date)}` : null,
+                ...(m?.macro ?? []).map((ev) => `${ev.label} ${formatExpiry(ev.date)} (${ev.event})`),
+              ].filter(Boolean);
+              return (
+                <button
+                  key={e.expiry}
+                  type="button"
+                  className={`opt-expiry-day${m?.earnings ? " has-earnings" : ""}${m?.macro.length ? " has-macro" : ""}${blocked ? " blocked" : ""}`}
+                  aria-pressed={e.expiry === value}
+                  disabled={blocked}
+                  title={notes.join(" · ")}
+                  onClick={() => onChange(e.expiry)}
+                >
+                  {Number(e.expiry.slice(8, 10))}
+                  {m?.earnings && <span className="opt-dot earnings" aria-label="earnings" />}
+                  {m?.macro.length ? <span className="opt-dot macro" aria-label={m.macro.map((x) => x.label).join(", ")} /> : null}
+                </button>
+              );
+            })}
           </div>
         </div>
       ))}
     </div>
   );
+}
+
+/** One expiry's chain, fetched on demand (the server caches it 15 s); the
+ * tab needs the horizon expiry's and the last pre-earnings expiry's ATM IV
+ * to price the report itself. Null until in, or when it cannot be had. */
+function useChainFor(symbol: string | null, expiry: string | null, enabled: boolean, fallback: ChainResponse | null): ChainResponse | null {
+  const [chain, setChain] = useState<ChainResponse | null>(null);
+  useEffect(() => {
+    if (!enabled || !symbol || !expiry) return;
+    if (fallback && fallback.underlying === symbol && fallback.expiry === expiry) return;
+    let cancelled = false;
+    getChain(symbol, expiry)
+      .then((c) => {
+        if (!cancelled) setChain(c);
+      })
+      .catch(() => {
+        if (!cancelled) setChain(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, expiry, enabled, fallback]);
+  if (fallback && symbol && fallback.underlying === symbol && fallback.expiry === expiry) return fallback;
+  return chain && chain.underlying === symbol && chain.expiry === expiry ? chain : null;
+}
+
+/** The report's own implied move, as a percentage of spot: the horizon
+ * expiry's implied variance less the last pre-report expiry's. The
+ * ordinary days cancel; what is left is what the market charges for the
+ * print. Null when either chain or IV is missing or the excess is not
+ * positive. */
+function earningsImpliedPct(horizon: ChainResponse | null, horizonDte: number | null, pre: ChainResponse | null, preDte: number | null): number | null {
+  const ivH = atmIv(horizon);
+  const ivP = atmIv(pre);
+  if (ivH == null || ivP == null || horizonDte == null || preDte == null || horizonDte <= preDte) return null;
+  const excess = ivH * ivH * (horizonDte / 365) - ivP * ivP * (preDte / 365);
+  return excess > 0 ? Math.sqrt(excess) * 100 : null;
+}
+
+interface RunParams {
+  outlook: Outlook | null;
+  target: number | null;
+  directionalMove: number | null;
+  families: Set<Strategy>;
+  horizonExpiry: string;
+  budget: number | null;
+  maxLoss: number | null;
+  preference: number;
+  avoidEarnings: boolean;
 }
 
 /**
@@ -326,12 +411,18 @@ function ExpiryChips({ expiries, value, onChange }: { expiries: ExpiryInfo[]; va
  * them through the ticket's path and ranks them (see backend
  * app/options/optimize.py). Return on risk says what a shape pays if the
  * target is reached; chance is the implied distribution's own odds of any
- * profit. Neither is a recommendation.
+ * profit. The events line says what the horizon is held through (earnings,
+ * FOMC, CPI) and how the stock moved over its past reports; the IV-rank
+ * light says whether premium is rich or cheap against its own history.
+ * Nothing here is a recommendation.
  */
-export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: OptimizerTabProps) {
+export function OptimizerTab({ symbol, chain, expiries, events, optimizer, intent, onIntentHandled, onLoad }: OptimizerTabProps) {
   const { result, request, loading, error } = optimizer;
   const remembered = request && request.underlying === symbol ? request : null;
   const spot = chain?.spot ?? null;
+  const symbolEvents = events && events.underlying === symbol ? events : null;
+  const earnings = symbolEvents?.earnings ?? null;
+  const macroShown = useMemo(() => macroInWindow(symbolEvents?.macro ?? [], expiries), [symbolEvents, expiries]);
 
   const [outlook, setOutlook] = useState<Outlook | null>((remembered?.outlook as Outlook | undefined) ?? null);
   const [target, setTarget] = useState<string>(remembered?.target_low != null ? String(remembered.target_low) : "");
@@ -341,6 +432,7 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
   const [horizonExpiry, setHorizonExpiry] = useState<string>(remembered?.horizon_expiry ?? "");
   const [budget, setBudget] = useState<string>(remembered?.budget != null ? String(remembered.budget) : "1000");
   const [preference, setPreference] = useState<number>(remembered?.preference ?? 0.5);
+  const [holdThroughEarnings, setHoldThroughEarnings] = useState<boolean>(!(remembered?.avoid_earnings ?? false));
   const [more, setMore] = useState(false);
   const [maxLoss, setMaxLoss] = useState<string>(remembered?.max_loss != null ? String(remembered.max_loss) : "");
   const [families, setFamilies] = useState<Set<Strategy>>(
@@ -350,6 +442,35 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
           STRATEGY_GROUPS.flatMap((g) => g.strategies).filter((s) => !NOT_OFFERED.has(s) && s !== "covered_call" && s !== "cash_secured_put"),
       ),
   );
+  const [reason, setReason] = useState<string | null>(null);
+
+  // A new symbol without a remembered run for it starts from a clean form:
+  // the old symbol's horizon is not a listed expiry of the new one, and its
+  // target is a price on another chart.
+  const symbolRef = useRef(symbol);
+  useEffect(() => {
+    if (symbolRef.current === symbol) return;
+    symbolRef.current = symbol;
+    // A run remembered for this symbol restores its form; otherwise clean.
+    const r = request && request.underlying === symbol ? request : null;
+    setOutlook((r?.outlook as Outlook | undefined) ?? null);
+    setTarget(r?.target_low != null ? String(r.target_low) : "");
+    setDirectionalMove(r?.target_points && r.target_points.length === 2 ? (r.target_points[1] - r.target_points[0]) / 2 : null);
+    setHorizonExpiry(r?.horizon_expiry ?? "");
+    setHoldThroughEarnings(!(r?.avoid_earnings ?? false));
+    if (r?.strategies) setFamilies(new Set(r.strategies));
+    setReason(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+
+  // A horizon that is not one of this symbol's listed expiries (a stale one
+  // from before the switch, an expiry that has since dropped off) falls back
+  // to the first with a day left.
+  useEffect(() => {
+    if (expiries.length === 0 || horizonExpiry === "") return;
+    if (expiries.some((e) => e.expiry === horizonExpiry)) return;
+    setHorizonExpiry(expiries.find((e) => e.dte >= 1)?.expiry ?? "");
+  }, [expiries, horizonExpiry]);
 
   // A fresh symbol: the target starts at its spot, the horizon at the first
   // expiry with a day left (a contract expiring today has no IV to price a
@@ -364,28 +485,53 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, spot, expiries.length]);
 
+  // With "hold through earnings" off, a horizon on or after the report is
+  // moved back to the last expiry before it.
+  useEffect(() => {
+    if (holdThroughEarnings || !earnings?.report_date || !horizonExpiry) return;
+    if (!heldThroughEarnings(horizonExpiry, earnings)) return;
+    const before = expiries.filter((e) => e.dte >= 1 && !heldThroughEarnings(e.expiry, earnings));
+    if (before.length) setHorizonExpiry(before[before.length - 1].expiry);
+  }, [holdThroughEarnings, earnings, horizonExpiry, expiries]);
+
   // The one-sigma implied move to the chosen horizon, from the chain on
   // screen: spot x ATM IV x sqrt(T). What the outlook buttons work in.
-  const impliedMove = useMemo(() => {
-    const iv = atmIv(chain);
-    const dte = expiries.find((e) => e.expiry === horizonExpiry)?.dte ?? null;
-    if (!spot || !iv || !dte || dte <= 0) return null;
-    return spot * iv * Math.sqrt(dte / 365);
-  }, [chain, expiries, horizonExpiry, spot]);
+  const chainIv = useMemo(() => atmIv(chain), [chain]);
+  const horizonDte = expiries.find((e) => e.expiry === horizonExpiry)?.dte ?? null;
+  const impliedMove = useMemo(() => impliedMoveOf(spot, chainIv, horizonDte), [spot, chainIv, horizonDte]);
+
+  // Earnings inside the horizon: the horizon expiry's chain and the last
+  // pre-report expiry's, so the report's own implied move can be read off
+  // their difference (see earningsImpliedPct).
+  const horizonThroughEarnings = heldThroughEarnings(horizonExpiry, earnings);
+  const preExpiry = useMemo(() => {
+    if (!earnings?.report_date) return null;
+    const before = expiries.filter((e) => e.dte >= 1 && e.expiry < earnings.report_date!);
+    return before.length ? before[before.length - 1].expiry : null;
+  }, [expiries, earnings]);
+  const preDte = expiries.find((e) => e.expiry === preExpiry)?.dte ?? null;
+  const horizonChain = useChainFor(symbol, horizonExpiry || null, horizonThroughEarnings, chain);
+  const preChain = useChainFor(symbol, preExpiry, horizonThroughEarnings, chain);
+  const reportImpliedPct = horizonThroughEarnings ? earningsImpliedPct(horizonChain, horizonDte, preChain, preDte) : null;
+
+  /** The target and families a view implies, without touching state -- so
+   * the button and a scanner intent share one definition. */
+  const viewParams = (key: Outlook): Pick<RunParams, "outlook" | "target" | "directionalMove" | "families"> => {
+    const view = OUTLOOKS.find((o) => o.key === key)!;
+    const fam = new Set(OUTLOOK_STRATEGIES[key]);
+    if (spot == null) return { outlook: key, target: null, directionalMove: null, families: fam };
+    const move = impliedMove ?? spot * 0.02;
+    if (view.tone === "both") return { outlook: key, target: spot, directionalMove: move, families: fam };
+    return { outlook: key, target: spot + view.move * move, directionalMove: null, families: fam };
+  };
 
   const pickOutlook = (key: Outlook) => {
+    const p = viewParams(key);
     setOutlook(key);
-    setFamilies(new Set(OUTLOOK_STRATEGIES[key]));
-    if (spot == null) return;
-    const view = OUTLOOKS.find((o) => o.key === key)!;
-    const move = impliedMove ?? spot * 0.02;
-    if (view.tone === "both") {
-      setDirectionalMove(move);
-      setTarget(spot.toFixed(2));
-    } else {
-      setDirectionalMove(null);
-      setTarget((spot + view.move * move).toFixed(2));
-    }
+    setFamilies(p.families);
+    setDirectionalMove(p.directionalMove);
+    if (p.target != null) setTarget(p.target.toFixed(2));
+    setReason(null);
   };
 
   const numeric = (v: string): number | null => {
@@ -396,25 +542,68 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
   const targetPct = targetValue != null && spot ? ((targetValue / spot - 1) * 100).toFixed(1) : null;
   const canRun = !!symbol && targetValue != null && horizonExpiry !== "" && families.size > 0;
 
-  const run = () => {
-    if (!symbol || !canRun || targetValue == null) return;
+  const bodyFor = (p: RunParams): OptimizeRequest | null => {
+    if (!symbol || p.target == null || !p.horizonExpiry || p.families.size === 0) return null;
     const body: OptimizeRequest = {
       underlying: symbol,
-      horizon_expiry: horizonExpiry,
-      budget: numeric(budget),
-      max_loss: numeric(maxLoss),
-      strategies: [...families],
-      outlook: outlook,
-      preference,
+      horizon_expiry: p.horizonExpiry,
+      budget: p.budget,
+      max_loss: p.maxLoss,
+      strategies: [...p.families],
+      outlook: p.outlook,
+      preference: p.preference,
+      avoid_earnings: p.avoidEarnings,
       top_n: 9,
     };
-    if (directionalMove != null && spot != null) {
-      body.target_points = [Math.round((spot - directionalMove) * 100) / 100, Math.round((spot + directionalMove) * 100) / 100];
+    if (p.directionalMove != null && spot != null) {
+      body.target_points = [Math.round((spot - p.directionalMove) * 100) / 100, Math.round((spot + p.directionalMove) * 100) / 100];
     } else {
-      body.target_low = targetValue;
+      body.target_low = Math.round(p.target * 100) / 100;
     }
-    optimizer.run(body);
+    return body;
   };
+
+  const run = () => {
+    const body = bodyFor({
+      outlook,
+      target: targetValue,
+      directionalMove,
+      families,
+      horizonExpiry,
+      budget: numeric(budget),
+      maxLoss: numeric(maxLoss),
+      preference,
+      avoidEarnings: !holdThroughEarnings,
+    });
+    if (body) optimizer.run(body);
+  };
+
+  // A scanner row's request: once this symbol's chain (and so its implied
+  // move) is on screen, take the view, show it in the form and run it.
+  const handledRef = useRef<number>(0);
+  useEffect(() => {
+    if (!intent || intent.seq === handledRef.current) return;
+    if (!symbol || intent.symbol !== symbol || !chain || chain.underlying !== symbol || spot == null) return;
+    if (horizonExpiry === "" || !expiries.some((e) => e.expiry === horizonExpiry)) return;
+    handledRef.current = intent.seq;
+    const p = viewParams(intent.outlook);
+    setOutlook(p.outlook);
+    setFamilies(p.families);
+    setDirectionalMove(p.directionalMove);
+    if (p.target != null) setTarget(p.target.toFixed(2));
+    setReason(intent.reason ?? null);
+    const body = bodyFor({
+      ...p,
+      horizonExpiry,
+      budget: numeric(budget),
+      maxLoss: numeric(maxLoss),
+      preference,
+      avoidEarnings: !holdThroughEarnings,
+    });
+    if (body) optimizer.run(body);
+    onIntentHandled(intent.seq);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent?.seq, symbol, chain?.underlying, spot, horizonExpiry, impliedMove]);
 
   const toggle = (s: Strategy) =>
     setFamilies((cur) => {
@@ -431,6 +620,33 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
   const bestRor = shown ? Math.max(0, ...shown.results.map((r) => r.return_on_risk)) : 0;
   const bestChance = shown ? Math.max(0, ...shown.results.map((r) => r.chance ?? 0)) : 0;
   const shownTargets = shown ? shown.target.points : [];
+
+  // The event read for the chosen horizon: what it is held through, and how
+  // the market's pricing compares with the stock's own record.
+  const macroInHorizon = (symbolEvents?.macro ?? []).filter((m) => m.date <= horizonExpiry);
+  const macroLabelsInHorizon = [...new Set(macroInHorizon.map((m) => m.label))];
+  const typicalPct = earnings?.median_abs_pct ?? null;
+  const ratio = reportImpliedPct != null && typicalPct != null && reportImpliedPct > 0 ? typicalPct / reportImpliedPct : null;
+  const priced = reportImpliedPct != null && preExpiry ? `The market prices ±${reportImpliedPct.toFixed(1)} % for the report itself (the ${formatExpiry(horizonExpiry)} expiry's implied move over the ${formatExpiry(preExpiry)} one)` : null;
+  const eventSuggestion: { view: Outlook; text: string } | null =
+    horizonThroughEarnings && ratio != null && priced && typicalPct != null && earnings
+      ? ratio >= 1.15
+        ? {
+            view: "directional",
+            text: `${priced}; the stock moved ±${typicalPct.toFixed(1)} % median over its last ${earnings.samples} reports. It has usually moved more than is priced: buying the move (straddle, strangle) has been the cheaper side.`,
+          }
+        : ratio <= 0.85
+          ? {
+              view: "neutral",
+              text: `${priced}; the stock moved ±${typicalPct.toFixed(1)} % median over its last ${earnings.samples} reports. It has usually moved less than is priced: selling the move (condor, iron fly) has been the cheaper side.`,
+            }
+          : {
+              view: "neutral",
+              text: `${priced}, about what the stock moved (±${typicalPct.toFixed(1)} % median over ${earnings.samples} reports). Neither side has had an edge on size alone.`,
+            }
+      : null;
+  const ivRank = symbolEvents?.iv.rank ?? null;
+  const tone = ivTone(ivRank?.percent);
 
   return (
     <div className="idea-tab opt-tab">
@@ -491,9 +707,79 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
             implied move ±{impliedMove.toFixed(2)} to {formatExpiry(horizonExpiry)}
           </span>
         )}
+        {symbolEvents && (
+          <span
+            className={`opt-ivrank ${tone ?? "none"}`}
+            title={`${ivRankSentence(symbolEvents.iv)}. Where today's at-the-money IV sits between the lowest and highest recorded over the past year of sessions: above 60 % premium is rich against its own history and credit shapes collect more, below 30 % it is cheap and debit shapes cost less. A comparison with the past, not a forecast.`}
+          >
+            <span className="opt-ivrank-dot" aria-hidden="true" />
+            {ivRank ? `IV rank ${ivRank.percent.toFixed(0)} %` : "IV rank n/a"}
+            {tone === "rich" && (
+              <button type="button" className="row-action" onClick={() => setFamilies(new Set(CREDIT_STRATEGIES))} title="Search the shapes that sell premium: bull put, bear call, iron condor, iron fly">
+                credit shapes
+              </button>
+            )}
+            {tone === "cheap" && (
+              <button type="button" className="row-action" onClick={() => setFamilies(new Set(DEBIT_STRATEGIES))} title="Search the shapes that buy premium: long call/put, debit spreads, straddle, strangle, calendar">
+                debit shapes
+              </button>
+            )}
+          </span>
+        )}
       </div>
 
-      <ExpiryChips expiries={expiries} value={horizonExpiry} onChange={setHorizonExpiry} />
+      <ExpiryChips expiries={expiries} value={horizonExpiry} events={symbolEvents} allowThroughEarnings={holdThroughEarnings} onChange={setHorizonExpiry} />
+
+      {symbolEvents && (earnings || macroShown.length > 0) && (
+        <div className="opt-events">
+          {earnings && (
+            <label className="opt-event earnings" title="Off: every expiry on or after the report is left out, so no structure is held through it.">
+              <span className="opt-dot earnings" aria-hidden="true" />
+              {earningsSentence(earnings)}
+              {earnings.report_date && (
+                <>
+                  {" · "}
+                  <input type="checkbox" checked={holdThroughEarnings} onChange={(e) => setHoldThroughEarnings(e.target.checked)} /> hold through earnings
+                </>
+              )}
+            </label>
+          )}
+          {macroShown.length > 0 && (
+            <span className="opt-event macro" title="Scheduled US releases inside the strip's window: FOMC decision, CPI, payrolls, PCE, GDP. Index options price these days; the expiry chips dot the first expiry held through each.">
+              <span className="opt-dot macro" aria-hidden="true" />
+              {macroSentence(macroShown)}
+            </span>
+          )}
+        </div>
+      )}
+
+      {eventSuggestion && (
+        <div className="opt-suggestion">
+          <span>
+            <strong>Earnings inside this horizon.</strong> {eventSuggestion.text}
+            {macroLabelsInHorizon.length ? ` Also inside it: ${macroLabelsInHorizon.join(", ")}.` : ""}
+          </span>
+          <button type="button" className="row-action" onClick={() => pickOutlook(eventSuggestion.view)}>
+            {eventSuggestion.view === "directional" ? "Use Directional" : "Use Neutral"}
+          </button>
+        </div>
+      )}
+      {!eventSuggestion && horizonThroughEarnings && earnings?.report_date && (
+        <p className="opt-suggestion plain">
+          <strong>Earnings inside this horizon</strong> ({formatExpiry(earnings.report_date)}): the IV in every price below includes the
+          report and will not survive it.
+          {typicalPct != null ? ` The stock moved ±${typicalPct.toFixed(1)} % median over its last ${earnings.samples} reports.` : ""}
+          {earnings.history_note ? ` Past moves: ${earnings.history_note}.` : ""}
+          {preExpiry ? " What the market prices for the report needs the pre-report expiry's chain, which is not in yet." : " No expiry before the report is listed, so the report's own implied move cannot be separated."}
+        </p>
+      )}
+      {!horizonThroughEarnings && macroInHorizon.length > 0 && (
+        <p className="opt-suggestion plain">
+          <strong>Inside this horizon:</strong> {macroInHorizon.map((m) => `${m.label} ${formatExpiry(m.date)}`).join(", ")}. A release day
+          moves the whole market, so the day's range is larger than a quiet day's implied move; on the index ETFs the 0DTE GEX walls on
+          the chart say where price is pinned going into it.
+        </p>
+      )}
 
       <div className="opt-preference">
         <span className="opt-pref-label">← Max Return</span>
@@ -539,7 +825,7 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
         </div>
       )}
 
-      {error && <p className="order-rejection">{error}</p>}
+      {error && remembered && <p className="order-rejection">{error}</p>}
       {loading && (
         <p className="widget-empty">Loading the chain across the horizon's expiries, pricing every candidate, previewing the finalists…</p>
       )}
@@ -547,6 +833,7 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
       {!loading && shown && (
         <>
           <p className="idea-context">
+            {reason ? `From the scanner (${reason}) · ` : ""}
             {shown.target.points.length === 2 && shown.outlook === "directional"
               ? `Target ${formatPrice(shown.target.points[0])} or ${formatPrice(shown.target.points[1])}`
               : shown.target.high > shown.target.low
@@ -556,6 +843,7 @@ export function OptimizerTab({ symbol, chain, expiries, optimizer, onLoad }: Opt
             {shown.implied_move != null ? ` · implied move ±${shown.implied_move.toFixed(2)}` : ""}
             {shown.atm_iv != null ? ` · ATM IV ${(shown.atm_iv * 100).toFixed(1)}%` : ""} · expiries{" "}
             {shown.horizon.expiries_considered.map((e) => formatExpiry(e)).join(", ")}
+            {shown.earnings?.avoided ? " · earnings avoided" : shown.earnings?.held_through ? " · held through earnings" : ""}
           </p>
           {shown.warnings.map((w) => (
             <p key={w} className="idea-warning">

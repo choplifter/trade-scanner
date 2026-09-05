@@ -70,16 +70,36 @@ def _parse_date(raw) -> date | None:
         return None
 
 
-def next_earnings_from_rows(symbol: str, rows, today: date) -> EarningsDate | None:
-    """The soonest report dated today or later. Pure, so the row-shape
-    handling is testable without FMP."""
-    upcoming = sorted(
-        d for d in (_parse_date(row.get("date")) for row in rows or [] if isinstance(row, dict)) if d and d >= today
-    )
+def report_dates_from_rows(rows) -> list[date]:
+    """Every report date in FMP's rows, past and upcoming, sorted. Pure."""
+    return sorted({d for d in (_parse_date(row.get("date")) for row in rows or [] if isinstance(row, dict)) if d})
+
+
+def next_earnings_from_dates(symbol: str, dates: list[date], today: date) -> EarningsDate | None:
+    upcoming = [d for d in dates if d >= today]
     if not upcoming:
         return None
     report_date = upcoming[0]
     return EarningsDate(symbol=symbol, report_date=report_date, days_until=(report_date - today).days)
+
+
+def next_earnings_from_rows(symbol: str, rows, today: date) -> EarningsDate | None:
+    """The soonest report dated today or later. Pure, so the row-shape
+    handling is testable without FMP."""
+    return next_earnings_from_dates(symbol, report_dates_from_rows(rows), today)
+
+
+async def fetch_report_dates(client: httpx.AsyncClient, api_key: str, symbol: str) -> list[date] | None:
+    """All of a symbol's report dates, or None when the call failed -- the
+    cache keeps the two apart."""
+    try:
+        resp = await client.get(f"{_FMP_BASE}/earnings", params={"symbol": symbol, "apikey": api_key})
+        resp.raise_for_status()
+        rows = resp.json()
+    except Exception:
+        logger.exception("FMP earnings fetch failed for %s", symbol)
+        return None
+    return report_dates_from_rows(rows)
 
 
 async def fetch_next_earnings(
@@ -97,19 +117,21 @@ async def fetch_next_earnings(
 
 @dataclass
 class _Entry:
-    value: EarningsDate | None
+    dates: list[date]
     fetched_at: float
     on_date: date
 
 
 class EarningsCalendar:
-    """Next-report dates by symbol, cached for a day and single-flighted per
+    """Report dates by symbol, cached for a day and single-flighted per
     symbol -- the same shape as the GEX cache, for the same reason: several
     callers asking about one symbol at once should cost one request.
 
-    A symbol with no upcoming report caches that answer too. "FMP knows of
-    nothing" is a real result and re-asking every time would spend the quota
-    on it."""
+    One fetch serves both questions -- the next report (`next_earnings`)
+    and the past ones the events module measures the stock's moves over
+    (`report_dates`). A symbol with no report at all caches that answer
+    too. "FMP knows of nothing" is a real result and re-asking every time
+    would spend the quota on it."""
 
     def __init__(
         self,
@@ -128,18 +150,22 @@ class EarningsCalendar:
         self._entries: dict[str, _Entry] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
+    @property
+    def configured(self) -> bool:
+        return bool(self._api_key)
+
     def _lock(self, symbol: str) -> asyncio.Lock:
         lock = self._locks.get(symbol)
         if lock is None:
             lock = self._locks[symbol] = asyncio.Lock()
         return lock
 
-    async def next_earnings(self, symbol: str) -> EarningsDate | None:
-        """The symbol's next report, or None when there is none upcoming,
-        FMP is not configured, or the call failed. All three are the same
-        thing to a caller: nothing known, not "nothing coming"."""
+    async def report_dates(self, symbol: str) -> list[date]:
+        """Every report date FMP lists for the symbol, past and upcoming.
+        Empty when FMP is not configured, the call failed, or FMP knows of
+        none: to a caller all three are "nothing known"."""
         if not self._api_key:
-            return None
+            return []
         symbol = symbol.upper()
         today = self._today()
         async with self._lock(symbol):
@@ -147,12 +173,21 @@ class EarningsCalendar:
             # days_until is relative to the day it was computed, so an entry
             # from yesterday is wrong even inside the TTL.
             if entry is not None and entry.on_date == today and self._now() - entry.fetched_at < self._ttl:
-                return entry.value
+                return list(entry.dates)
 
             if self._client is not None:
-                value = await fetch_next_earnings(self._client, self._api_key, symbol, today)
+                dates = await fetch_report_dates(self._client, self._api_key, symbol)
             else:
                 async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                    value = await fetch_next_earnings(client, self._api_key, symbol, today)
-            self._entries[symbol] = _Entry(value=value, fetched_at=self._now(), on_date=today)
-            return value
+                    dates = await fetch_report_dates(client, self._api_key, symbol)
+            # A failed call is cached as "nothing known" like an empty answer:
+            # one broken key must not turn every suggestion into a retry.
+            self._entries[symbol] = _Entry(dates=list(dates or []), fetched_at=self._now(), on_date=today)
+            return list(dates or [])
+
+    async def next_earnings(self, symbol: str) -> EarningsDate | None:
+        """The symbol's next report, or None when there is none upcoming,
+        FMP is not configured, or the call failed. All three are the same
+        thing to a caller: nothing known, not "nothing coming"."""
+        dates = await self.report_dates(symbol)
+        return next_earnings_from_dates(symbol.upper(), dates, self._today())

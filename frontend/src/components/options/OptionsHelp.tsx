@@ -54,6 +54,27 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
         </dl>
 
+        <h3>Events on the strip</h3>
+        <dl>
+          <dt>E · FOMC · CPI …</dt>
+          <dd>
+            A red <strong>E</strong> marks the first expiry held through the next earnings report, a purple tag the
+            first expiry held through a scheduled US release (FOMC decision, CPI, payrolls, PCE, GDP).
+            Every later expiry is held through the same event; the mark sits where it enters the strip. Dates come
+            from FMP; without a key nothing is marked, which means "not known", not "nothing scheduled".
+          </dd>
+          <dt>The line below</dt>
+          <dd>
+            The report date with its days away and the stock's <em>typical move</em> over its past reports: the
+            median of the close-to-close move from the close before each report date to the first close after it
+            (two sessions, so a before-the-open and an after-the-close report are measured alike), over up to eight
+            reports, with the largest. Then the macro dates, then the <strong>IV rank</strong>: where today's
+            at-the-money IV sits between the lowest and highest this app has recorded for the symbol over the past
+            year of sessions — green above 60 % (premium rich against its own history), amber between, blue below
+            30 % (cheap). It needs twenty recorded sessions; the Idea tab and this line record one per day.
+          </dd>
+        </dl>
+
         <h3>Strike rail</h3>
         <dl>
           <dt>Ticks · spot</dt>
@@ -414,6 +435,34 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             expiry chips are the listed expiries grouped by month; one expiring today is not offered, because a
             contract without time left has no implied volatility to price a horizon on. "More options" adds a max
             loss and the family checkboxes.
+          </dd>
+          <dt>Events · hold through earnings</dt>
+          <dd>
+            Under the chips, the same events line as the chain's, with a switch. <strong>Hold through earnings</strong>{" "}
+            off leaves out every expiry on or after the report (the chips grey out, a horizon on or after it moves
+            back to the last one before it) so no structure is held through the print; on, structures may span it
+            and the results carry a warning that the IV in their prices includes the report and will not survive it.
+            With earnings inside the horizon, a note compares what the market prices <em>for the report itself</em>{" "}
+            with what the stock actually moved over its past reports. The report's implied move is read off two
+            expiries: the horizon expiry's implied variance (ATM IV² × time) less the last pre-report expiry's — the
+            ordinary days cancel, what is left is the print — as a percentage of spot. When the stock has usually
+            moved more than that, buying the move (Directional: straddle, strangle) has been the cheaper side; when
+            less, selling it (Neutral: condor, iron fly). The button applies that view. The numbers are a record,
+            not a forecast; the past moves span two sessions, the implied one is a one-sigma figure.
+          </dd>
+          <dt>IV rank light</dt>
+          <dd>
+            Beside the implied move: green means premium is rich against the symbol's own history (rank above 60 %)
+            and offers <em>credit shapes</em> — bull put, bear call, iron condor, iron fly; blue means cheap (below
+            30 %) and offers <em>debit shapes</em> — long call and put, debit spreads, straddle, strangle, calendar.
+            The buttons only tick the families; the search still runs on your target.
+          </dd>
+          <dt>From the scanner</dt>
+          <dd>
+            Every scanner row has an <strong>Opt</strong> button: it selects the symbol, opens this tab and runs the
+            view the day's move suggests — Bullish for an up move, Bearish for a down move, "Very" beyond ten
+            percent — on the first expiry. The results say "From the scanner (move +12.4 %)" so the view is not
+            mistaken for one you chose.
           </dd>
           <dt>Max Return ↔ Max Chance</dt>
           <dd>

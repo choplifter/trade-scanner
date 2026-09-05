@@ -299,12 +299,40 @@ async def optimize(body: OptimizeRequest, request: Request, service: OptionsServ
     submits by hand.
     """
     try:
-        return await optimize_structures(service, body.underlying, body)
+        return await optimize_structures(
+            service, body.underlying, body, earnings_calendar=getattr(request.app.state, "earnings_calendar", None)
+        )
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except Exception:
         logger.exception("Options optimizer failed for %s", body.underlying)
         raise HTTPException(status_code=502, detail="Failed to optimize structures")
+
+
+@router.get("/events/{underlying}")
+async def option_events(
+    underlying: str,
+    request: Request,
+    atm_iv: float | None = Query(default=None, gt=0, lt=10),
+    dte: int | None = Query(default=None, ge=0, le=1000),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """What is scheduled inside this symbol's option expiries -- the next
+    earnings report with the stock's moves over its past ones, the tracked
+    macro releases -- and where the chain's at-the-money IV (`atm_iv`, as
+    the frontend sees it) sits in its recorded history. See
+    app.options.events. Needs no broker account: nothing here is priced."""
+    from app.options.events import gather_events
+
+    return await gather_events(
+        underlying.upper(),
+        earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
+        macro_calendar=getattr(request.app.state, "macro_calendar", None),
+        iv_store=getattr(request.app.state, "iv_history_store", None),
+        clients=getattr(request.app.state, "alpaca_clients", None),
+        atm_iv=atm_iv,
+        dte=dte,
+    )
 
 
 class IdeaRequest(BaseModel):

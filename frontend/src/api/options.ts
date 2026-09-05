@@ -25,6 +25,7 @@ import type {
   OptionsIdeaResponse,
   OptimizeRequest,
   OptimizeResponse,
+  OptionEventsResponse,
   UnderlyingTrigger,
 } from "../types/options";
 import type { Order, TradingRejection } from "../types/trading";
@@ -146,4 +147,17 @@ export function suggestOptionsIdeas(underlying: string): Promise<OptionsIdeaResp
  * thousand candidates priced, a dozen previewed. Read-only. */
 export function optimizeStructures(body: OptimizeRequest): Promise<OptimizeResponse> {
   return send<OptimizeResponse>("POST", "/trading/options/optimize", body);
+}
+
+/** Earnings (with the stock's past moves), macro releases and IV rank for
+ * an underlying -- backend app/options/events.py. Not routed through
+ * tradingPath: nothing here depends on the account or the mode, and the
+ * simulation's chain is the same symbol's. `atmIv` is the chain's own
+ * at-the-money IV, which the rank is measured against. */
+export function optionEvents(underlying: string, atmIv: number | null, dte: number | null): Promise<OptionEventsResponse> {
+  const params = new URLSearchParams();
+  if (atmIv != null && atmIv > 0) params.set("atm_iv", String(atmIv));
+  if (dte != null && dte > 0) params.set("dte", String(dte));
+  const query = params.toString();
+  return getJson<OptionEventsResponse>(`/trading/options/events/${encodeURIComponent(underlying)}${query ? `?${query}` : ""}`);
 }

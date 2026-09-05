@@ -4,6 +4,7 @@ import { formatClockSeconds } from "../../utils/time";
 import { CopyButton } from "../common/CopyButton";
 import type { ScannerRow } from "../../types/alpaca";
 import { startSymbolDrag } from "../../utils/dragSymbol";
+import { outlookForMove, requestOptimizer } from "../options/optimizerIntent";
 import {
   formatDollarVolume,
   formatMarketCap,
@@ -232,6 +233,18 @@ export function ScannerTable({
                 value={tradingViewSymbol(row.symbol, row.exchange)}
                 title={`Copy "${tradingViewSymbol(row.symbol, row.exchange)}" to clipboard (for TradingView search)`}
               />
+              <button
+                type="button"
+                className="scanner-options-button"
+                title={`Search an options structure for this move: opens the Options widget's Optimizer on ${row.symbol} with the ${outlookForMove(row.pct_change).replace("_", " ")} view (target one implied move ${row.pct_change >= 0 ? "above" : "below"} the spot, two for a move beyond 10 %). Nothing is ordered.`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectSymbol(row.symbol);
+                  requestOptimizer({ symbol: row.symbol, outlook: outlookForMove(row.pct_change), reason: `move ${formatPct(row.pct_change)}` });
+                }}
+              >
+                Opt
+              </button>
               {row.is_hod && <span className="badge-hod">HOD</span>}
               {row.is_stale && (
                 <span
