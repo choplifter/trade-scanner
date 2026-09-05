@@ -14,6 +14,7 @@ import pytest
 from app.options.models import SpreadTicket
 from app.options.optimizer import (
     DEFAULT_STRATEGIES,
+    MIN_RISK,
     OUTLOOK_STRATEGIES,
     Skipped,
     Target,
@@ -166,6 +167,14 @@ def test_skip_reasons_account_for_every_enumerated_shape():
     assert all(c.risk <= 300.0 for c in kept)
     assert all(c.pnl_min > 0 for c in kept)
     assert "over_budget" in drops and "non_positive_return" in drops
+
+    # A position under the minimum risk is dropped as such, whatever it
+    # pays: a cent of debit is a quote artefact, not a trade.
+    assert all(c.risk >= MIN_RISK for c in kept)
+    cheap = [c for c in cands if c.risk < MIN_RISK]
+    assert drops.get("under_min_risk", 0) == len(cheap)
+    kept_all, drops_all = filter_and_rank(cands, budget=300.0, top_k=10_000, per_strategy_cap=10_000, min_risk=0.0)
+    assert "under_min_risk" not in drops_all and len(kept_all) >= len(kept)
 
     # The strategy cap is a drop reason too, so the dozen finalists are
     # accounted for the same way.

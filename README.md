@@ -1419,6 +1419,12 @@ Four steps, three of them pure and tested without I/O
    and the ticket's own limit, so a card can never disagree with the
    ticket it loads into.
 
+A position under **$5 of risk** is dropped (`MIN_RISK`, reason
+`under_min_risk`): a far-dated fly whose mids net to a cent while the
+natural is forty shows a thousand-percent return and a near-certain
+chance on one dollar, which is a quote artefact, not a trade, and it
+would top every list.
+
 **Everything dropped is counted with its reason** -- the line under the
 cards reads like "798 candidates · 786 priced · 361 lose at the target · 8
 mispriced shape · 4 quoted the wrong way" -- because "nothing reaches this

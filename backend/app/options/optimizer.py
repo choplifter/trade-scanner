@@ -46,6 +46,12 @@ from app.ai.options_resolve import ticket_from_legs
 MAX_CANDIDATES = 1000
 FINALISTS = 12
 PER_STRATEGY_CAP = 3
+# Dollars per position. A structure that costs a cent -- a far-dated fly
+# whose mids happen to net to 0.01 while the natural is 0.40 -- shows a
+# thousand-percent return and a near-certain chance on one dollar of
+# risk; that is a quote artefact, not a trade, and it would top every
+# list.
+MIN_RISK = 5.0
 VERTICAL_MAX_WIDTH = 3  # strikes between long and short
 CONDOR_WING_WIDTHS = (1, 2, 3)
 CONDOR_SHORT_DELTA = (0.10, 0.40)  # |delta| band for the short strikes
@@ -619,10 +625,12 @@ def filter_and_rank(
     top_k: int = FINALISTS,
     per_strategy_cap: int = PER_STRATEGY_CAP,
     preference: float = 0.0,
+    min_risk: float = MIN_RISK,
 ) -> tuple[list[Candidate], dict[str, int]]:
     """The best `top_k`, with the drop reasons counted.
 
-    `budget` caps what the account puts up per position; `max_loss` caps
+    `budget` caps what the account puts up per position, `min_risk` floors
+    it (see MIN_RISK); `max_loss` caps
     the defined maximum loss (an unbounded one never passes it). A shape
     that loses money at the worst point of the target is out: the reader
     asked what pays off there. The order blends return on risk and chance
@@ -637,6 +645,9 @@ def filter_and_rank(
 
     kept: list[Candidate] = []
     for cand in candidates:
+        if cand.risk < min_risk:
+            drop("under_min_risk")
+            continue
         if budget is not None and cand.risk > budget:
             drop("over_budget")
             continue

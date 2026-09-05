@@ -466,8 +466,10 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
           <dt>The line below the cards</dt>
           <dd>
-            Every shape that was enumerated is either on a card or counted there with its reason: over budget, lose
-            at the target, no market, no IV, quoted the wrong way, mispriced, or beyond the candidate cap. "Nothing
+            Every shape that was enumerated is either on a card or counted there with its reason: over budget, under
+            $5 of risk (a structure whose mids net to a cent is a quote artefact — it would show a thousand-percent
+            return on one dollar), lose at the target, no market, no IV, quoted the wrong way, mispriced, or beyond
+            the candidate cap. "Nothing
             reaches this target" and "everything was over budget" are different answers. Finalists the account
             refuses (an options level, a ceiling) are listed with the refusal.
           </dd>
