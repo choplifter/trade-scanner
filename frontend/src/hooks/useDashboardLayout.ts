@@ -197,12 +197,15 @@ function loadLayout(): Layout {
   return DEFAULT_LAYOUT;
 }
 
+// Dock is the default: it is the mode actually used day to day, and a
+// fresh browser should come up the way the dashboard is worked in. Panels
+// and Grid stay one click away in the header and are remembered once chosen.
 function loadMode(): LayoutMode {
   try {
     const raw = localStorage.getItem(MODE_STORAGE_KEY);
-    return raw === "grid" || raw === "dock" ? raw : "panels";
+    return raw === "grid" || raw === "panels" ? raw : "dock";
   } catch {
-    return "panels";
+    return "dock";
   }
 }
 

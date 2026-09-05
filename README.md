@@ -873,11 +873,11 @@ past dates.
   for the scanner benchmark, scanner match history, cross-symbol
   correlation/comparison, and seasonality.
 - **Three layout modes** (React app), switched by the header's
-  **Panels / Grid / Dock** toggle and remembered across reloads: **Panels**
-  is the default nested-splitter layout (drag the splitters to resize fixed
-  slots), **Dock** is a VS Code-style docking layout (`dockview-react`) where
-  every widget is a tab you can drag into any group, split or
-  maximise, and **Grid** makes every widget freely repositionable -- drag a widget
+  **Panels / Grid / Dock** toggle and remembered across reloads: **Dock**,
+  the default, is a VS Code-style docking layout (`dockview-react`) where
+  every widget is a tab you can drag into any group, split or maximise;
+  **Panels** is the nested-splitter layout (drag the splitters to resize
+  fixed slots), and **Grid** makes every widget freely repositionable -- drag a widget
   by its header to move it, drag its bottom-right corner to resize, and
   neighbours compact out of the way (`react-grid-layout`, wrapped by
   `frontend/src/components/layout/DashboardGrid.tsx`). A **Reset** button
