@@ -301,12 +301,15 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
       // Works for this session, just not remembered next time.
     }
   }
-  // When the symbol on screen is part of the logged-in user's active
-  // replay session, the chart switches its *intraday* bars (1m/5m/15m --
-  // all clean multiples of replay's native 5-minute resolution via
-  // aggregateBars below) to the clipped-to-as_of replay source instead of
-  // live data -- see routers/replay.py's /bars/{symbol}
-  // (ReplayEngine.bars_up_to). Historical-kind timeframes (1h and up)
+  // While the logged-in user has a replay session, the chart switches its
+  // *intraday* bars (1m/5m/15m -- all clean multiples of replay's native
+  // 5-minute resolution via aggregateBars below) to the clipped-to-as_of
+  // replay source instead of live data -- see routers/replay.py's
+  // /bars/{symbol} (ReplayEngine.bars_up_to). Any symbol, not just the
+  // session's own: the backend fetches a symbol outside the session on
+  // first request (ReplayEngine.ensure_bars), so SPY from the watchlist
+  // replays without having been named at start. Only the ranked scanner
+  // rows keep the session's universe. Historical-kind timeframes (1h and up)
   // keep showing real live data regardless: building those from 5-minute
   // bars would need multi-day aggregation this doesn't have, and there's
   // little use for a weekly candle while replaying a single session.
@@ -323,7 +326,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // sim orders against this same replayed price. The chart just has to
   // show the same data the fill priced against.
   const replaySession = useReplaySession();
-  const isReplaySymbol = !!symbol && !!replaySession && (replaySession.symbols.includes(symbol) || contract != null);
+  const isReplaySymbol = !!symbol && !!replaySession;
   const usingReplayBars = isReplaySymbol && option.kind === "intraday";
   const intraday = useChartFeed(usingReplayBars ? null : symbol);
   const historical = useHistoricalBars(

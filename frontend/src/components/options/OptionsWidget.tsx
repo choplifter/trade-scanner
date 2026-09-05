@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 
 import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, clampShortTarget, getSettings, updateSettings } from "../../api/settings";
-import { modeBadge, type TradingMode } from "../../api/tradingMode";
+import { modeBadge, setTradingMode, type TradingMode } from "../../api/tradingMode";
 import { useOptionChain } from "../../hooks/useOptionChain";
 import { useOptionsIdeas } from "../../hooks/useOptionsIdeas";
+import { useReplaySession } from "../../hooks/useReplaySession";
 import { useSpreads } from "../../hooks/useSpreads";
 import {
   SHORT_DELTA_MAX,
@@ -63,6 +64,11 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // The Idea tab's request lives here so "Load into ticket" (which shows
   // the Chain tab) does not throw away an answer that took minutes.
   const ideas = useOptionsIdeas();
+  // A replay only reaches this widget in Simulation mode: Paper and Live
+  // keep showing the real account's chain, which next to a replayed chart
+  // reads as "the chain does not move". Say so, and offer the switch.
+  const replaySession = useReplaySession();
+  const replayButLive = replaySession !== null && mode !== "simulation";
   const [strategy, setStrategy] = useState<Strategy>("bull_put");
   const [width, setWidth] = useState(2);
   const [legs, setLegs] = useState<Legs | null>(null);
@@ -357,6 +363,15 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
         )}
       </div>
       <div className="widget-body">
+        {replayButLive && (
+          <div className="widget-empty replay-mode-hint">
+            A replay is running, but this chain is the live {mode === "live" ? "Live" : "Paper"} account's.{" "}
+            <button type="button" className="row-action" onClick={() => setTradingMode("simulation")}>
+              Switch to Simulation
+            </button>{" "}
+            to see the chain as it was at the replayed moment.
+          </div>
+        )}
         {mode !== "simulation" && spreads.brokerMissing ? (
           <BrokerMissing mode={mode} />
         ) : tab === "spreads" ? (

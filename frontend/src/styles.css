@@ -4095,3 +4095,16 @@ td.chain-side.chain-stale {
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* Replay on, but Paper/Live on: the banner ReplayPanel and OptionsWidget
+   show above their body, with the one-click switch. */
+.replay-mode-hint {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.replay-mode-hint .row-action {
+  margin: 0 0.15rem;
+}

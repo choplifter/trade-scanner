@@ -6,12 +6,47 @@
 
 import { deleteJson, getJson, patchJson, postJson } from "./http";
 import { setReplaySession } from "./replayMode";
+import { getTradingMode, setTradingMode } from "./tradingMode";
 import type { Bar, IndicatorResult } from "../types/alpaca";
 import type { ReplayStateResponse } from "../types/replay";
 
 function sync(res: ReplayStateResponse): ReplayStateResponse {
   setReplaySession(res.session);
   return res;
+}
+
+/** Which account mode was on before a replay switched the app to
+ * Simulation, so stopping can put it back. localStorage rather than a
+ * variable: a session outlives page loads. Live is never restored -- a
+ * page load never comes back in Live either (see api/tradingMode.ts). */
+const PREVIOUS_MODE_KEY = "replay:previous-trading-mode";
+
+/** Replay is a simulation tool: Paper and Live keep talking to the real
+ * account whatever the clock says, so a chain or ticket seen next to a
+ * replayed chart would be live data. Rather than explain that, a starting
+ * replay puts the app into Simulation itself. */
+function enterSimulationForReplay(): void {
+  const current = getTradingMode();
+  if (current === "simulation") return;
+  try {
+    localStorage.setItem(PREVIOUS_MODE_KEY, current === "live" ? "paper" : current);
+  } catch {
+    // Not remembered; stopping then simply leaves Simulation on.
+  }
+  setTradingMode("simulation");
+}
+
+function leaveSimulationAfterReplay(): void {
+  let previous: string | null = null;
+  try {
+    previous = localStorage.getItem(PREVIOUS_MODE_KEY);
+    localStorage.removeItem(PREVIOUS_MODE_KEY);
+  } catch {
+    return;
+  }
+  // Only undo what the replay did: a user who chose Simulation before or
+  // during the session keeps it.
+  if (previous === "paper" && getTradingMode() === "simulation") setTradingMode("paper");
 }
 
 /** `symbols` empty (or omitted) replays the real historical "stocks in
@@ -27,7 +62,12 @@ export function startReplay(
     symbols,
     start_date: startDate,
     speed,
-  }).then(sync);
+  })
+    .then(sync)
+    .then((res) => {
+      enterSimulationForReplay();
+      return res;
+    });
 }
 
 export function getReplayState(): Promise<ReplayStateResponse> {
@@ -104,6 +144,7 @@ export function getReplayIndicators(symbol: string): Promise<ReplayIndicatorsRes
 export function stopReplay(): Promise<{ stopped: boolean }> {
   return deleteJson<{ stopped: boolean }>("/replay/stop").then((res) => {
     setReplaySession(null);
+    leaveSimulationAfterReplay();
     return res;
   });
 }

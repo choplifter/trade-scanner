@@ -269,11 +269,15 @@ async def get_replay_bars(symbol: str, request: Request, user: dict = Depends(ge
     chart can never show a bar the clock hasn't reached yet, even
     transiently -- the entire point of "replay" is not seeing the future.
 
+    A symbol outside the session's universe is fetched on first request
+    (ReplayEngine.ensure_bars), so any symbol the user selects replays --
+    the chart no longer depends on it having been named at /start.
+
     Empty rather than a 404/502 when the session exists but has no
     resident engine (e.g. right after a server restart, before the pacing
-    loop or another request has reloaded it) or the symbol wasn't part of
-    this session's universe -- same "nothing to show yet, not an error"
-    convention _state_payload's own `views: null` uses.
+    loop or another request has reloaded it) or the symbol has no bars in
+    the range -- same "nothing to show yet, not an error" convention
+    _state_payload's own `views: null` uses.
     """
     session = _session_or_404(await request.app.state.replay_store.get(user["id"]))
     engine = request.app.state.replay_engines.get(user["id"])
@@ -295,8 +299,22 @@ async def get_replay_bars(symbol: str, request: Request, user: dict = Depends(ge
             logger.exception("Replay option bars failed for %s", parsed.symbol)
             return {"symbol": parsed.symbol, "bars": []}
         return {"symbol": parsed.symbol, "bars": [_bar_to_dict(b) for b in option_engine.bars_up_to(parsed.symbol, as_of)]}
+    await _ensure_replay_bars(request, engine, session, symbol.upper())
     bars = engine.bars_up_to(symbol.upper(), as_of)
     return {"symbol": symbol.upper(), "bars": [_bar_to_dict(b) for b in bars]}
+
+
+async def _ensure_replay_bars(request: Request, engine, session: dict, symbol: str) -> None:
+    """Pull a symbol the session did not include into the engine's bar set.
+    A failed fetch is logged and leaves the symbol empty for this request
+    -- the chart shows nothing rather than a 502, and the next tick tries
+    again."""
+    if engine.has_bars(symbol):
+        return
+    try:
+        await engine.ensure_bars(request.app.state.alpaca_clients, [symbol], int(session["lookback_days"]))
+    except Exception:
+        logger.exception("Replay bars fetch failed for %s outside the session", symbol)
 
 
 def _clip_to_as_of(bars: list, as_of: datetime) -> list:
@@ -334,6 +352,7 @@ async def get_replay_indicators(symbol: str, request: Request, user: dict = Depe
 
     symbol = symbol.upper()
     as_of = datetime.fromisoformat(session["as_of"])
+    await _ensure_replay_bars(request, engine, session, symbol)
     minute_bars = engine.bars_up_to(symbol, as_of)
 
     clients = request.app.state.alpaca_clients

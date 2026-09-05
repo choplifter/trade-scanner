@@ -149,3 +149,43 @@ def test_empty_bars_yield_no_timestamps_and_empty_views():
     assert engine.start is None and engine.end is None
     views = engine.snapshot_views(datetime.combine(_DAY, time(9, 30), tzinfo=ET), min_dollar_volume=0.0)
     assert views == {"gainers": [], "losers": [], "most_active": []}
+
+
+def test_ensure_bars_fetches_a_symbol_outside_the_session_for_the_chart_only():
+    import asyncio
+
+    engine = _engine({"AAA": _session([12.0, 12.5])})
+    as_of = engine.timestamps[-1]
+    calls: list[list[str]] = []
+
+    async def fetch(_clients, symbols, _lookback, cache_dir=None):
+        calls.append(list(symbols))
+        return {"SPY": _session([500.0, 501.0, 502.0])}
+
+    assert engine.bars_up_to("SPY", as_of) == []
+    asyncio.run(engine.ensure_bars(None, ["spy"], 4, fetch=fetch))
+    assert calls == [["SPY"]]
+    # Clipped to as_of like a session symbol's bars.
+    assert [b.close for b in engine.bars_up_to("SPY", as_of)] == [500.0, 501.0]
+    # Already held: no second fetch, and the ranked cohort is untouched.
+    asyncio.run(engine.ensure_bars(None, ["SPY", "AAA"], 4, fetch=fetch))
+    assert calls == [["SPY"]]
+    assert [r.symbol for r in engine.snapshot_views(as_of, min_dollar_volume=0.0)["gainers"]] == ["AAA"]
+
+
+def test_ensure_bars_remembers_a_symbol_without_bars_instead_of_refetching():
+    import asyncio
+
+    engine = _engine({"AAA": _session([12.0])})
+    calls = 0
+
+    async def fetch(_clients, symbols, _lookback, cache_dir=None):
+        nonlocal calls
+        calls += 1
+        return {}
+
+    asyncio.run(engine.ensure_bars(None, ["ZZZ"], 4, fetch=fetch))
+    asyncio.run(engine.ensure_bars(None, ["ZZZ"], 4, fetch=fetch))
+    assert calls == 1
+    assert engine.has_bars("ZZZ")
+    assert engine.bars_up_to("ZZZ", engine.timestamps[0]) == []

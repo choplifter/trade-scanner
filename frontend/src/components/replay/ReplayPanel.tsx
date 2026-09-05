@@ -201,11 +201,21 @@ export function ReplayPanel({ selectedSymbol, onSelectSymbol }: ReplayPanelProps
 
       {session && (
         <>
-          {tradingMode.mode !== "simulation" && (
-            <div className="widget-empty">
-              Switch to Simulation Mode (top right) to trade stocks and options against replayed
-              history -- the scanner below still shows real historical data either way.
+          {tradingMode.mode !== "simulation" ? (
+            // Starting a replay switches to Simulation on its own (see
+            // api/replay.ts); this is the way back after switching away.
+            <div className="widget-empty replay-mode-hint">
+              {tradingMode.mode === "live" ? "Live" : "Paper"} mode is on: the option chain and tickets show the
+              real account, not the replayed moment.{" "}
+              <button type="button" className="row-action" onClick={() => tradingMode.setMode("simulation")}>
+                Switch to Simulation
+              </button>
             </div>
+          ) : (
+            <p className="screener-summary">
+              Simulation mode is on for this replay -- chart, option chain and orders follow the clock. Stop
+              returns to the previous mode.
+            </p>
           )}
           <div className="replay-controls">
             <button

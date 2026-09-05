@@ -1360,6 +1360,21 @@ options_book.py`), so every strategy the ticket offers can be practised
 without an Alpaca order -- and, in a **History Replay**, against a past
 day, which is how you rehearse a strategy at the weekend.
 
+- **Starting a replay switches the app to Simulation.** Replay is a
+  simulation tool: Paper and Live keep talking to the real account whatever
+  the clock says, so a chain or ticket next to a replayed chart would be
+  live data that just sits there on a weekend. Rather than have that
+  explained, *Start replay* puts the app into Simulation itself and *Stop*
+  returns to the mode it found (Live is never restored; a page load never
+  wakes up in Live either). Switch away during a session and both the
+  replay panel and the Options widget say so, with a one-click way back.
+- **Any symbol replays in the chart.** The session's symbol list decides
+  what the ranked scanner views contain; the chart is not limited to it.
+  Select SPY from the watchlist during a replay and its 5-minute bars are
+  fetched on first request (`ReplayEngine.ensure_bars`, same disk cache)
+  and clipped to the clock like everything else. The option chain already
+  worked this way (the replay option engine fetches an underlying's own
+  bars when the session lacks it).
 - **Where the prices come from.** Live in Simulation mode: the same chain
   and snapshots the paper account sees. In a replay: the contracts that
   existed on the replayed day (Alpaca lists expired contracts, from

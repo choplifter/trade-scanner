@@ -37,6 +37,7 @@ user's engine isn't already resident in the in-process ReplayEngineCache
 below -- e.g. after a server restart.
 """
 
+import asyncio
 import logging
 from bisect import bisect_left, bisect_right
 from datetime import datetime, timedelta
@@ -100,6 +101,10 @@ class ReplayEngine:
         # preserve (it only carries forward the running state a ranking
         # needs, not each bar's own open/high/low).
         self._bars_by_symbol = bars_by_symbol
+        # Symbols the session did not include but a chart asked for -- see
+        # ensure_bars. One lock: a burst of widgets on one new symbol costs
+        # one fetch.
+        self._extra_lock = asyncio.Lock()
         avg_vol_by_date = trailing_avg_daily_volume(daily_bars_by_symbol)
         prev_close_by_date = previous_closes(daily_bars_by_symbol)
         rows_by_ts, _exit_price, _session_bars = build_rows_by_timestamp(
@@ -168,6 +173,38 @@ class ReplayEngine:
             if row.symbol == symbol:
                 return row.day_high
         return None
+
+    def has_bars(self, symbol: str) -> bool:
+        return symbol.upper() in self._bars_by_symbol
+
+    async def ensure_bars(
+        self,
+        clients: AlpacaClients,
+        symbols: list[str],
+        lookback_days: int,
+        cache_dir=DEFAULT_CACHE_DIR,
+        fetch=None,
+    ) -> None:
+        """Fetch 5-minute bars for symbols the session did not include, so a
+        chart can replay any symbol the user selects (SPY from the
+        watchlist, say) without it having been named at /start. Chart-only:
+        the ranked views keep the session's own universe -- a symbol pulled
+        in after the fact never had a chance to rank, and adding it would
+        rewrite the cohort the scanner rows were computed from. Same
+        disk-cached fetch load_replay_engine uses, same lookback, so the
+        bars line up with the session's. A symbol that returns nothing is
+        remembered as empty rather than refetched on every clock tick.
+        `fetch` exists for tests."""
+        wanted = [s.upper() for s in symbols]
+        if all(s in self._bars_by_symbol for s in wanted):
+            return
+        async with self._extra_lock:
+            missing = [s for s in wanted if s not in self._bars_by_symbol]
+            if not missing:
+                return
+            fetched = await (fetch or get_cached_5m_bars_multi)(clients, missing, lookback_days, cache_dir=cache_dir)
+            for s in missing:
+                self._bars_by_symbol[s] = list(fetched.get(s) or [])
 
     def bars_up_to(self, symbol: str, as_of: datetime) -> list:
         """This symbol's 5-minute bars from the start of the fetched range
