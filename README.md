@@ -1440,7 +1440,9 @@ day, which is how you rehearse a strategy at the weekend.
 - **Fills.** A package fills at the *natural* -- bought legs at the ask,
   sold legs at the bid -- as one thing, no partial fills. The ticket's
   default limit in Simulation mode is the natural, so a plain "Place"
-  fills at once; a limit the market has not reached rests as a **working
+  fills at once, and so is the **Close** dialog's (the mid would rest,
+  which in a paused replay means forever -- the clock has to move for a
+  resting package to be checked); a limit the market has not reached rests as a **working
   package** (listed above *Open spreads*, with a cancel) and is checked on
   every tick of the sim fill loop, or on every replay step while
   replaying. Where a leg has no quote on the side it needs (a one-sided
@@ -1454,6 +1456,12 @@ day, which is how you rehearse a strategy at the weekend.
   like one. Credit spreads reserve their collateral (width less the
   credit, the strike for a cash-secured put) from the simulated buying
   power; a covered call needs the shares in the simulated book.
+- **No over-closing.** A close that, together with the closing packages
+  already resting, would close more of a leg than is held is refused with
+  the reason ("a closing package for 1 contract is already resting --
+  cancel it or wait for its fill"). Without that a second click on Close
+  while the first package rests went through, and when the clock moved
+  both filled: the position closed and re-opened the other way round.
 - **Expiry.** A contract still held at 16:00 ET on its expiry day settles
   at intrinsic value against the underlying (no assignment into shares) --
   in a replay, when the clock crosses that moment.

@@ -301,12 +301,67 @@ class SimOptionsService(OptionsService):
         )
         return public_option_order(order)
 
+    async def preview_close(self, req: CloseSpreadRequest) -> dict:
+        """As the base preview, but the suggested limit is the natural, not
+        the mid -- the same default the opening ticket has here. The book
+        fills only at the natural; a mid limit rests until the market comes
+        to it, which in a paused replay is never. Seen live: three closes of
+        one iron fly, each accepted at the mid, each resting, the position
+        still open and the reader asking why it "cannot be closed"."""
+        preview = await super().preview_close(req)
+        natural = preview.get("net_natural")
+        if natural is not None and natural > 0:
+            suggested = round(natural, 2)
+            preview["suggested_limit"] = suggested
+            preview["alpaca_limit_price"] = alpaca_limit(preview["direction"], suggested)
+        return preview
+
+    async def _assert_not_over_closing(self, legs, qty: int) -> None:
+        """Refuse a close that, together with the closing packages already
+        resting, would close more of a leg than is held. Without this a
+        second click on Close while the first package rests goes through,
+        and when the clock finally moves both fill: the position is closed
+        and then re-opened the other way round -- a fresh trade nobody
+        asked for. The real broker rejects that too (not enough to close);
+        the book has to as well."""
+        working = await self._options_store.working_orders(self._user_id)
+        committed: dict[str, int] = {}
+        for order in working:
+            remaining = int(order.get("qty") or 0) - int(order.get("filled_qty") or 0)
+            if remaining <= 0:
+                continue
+            for leg in order.get("legs") or []:
+                if str(leg.get("position_intent", "")).endswith("_to_close"):
+                    sym = str(leg["symbol"]).upper()
+                    committed[sym] = committed.get(sym, 0) + remaining * int(leg.get("ratio_qty") or 1)
+        for leg in legs:
+            if not leg.position_intent.endswith("_to_close"):
+                continue
+            position = await self._options_store.get_position(self._user_id, leg.symbol.upper())
+            held = int(round(abs(float(position["qty"])))) if position is not None else 0
+            already = committed.get(leg.symbol.upper(), 0)
+            wanted = qty * int(getattr(leg, "ratio_qty", 1) or 1)
+            if wanted > held - already:
+                if already > 0:
+                    raise OrderRejected(
+                        f"{leg.symbol}: a closing package for {already} contract{'s' if already != 1 else ''} is already "
+                        "resting in Working packages -- cancel it or wait for its fill before closing again.",
+                        field="qty",
+                    )
+                raise OrderRejected(
+                    f"{leg.symbol}: only {held} contract{'s' if held != 1 else ''} held, cannot close {wanted}.",
+                    field="qty",
+                )
+
     async def close_spread(
         self, req: CloseSpreadRequest, confirm: str | None = None, *, marketable: bool = False
     ) -> dict:
         """Close at the natural (no limit given, or a trigger firing), or
-        rest a limit until the market reaches it."""
+        rest a limit until the market reaches it. A close that would exceed
+        what is held -- counting the closing packages already resting -- is
+        refused (see _assert_not_over_closing)."""
         legs, direction, _net_mid, _net_natural = await self._priced_close(req)
+        await self._assert_not_over_closing(legs, req.qty)
         parsed = try_parse_occ(legs[0].symbol)
         limit = None if (marketable or req.limit_price is None) else round(req.limit_price, 2)
         quotes = await self._source.leg_quotes([leg.symbol for leg in legs])

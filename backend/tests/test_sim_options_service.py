@@ -258,3 +258,42 @@ def test_premium_trigger_uses_the_books_quotes(env):
     assert len(service.closes) == 1
     fired = asyncio.run(triggers.list_for_user(3, "sim"))[0]
     assert fired["status"] == "fired" and fired["fired_on"] == "premium" and fired["fired_price"] == 1.45
+
+
+def test_close_preview_suggests_the_natural_in_simulation(env):
+    _open_bull_put(env, qty=1)
+    quotes = {PUT_745: _quote(PUT_745, 2.50, 2.60, "put", 745.0), PUT_740: _quote(PUT_740, 1.80, 1.90, "put", 740.0)}
+    service = _service(env, quotes)
+    from app.options.models import CloseLeg, CloseSpreadRequest
+
+    preview = asyncio.run(
+        service.preview_close(CloseSpreadRequest(legs=[CloseLeg(symbol=PUT_745, qty=-1), CloseLeg(symbol=PUT_740, qty=1)], qty=1))
+    )
+    # Buy the 745 back at the ask (2.60), sell the 740 at the bid (1.80):
+    # the natural debit is 0.80, the mid would be 0.75 and would rest.
+    assert preview["direction"] == "debit"
+    assert preview["net_natural"] == pytest.approx(0.80)
+    assert preview["suggested_limit"] == pytest.approx(0.80)
+
+
+def test_a_second_close_while_the_first_rests_is_refused(env):
+    from app.options.models import CloseLeg, CloseSpreadRequest
+    from app.trading.errors import OrderRejected
+
+    _open_bull_put(env, qty=1)
+    quotes = {PUT_745: _quote(PUT_745, 2.50, 2.60, "put", 745.0), PUT_740: _quote(PUT_740, 1.80, 1.90, "put", 740.0)}
+    service = _service(env, quotes)
+    req = CloseSpreadRequest(legs=[CloseLeg(symbol=PUT_745, qty=-1), CloseLeg(symbol=PUT_740, qty=1)], qty=1, limit_price=0.50)
+
+    first = asyncio.run(service.close_spread(req))
+    assert first["status"] in ("accepted", "new", "working", "pending_new") or first["filled_qty"] in ("0", 0)
+
+    with pytest.raises(OrderRejected) as exc:
+        asyncio.run(service.close_spread(req))
+    assert "already resting" in str(exc.value)
+
+    # Cancelling the resting package frees the position for a real close.
+    asyncio.run(service.cancel(first["id"]))
+    closed = asyncio.run(service.close_spread(CloseSpreadRequest(legs=req.legs, qty=1)))
+    assert closed["status"] == "filled"
+
