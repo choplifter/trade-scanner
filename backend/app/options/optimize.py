@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import date, datetime, time, timezone
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -33,17 +35,20 @@ from app.options.models import STRATEGY_LABELS, Strategy
 from app.options.optimizer import (
     DEFAULT_STRATEGIES,
     FINALISTS,
+    OUTLOOK_STRATEGIES,
     Candidate,
     Skipped,
     Target,
     candidate_ticket,
+    chance_of_profit,
     enumerate_candidates,
     filter_and_rank,
     legs_label,
     position_pnl,
     price_candidate,
+    rank_score,
 )
-from app.options.payoff import PayoffLeg
+from app.options.payoff import PayoffLeg, years_between
 from app.services.market_clock import ET
 from app.trading.errors import OrderRejected, TradingError
 
@@ -57,15 +62,25 @@ MAX_EXPIRIES = 3
 DISCLAIMER = (
     "Structures enumerated from the listed chain and priced through the ticket's own path. "
     "Return on risk is the P/L if the underlying is at the target on the horizon date with each "
-    "leg's implied volatility unchanged, divided by what the account puts up -- not a probability, "
-    "not advice. Check every quote yourself before acting on any of it."
+    "leg's implied volatility unchanged, divided by what the account puts up. Chance is the share of "
+    "the option market's own implied distribution (at-the-money IV, lognormal, no drift) under which the "
+    "position is profitable at the horizon -- a model number, not a forecast. Neither is advice; check "
+    "every quote yourself before acting on any of it."
 )
 
 
 class OptimizeRequest(BaseModel):
     underlying: str = Field(min_length=1, max_length=12)
-    target_low: float = Field(gt=0)
+    # The target: one price (target_low), a range (low..high), or explicit
+    # points -- a directional view names a price on each side of the spot.
+    target_low: float | None = Field(default=None, gt=0)
     target_high: float | None = Field(default=None, gt=0)
+    target_points: list[float] | None = Field(default=None, min_length=1, max_length=8)
+    # Which view produced the target; sets the default strategy families
+    # when `strategies` is not given. Informational otherwise.
+    outlook: Literal["very_bearish", "bearish", "neutral", "directional", "bullish", "very_bullish"] | None = None
+    # 0 = Max Return, 1 = Max Chance -- the slider.
+    preference: float = Field(default=0.0, ge=0.0, le=1.0)
     # Exactly one of the two: the horizon is a listed expiry, or a date
     # (which excludes expiries before it).
     horizon_expiry: date | None = None
@@ -81,13 +96,29 @@ class OptimizeRequest(BaseModel):
     def _check(self) -> "OptimizeRequest":
         if (self.horizon_expiry is None) == (self.horizon_date is None):
             raise ValueError("give either horizon_expiry or horizon_date")
-        if self.target_high is not None and self.target_high < self.target_low:
+        if self.target_points is None and self.target_low is None:
+            raise ValueError("give target_low (and optionally target_high) or target_points")
+        if self.target_points is not None and any(p <= 0 for p in self.target_points):
+            raise ValueError("target_points must be positive prices")
+        if self.target_high is not None and self.target_low is not None and self.target_high < self.target_low:
             raise ValueError("target_high must be at or above target_low")
         return self
 
     @property
     def target(self) -> Target:
-        return Target(low=self.target_low, high=self.target_high if self.target_high is not None else self.target_low)
+        if self.target_points:
+            pts = tuple(sorted(self.target_points))
+            return Target(low=pts[0], high=pts[-1], explicit=pts)
+        low = self.target_low or 0.0
+        return Target(low=low, high=self.target_high if self.target_high is not None else low)
+
+    @property
+    def strategy_set(self) -> frozenset[str]:
+        if self.strategies:
+            return frozenset(self.strategies)
+        if self.outlook is not None:
+            return OUTLOOK_STRATEGIES[self.outlook]
+        return DEFAULT_STRATEGIES
 
     @property
     def horizon(self) -> date:
@@ -121,10 +152,25 @@ def _signed_limit(spread) -> float:
     return spread.limit_price if spread.direction == "debit" else -spread.limit_price
 
 
-def _repriced(cand: Candidate, spread, target: Target, horizon: datetime) -> tuple[list[float], float] | None:
-    """The card's P/L points and risk from the previewed legs and limit --
-    the same arithmetic as the cheap pass, on the numbers the ticket will
-    actually carry. None when a previewed leg lacks an IV."""
+def atm_sigma(rows: list[dict], spot: float) -> float | None:
+    """The at-the-money implied volatility of one expiry's condensed rows:
+    the mean of the call and put IV at the strike nearest the spot that
+    has both, else whichever side is quoted there. None when the rows
+    carry no IV at all."""
+    quoted = [r for r in rows if (r.get("call") or {}).get("iv") or (r.get("put") or {}).get("iv")]
+    if not quoted:
+        return None
+    row = min(quoted, key=lambda r: abs(r["strike"] - spot))
+    ivs = [q["iv"] for q in (row.get("call"), row.get("put")) if q and q.get("iv")]
+    return sum(ivs) / len(ivs) if ivs else None
+
+
+def _repriced(
+    cand: Candidate, spread, target: Target, horizon: datetime, *, sigma: float | None = None, years: float | None = None
+) -> tuple[list[float], float, float | None] | None:
+    """The card's P/L points, risk and chance from the previewed legs and
+    limit -- the same arithmetic as the cheap pass, on the numbers the
+    ticket will actually carry. None when a previewed leg lacks an IV."""
     legs = [
         PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
         for leg in spread.legs
@@ -139,7 +185,10 @@ def _repriced(cand: Candidate, spread, target: Target, horizon: datetime) -> tup
             return None
         points.append(pnl)
     risk = spread.collateral if spread.collateral > 0 else (spread.max_loss or 0.0)
-    return points, risk
+    chance = None
+    if sigma is not None and years is not None and years > 0:
+        chance = chance_of_profit(legs, net, horizon, spread.spot, sigma, years, spread.qty)
+    return points, risk, chance
 
 
 async def optimize_structures(
@@ -184,18 +233,27 @@ async def optimize_structures(
     rows_by_expiry = {expiry: block["strikes"] for expiry, block in rows_by_expiry_payload.items()}
     horizon_moment = datetime.combine(horizon, time(16, 0), tzinfo=ET)
     target = req.target
-    strategies = frozenset(req.strategies) if req.strategies else DEFAULT_STRATEGIES
+    strategies = req.strategy_set
+
+    # The volatility the chance of profit is measured against: the
+    # at-the-money IV of the horizon's own expiry (the first loaded), and
+    # with it the one-sigma implied move to the horizon.
+    years = years_between(now, horizon)
+    sigma = atm_sigma(rows_by_expiry.get(expiries[0], []), spot)
+    implied_move = round(spot * sigma * math.sqrt(years), 2) if sigma and years > 0 else None
 
     raws, skipped = enumerate_candidates(rows_by_expiry, spot, target, strategies)
     candidates: list[Candidate] = []
     for raw in raws:
-        priced = price_candidate(raw, rows_by_expiry, spot, target, horizon_moment)
+        priced = price_candidate(raw, rows_by_expiry, spot, target, horizon_moment, sigma=sigma, years=years)
         if isinstance(priced, str):
             skipped.add(priced)
         else:
             candidates.append(priced)
     skipped.scored = len(candidates)
-    finalists, drop_reasons = filter_and_rank(candidates, budget=req.budget, max_loss=req.max_loss, top_k=FINALISTS)
+    finalists, drop_reasons = filter_and_rank(
+        candidates, budget=req.budget, max_loss=req.max_loss, top_k=FINALISTS, preference=req.preference
+    )
     for reason, n in drop_reasons.items():
         skipped.add(reason, n)
 
@@ -216,7 +274,7 @@ async def optimize_structures(
                     }
                 )
                 continue
-            repriced = _repriced(cand, spread, target, horizon_moment)
+            repriced = _repriced(cand, spread, target, horizon_moment, sigma=sigma, years=years)
             if repriced is None:
                 rejected.append(
                     {
@@ -228,7 +286,7 @@ async def optimize_structures(
                     }
                 )
                 continue
-            points, risk = repriced
+            points, risk, chance = repriced
             pnl_min = min(points)
             if risk <= 0 or pnl_min <= 0:
                 rejected.append(
@@ -255,6 +313,7 @@ async def optimize_structures(
                     "pnl_mean": round(sum(points) / len(points), 2),
                     "pnl_max": round(max(points), 2),
                     "return_on_risk": round(pnl_min / risk, 4),
+                    "chance": chance,
                     "max_profit": spread.max_profit,
                     "max_loss": spread.max_loss,
                     "breakevens": spread.breakevens,
@@ -263,8 +322,18 @@ async def optimize_structures(
                 }
             )
 
-    results.sort(key=lambda r: (-r["return_on_risk"], -r["pnl_mean"], r["risk"]))
-    results = results[: req.top_n]
+    # The same blend as the cheap pass, on the final numbers.
+    scored = [
+        Candidate(
+            strategy=r["strategy"], expiry=date.fromisoformat(r["expiry"]), legs=(), net_price=r["net_price"],
+            direction=r["direction"], risk=r["risk"], max_profit=r["max_profit"], max_loss=r["max_loss"],
+            breakevens=r["breakevens"], pnl_points=[r["pnl_min"], r["pnl_mean"], r["pnl_max"]], chance=r["chance"],
+        )
+        for r in results
+    ]
+    scores = rank_score(scored, req.preference)
+    order = sorted(range(len(results)), key=lambda i: (-scores[id(scored[i])], -results[i]["return_on_risk"], results[i]["risk"]))
+    results = [results[i] for i in order][: req.top_n]
     for i, r in enumerate(results, start=1):
         r["rank"] = i
 
@@ -272,7 +341,11 @@ async def optimize_structures(
         "underlying": underlying,
         "spot": round(spot, 2),
         "as_of": now.isoformat(timespec="seconds"),
-        "target": {"low": target.low, "high": target.high},
+        "target": {"low": target.low, "high": target.high, "points": target.points()},
+        "outlook": req.outlook,
+        "preference": req.preference,
+        "implied_move": implied_move,
+        "atm_iv": round(sigma, 4) if sigma else None,
         "horizon": {"date": horizon.isoformat(), "expiries_considered": [e.isoformat() for e in expiries]},
         "results": results,
         "rejected": rejected,

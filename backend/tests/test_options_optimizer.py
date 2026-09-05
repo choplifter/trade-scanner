@@ -14,15 +14,18 @@ import pytest
 from app.options.models import SpreadTicket
 from app.options.optimizer import (
     DEFAULT_STRATEGIES,
+    OUTLOOK_STRATEGIES,
     Skipped,
     Target,
     candidate_ticket,
+    chance_of_profit,
     enumerate_candidates,
     filter_and_rank,
     legs_label,
     price_candidate,
+    rank_score,
 )
-from app.options.payoff import bs_greeks, bs_price
+from app.options.payoff import PayoffLeg, bs_greeks, bs_price
 
 ET = ZoneInfo("America/New_York")
 SPOT = 100.0
@@ -207,3 +210,83 @@ def test_skipped_to_dict_is_sorted_and_complete():
     s.add("no_iv")
     s.add("over_budget", 2)
     assert s.to_dict() == {"total": 3, "scored": 1, "reasons": {"no_iv": 1, "over_budget": 2}}
+
+
+# --- chance of profit and the return / chance slider ---------------------------------
+
+
+def _years_to(expiry: date) -> float:
+    return _years(expiry)
+
+
+def test_chance_of_profit_is_a_probability_that_orders_shapes_sensibly():
+    horizon = _horizon(NEAR)
+    years = _years_to(NEAR)
+    # A long call bought at the ATM mid: well under an even chance.
+    atm = PayoffLeg(kind="call", strike=100.0, side="buy", expiry=NEAR, iv=IV)
+    atm_mid = _quote("call", 100.0, NEAR)["mid"]
+    p_atm = chance_of_profit([atm], atm_mid, horizon, SPOT, IV, years)
+    # A deep in-the-money call, bought for its mid: far likelier to end in profit than a far OTM one.
+    itm = PayoffLeg(kind="call", strike=92.0, side="buy", expiry=NEAR, iv=IV)
+    otm = PayoffLeg(kind="call", strike=108.0, side="buy", expiry=NEAR, iv=IV)
+    p_itm = chance_of_profit([itm], _quote("call", 92.0, NEAR)["mid"], horizon, SPOT, IV, years)
+    p_otm = chance_of_profit([otm], _quote("call", 108.0, NEAR)["mid"], horizon, SPOT, IV, years)
+    assert p_atm is not None and 0.3 < p_atm < 0.5
+    assert p_otm < p_atm < p_itm
+    assert 0.0 <= p_otm and p_itm <= 1.0
+    # A short put sold far below the spot: the market's own odds say it usually keeps the credit.
+    short_put = PayoffLeg(kind="put", strike=90.0, side="sell", expiry=NEAR, iv=IV)
+    p_short = chance_of_profit([short_put], -_quote("put", 90.0, NEAR)["mid"], horizon, SPOT, IV, years)
+    assert p_short > 0.8
+    assert chance_of_profit([atm], atm_mid, horizon, SPOT, 0.0, years) is None
+
+
+def test_price_candidate_carries_the_chance_when_given_sigma():
+    rows = {NEAR: _rows(NEAR)}
+    raws, _ = enumerate_candidates(rows, SPOT, Target(104, 104), frozenset({"bull_call"}))
+    with_sigma = price_candidate(raws[0], rows, SPOT, Target(104, 104), _horizon(NEAR), sigma=IV, years=_years_to(NEAR))
+    without = price_candidate(raws[0], rows, SPOT, Target(104, 104), _horizon(NEAR))
+    assert not isinstance(with_sigma, str) and with_sigma.chance is not None and 0 < with_sigma.chance < 1
+    assert not isinstance(without, str) and without.chance is None
+
+
+def test_the_slider_moves_the_ranking_from_return_to_chance():
+    rows = {NEAR: _rows(NEAR)}
+    raws, _ = enumerate_candidates(rows, SPOT, Target(101, 101), frozenset({"bull_call", "bull_put", "long_call"}))
+    cands = []
+    for raw in raws:
+        c = price_candidate(raw, rows, SPOT, Target(101, 101), _horizon(NEAR), sigma=IV, years=_years_to(NEAR))
+        if not isinstance(c, str):
+            cands.append(c)
+    by_return, _ = filter_and_rank(cands, top_k=50, per_strategy_cap=50, preference=0.0)
+    by_chance, _ = filter_and_rank(cands, top_k=50, per_strategy_cap=50, preference=1.0)
+    rors = [c.return_on_risk for c in by_return]
+    chances = [c.chance for c in by_chance]
+    assert rors == sorted(rors, reverse=True)
+    assert chances == sorted(chances, reverse=True)
+    assert by_return[0] is not by_chance[0]
+    # Percentile blending: every score lies in [0, 1].
+    scores = rank_score(cands, 0.5)
+    assert all(0.0 <= v <= 1.0 for v in scores.values())
+
+
+def test_a_directional_target_is_two_explicit_points_and_straddles_survive_it():
+    rows = {NEAR: _rows(NEAR)}
+    target = Target(low=94.0, high=106.0, explicit=(94.0, 106.0))
+    assert target.points() == [94.0, 106.0] and not target.is_range
+    raws, _ = enumerate_candidates(rows, SPOT, target, OUTLOOK_STRATEGIES["directional"])
+    cands = [c for c in (price_candidate(r, rows, SPOT, target, _horizon(NEAR)) for r in raws) if not isinstance(c, str)]
+    kept, _ = filter_and_rank(cands, top_k=50)
+    assert kept and all(c.strategy in ("long_straddle", "long_strangle") for c in kept)
+    # The same straddles over the *range* 94..106 include the spot, where they lose: none survive.
+    ranged = Target(low=94.0, high=106.0)
+    cands_r = [c for c in (price_candidate(r, rows, SPOT, ranged, _horizon(NEAR)) for r in raws) if not isinstance(c, str)]
+    kept_r, drops = filter_and_rank(cands_r, top_k=50)
+    assert kept_r == [] and drops["non_positive_return"] == len(cands_r)
+
+
+def test_outlooks_map_to_strategy_families_that_fit_the_view():
+    assert OUTLOOK_STRATEGIES["very_bullish"] <= {"long_call", "bull_call"}
+    assert "bear_put" in OUTLOOK_STRATEGIES["bearish"] and "bull_call" not in OUTLOOK_STRATEGIES["bearish"]
+    assert OUTLOOK_STRATEGIES["neutral"] & {"iron_condor", "iron_butterfly"}
+    assert OUTLOOK_STRATEGIES["directional"] == {"long_straddle", "long_strangle"}

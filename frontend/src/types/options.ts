@@ -461,10 +461,19 @@ export interface LoadableStructure {
 /** POST /trading/options/optimize -- see backend app/options/optimize.py.
  * Exactly one of horizon_expiry / horizon_date; budget and max_loss are per
  * position in dollars; strategies null = every family except income. */
+export type OptimizerOutlook = "very_bearish" | "bearish" | "neutral" | "directional" | "bullish" | "very_bullish";
+
 export interface OptimizeRequest {
   underlying: string;
-  target_low: number;
+  /** One target, or the low end of a range. Omitted when `target_points` is given. */
+  target_low?: number | null;
   target_high?: number | null;
+  /** Explicit target prices (a directional view: one below, one above). */
+  target_points?: number[] | null;
+  /** Which of OptionStrat's six views set the target; informational. */
+  outlook?: OptimizerOutlook | null;
+  /** 0 ranks by return on risk, 1 by chance of profit, between blends. */
+  preference?: number;
   horizon_expiry?: string | null;
   horizon_date?: string | null;
   budget?: number | null;
@@ -493,6 +502,10 @@ export interface OptimizerResult {
   pnl_mean: number;
   pnl_max: number;
   return_on_risk: number;
+  /** Probability of any profit on the horizon date under a lognormal at
+   * the chain's ATM IV with no drift -- the market's own distribution, not
+   * a forecast. Null when no IV was available. */
+  chance: number | null;
   max_profit: number | null;
   max_loss: number | null;
   breakevens: number[];
@@ -521,7 +534,12 @@ export interface OptimizeResponse {
   underlying: string;
   spot: number;
   as_of: string;
-  target: { low: number; high: number };
+  target: { low: number; high: number; points: number[] };
+  outlook: OptimizerOutlook | null;
+  preference: number;
+  /** One standard deviation of the move the market prices to the horizon (dollars). */
+  implied_move: number | null;
+  atm_iv: number | null;
   horizon: { date: string; expiries_considered: string[] };
   results: OptimizerResult[];
   rejected: OptimizerRejected[];

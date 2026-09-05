@@ -399,11 +399,28 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
 
         <h3>Optimizer</h3>
         <dl>
-          <dt>Target · Horizon</dt>
+          <dt>Outlook</dt>
           <dd>
-            Where you expect the underlying, as one price or a range, and when: a listed expiry, or a date (expiries
-            before it are then left out). The target starts at the spot; the horizon must be after today, because a
-            contract expiring today has no implied volatility to price a horizon on.
+            OptionStrat's six views, each a shortcut for a target and a set of shapes. The unit is the{" "}
+            <em>implied move</em>: one standard deviation of the move the option market prices to the chosen
+            expiry, spot × ATM IV × √time, shown next to the inputs. Bullish sets the target one implied move above
+            the spot, Very bullish two; Bearish and Very bearish mirror it; Neutral leaves the target at the spot and
+            searches condors, flies and calendars; Directional expects a move either way and ranks straddles and
+            strangles at both points at once. The target and the families stay editable afterwards.
+          </dd>
+          <dt>Target · Expiry</dt>
+          <dd>
+            Where you expect the underlying and when. The percentage beside the target is against the spot. The
+            expiry chips are the listed expiries grouped by month; one expiring today is not offered, because a
+            contract without time left has no implied volatility to price a horizon on. "More options" adds a max
+            loss and the family checkboxes.
+          </dd>
+          <dt>Max Return ↔ Max Chance</dt>
+          <dd>
+            Where the ranking stands between the two numbers on the cards. At the left, structures are ordered by
+            return on risk (what they pay if the target is reached); at the right by chance of profit (how likely
+            any profit is at all). In between, each structure's percentile on both scales is blended. Far
+            out-of-the-money shapes win the left end, wide credit structures the right.
           </dd>
           <dt>Budget · Max loss</dt>
           <dd>
@@ -426,12 +443,26 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             target on the horizon date computed with the risk chart's own Black-Scholes, each leg's IV held still.
             The dozen best then go through the ticket's own preview, and the cards show that preview's numbers.
           </dd>
-          <dt>Return on risk</dt>
+          <dt>Return on risk · Profit · Risk</dt>
           <dd>
-            The P/L at the worst point of the target divided by what the account puts up — "wherever in your range
-            it lands, at least this many times the risk". A ranking of payoff if you are right, at one price and
-            date with IV unchanged. It is not a probability, and the optimizer does not say how likely the target
-            is.
+            Return on risk is the P/L at the worst point of the target divided by what the account puts up — "if the
+            target is reached, at least this many percent of the risk". Profit is that P/L in dollars, Risk the
+            debit or collateral. A ranking of payoff if you are right, at one price and date with IV unchanged. The
+            colours are relative to the list: the best value is green, within half of it amber, below that grey.
+          </dd>
+          <dt>Chance</dt>
+          <dd>
+            The probability of <em>any</em> profit on the horizon date if the underlying moves as the option market
+            itself prices it: a lognormal distribution at the chain's at-the-money IV, no drift. The P/L curve is
+            integrated over that distribution (each leg's IV held still). A model number, not a forecast — it says
+            how much of the market's own distribution the structure covers, which is why a wide credit spread scores
+            high and a far out-of-the-money call low, whatever you think of the target.
+          </dd>
+          <dt>The small chart</dt>
+          <dd>
+            Each card's P/L at expiry over the price grid: green where the position ends in profit, red where in
+            loss, breakevens dotted with their prices, the target amber, the spot blue. The same curve the ticket's
+            risk chart draws once the structure is loaded.
           </dd>
           <dt>The line below the cards</dt>
           <dd>

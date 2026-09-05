@@ -125,6 +125,10 @@ def test_the_request_needs_exactly_one_horizon_and_an_ordered_range():
     with pytest.raises(ValueError):
         OptimizeRequest(underlying="x", target_low=100)
     with pytest.raises(ValueError):
+        OptimizeRequest(underlying="x", horizon_expiry=NEAR)  # no target at all
+    pts = OptimizeRequest(underlying="x", target_points=[94, 106], horizon_expiry=NEAR, outlook="directional")
+    assert pts.target.points() == [94.0, 106.0] and pts.strategy_set == {"long_straddle", "long_strangle"}
+    with pytest.raises(ValueError):
         OptimizeRequest(underlying="x", target_low=100, horizon_expiry=NEAR, horizon_date=NEAR)
     with pytest.raises(ValueError):
         OptimizeRequest(underlying="x", target_low=105, target_high=100, horizon_expiry=NEAR)
@@ -294,3 +298,22 @@ def test_the_sim_endpoint_runs_during_a_replay_and_says_what_the_chain_is(sim_ap
         json={"underlying": "x", "target_low": 104, "horizon_expiry": NEAR.isoformat()},
     )
     assert resp.status_code == 200 and resp.json()["warnings"] == []
+
+
+def test_results_carry_chance_implied_move_and_honour_the_slider():
+    service = _Service()
+    by_return = _run(service, _req(target_high=106.0, preference=0.0))
+    by_chance = _run(_Service(), _req(target_high=106.0, preference=1.0))
+    assert by_return["implied_move"] and by_return["atm_iv"] == pytest.approx(IV, abs=1e-3)
+    assert all(0 <= r["chance"] <= 1 for r in by_return["results"])
+    chances = [r["chance"] for r in by_chance["results"]]
+    assert chances == sorted(chances, reverse=True)
+    assert by_return["preference"] == 0.0 and by_chance["preference"] == 1.0
+    assert by_return["target"]["points"][0] == 104.0
+
+
+def test_an_outlook_sets_the_families_when_none_are_given():
+    body = _run(_Service(), _req(target_low=95.0, outlook="bearish", budget=2000.0))
+    assert body["outlook"] == "bearish"
+    assert body["results"]
+    assert {r["strategy"] for r in body["results"]} <= {"long_put", "bear_put", "bear_call"}

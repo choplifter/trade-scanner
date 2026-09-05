@@ -27,6 +27,7 @@ hand-written chain.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal
@@ -52,6 +53,25 @@ FLY_WING_WIDTHS = (1, 2, 3, 4)
 FLY_BODIES = 3  # strikes nearest the target considered as a body
 STRANGLE_WIDTHS = (1, 2, 3)
 TARGET_POINTS = 5
+# The price grid the chance of profit integrates over: +/- 4 sigma of the
+# lognormal move to the horizon, in 201 steps.
+CHANCE_GRID_POINTS = 201
+CHANCE_SIGMA_REACH = 4.0
+
+# OptionStrat's sentiment buttons, as the strategy families each one
+# searches. The target price is the frontend's to set from the implied move
+# (+/- one implied move for bearish/bullish, two for the "very" ones, the
+# spot for neutral, both sides for directional); this is only which shapes
+# are worth trying for that view.
+Outlook = Literal["very_bearish", "bearish", "neutral", "directional", "bullish", "very_bullish"]
+OUTLOOK_STRATEGIES: dict[str, frozenset[str]] = {
+    "very_bearish": frozenset({"long_put", "bear_put"}),
+    "bearish": frozenset({"long_put", "bear_put", "bear_call"}),
+    "neutral": frozenset({"iron_condor", "iron_butterfly", "call_butterfly", "put_butterfly", "calendar"}),
+    "directional": frozenset({"long_straddle", "long_strangle"}),
+    "bullish": frozenset({"long_call", "bull_call", "bull_put"}),
+    "very_bullish": frozenset({"long_call", "bull_call"}),
+}
 
 # Diagonals are left out: strike x strike x expiry pairs multiply the count
 # for a shape the ticket can build by hand in a moment. Income strategies are
@@ -90,17 +110,26 @@ SkipReason = Literal[
 @dataclass(frozen=True)
 class Target:
     """Where the reader expects the underlying on the horizon date -- one
-    price, or a range. `points` samples the range so the worst case within
-    it can be found without assuming where in the range it lands."""
+    price, a range, or (a directional view) a set of prices on both sides
+    of the spot. `points` samples a range so the worst case within it can
+    be found without assuming where in the range it lands; explicit points
+    are taken as given."""
 
     low: float
     high: float
+    explicit: tuple[float, ...] | None = None
 
     @property
     def mid(self) -> float:
         return (self.low + self.high) / 2
 
+    @property
+    def is_range(self) -> bool:
+        return self.explicit is None and self.high > self.low
+
     def points(self, n: int = TARGET_POINTS) -> list[float]:
+        if self.explicit:
+            return list(self.explicit)
         if self.high <= self.low or n <= 1:
             return [self.low]
         step = (self.high - self.low) / (n - 1)
@@ -136,6 +165,9 @@ class Candidate:
     max_loss: float | None
     breakevens: list[float]
     pnl_points: list[float]
+    # Model probability that the position is profitable on the horizon
+    # date -- see chance_of_profit. None when no volatility was available.
+    chance: float | None = None
 
     @property
     def pnl_min(self) -> float:
@@ -420,6 +452,55 @@ def _lookup(rows_by_expiry: dict[date, list[dict]], expiry: date, kind: str, str
     return None
 
 
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def chance_of_profit(
+    legs: list[PayoffLeg],
+    net_price: float,
+    horizon: datetime,
+    spot: float,
+    sigma: float,
+    years: float,
+    qty: int = 1,
+) -> float | None:
+    """The probability that the position shows a profit on the horizon
+    date, under the distribution the option market itself implies: the
+    underlying's log-return to the horizon is normal with standard
+    deviation sigma*sqrt(T) (sigma the at-the-money implied volatility)
+    and no drift beyond the lognormal correction -- the same assumption
+    every "chance of profit" figure rests on, OptionStrat's included.
+    Integrates the P/L over a price grid +/- 4 sigma and adds up the
+    probability mass where it is positive. A model number: it says how
+    likely the implied distribution makes a profit, not how likely a
+    profit is."""
+    if sigma <= 0 or years <= 0 or spot <= 0:
+        return None
+    width = sigma * math.sqrt(years)
+    mu = -0.5 * width * width
+    lo = -CHANCE_SIGMA_REACH * width
+    hi = CHANCE_SIGMA_REACH * width
+    n = CHANCE_GRID_POINTS
+    step = (hi - lo) / (n - 1)
+    total = 0.0
+    for i in range(n):
+        x = lo + i * step
+        # Probability mass of this step of log-return.
+        a = _norm_cdf((x - step / 2 - mu) / width)
+        b = _norm_cdf((x + step / 2 - mu) / width)
+        mass = b - a
+        if mass <= 0:
+            continue
+        price = spot * math.exp(x)
+        pnl = position_pnl(legs, net_price, price, horizon, qty)
+        if pnl is None:
+            return None
+        if pnl > 0:
+            total += mass
+    return round(min(1.0, max(0.0, total)), 4)
+
+
 def position_pnl(legs: list[PayoffLeg], net_price: float, price: float, at: datetime, qty: int = 1) -> float | None:
     """P/L per position at `price` on `at`, the risk chart's own arithmetic
     (payoff_curve): every leg valued by Black-Scholes at its IV, intrinsic
@@ -442,8 +523,12 @@ def price_candidate(
     horizon: datetime,
     *,
     qty: int = 1,
+    sigma: float | None = None,
+    years: float | None = None,
 ) -> Candidate | str:
-    """A priced candidate, or the reason it cannot be one."""
+    """A priced candidate, or the reason it cannot be one. With `sigma`
+    (the at-the-money IV) and `years` to the horizon the candidate also
+    carries its chance of profit."""
     mids: list[float] = []
     payoff_legs: list[PayoffLeg] = []
     for leg in raw.legs:
@@ -482,6 +567,10 @@ def price_candidate(
             return "no_iv"
         pnl_points.append(pnl)
 
+    chance = None
+    if sigma is not None and years is not None and years > 0:
+        chance = chance_of_profit(payoff_legs, signed, horizon, spot, sigma, years, qty)
+
     return Candidate(
         strategy=raw.strategy,
         expiry=raw.expiry,
@@ -493,10 +582,33 @@ def price_candidate(
         max_loss=risk.max_loss,
         breakevens=risk.breakevens,
         pnl_points=pnl_points,
+        chance=chance,
     )
 
 
 # --- ranking ----------------------------------------------------------------------
+
+
+def rank_score(candidates: list[Candidate], preference: float) -> dict[int, float]:
+    """One score per candidate (by id) blending two rankings: return on
+    risk and chance of profit, each as a percentile within the list, mixed
+    by `preference` -- 0 is all return, 1 is all chance, the slider in
+    between. Percentiles rather than raw values so one absurd return does
+    not flatten every chance into irrelevance. Without chances the score
+    is the return percentile alone."""
+    n = len(candidates)
+    if n == 0:
+        return {}
+    by_ror = sorted(candidates, key=lambda c: c.return_on_risk)
+    ror_rank = {id(c): i / max(1, n - 1) for i, c in enumerate(by_ror)}
+    with_chance = [c for c in candidates if c.chance is not None]
+    if not with_chance:
+        return {id(c): ror_rank[id(c)] for c in candidates}
+    by_chance = sorted(with_chance, key=lambda c: c.chance)  # type: ignore[arg-type,return-value]
+    m = len(with_chance)
+    chance_rank = {id(c): i / max(1, m - 1) for i, c in enumerate(by_chance)}
+    p = min(1.0, max(0.0, preference))
+    return {id(c): (1 - p) * ror_rank[id(c)] + p * chance_rank.get(id(c), 0.0) for c in candidates}
 
 
 def filter_and_rank(
@@ -506,14 +618,17 @@ def filter_and_rank(
     max_loss: float | None = None,
     top_k: int = FINALISTS,
     per_strategy_cap: int = PER_STRATEGY_CAP,
+    preference: float = 0.0,
 ) -> tuple[list[Candidate], dict[str, int]]:
-    """The best `top_k` by return on risk, with the drop reasons counted.
+    """The best `top_k`, with the drop reasons counted.
 
     `budget` caps what the account puts up per position; `max_loss` caps
     the defined maximum loss (an unbounded one never passes it). A shape
     that loses money at the worst point of the target is out: the reader
-    asked what pays off there. At most `per_strategy_cap` per strategy
-    and expiry, so a list is not twelve bull calls one strike apart.
+    asked what pays off there. The order blends return on risk and chance
+    of profit by `preference` (see rank_score) -- 0 is the slider at Max
+    Return, 1 at Max Chance. At most `per_strategy_cap` per strategy and
+    expiry, so a list is not twelve bull calls one strike apart.
     """
     reasons: dict[str, int] = {}
 
@@ -533,7 +648,8 @@ def filter_and_rank(
             continue
         kept.append(cand)
 
-    kept.sort(key=lambda c: (-c.return_on_risk, -c.pnl_mean, c.risk))
+    scores = rank_score(kept, preference)
+    kept.sort(key=lambda c: (-scores[id(c)], -c.return_on_risk, -c.pnl_mean, c.risk))
     out: list[Candidate] = []
     seen: dict[tuple[str, date], int] = {}
     for cand in kept:
@@ -556,6 +672,9 @@ def candidate_ticket(underlying: str, cand: Candidate | RawCandidate, qty: int =
 
 __all__ = [
     "Candidate",
+    "OUTLOOK_STRATEGIES",
+    "chance_of_profit",
+    "rank_score",
     "DEFAULT_STRATEGIES",
     "FINALISTS",
     "MAX_CANDIDATES",

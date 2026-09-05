@@ -4294,6 +4294,295 @@ td.chain-side.chain-stale {
   color: var(--text-muted);
 }
 
+/* --- Optimizer v2: outlook bar, expiry chips, slider, cards ------------- */
+
+.opt-tab {
+  --opt-bear: #d03b3b;
+  --opt-flat: #8a8f98;
+  --opt-both: #8e5bd6;
+  --opt-bull: #1f9d55;
+  --opt-mid: #d6a11c;
+}
+
+.opt-outlooks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 8px 4px;
+}
+
+.opt-outlook {
+  flex: 1 1 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.opt-outlook-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid var(--tone);
+  color: var(--tone);
+}
+
+.opt-outlook.bear { --tone: var(--opt-bear); }
+.opt-outlook.flat { --tone: var(--opt-flat); }
+.opt-outlook.both { --tone: var(--opt-both); }
+.opt-outlook.bull { --tone: var(--opt-bull); }
+
+.opt-outlook:hover {
+  border-color: var(--tone);
+}
+
+.opt-outlook[aria-pressed="true"] {
+  border-color: var(--tone);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--tone);
+}
+
+.opt-outlook[aria-pressed="true"] .opt-outlook-icon {
+  background: var(--tone);
+  color: #fff;
+}
+
+.opt-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.opt-inputs label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.opt-inputs input[type="number"] {
+  width: 92px;
+  font-size: 12px;
+}
+
+.opt-expiries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 4px 8px;
+}
+
+.opt-expiry-month {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.opt-expiry-month-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding-left: 2px;
+}
+
+.opt-expiry-days {
+  display: flex;
+  gap: 2px;
+}
+
+.opt-expiry-day {
+  min-width: 26px;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.opt-expiry-day:hover {
+  border-color: var(--text-secondary);
+}
+
+.opt-expiry-day[aria-pressed="true"] {
+  background: var(--row-selected);
+  border-color: var(--accent, #c08a2e);
+  color: var(--text-primary);
+}
+
+.opt-preference {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.opt-preference input[type="range"] {
+  flex: 1 1 140px;
+  max-width: 320px;
+  accent-color: var(--opt-both);
+}
+
+.opt-pref-label {
+  white-space: nowrap;
+}
+
+.opt-run {
+  margin-left: auto;
+}
+
+.opt-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 16px;
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.opt-more > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.opt-more input[type="number"] {
+  width: 84px;
+}
+
+.opt-grid {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 8px;
+}
+
+.opt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, transparent);
+  font-size: 11px;
+}
+
+.opt-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.opt-card-legs {
+  color: var(--text-secondary);
+}
+
+.opt-card-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+  margin: 2px 0;
+}
+
+.opt-stat {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.opt-stat strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  margin-right: 3px;
+  color: var(--text-primary);
+}
+
+.opt-stat.top strong { color: var(--opt-bull); }
+.opt-stat.mid strong { color: var(--opt-mid); }
+.opt-stat.low strong { color: var(--text-secondary); }
+
+.opt-mini {
+  width: 100%;
+  height: 110px;
+  display: block;
+  border-radius: 4px;
+  background: var(--bg-input, rgba(127, 127, 127, 0.06));
+}
+
+.opt-mini-line {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 1.5;
+}
+
+.opt-mini-zero {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+}
+
+.opt-mini-tick {
+  font-size: 8px;
+  fill: var(--text-muted);
+}
+
+.opt-mini-spot {
+  stroke: #3b82d0;
+  stroke-width: 1;
+}
+
+.opt-mini-target {
+  stroke: #c08a2e;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+.opt-mini-be {
+  stroke: var(--text-secondary);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.opt-mini-be-label {
+  font-size: 8px;
+  fill: var(--text-secondary);
+}
+
+.opt-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.opt-load {
+  white-space: nowrap;
+}
+
 /* --- Risk view: the date x price table (PayoffTable) ---------------------- */
 
 .payoff-view-toggle {

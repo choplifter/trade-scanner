@@ -1362,13 +1362,25 @@ AI Trade Ideas widget and the GEX plan draw.
 ### Optimizer: structures for a price target
 
 The Options widget's fourth tab is OptionStrat's optimizer on this app's
-own pipeline. Name a **target** (one price or a range), a **horizon** (a
-listed expiry, or a date -- expiries before it are left out), a **budget**
-(the most the account puts up per position: a debit, or a credit
-structure's collateral) and a **max loss**, tick the strategy families to
-search, and the account answers with the structures that pay best if the
-target is reached -- each with the ticket the widget loads and the preview
-that ticket would show.
+own pipeline. Pick an **outlook** (Very bearish … Very bullish, Neutral,
+Directional) or type a **target** (one price, a range, or with a directional
+view one point either side), pick an **expiry** from the month-grouped
+chips, a **budget** (the most the account puts up per position: a debit, or
+a credit structure's collateral), set the **Max Return ↔ Max Chance**
+slider, and the account answers with the structures that pay best -- each
+card with its return on risk, chance of profit, profit and risk in dollars,
+a small payoff chart, the ticket the widget loads and the preview that
+ticket would show. "More options" adds a max loss and the family
+checkboxes.
+
+The outlook buttons work in **implied moves**: one standard deviation of
+the move the market prices to the chosen expiry, spot × ATM IV × √T (shown
+next to the inputs and returned as `implied_move`). Bullish puts the target
+one implied move up, Very bullish two, the bearish pair mirror it, Neutral
+leaves it at the spot and searches condors, flies and calendars,
+Directional ranks straddles and strangles at both ±1σ points at once
+(`target_points`). The mapping of view to families is
+`optimizer.OUTLOOK_STRATEGIES`.
 
 Four steps, three of them pure and tested without I/O
 (`app/options/optimizer.py`; `app/options/optimize.py` orchestrates):
@@ -1393,7 +1405,12 @@ Four steps, three of them pure and tested without I/O
    `payoff.leg_value`, the risk chart's own Black-Scholes with each leg's IV
    held still. **Return on risk** is the P/L at the *worst* point of the
    target over what the account puts up -- "wherever in your range it
-   lands, at least this" -- then the budget and max-loss filters, and at
+   lands, at least this". **Chance** is the probability of any profit on
+   the horizon date under a lognormal at the chain's ATM IV with no drift
+   (`chance_of_profit`: the P/L curve integrated over ±4σ), the market's own
+   distribution rather than a forecast. The slider (`preference`, 0..1)
+   blends the two: each candidate's percentile rank on both scales,
+   weighted (`rank_score`). Then the budget and max-loss filters, and at
    most three per strategy and expiry so a list is not twelve bull calls
    one strike apart.
 4. **Preview.** Only the dozen finalists go through `OptionsService.preview`,
@@ -1416,9 +1433,10 @@ at the replayed moment, so there is no look-ahead to refuse -- but the
 response carries a warning saying what a replayed chain is (bid/ask from
 the last print, IV solved back out of it).
 
-Return on risk is not a probability and the response says so in as many
-words. Nothing here recommends; it describes what each shape pays if the
-target is reached, and what it costs.
+Return on risk is not a probability, chance is a model number, and the
+response says so in as many words. Nothing here recommends; it describes
+what each shape pays if the target is reached, how much of the market's
+own distribution it covers, and what it costs.
 
 ### Options elsewhere
 

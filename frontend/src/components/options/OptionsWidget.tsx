@@ -451,7 +451,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
         ) : tab === "idea" ? (
           <AiIdeaTab symbol={symbol} ideas={ideas} onLoad={loadStructure} />
         ) : tab === "optimizer" ? (
-          <OptimizerTab symbol={symbol} spot={chain?.spot ?? null} expiries={expiries} optimizer={optimizer} onLoad={loadStructure} />
+          <OptimizerTab symbol={symbol} chain={chain} expiries={expiries} optimizer={optimizer} onLoad={loadStructure} />
         ) : !symbol ? (
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
         ) : (
