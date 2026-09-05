@@ -67,10 +67,13 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             receives at once. In a replay these are Bid* and Ask*: derived from the last print, because no historical
             quotes exist.
           </dd>
-          <dt>Δ (delta)</dt>
+          <dt>Δ / Γ / Θ</dt>
           <dd>
-            How much the option moves per 1 $ move of the underlying, and roughly the market's odds of finishing in
-            the money. 0.50 is at the money; 0.20 is far out. Puts carry a negative sign.
+            One greek column per side; click its header to cycle. Delta: how much the option moves per 1 $ move of
+            the underlying, and roughly the market's odds of finishing in the money (0.50 at the money, 0.20 far out,
+            puts negative). Gamma: how much delta changes per 1 $, so how fast a position turns near the money and
+            near expiry. Theta: value lost per day at a standing price, per share, negative for a bought option. The
+            cell tooltip always shows all three.
           </dd>
           <dt>IV</dt>
           <dd>

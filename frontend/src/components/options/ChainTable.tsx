@@ -4,6 +4,27 @@ import type { ChainResponse, LegQuote, OptionKind, StrikeRow } from "../../types
 import { formatStrike } from "../../utils/occ";
 import { formatClock, timeZoneLabel } from "../../utils/time";
 import { symbolDragProps } from "../../utils/dragSymbol";
+import { updateSettings, type ChainGreek } from "../../api/settings";
+import { useSettings } from "../../hooks/useSettings";
+
+/** The greek column cycles Δ -> Γ -> Θ on a header click; the choice is
+ * kept in the settings so every chain shows the same one. One column
+ * rather than three: the table is already thirteen columns beside a
+ * ticket, and the cell tooltip carries all three regardless. */
+const GREEKS: { key: ChainGreek; label: string; title: string; digits: number }[] = [
+  { key: "delta", label: "Δ", title: "Delta: option move per 1 $ of the underlying, and roughly the odds of expiring in the money. Click for gamma.", digits: 2 },
+  { key: "gamma", label: "Γ", title: "Gamma: how much delta changes per 1 $ of the underlying -- how fast a position turns. Click for theta.", digits: 3 },
+  { key: "theta", label: "Θ", title: "Theta: value lost per day at a standing price, per share -- negative for a bought option. Click for delta.", digits: 2 },
+];
+
+function greekValue(quote: LegQuote | null, greek: ChainGreek): number | null {
+  if (!quote) return null;
+  return greek === "delta" ? quote.delta : greek === "gamma" ? (quote.gamma ?? null) : (quote.theta ?? null);
+}
+
+function greeksNote(quote: LegQuote): string {
+  return ` -- Δ ${num(quote.delta, 2)} · Γ ${num(quote.gamma ?? null, 3)} · Θ ${num(quote.theta ?? null, 2)}`;
+}
 
 /** `body` is a butterfly's doubled short. */
 export type LegRole = "long" | "short" | "body";
@@ -51,6 +72,7 @@ function Side({
   pickable,
   replay,
   asOfMs,
+  greek,
   onPick,
 }: {
   quote: LegQuote | null;
@@ -61,6 +83,7 @@ function Side({
   /** A replayed chain: no open interest, synthetic bid/ask, stale prints. */
   replay: boolean;
   asOfMs: number;
+  greek: { key: ChainGreek; digits: number };
   onPick: () => void;
 }) {
   const lastAt = replay ? (quote?.last_at ?? null) : null;
@@ -76,10 +99,11 @@ function Side({
     .filter(Boolean)
     .join(" ");
   const oiCell = replay ? "—" : oi(quote?.open_interest ?? 0);
+  const greekCell = num(greekValue(quote, greek.key), greek.digits);
   const cells =
     kind === "call"
-      ? [oiCell, pct(quote?.iv ?? null), num(quote?.delta ?? null, 2), num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2)]
-      : [num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2), num(quote?.delta ?? null, 2), pct(quote?.iv ?? null), oiCell];
+      ? [oiCell, pct(quote?.iv ?? null), greekCell, num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2)]
+      : [num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2), greekCell, pct(quote?.iv ?? null), oiCell];
   const printNote = lastAt != null ? ` -- last print ${lastPrintLabel(lastAt)} ${timeZoneLabel()}${stale ? " (stale)" : ""}` : replay && quote ? " -- no print yet today" : "";
   return (
     <>
@@ -90,7 +114,7 @@ function Side({
           onClick={pickable && quote ? onPick : undefined}
           title={
             quote
-              ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""}${printNote} -- drag onto a chart for its premium chart`
+              ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""}${greeksNote(quote)}${printNote} -- drag onto a chart for its premium chart`
               : "no contract"
           }
           {...(quote ? symbolDragProps(quote.symbol) : {})}
@@ -109,6 +133,19 @@ function Side({
 export function ChainTable({ chain, selection, pickable, onPick }: ChainTableProps) {
   const replay = chain.feed === "replay";
   const asOfMs = Date.parse(chain.as_of);
+  const [settings] = useSettings();
+  const greek = GREEKS.find((g) => g.key === settings.chainGreek) ?? GREEKS[0];
+  const cycleGreek = () => {
+    const next = GREEKS[(GREEKS.indexOf(greek) + 1) % GREEKS.length];
+    updateSettings({ chainGreek: next.key });
+  };
+  const greekHeader = (
+    <th>
+      <button type="button" className="chain-greek-toggle" onClick={cycleGreek} title={greek.title} aria-label={`Greek column: ${greek.key}`}>
+        {greek.label}
+      </button>
+    </th>
+  );
   const quoteTitle = replay ? "Replay: last print ± slippage (max(2%, 0.01)) -- the simulated fill price" : undefined;
   const oiTitle = replay ? "Open interest is not known for a replayed day" : undefined;
   const spotRowRef = useRef<HTMLTableRowElement | null>(null);
@@ -154,7 +191,7 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
           <tr>
             <th title={oiTitle}>OI</th>
             <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV</th>
-            <th>Δ</th>
+            {greekHeader}
             <th title={quoteTitle}>Bid{replay ? "*" : ""}</th>
             <th>{replay ? "Last" : "Mid"}</th>
             <th title={quoteTitle}>Ask{replay ? "*" : ""}</th>
@@ -162,7 +199,7 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
             <th title={quoteTitle}>Bid{replay ? "*" : ""}</th>
             <th>{replay ? "Last" : "Mid"}</th>
             <th title={quoteTitle}>Ask{replay ? "*" : ""}</th>
-            <th>Δ</th>
+            {greekHeader}
             <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV</th>
             <th title={oiTitle}>OI</th>
           </tr>
@@ -183,6 +220,7 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
                   pickable={pickable !== "put"}
                   replay={replay}
                   asOfMs={asOfMs}
+                greek={greek}
                   onPick={() => onPick("call", row.strike)}
                 />
                 <td className="chain-strike">{formatStrike(row.strike)}</td>
@@ -194,6 +232,7 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
                   pickable={pickable !== "call"}
                   replay={replay}
                   asOfMs={asOfMs}
+                greek={greek}
                   onPick={() => onPick("put", row.strike)}
                 />
               </tr>

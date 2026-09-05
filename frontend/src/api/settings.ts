@@ -32,6 +32,8 @@ export type VwapAnchor = "session" | "premarket";
  * York's. Display only -- session boundaries and the journal's entry
  * windows are market concepts and stay computed in New York time. */
 export type TimeZoneMode = "local" | "market";
+/** Which greek the option chain's greek column shows; the header cycles it. */
+export type ChainGreek = "delta" | "gamma" | "theta";
 export const MARKET_TIME_ZONE = "America/New_York";
 export type DefaultChartType = "candles" | "line";
 
@@ -59,6 +61,7 @@ export interface AppSettings {
    * often rests on paper) or the natural (fills at once). */
   optionsLimitMode: "mid" | "natural";
   timeZone: TimeZoneMode;
+  chainGreek: ChainGreek;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -81,6 +84,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   optionsLimitMode: "natural",
   timeZone: "local",
+  chainGreek: "delta",
 };
 
 /** One short target from storage, clamped to the picker's range. */
@@ -163,6 +167,7 @@ function load(): AppSettings {
       optionsShortTargets: parseShortTargets(parsed.optionsShortTargets),
       optionsLimitMode: oneOf(parsed.optionsLimitMode, ["mid", "natural"] as const, DEFAULT_SETTINGS.optionsLimitMode),
       timeZone: oneOf(parsed.timeZone, ["local", "market"] as const, DEFAULT_SETTINGS.timeZone),
+      chainGreek: oneOf(parsed.chainGreek, ["delta", "gamma", "theta"] as const, DEFAULT_SETTINGS.chainGreek),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

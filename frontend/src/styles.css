@@ -4197,3 +4197,15 @@ td.chain-side.chain-stale {
   min-width: 1.6em;
   font-weight: 600;
 }
+
+/* The chain's greek column header is a button (Δ -> Γ -> Θ) styled as the
+   plain header text it replaces, with a hint that it does something. */
+.chain-greek-toggle {
+  all: unset;
+  cursor: pointer;
+  border-bottom: 1px dotted currentColor;
+}
+
+.chain-greek-toggle:hover {
+  color: var(--text-primary);
+}
