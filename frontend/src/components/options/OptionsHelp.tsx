@@ -94,35 +94,160 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
         </dl>
 
-        <h3>Strategy row</h3>
+        <h3>Strategies</h3>
+        <p className="options-help-intro">
+          Sixteen shapes in five groups. For each: what you hold, whether you pay or receive, where it makes and
+          loses money at expiry, what it is usually for, and what to watch. "Level" is the Alpaca options approval
+          the account needs; Paper accounts have level 3. The auto-pick places the legs from Width and Short (see
+          Ticket controls); every leg can be moved by clicking the chain. None of this is advice: it describes the
+          shape, not whether to trade it.
+        </p>
+
+        <h3>Long (level 2)</h3>
         <dl>
-          <dt>Long</dt>
+          <dt>Long call</dt>
           <dd>
-            Long call, Long put: one bought contract. Straddle: bought call and put at one strike. Strangle: bought
-            call above and put below the spot. All pay a debit, all gain from a large move.
+            Buy one call. Pay the premium; that is the most you can lose. Profits above strike + premium, without
+            limit. The directional bet with time working against you: a 0DTE at-the-money call loses most of its
+            value in the last two hours if the underlying stands still, so the Time slider under the risk chart
+            is worth a look before buying one. Delta 0.40 to 0.55 moves nearly one-for-one with the underlying;
+            cheaper 0.20 calls need a larger move before they respond.
           </dd>
-          <dt>Vertical</dt>
+          <dt>Long put</dt>
           <dd>
-            Two legs, same expiry, same kind. Bull call and Bear put pay a debit and need a move. Bull put and Bear call
-            receive a credit and need the underlying to stay beyond the short strike. Hotkeys 5 to 9 select these and
-            the iron condor.
+            Buy one put. The mirror: profits below strike − premium, loses at most the premium. Also the classic
+            hedge for shares. Puts on SPY usually carry a higher IV than calls the same distance away (the skew),
+            so the same distance costs more on the put side.
           </dd>
-          <dt>Neutral</dt>
+          <dt>Straddle</dt>
           <dd>
-            Iron condor: a bull put and a bear call together, credit, profits inside the two short strikes. Iron fly:
-            the same with both short legs at one strike. Call fly and Put fly: one kind, bought wings around a sold
-            body (×2), cheap, profits near the body at expiry.
+            Buy a call and a put at the same strike, at the money. Pay both premiums. Profits when the underlying
+            moves further than the total premium in either direction; loses most when it stays put. Its price is
+            the market's expected move to expiry (see the EM lines on the chart), so buying one is a bet the
+            realised move beats what is priced. Bought before an event, sold after it: implied vol collapses once
+            the news is out, and a straddle bought at high IV can lose even when the underlying moves.
           </dd>
-          <dt>Time</dt>
+          <dt>Strangle</dt>
           <dd>
-            Calendar: sell the near expiry, buy the same strike further out. Diagonal: the same with different
-            strikes. Both live on the near leg decaying faster than the far one. The ticket shows both expiries.
+            Buy a call above and a put below the spot. Cheaper than the straddle, needs a bigger move before either
+            leg is in the money. Same logic, wider breakevens, lower cost. Short Δ sets how far out the auto-pick
+            puts the two legs (0.25 by default); the ticket shows the corridor between them.
           </dd>
-          <dt>Income</dt>
+        </dl>
+
+        <h3>Vertical (level 3)</h3>
+        <dl>
+          <dt>Bull call</dt>
           <dd>
-            Covered call: sell a call against 100 shares you hold. Cash-sec. put: sell a put with the strike's cash
-            set aside. The ticket checks the shares or the cash and says what is missing.
+            Buy a call, sell a higher call, same expiry. Pay a debit. Max profit is the width minus the debit,
+            reached at or above the short strike; max loss is the debit, below the long strike. A cheaper, capped
+            version of the long call: the sold leg pays for part of the bought one and caps the upside. Width in
+            strikes sets how much of each. Breakeven is the long strike plus the debit.
           </dd>
+          <dt>Bear put</dt>
+          <dd>
+            Buy a put, sell a lower put. The mirror of the bull call for a move down: debit, capped profit at the
+            width minus the debit below the short strike, loses the debit above the long strike.
+          </dd>
+          <dt>Bull put</dt>
+          <dd>
+            Sell a put, buy a lower put. Receive a credit and keep it if the underlying stays above the short
+            strike at expiry. Max loss is the width minus the credit, below the long strike. The income version
+            of "I don't think it falls through here": the short strike is placed at a level you expect to hold
+            (a put wall, a prior low), the long strike caps the damage. Short Δ (0.30 by default) sets how far
+            out the short leg goes: smaller delta, further out, less credit, more room. The account reserves the
+            width minus the credit as collateral.
+          </dd>
+          <dt>Bear call</dt>
+          <dd>
+            Sell a call, buy a higher call. The mirror: credit kept if the underlying stays below the short strike,
+            max loss width minus credit above the long strike. Placed above a call wall or a session high it is
+            the bet the rally stalls there.
+          </dd>
+        </dl>
+
+        <h3>Neutral (level 3)</h3>
+        <dl>
+          <dt>Iron condor</dt>
+          <dd>
+            A bull put and a bear call together: sell a put below and a call above the spot, buy a further put and
+            call as wings. Receive both credits. Profits when the underlying stays between the two short strikes
+            at expiry; the maximum loss is one wing's width minus the total credit, on whichever side breaks.
+            The corridor shown in the ticket is the range that has to hold. Short Δ (0.20 by default) sets the
+            short strikes' distance, Width the wings. Positive-gamma days (see the GEX regime) suit it; a
+            negative-gamma regime is where a condor gets run over.
+          </dd>
+          <dt>Iron fly</dt>
+          <dd>
+            An iron condor with both short legs at one strike, at the money: sell the call and the put there, buy
+            a call above and a put below as wings. Largest credit of the neutral shapes, narrowest sweet spot:
+            maximum profit only if the underlying closes exactly at the body, breakevens at the body ± the
+            credit. A bet on pinning at a strike, typically near a gamma wall on expiry day. Closing it buys the
+            body back and sells the wings; in Simulation the Close dialog suggests the natural so it fills.
+          </dd>
+          <dt>Call fly</dt>
+          <dd>
+            Buy a call below, sell two calls at the body, buy a call above, all one kind and one expiry. Pay a
+            small debit; that is the maximum loss. Maximum profit at the body at expiry: the wing width minus the
+            debit, often several times the debit. Cheap because it needs the underlying near the body at the
+            end, and worth little until close to expiry. Wings sets the distance from body to each wing.
+          </dd>
+          <dt>Put fly</dt>
+          <dd>The same shape in puts. Equivalent payoff; pick whichever side is quoted tighter or where the debit is smaller.</dd>
+        </dl>
+
+        <h3>Time (level 3)</h3>
+        <dl>
+          <dt>Calendar</dt>
+          <dd>
+            Sell the near expiry, buy the same strike in a later expiry, one kind. Pay a debit (the far option
+            costs more). Profits if the underlying sits near the strike as the near leg expires, because the
+            near option decays faster than the far one; loses if it runs far away in either direction, or if the
+            far expiry's IV falls. The ticket's expiry is the sold leg's; Long expiry picks the bought one, and
+            the Short/Long toggle says which expiry a chain click sets. Useful when the front expiry's IV stands
+            well above the back's (an event priced into one week).
+          </dd>
+          <dt>Diagonal</dt>
+          <dd>
+            A calendar with different strikes: sell a nearer, further-out-of-the-money option, buy a later,
+            closer one. Adds a directional lean to the time decay. The "poor man's covered call" is a diagonal:
+            a long-dated deep call instead of shares, a short near call sold against it.
+          </dd>
+        </dl>
+
+        <h3>Income (level 1)</h3>
+        <dl>
+          <dt>Covered call</dt>
+          <dd>
+            Sell a call against 100 shares you hold per contract. Receive the premium; if the underlying finishes
+            above the strike the shares are called away at the strike, so the upside is capped there plus the
+            premium. Downside is the shares' own. The ticket checks the shares are in the account (in Simulation,
+            in the practice book) and says what is missing.
+          </dd>
+          <dt>Cash-sec. put</dt>
+          <dd>
+            Sell a put with the strike's cash set aside. Receive the premium; if the underlying finishes below the
+            strike you buy 100 shares per contract at the strike, effectively at strike − premium. A way to be
+            paid for a limit buy order. The account reserves the strike × 100 as collateral.
+          </dd>
+        </dl>
+
+        <h3>Reading a shape quickly</h3>
+        <dl>
+          <dt>Debit or credit</dt>
+          <dd>
+            Debit shapes (long options, bull call, bear put, flies, calendars) pay first and need something to
+            happen; time and falling IV work against them. Credit shapes (bull put, bear call, condor, iron fly,
+            income) are paid first and need nothing to happen; time and falling IV work for them, a large move
+            against them.
+          </dd>
+          <dt>Where the money is made</dt>
+          <dd>
+            The risk chart's solid line is the answer at expiry; hover it. The dashed line is today. If the two
+            differ a lot at the price you expect, the position needs time, not just direction.
+          </dd>
+          <dt>Hotkeys</dt>
+          <dd>5 to 9 select bull call, bear put, bull put, bear call and iron condor; + and − change Width; [ and ] step the expiry.</dd>
         </dl>
 
         <h3>Ticket controls</h3>

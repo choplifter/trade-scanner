@@ -1423,7 +1423,9 @@ day, which is how you rehearse a strategy at the weekend.
   point is the size of what time and vol do to a short-dated option before
   the move arrives, not the fill. The **?** button in the widget header
   opens a reference for every term on the widget, from the expiry strip to
-  Min credit, Mid/Natural and the sliders.
+  Min credit, Mid/Natural and the sliders, plus one entry per strategy:
+  what is held, debit or credit, where it makes and loses money at expiry,
+  what it is usually for, what to watch, and the options level it needs.
 - **Where the prices come from.** Live in Simulation mode: the same chain
   and snapshots the paper account sees. In a replay: the contracts that
   existed on the replayed day (Alpaca lists expired contracts, from
