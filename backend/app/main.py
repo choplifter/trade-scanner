@@ -12,6 +12,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.ai.trade_idea_tracker import TradeIdeaTracker
 from app.market_data.earnings import EarningsCalendar
 from app.market_data.macro_calendar import MacroCalendar
+from app.playbooks.runner import PlaybookRunner
+from app.playbooks.store import PlaybookStore
+from app.routers import playbooks as playbooks_router
 from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import build_universe, list_active_equity_symbols
 from app.auth.dependency import get_current_user
@@ -276,6 +279,15 @@ async def lifespan(app: FastAPI):
     options_trigger_store = TriggerStore(settings.scanner_history_db_path)
     await options_trigger_store.init_schema()
     app.state.options_trigger_store = options_trigger_store
+    # Playbook campaigns (app.playbooks): the store, and the runner the sim
+    # and replay loops call after settlement to keep every campaign's
+    # proposal current.
+    playbook_store = PlaybookStore(settings.scanner_history_db_path)
+    await playbook_store.init_schema()
+    app.state.playbook_store = playbook_store
+    app.state.playbook_runner = PlaybookRunner(
+        playbook_store, earnings_calendar=app.state.earnings_calendar, macro_calendar=app.state.macro_calendar
+    )
     # What the sim fill loop and the replay pacing loop need to run the
     # simulated options book for a user (see app.trading.sim.options_service).
     options_wiring = OptionsWiring(
@@ -284,6 +296,8 @@ async def lifespan(app: FastAPI):
         option_engines=app.state.replay_option_engines,
         chain_cache=app.state.options_chain_cache,
         scanner_engine=engine,
+        playbook_store=playbook_store,
+        playbook_runner=app.state.playbook_runner,
     )
     app.state.options_wiring = options_wiring
 
@@ -384,6 +398,7 @@ app.include_router(broker.router)
 app.include_router(admin.router)
 app.include_router(trading_sim.router)
 app.include_router(trading_sim_options.router)
+app.include_router(playbooks_router.router, dependencies=_auth_gate)
 app.include_router(replay.router)
 app.include_router(news_feed.router)
 app.include_router(watchlist.router)

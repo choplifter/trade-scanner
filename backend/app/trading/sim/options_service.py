@@ -185,6 +185,13 @@ class SimOptionsService(OptionsService):
             int(round(p["qty"])) for p in rows if p["symbol"].upper() == underlying.upper() and p["side"] == "long"
         )
 
+    async def share_position(self, underlying: str) -> dict | None:
+        """The simulated stock book's long position in `underlying`."""
+        position = await self._sim_store.get_position(self._user_id, underlying.upper())
+        if position is None or position["side"] != "long" or float(position["qty"]) <= 0:
+            return None
+        return {"symbol": underlying.upper(), "qty": float(position["qty"]), "avg_entry_price": float(position["avg_entry_price"])}
+
     async def marked_positions(self) -> list[dict]:
         """Held contracts priced at the source's moment, in Alpaca's
         position shape (signed qty, money x 100)."""
@@ -456,6 +463,10 @@ class OptionsWiring:
     option_engines: ReplayOptionsEngineCache
     chain_cache: ChainCache | None = None
     scanner_engine: object | None = None
+    # The playbook campaigns and the runner that keeps them current (see
+    # app.playbooks.runner); None when the feature is not wired.
+    playbook_store: object | None = None
+    playbook_runner: object | None = None
 
 
 def replay_quote_source(

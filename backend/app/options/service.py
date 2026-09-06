@@ -247,6 +247,20 @@ class OptionsService:
 
     # --- pricing ------------------------------------------------------------
 
+    async def share_position(self, underlying: str) -> dict | None:
+        """The long share position in `underlying` as {qty, avg_entry_price},
+        or None -- what a playbook's cost basis starts from."""
+        underlying = underlying.upper()
+        positions = _plain(await asyncio.to_thread(self._trading.get_all_positions)) or []
+        for p in positions:
+            if str(p.get("asset_class", "us_equity")) != "us_equity" or str(p.get("symbol", "")).upper() != underlying:
+                continue
+            qty = _number(p.get("qty")) or 0.0
+            if qty <= 0:
+                continue
+            return {"symbol": underlying, "qty": qty, "avg_entry_price": _number(p.get("avg_entry_price"))}
+        return None
+
     async def preview(self, ticket: SpreadTicket, *, account: dict | None = None) -> ResolvedSpread:
         """What the ticket would become. Ungated, like the equity preview:
         seeing the risk of a spread you may not place is useful, not

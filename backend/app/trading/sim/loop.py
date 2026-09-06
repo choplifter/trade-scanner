@@ -80,6 +80,8 @@ async def _tick_options(
     or an armed sim trigger, at live prices."""
     users = await wiring.options_store.users_with_work()
     users |= {int(t["user_id"]) for t in await wiring.trigger_store.all_active("sim")}
+    if wiring.playbook_store is not None:
+        users |= {int(c["user_id"]) for c in await wiring.playbook_store.all_active("sim")}
     users -= replaying
     if not users:
         return
@@ -103,6 +105,10 @@ async def _tick_options(
             await service.book.settle_expired(service.source, now)
             if regular:
                 await check_sim_triggers(user_id, service, wiring.trigger_store, settings)
+            if wiring.playbook_runner is not None:
+                # After settlement, so an assignment is already in the books
+                # when the campaign reconciles and asks for its next step.
+                await wiring.playbook_runner.tick(user_id, "sim", service, now=now)
         except Exception:
             logger.exception("Sim options tick failed for user %s", user_id)
 

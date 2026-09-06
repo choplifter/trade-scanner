@@ -86,7 +86,10 @@ async def run_side_effects(
     has_orders = bool(await wiring.options_store.working_orders(user_id))
     has_positions = bool(await wiring.options_store.list_positions(user_id))
     has_triggers = any(int(t.get("user_id") or 0) == user_id for t in await wiring.trigger_store.all_active("sim"))
-    if not (has_orders or has_positions or has_triggers):
+    has_campaigns = wiring.playbook_store is not None and any(
+        int(c.get("user_id") or 0) == user_id for c in await wiring.playbook_store.all_active("sim")
+    )
+    if not (has_orders or has_positions or has_triggers or has_campaigns):
         return
     try:
         service = make_sim_options_service(
@@ -106,6 +109,10 @@ async def run_side_effects(
             await service.book.settle_expired(service.source, as_of)
         if has_triggers:
             await check_sim_triggers(user_id, service, wiring.trigger_store, settings)
+        if has_campaigns and wiring.playbook_runner is not None:
+            # At the replay's moment: a replayed expiry's assignment is in the
+            # books by now, and the proposal is priced from the replayed chain.
+            await wiring.playbook_runner.tick(user_id, "sim", service, now=as_of)
     except Exception:
         logger.exception("Replay options side effects failed for user %s", user_id)
 
