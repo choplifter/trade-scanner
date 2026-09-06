@@ -4583,6 +4583,250 @@ td.chain-side.chain-stale {
   white-space: nowrap;
 }
 
+/* --- Playbooks tab -------------------------------------------------------- */
+
+.pb-tab {
+  --pb-cash: #8a8f98;
+  --pb-put: #d03b3b;
+  --pb-shares: #3b82d0;
+  --pb-call: #1f9d55;
+}
+
+.pb-start {
+  padding: 6px 8px 2px;
+}
+
+.pb-start-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pb-form {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, transparent);
+  font-size: 11px;
+}
+
+.pb-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 6px 0;
+}
+
+.pb-param {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+}
+
+.pb-param input[type="number"] {
+  width: 72px;
+  font-size: 11px;
+}
+
+.pb-form-actions {
+  margin-top: 6px;
+}
+
+.pb-auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.pb-campaigns {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pb-campaign {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, transparent);
+  font-size: 11px;
+}
+
+.pb-campaign.selected {
+  border-color: var(--accent, #c08a2e);
+}
+
+.pb-campaign.paused,
+.pb-campaign.closed {
+  opacity: 0.75;
+}
+
+.pb-campaign-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pb-symbol {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.pb-phase {
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--pb-cash);
+}
+
+.pb-phase.short_put { background: var(--pb-put); }
+.pb-phase.assigned { background: var(--pb-shares); }
+.pb-phase.covered_call { background: var(--pb-call); }
+.pb-phase.mixed { background: #8e5bd6; }
+
+.pb-status,
+.pb-auto {
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.pb-auto {
+  color: var(--pb-call);
+  border-color: var(--pb-call);
+}
+
+.pb-spacer {
+  flex: 1;
+}
+
+.pb-numbers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 6px 0;
+  color: var(--text-muted);
+}
+
+.pb-numbers strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-proposal {
+  margin: 6px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--pb-cash);
+  border-radius: 4px;
+  background: var(--bg-input, rgba(127, 127, 127, 0.06));
+}
+
+.pb-proposal.sell_put { border-left-color: var(--pb-put); }
+.pb-proposal.sell_call { border-left-color: var(--pb-call); }
+.pb-proposal.roll { border-left-color: #8e5bd6; }
+.pb-proposal.close { border-left-color: #d6a11c; }
+
+.pb-proposal-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.pb-proposal-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.pb-proposal-head strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.pb-proposal-reason {
+  margin: 4px 0;
+  color: var(--text-secondary);
+}
+
+.pb-proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.pb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 4px 0;
+}
+
+.pb-events {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pb-event {
+  display: grid;
+  grid-template-columns: 110px 100px 1fr;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.pb-event-at {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-event-kind {
+  font-weight: 600;
+}
+
+.pb-event.assigned .pb-event-kind,
+.pb-event.sold_put .pb-event-kind { color: var(--pb-put); }
+.pb-event.called_away .pb-event-kind,
+.pb-event.sold_call .pb-event-kind { color: var(--pb-call); }
+.pb-event.rolled .pb-event-kind { color: #8e5bd6; }
+.pb-event.execute_failed .pb-event-kind { color: var(--status-critical, #d03b3b); }
+
+.pb-note {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pb-note input {
+  flex: 1;
+  font-size: 11px;
+}
+
 /* --- Roll ticket ---------------------------------------------------------- */
 
 .roll-columns {

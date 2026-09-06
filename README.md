@@ -1505,6 +1505,84 @@ response says so in as many words. Nothing here recommends; it describes
 what each shape pays if the target is reached, how much of the market's
 own distribution it covers, and what it costs.
 
+### Playbooks: the Wheel as a script
+
+`backend/app/playbooks/` is the third script family next to indicators and
+strategies. A strategy is stateless, evaluated per bar, on shares, and
+answers with a Signal; a **playbook** is stateful (a *campaign* with a
+phase, a cost basis and a history), event-driven (fills, expiries,
+assignments) and answers with an **action on option positions** --
+`SellPut`, `SellCall`, `Roll`, `Close` or `Hold`. Drop a `.py` file in the
+package and it is offered; the contract (`loader.py`) mirrors the
+strategies loader: `NAME`, `DESCRIPTION`, `ENABLED`, `PARAMS` (a list of
+`ParamSpec`s the tab renders as a form and validates with
+`resolve_params`), `def next_step(ctx: PlaybookContext) -> Action | None`.
+A file that fails to load is reported in the tab, not swallowed.
+
+`context.py` is what a script may look at: symbol, spot, shares held and
+their average entry, the **cost basis** ((average entry × shares −
+premiums collected) / shares), the open short legs with entry credit,
+mark, DTE and profit %, the events so far, a `ChainView` over several
+expiries (`expiry_in(min_dte, max_dte, avoid=earnings)`,
+`strike_at_delta(kind, |δ|, expiry)`, `first_strike_at_or_above(expiry,
+basis)`, `mid`), a `CalendarView` (next earnings, macro dates) and the
+account's options buying power. `actions.py` renders an action into the
+ticket the widget already loads (`SpreadTicket` JSON for a put or call,
+`RollRequest` JSON for a roll, `CloseSpreadRequest` for a close) plus a
+sentence.
+
+**wheel.py**, the first script, in this order: (1) an open leg that has
+earned `take_profit_pct` of its credit or has `roll_at_dte` days or fewer
+left is rolled to the next expiry in the DTE window (same strike while out
+of the money, a call also at or above the basis, else the delta strike);
+(2) no shares and no put: sell the `put_delta` put, stepping the strike
+down while its collateral exceeds the budget or the cash available;
+(3) shares held and no call: sell the `call_delta` call, lifted to the
+first strike at or above the cost basis; (4) otherwise hold, saying how
+the open leg stands. `avoid_earnings` leaves out every expiry on or after
+the next report (a contract expiring on the report day is held through it).
+
+**Campaigns** (`store.py`, sqlite alongside the triggers): one live per
+user, account and symbol, with parameters, status (active / paused /
+closed), an auto-execute switch and cached snapshot numbers; **events**
+are the only history -- started, sold_put, sold_call, closed, rolled,
+expired, cash_settled, assigned, called_away, shares_changed, notes,
+executed. `snapshot.py` rebuilds shares, open legs, premiums, basis,
+realized P&L (premiums plus the shares' round trips, assigned at the put
+strike and called away at the call strike) and the phase (cash / short_put
+/ assigned / covered_call / mixed) from the books and the events.
+
+**The runner** (`runner.py`) is called by the sim loop and the replay loop
+after settlement: it *reconciles* the account's closed option orders on
+the symbol since a cursor into events by their `strategy`
+(`cash_secured_put`, `covered_call`, `close`, `roll`, `expiry`,
+`cash_settled`, `assigned`, `called_away`; anything else on the symbol is
+a note, a share count that moved without a settlement is a
+`shares_changed` note -- recorded, not fought), *proposes* every five
+minutes or on an event (up to six chains around the DTE window, the
+calendar, the account; the script's answer rendered and stored with its
+error if it threw), and *executes* only with the campaign's auto_execute
+on, in the simulated account, in the regular session, never the same
+proposal twice; a failure trips the switch and records `execute_failed`.
+Orders filled before a campaign started are not its premiums (the cursor
+starts at creation).
+
+**The tab.** Options widget → **Playbooks** (Simulation mode only for
+now): start a campaign on the selected symbol with the script's
+parameters; each campaign card shows phase, shares and entry, basis,
+premiums, realized P&L, the **next step** with its reason ("Load into
+ticket" prefills the Chain tab, "Open roll ticket" the roll ticket,
+"Recompute" asks again), pause / resume / close, the auto-execute switch
+(tick twice), the events, a note field. The Positions tab's **Wheel…** on a
+share lot of 100+ opens the tab with the form for that symbol
+(`components/options/playbookIntent.ts`, the same bus as the scanner's
+Opt). API: `GET /api/trading/options/playbooks/scripts`,
+`GET/POST /campaigns`, `PATCH /campaigns/{id}`, `POST /campaigns/{id}/propose`,
+`POST /campaigns/{id}/note`; anything but `account=sim` is a 422
+`sim_only`. Paper/Live later: the runner reads orders, so the lift is an
+adapter over Alpaca's account activities (OPASN / OPEXP / OPEXC) that turns
+assignments into events and journal fills.
+
 ### Options elsewhere
 
 - **Orders tab:** option orders show as `SPY 4 Sep 765C`; a multi-leg

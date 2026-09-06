@@ -541,6 +541,46 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
         </dl>
 
+        <h3>Playbooks (Simulation)</h3>
+        <dl>
+          <dt>What a playbook is</dt>
+          <dd>
+            A script that runs an options <em>campaign</em> over weeks — the Wheel first: sell a cash-secured put; when
+            assigned, hold the shares and sell covered calls above the cost basis; when called away, start again. Like
+            the indicator and strategy scripts it is a file (backend/app/playbooks/), but stateful and event-driven: it
+            reads the campaign's phase, shares, cost basis, open legs, the chain around its DTE window and the calendar,
+            and answers with one action — sell a put, sell a call, roll, close, or hold with a reason.
+          </dd>
+          <dt>Propose, not trade</dt>
+          <dd>
+            The runner refreshes each campaign's <strong>next step</strong> every few minutes and after every fill,
+            expiry or assignment. You place it: "Load into ticket" prefills the Chain tab's ticket, "Open roll ticket"
+            the roll. Only the Simulation account offers <strong>auto-execute</strong> (tick twice to confirm): the
+            runner then places proposals itself during the regular session, and switches itself off after a failure.
+          </dd>
+          <dt>Phase · basis · premiums</dt>
+          <dd>
+            Phase is read from the books: cash (nothing held), short put, assigned (shares, no call), covered call,
+            mixed. <strong>Cost basis</strong> = (average entry × shares − premiums collected) / shares — an
+            assignment enters the shares at the strike, every credit since the campaign started lowers it, and a call
+            is never proposed below it (switchable). Premiums count every option credit less every debit since the
+            start; realized P&amp;L adds the shares' round trips (assigned at the put strike, called away at the call
+            strike). Shares you buy or sell by hand are noted, not fought: the phase simply moves.
+          </dd>
+          <dt>Wheel parameters</dt>
+          <dd>
+            Contracts; put and call delta; the DTE window to sell into; roll at DTE and take-profit % (a leg is rolled
+            to the next expiry in the window once it has earned that share of its credit or has that few days left —
+            same strike while out of the money, else the delta strike); avoid earnings (no expiry on or after the
+            next report); a collateral budget per put; call ≥ basis.
+          </dd>
+          <dt>From the Positions tab</dt>
+          <dd>
+            "Wheel…" on a share lot of 100 or more (Simulation) opens this tab with the start form for that symbol:
+            the campaign adopts the shares and proposes the first covered call.
+          </dd>
+        </dl>
+
         <h3>Levels the chart draws from this chain</h3>
         <dl>
           <dt>Call Wall · Put Wall · Flip</dt>

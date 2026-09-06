@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { formatDateTime } from "../../utils/time";
 
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
+import { requestPlaybook } from "../options/playbookIntent";
 import { resetSimAccount } from "../../api/http";
 import { useTradingContext } from "../../context/TradingContext";
 import { useBalanceHistory } from "../../hooks/useBalanceHistory";
@@ -565,6 +566,7 @@ export function TradingWidget({ selectedSymbol, onSelectSymbol, mode }: TradingW
               selectedSymbol={selectedSymbol}
               onSelectSymbol={onSelectSymbol}
               onAction={setPending}
+              mode={mode}
             />
           </>
         ) : tab === "orders" ? (
@@ -795,8 +797,12 @@ function PositionsTable({
   selectedSymbol,
   onSelectSymbol,
   onAction,
+  mode,
 }: {
   positions: Position[];
+  /** Simulation offers "Wheel…" on a share lot: a playbook campaign that
+   * writes covered calls on it (playbooks run in the simulation for now). */
+  mode: TradingMode;
   /** The working orders, so each row can show its own exits. Alpaca keeps
    * take-profit and stop-loss as separate orders, never on the position --
    * see exitsForPosition. */
@@ -934,6 +940,20 @@ function PositionsTable({
                   >
                     Close
                   </button>
+                  {mode === "simulation" && (num(p.qty) ?? 0) >= 100 && (
+                    <button
+                      type="button"
+                      className="row-action"
+                      title="Start a Wheel campaign on these shares in the Options widget: it proposes covered calls at or above the cost basis, and puts again once the shares are called away. Nothing is ordered by itself."
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectSymbol(p.symbol);
+                        requestPlaybook({ symbol: p.symbol, playbook: "wheel" });
+                      }}
+                    >
+                      Wheel…
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>

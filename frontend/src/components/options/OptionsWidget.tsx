@@ -46,11 +46,14 @@ import { StrikeRail } from "./StrikeRail";
 import { BrokerMissing } from "../common/BrokerMissing";
 import { OpenSpreads } from "./OpenSpreads";
 import { RollTicket, type RollTarget } from "./RollTicket";
+import { PlaybooksTab } from "./PlaybooksTab";
+import { subscribePlaybookIntent, type PlaybookIntent } from "./playbookIntent";
+import { useCampaigns } from "../../hooks/useCampaigns";
 import { OptionsHelp } from "./OptionsHelp";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
 
-type Tab = "chain" | "spreads" | "idea" | "optimizer";
+type Tab = "chain" | "spreads" | "idea" | "optimizer" | "playbooks";
 
 interface OptionsWidgetProps {
   symbol: string | null;
@@ -85,6 +88,18 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // proposal (expiry and strike preset). Lives here, above the tabs, so a
   // roll can be started from any of them.
   const [rollTarget, setRollTarget] = useState<RollTarget | null>(null);
+  // Playbook campaigns (Simulation only): polled while the tab shows, and
+  // a "Wheel…" from the Positions tab opens it with the start form.
+  const campaigns = useCampaigns(tab === "playbooks" && mode === "simulation");
+  const [playbookIntent, setPlaybookIntent] = useState<PlaybookIntent | null>(null);
+  useEffect(
+    () =>
+      subscribePlaybookIntent((next) => {
+        setPlaybookIntent(next);
+        setTab("playbooks");
+      }),
+    [],
+  );
   // A replay only reaches this widget in Simulation mode: Paper and Live
   // keep showing the real account's chain, which next to a replayed chart
   // reads as "the chain does not move". Say so, and offer the switch.
@@ -428,6 +443,20 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           >
             {optimizer.loading ? "Optimizer…" : "Optimizer"}
           </button>
+          {/* Simulation only for now: the runner reconciles the simulated
+            * book's orders; the Paper lift (Alpaca's activities for
+            * assignments) is a later step. */}
+          {mode === "simulation" && (
+            <button
+              type="button"
+              className="timeframe-button"
+              aria-pressed={tab === "playbooks"}
+              onClick={() => setTab("playbooks")}
+              title="Campaigns run by playbook scripts -- the Wheel first: sell a put, get assigned, sell calls, repeat"
+            >
+              Playbooks{campaigns.campaigns.length > 0 ? ` (${campaigns.campaigns.length})` : ""}
+            </button>
+          )}
           <button
             type="button"
             className="timeframe-button options-help-button"
@@ -497,6 +526,18 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             intent={intent}
             onIntentHandled={(seq) => setIntent((cur) => (cur && cur.seq === seq ? null : cur))}
             onLoad={loadStructure}
+          />
+        ) : tab === "playbooks" ? (
+          <PlaybooksTab
+            symbol={symbol}
+            mode={mode}
+            campaigns={campaigns}
+            spreads={spreads.spreads}
+            intent={playbookIntent}
+            onIntentHandled={(seq) => setPlaybookIntent((cur) => (cur && cur.seq === seq ? null : cur))}
+            onLoad={loadStructure}
+            onSelectSymbol={onSelectSymbol}
+            onRoll={setRollTarget}
           />
         ) : !symbol ? (
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
