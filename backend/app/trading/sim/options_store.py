@@ -73,7 +73,9 @@ WORKING = "new"
 FILLED = "filled"
 CANCELED = "canceled"
 EXPIRED = "expired"
-_CLOSED_STATUSES = (FILLED, CANCELED, EXPIRED)
+# An in-the-money short leg at expiry: shares moved (see app.trading.sim.settlement).
+ASSIGNED = "assigned"
+_CLOSED_STATUSES = (FILLED, CANCELED, EXPIRED, ASSIGNED)
 
 
 def _row_to_order(row: sqlite3.Row) -> dict:

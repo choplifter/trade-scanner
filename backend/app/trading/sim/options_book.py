@@ -15,8 +15,11 @@ Positions are per contract, in the exact shape the equity broker keeps,
 so app.trading.sim.broker._apply_fill_to_position -- the pure arithmetic
 of entries, exits and flips -- is reused unchanged; the contract
 multiplier is applied to cash and to the round trip's P&L here. A
-contract still held past its expiry is settled at intrinsic value against
-the underlying (no assignment into shares).
+contract still held past its expiry is settled the way a real account
+settles it (app.trading.sim.settlement): out of the money it expires, an
+in-the-money short put is assigned into 100 shares per contract at the
+strike, an in-the-money short call behind held shares calls them away at
+the strike, and everything else is settled in cash at intrinsic value.
 """
 
 import logging
@@ -26,13 +29,13 @@ from datetime import UTC, date, datetime, time
 
 from app.options.chain import LegQuote
 from app.options.occ import try_parse_occ
-from app.options.payoff import intrinsic
 from app.options.pricing import option_slippage
 from app.options.quote_source import QuoteSource
 from app.services.market_clock import ET
 from app.trading.errors import OrderRejected
 from app.trading.sim.broker import _apply_fill_to_position
-from app.trading.sim.options_store import CANCELED, EXPIRED, FILLED, WORKING, SimOptionsStore
+from app.trading.sim.options_store import ASSIGNED, CANCELED, EXPIRED, FILLED, WORKING, SimOptionsStore
+from app.trading.sim.settlement import Settlement, decide_settlement
 from app.trading.sim.store import SimStore
 
 logger = logging.getLogger(__name__)
@@ -255,6 +258,61 @@ class SimOptionsBook:
         money = contracts * price * CONTRACT_MULTIPLIER
         await self._sim_store.add_cash(self._user_id, money if side == "sell" else -money)
 
+    async def _apply_share_fill(self, underlying: str, order_id: str, side: str, qty: int, price: float, now: datetime) -> None:
+        """The stock side of an assignment or a call-away: `qty` shares of
+        `underlying` bought or sold at `price` (the strike), against the sim
+        stock book -- the same arithmetic the equity broker uses, so an
+        assigned lot adds to or averages into a held position exactly as a
+        bought one would, and shares called away close their round trip in
+        sim_trades with multiplier 1. A sim_orders row keeps the fill visible
+        in the Orders list under the settlement order's id."""
+        position = await self._sim_store.get_position(self._user_id, underlying)
+        new_position, trade_row = _apply_fill_to_position(
+            position,
+            symbol=underlying,
+            order_id=order_id,
+            side=side,
+            qty=float(qty),
+            price=price,
+            now=now.astimezone(UTC),
+            initial_stop=None,
+        )
+        if new_position is None:
+            if position is not None:
+                await self._sim_store.delete_position(self._user_id, underlying)
+        else:
+            await self._sim_store.upsert_position(self._user_id, new_position)
+        if trade_row is not None:
+            trade_row["multiplier"] = 1
+            await self._sim_store.insert_trade(self._user_id, trade_row)
+        stamp = _utc_iso(now)
+        await self._sim_store.insert_order(
+            self._user_id,
+            {
+                "id": order_id,
+                "parent_id": None,
+                "oco_group_id": None,
+                "leg_role": None,
+                "client_order_id": None,
+                "symbol": underlying,
+                "side": side,
+                "order_type": "market",
+                "order_class": "simple",
+                "qty": float(qty),
+                "filled_qty": float(qty),
+                "limit_price": None,
+                "stop_price": None,
+                "time_in_force": "day",
+                "status": FILLED,
+                "filled_avg_price": price,
+                "submitted_at": stamp,
+                "filled_at": stamp,
+                "canceled_at": None,
+            },
+        )
+        money = qty * price
+        await self._sim_store.add_cash(self._user_id, money if side == "sell" else -money)
+
     # --- resting orders --------------------------------------------------------
 
     async def check_fills(self, quote_source: QuoteSource, now: datetime) -> list[dict]:
@@ -285,15 +343,33 @@ class SimOptionsBook:
     # --- expiry ----------------------------------------------------------------
 
     async def settle_expired(self, quote_source: QuoteSource, now: datetime) -> list[dict]:
-        """Close every contract past its expiry (16:00 ET on the expiry day)
-        at intrinsic value against the underlying's price -- what an
-        exercised or expired contract is worth, without the shares."""
+        """Settle every contract past its expiry (16:00 ET on the expiry day)
+        against the underlying's price, the way a real account is settled
+        -- see app.trading.sim.settlement for the rules. Out of the money
+        the contract expires; an in-the-money short put is assigned into
+        shares at the strike, an in-the-money short call behind held shares
+        calls them away, everything else is settled in cash at intrinsic.
+
+        Returns the settlement orders written to the options book. Each
+        carries a non-persisted "settlement" entry ({outcome, share_qty,
+        share_price, share_order_id}) so a caller (the playbook runner, a
+        log) can say what happened without re-deriving it."""
         positions = await self._store.list_positions(self._user_id)
         if not positions:
             return []
         now_et = now.astimezone(ET)
         settled: list[dict] = []
-        for position in positions:
+        # Short calls are settled after short puts on the same underlying so
+        # a put assigned today does not cover a call expiring today: the two
+        # are settled against the shares held going into the close.
+        def settle_order(p: dict) -> int:
+            parsed = try_parse_occ(p["symbol"])
+            if p["side"] == "long" or parsed is None:
+                return 0
+            return 1 if parsed.kind == "put" else 2
+
+        ordered = sorted(positions, key=settle_order)
+        for position in ordered:
             occ = try_parse_occ(position["symbol"])
             if occ is None:
                 continue
@@ -307,39 +383,79 @@ class SimOptionsBook:
                 continue
             if spot is None:
                 continue
-            value = round(intrinsic(occ.kind, float(spot), occ.strike), 4)
-            side = "sell" if position["side"] == "long" else "buy"
+            shares = await self._sim_store.get_position(self._user_id, occ.underlying)
+            shares_long = int(round(shares["qty"])) if shares is not None and shares["side"] == "long" else 0
             contracts = int(round(position["qty"]))
-            leg = BookLeg(
-                symbol=occ.symbol,
-                kind=occ.kind,
-                strike=occ.strike,
-                expiry=occ.expiry,
-                side=side,
-                ratio_qty=1,
-                position_intent="sell_to_close" if side == "sell" else "buy_to_close",
-                fill_price=value,
-            )
-            order = {
-                "id": f"expiry:{occ.symbol}:{uuid.uuid4().hex[:8]}",
-                "client_order_id": None,
-                "underlying": occ.underlying,
-                "strategy": "expiry",
-                "direction": "credit" if side == "sell" else "debit",
-                "qty": contracts,
-                "filled_qty": contracts,
-                "limit_price": None,
-                "legs": [leg.to_json()],
-                "status": EXPIRED,
-                "net_fill_price": value if side == "buy" else -value,
-                "source": quote_source.feed,
-                "submitted_at": _utc_iso(now),
-                "filled_at": _utc_iso(now),
-                "canceled_at": None,
-                "as_of": now.isoformat(),
-            }
-            await self._store.insert_order(self._user_id, order)
-            await self._apply_leg_fill(occ.symbol, order["id"], side, contracts, value, now)
-            settled.append(order)
-            logger.info("Sim options settlement: %s x%d at intrinsic %.2f (spot %.2f)", occ.symbol, contracts, value, spot)
+            for settlement in decide_settlement(
+                side=position["side"], kind=occ.kind, strike=occ.strike, spot=float(spot), contracts=contracts, shares_long=shares_long
+            ):
+                order = await self._settle_one(occ, position["side"], settlement, quote_source.feed, now)
+                settled.append(order)
+                logger.info(
+                    "Sim options settlement: %s x%d %s at %.2f (spot %.2f%s)",
+                    occ.symbol, settlement.contracts, settlement.outcome, settlement.option_price, spot,
+                    f", {settlement.share_side} {settlement.share_qty} shares at {settlement.share_price:.2f}" if settlement.moves_shares else "",
+                )
+                if settlement.moves_shares:
+                    shares_long += settlement.share_qty if settlement.share_side == "buy" else -settlement.share_qty
         return settled
+
+    async def _settle_one(self, occ, held_side: str, settlement: Settlement, feed: str, now: datetime) -> dict:
+        """One settlement outcome written to the books: the option leg closed
+        at the settlement's price, the shares moved if it moves any."""
+        side = "sell" if held_side == "long" else "buy"
+        value = settlement.option_price
+        prefix = "assign" if settlement.moves_shares else "expiry"
+        order_id = f"{prefix}:{occ.symbol}:{uuid.uuid4().hex[:8]}"
+        leg = BookLeg(
+            symbol=occ.symbol,
+            kind=occ.kind,
+            strike=occ.strike,
+            expiry=occ.expiry,
+            side=side,
+            ratio_qty=1,
+            position_intent="sell_to_close" if side == "sell" else "buy_to_close",
+            fill_price=value,
+        )
+        order = {
+            "id": order_id,
+            "client_order_id": None,
+            "underlying": occ.underlying,
+            # "expiry" for an out-of-the-money contract keeps older rows
+            # meaningful; the other outcomes name themselves.
+            "strategy": "expiry" if settlement.outcome == "expired" else settlement.outcome,
+            "direction": "credit" if side == "sell" else "debit",
+            "qty": settlement.contracts,
+            "filled_qty": settlement.contracts,
+            "limit_price": None,
+            "legs": [leg.to_json()],
+            "status": ASSIGNED if settlement.moves_shares else EXPIRED,
+            "net_fill_price": value if side == "buy" else -value,
+            "source": feed,
+            "submitted_at": _utc_iso(now),
+            "filled_at": _utc_iso(now),
+            "canceled_at": None,
+            "as_of": now.isoformat(),
+        }
+        await self._store.insert_order(self._user_id, order)
+        await self._apply_leg_fill(occ.symbol, order_id, side, settlement.contracts, value, now)
+        share_order_id = None
+        if settlement.moves_shares and settlement.share_side and settlement.share_price is not None:
+            share_order_id = f"{order_id}:shares"
+            await self._apply_share_fill(
+                occ.underlying, share_order_id, settlement.share_side, settlement.share_qty, settlement.share_price, now
+            )
+            account = await self._sim_store.get_account_row(self._user_id)
+            if account is not None and account["cash"] < 0:
+                logger.warning(
+                    "Sim options settlement: cash is negative (%.2f) after %s of %d %s shares at %.2f",
+                    account["cash"], settlement.outcome, settlement.share_qty, occ.underlying, settlement.share_price,
+                )
+        order["settlement"] = {
+            "outcome": settlement.outcome,
+            "share_side": settlement.share_side,
+            "share_qty": settlement.share_qty,
+            "share_price": settlement.share_price,
+            "share_order_id": share_order_id,
+        }
+        return order

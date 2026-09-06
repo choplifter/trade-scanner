@@ -1607,9 +1607,25 @@ day, which is how you rehearse a strategy at the weekend.
   cancel it or wait for its fill"). Without that a second click on Close
   while the first package rests went through, and when the clock moved
   both filled: the position closed and re-opened the other way round.
-- **Expiry.** A contract still held at 16:00 ET on its expiry day settles
-  at intrinsic value against the underlying (no assignment into shares) --
-  in a replay, when the clock crosses that moment.
+- **Expiry.** A contract still held at 16:00 ET on its expiry day is
+  settled the way a real account settles it (`app/trading/sim/settlement.py`,
+  a pure decision table): out of the money it expires worthless; an
+  in-the-money **short put is assigned** -- 100 shares per contract land in
+  the simulated stock book at the strike, paid from cash (which may go
+  negative, like a margin call, if the reserved collateral was spent
+  meanwhile), and the option's round trip closes at 0.00 so it shows the
+  premium kept while the shares carry the loss at a cost basis of exactly
+  the strike; an in-the-money **short call behind held shares calls them
+  away** at the strike (the share round trip lands in the journal with
+  multiplier 1; a partly covered call splits into called-away and
+  cash-settled contracts); everything else -- long options, a naked short
+  call -- settles in cash at intrinsic value, which is what a broker's
+  automatic exercise-and-liquidate comes to. Settlement orders are
+  `expiry:…` (expired, cash-settled) or `assign:…` (assigned, called away,
+  status `assigned`), with the stock fill under `assign:…:shares`. Short
+  puts are settled before short calls on the same underlying, so a put
+  assigned today does not cover a call expiring today. In a replay all of
+  this happens when the clock crosses 16:00 ET.
 - **Triggers** work as on the real accounts, stored with account `sim`,
   and are checked by the book's own loops against the book's own prices
   -- never by the live trigger loop against Alpaca positions. They need no
@@ -1627,8 +1643,10 @@ day, which is how you rehearse a strategy at the weekend.
 - The simulated book fills at the last print ± slippage in a replay;
   illiquid strikes far from the money may not have printed for hours, and
   the fill uses that stale price. Stay near the money for realism.
-- No partial fills, no assignment into shares, no exercise: expired
-  contracts settle in cash at intrinsic value.
+- No partial fills and no early assignment: settlement happens only at
+  expiry (see **Expiry** above). Long in-the-money options and naked short
+  calls settle in cash at intrinsic value rather than being exercised into
+  shares.
 - A replayed session needs the underlying's contracts and bars per
   expiry: the first chain of a new expiry (or a new day in a multi-day
   replay) takes a few seconds while they load.
