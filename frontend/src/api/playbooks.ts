@@ -6,7 +6,15 @@
  */
 
 import { API_BASE, OrderRejectedError, checkUnauthorized, extractErrorMessage, getJson } from "./http";
-import type { BacktestRequest, BacktestResult, Campaign, CampaignCreate, CampaignPatch, PlaybookScriptsResponse } from "../types/playbooks";
+import type {
+  BacktestRequest,
+  BacktestResult,
+  Campaign,
+  CampaignAccount,
+  CampaignCreate,
+  CampaignPatch,
+  PlaybookScriptsResponse,
+} from "../types/playbooks";
 import type { TradingRejection } from "../types/trading";
 
 const BASE = "/trading/options/playbooks";
@@ -41,7 +49,7 @@ export function getPlaybookScripts(): Promise<PlaybookScriptsResponse> {
   return getJson<PlaybookScriptsResponse>(`${BASE}/scripts`);
 }
 
-export function getCampaigns(account: "sim", includeClosed = false): Promise<{ campaigns: Campaign[] }> {
+export function getCampaigns(account: CampaignAccount, includeClosed = false): Promise<{ campaigns: Campaign[] }> {
   return getJson<{ campaigns: Campaign[] }>(`${BASE}/campaigns?account=${account}&include_closed=${includeClosed}`);
 }
 

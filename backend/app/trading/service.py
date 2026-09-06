@@ -29,6 +29,7 @@ from app.trading.guards import Account, assert_can_trade, limits_for
 from app.trading.trade_store import TradeStore
 from app.trading.trades import (
     bucket_by_day,
+    fills_from_activities,
     fills_from_orders,
     in_period,
     period_start,
@@ -232,7 +233,14 @@ class OrderService:
             status=QueryOrderStatus.CLOSED, limit=_ORDER_FETCH_LIMIT, nested=True
         )
         orders = _plain(await asyncio.to_thread(self._trading.get_orders, request))
-        closed, still_open = round_trips(fills_from_orders(orders or []))
+        fills = fills_from_orders(orders or [])
+        # Assignments, expirations and exercises are activities at Alpaca, not
+        # orders: without them a short put assigned never closes its trip.
+        from app.alpaca.activities import fetch_option_activities
+
+        activities = await fetch_option_activities(self._trading)
+        fills.extend(fills_from_activities(activities, fills))
+        closed, still_open = round_trips(fills)
         await store.upsert(closed, account=self._account, user_id=user_id)
         selected = in_period(
             await store.all(account=self._account, user_id=user_id, include_legacy=include_legacy), start

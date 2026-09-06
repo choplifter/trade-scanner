@@ -579,7 +579,7 @@ export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onInten
     setStarting(true);
     setStartError(null);
     try {
-      await campaigns.create({ account: "sim", symbol, playbook: script.stem, params: values, auto_execute: autoExecute });
+      await campaigns.create({ account, symbol, playbook: script.stem, params: values, auto_execute: mode === "simulation" && autoExecute });
       setFormOpen(false);
       setAutoExecute(false);
     } catch (err: unknown) {
@@ -589,11 +589,12 @@ export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onInten
     }
   };
 
-  if (mode !== "simulation") {
+  const account: "sim" | "paper" = mode === "paper" ? "paper" : "sim";
+  if (mode === "live") {
     return (
       <div className="widget-empty">
-        Playbooks run in the Simulation account for now: switch the trading mode to Simulation to start or follow a
-        campaign.
+        Playbooks run in the Simulation and Paper accounts, not Live: a campaign there would propose real orders on a
+        real account. Switch the trading mode to follow one.
       </div>
     );
   }
@@ -631,9 +632,16 @@ export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onInten
                 <div className="pb-form">
                   <p className="order-hint">{script.description}</p>
                   <ParamsForm script={script} values={values} onChange={setValues} />
-                  <label className="pb-auto-toggle" title="Simulation only: the runner places the proposals itself during the regular session.">
-                    <input type="checkbox" checked={autoExecute} onChange={(e) => setAutoExecute(e.target.checked)} /> auto-execute in the simulation
-                  </label>
+                  {mode === "simulation" ? (
+                    <label className="pb-auto-toggle" title="Simulation only: the runner places the proposals itself during the regular session.">
+                      <input type="checkbox" checked={autoExecute} onChange={(e) => setAutoExecute(e.target.checked)} /> auto-execute in the simulation
+                    </label>
+                  ) : (
+                    <p className="order-hint">
+                      Paper: the campaign reads your Alpaca paper orders and activities (assignments, expirations) and
+                      proposes; you place every order yourself.
+                    </p>
+                  )}
                   <div className="pb-form-actions">
                     <button type="button" className="generate-button" disabled={starting} onClick={() => void start()}>
                       {starting ? "Starting…" : "Start campaign"}

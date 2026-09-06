@@ -247,6 +247,43 @@ class OptionsService:
 
     # --- pricing ------------------------------------------------------------
 
+    async def orders(self, status: str = "closed") -> list[dict]:
+        """The account's option orders by status, in Alpaca's shape (an MLEG
+        parent with its legs nested) -- what the playbook runner reconciles
+        a campaign from. Equity orders are left out."""
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        try:
+            query = QueryOrderStatus(status)
+        except ValueError:
+            raise OrderRejected(f"Unknown order status: {status}", field="status") from None
+        request = GetOrdersRequest(status=query, limit=500, nested=True)
+        rows = _plain(await asyncio.to_thread(self._trading.get_orders, request)) or []
+
+        def is_option(order: dict) -> bool:
+            if try_parse_occ(str(order.get("symbol") or "").upper()) is not None:
+                return True
+            return any(try_parse_occ(str(l.get("symbol") or "").upper()) is not None for l in order.get("legs") or [] if isinstance(l, dict))
+
+        return [o for o in rows if isinstance(o, dict) and is_option(o)]
+
+    async def activities(self, after: str | None = None) -> list[dict]:
+        """Assignments, expirations and exercises on the account since
+        `after` -- see app.alpaca.activities. Empty when the broker cannot be
+        asked; the runner then reads only orders and the positions."""
+        from app.alpaca.activities import fetch_option_activities
+
+        return await fetch_option_activities(self._trading, after=after)
+
+    async def marked_positions(self) -> list[dict]:
+        """The account's option positions in Alpaca's own shape (signed qty,
+        avg_entry_price and current_price per share) -- the same list
+        SimOptionsService.marked_positions builds for the simulated book, so
+        the playbook runner reads both accounts alike."""
+        positions = _plain(await asyncio.to_thread(self._trading.get_all_positions)) or []
+        return [p for p in positions if isinstance(p, dict) and str(p.get("asset_class", "")) == "us_option"]
+
     async def share_position(self, underlying: str) -> dict | None:
         """The long share position in `underlying` as {qty, avg_entry_price},
         or None -- what a playbook's cost basis starts from."""

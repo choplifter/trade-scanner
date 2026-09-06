@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { addCampaignNote, createCampaign, getCampaigns, getPlaybookScripts, patchCampaign, proposeNow } from "../api/playbooks";
 import { subscribeReplaySession } from "../api/replayMode";
-import type { Campaign, CampaignCreate, CampaignPatch, PlaybookScript } from "../types/playbooks";
+import type { Campaign, CampaignAccount, CampaignCreate, CampaignPatch, PlaybookScript } from "../types/playbooks";
 
 const POLL_MS = 15_000;
 
@@ -31,7 +31,7 @@ const EMPTY: CampaignsState = { scripts: [], scriptErrors: [], campaigns: [], lo
  * Every action replaces the campaign it returns in place, so the tab does
  * not wait for the next poll to show what it just did.
  */
-export function useCampaigns(enabled: boolean, account: "sim" = "sim"): CampaignsState & CampaignsActions {
+export function useCampaigns(enabled: boolean, account: CampaignAccount = "sim"): CampaignsState & CampaignsActions {
   const [state, setState] = useState<CampaignsState>(EMPTY);
   const cancelledRef = useRef(false);
 

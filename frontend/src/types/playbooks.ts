@@ -112,8 +112,12 @@ export interface Campaign {
   events: CampaignEvent[];
 }
 
+/** Where a campaign runs: the simulated book, or the paper account (read
+ * through Alpaca's orders and activities; never auto-executed). */
+export type CampaignAccount = "sim" | "paper";
+
 export interface CampaignCreate {
-  account: "sim";
+  account: CampaignAccount;
   symbol: string;
   playbook: string;
   params: Record<string, number | boolean>;

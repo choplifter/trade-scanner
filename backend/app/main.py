@@ -12,6 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.ai.trade_idea_tracker import TradeIdeaTracker
 from app.market_data.earnings import EarningsCalendar
 from app.market_data.macro_calendar import MacroCalendar
+from app.playbooks.paper_loop import run_playbook_paper_loop
 from app.playbooks.runner import PlaybookRunner
 from app.playbooks.store import PlaybookStore
 from app.routers import playbooks as playbooks_router
@@ -331,6 +332,12 @@ async def lifespan(app: FastAPI):
             resolver=app.state.broker_resolver, user_store=user_store,
         )
     )
+    playbook_paper_task = asyncio.create_task(
+        run_playbook_paper_loop(
+            clients, settings, playbook_store, app.state.playbook_runner, app.state.options_chain_cache, engine,
+            resolver=app.state.broker_resolver, user_store=user_store,
+        )
+    )
     replay_task = asyncio.create_task(
         run_replay_pacing_loop(
             replay_store, sim_store, app.state.replay_engines, manager, clients, settings, options_wiring
@@ -343,6 +350,7 @@ async def lifespan(app: FastAPI):
         scanner_task.cancel()
         sim_fill_task.cancel()
         options_trigger_task.cancel()
+        playbook_paper_task.cancel()
         replay_task.cancel()
         await news_stream.stop()
         await clients.stop_stream()

@@ -43,9 +43,11 @@ _DIR = Path(__file__).parent
 _EXCLUDED = {
     "__init__.py",
     "actions.py",
+    "alpaca_adapter.py",
     "backtest.py",
     "context.py",
     "loader.py",
+    "paper_loop.py",
     "runner.py",
     "snapshot.py",
     "store.py",

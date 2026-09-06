@@ -541,7 +541,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
         </dl>
 
-        <h3>Playbooks (Simulation)</h3>
+        <h3>Playbooks (Simulation · Paper)</h3>
         <dl>
           <dt>What a playbook is</dt>
           <dd>
@@ -557,6 +557,16 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             expiry or assignment. You place it: "Load into ticket" prefills the Chain tab's ticket, "Open roll ticket"
             the roll. Only the Simulation account offers <strong>auto-execute</strong> (tick twice to confirm): the
             runner then places proposals itself during the regular session, and switches itself off after a failure.
+          </dd>
+          <dt>Paper account</dt>
+          <dd>
+            In Paper mode a campaign reads your Alpaca paper account: filled option orders become the campaign's
+            events (a sold put, a covered call, a close, a roll placed as one multi-leg order), and the settlements
+            Alpaca reports not as orders but as <em>account activities</em> — assignment, expiration, exercise — are
+            read from there, so a put assigned over the weekend shows as "Assigned" with the shares at the strike on
+            Saturday morning. The same activities close the contract's round trip in the Trading Journal at 0.00
+            (its trip is the premium kept; the shares carry the rest), which Alpaca's order history alone never did.
+            A paper campaign never executes anything, whatever the switch says; Live is not offered.
           </dd>
           <dt>Phase · basis · premiums</dt>
           <dd>

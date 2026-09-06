@@ -67,11 +67,11 @@ def test_a_campaign_is_created_with_its_first_proposal_and_listed(api):
     assert client.post("/api/trading/options/playbooks/campaigns", json={"symbol": "ABC", "playbook": "condor_monthly"}).status_code == 422
 
 
-def test_paper_is_refused_as_sim_only_for_now(api):
+def test_live_is_refused(api):
     client, _store, _service = api
-    resp = client.post("/api/trading/options/playbooks/campaigns", json={"account": "paper", "symbol": "XYZ", "playbook": "wheel"})
-    assert resp.status_code == 422 and resp.json()["detail"]["code"] == "sim_only"
-    assert client.get("/api/trading/options/playbooks/campaigns", params={"account": "paper"}).status_code == 422
+    resp = client.post("/api/trading/options/playbooks/campaigns", json={"account": "live", "symbol": "XYZ", "playbook": "wheel"})
+    assert resp.status_code == 422 and resp.json()["detail"]["code"] == "account_not_allowed"
+    assert client.get("/api/trading/options/playbooks/campaigns", params={"account": "live"}).status_code == 422
 
 
 def test_patch_pauses_resumes_closes_and_switches(api):

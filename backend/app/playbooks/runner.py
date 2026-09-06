@@ -35,6 +35,7 @@ from app.options.models import CloseSpreadRequest, RollRequest, SpreadTicket
 from app.options.occ import try_parse_occ
 from app.playbooks import loader
 from app.playbooks.actions import render
+from app.playbooks.alpaca_adapter import book_order_from_activity, book_order_from_alpaca, parse_stamp
 from app.playbooks.context import CalendarView, ChainView, PlaybookContext
 from app.playbooks.snapshot import build_snapshot, events_from_rows
 from app.playbooks.store import ACTIVE, PlaybookStore
@@ -151,6 +152,9 @@ class PlaybookRunner:
                 await self._store.update(campaign["id"], last_error="tick failed; see the server log", now=now)
 
     async def run_one(self, campaign: dict, service, *, now: datetime, force: bool = False) -> dict | None:
+        # Always from the store: a caller's copy may predate a settlement's
+        # share count, and a stale count would read as shares moved by hand.
+        campaign = await self._store.get(campaign["id"]) or campaign
         changed = await self.reconcile(campaign, service, now=now)
         campaign = await self._store.get(campaign["id"]) or campaign
         due = force or changed or campaign.get("proposal_at") is None
@@ -173,32 +177,37 @@ class PlaybookRunner:
     async def reconcile(self, campaign: dict, service, *, now: datetime) -> bool:
         """Turn the books' doings since the cursor into events. Returns True
         when anything was recorded."""
-        orders = await service.orders("closed")
-        cursor = campaign.get("orders_cursor") or ""
+        orders = await self._book_orders(campaign, service)
+        cursor_at = parse_stamp(campaign.get("orders_cursor")) or datetime.min.replace(tzinfo=UTC)
+
+        def when(o: dict) -> datetime | None:
+            return parse_stamp(o.get("filled_at") or o.get("submitted_at"))
+
         mine = [
             o for o in orders
             if str(o.get("underlying") or "").upper() == campaign["symbol"]
-            and str(o.get("filled_at") or o.get("submitted_at") or "") > cursor
             and str(o.get("status")) in DONE_STATUSES
+            and (when(o) or now) > cursor_at
         ]
-        mine.sort(key=lambda o: str(o.get("filled_at") or o.get("submitted_at") or ""))
+        mine.sort(key=lambda o: when(o) or now)
         recorded = False
-        newest = cursor
+        newest = cursor_at
         share_events = False
         for order in mine:
             if await self._store.has_order_event(campaign["id"], str(order.get("id"))):
                 continue
             for ev in order_events(campaign, order):
-                at = datetime.fromisoformat(ev["at"]) if ev.get("at") else now
+                at = parse_stamp(ev.get("at")) or now
                 await self._store.add_event(
                     campaign["id"], int(campaign["user_id"]), ev["kind"], at=at, occ=ev.get("occ"), qty=int(ev.get("qty") or 0),
-                    price=ev.get("price"), cash_delta=ev.get("cash_delta"), order_id=ev.get("order_id"), note=ev.get("note"),
+                    price=ev.get("price"), cash_delta=ev.get("cash_delta"), order_id=ev.get("order_id"),
+                    note=ev.get("note") or order.get("note"),
                 )
                 recorded = True
                 if ev["kind"] in ("assigned", "called_away"):
                     share_events = True
-            stamp = str(order.get("filled_at") or order.get("submitted_at") or "")
-            if stamp > newest:
+            stamp = when(order)
+            if stamp is not None and stamp > newest:
                 newest = stamp
 
         # Shares that moved without a settlement to explain it: the user
@@ -215,8 +224,8 @@ class PlaybookRunner:
             recorded = True
 
         fields: dict = {}
-        if newest != cursor:
-            fields["orders_cursor"] = newest
+        if newest != cursor_at:
+            fields["orders_cursor"] = newest.isoformat()
         snapshot = await self.snapshot(campaign, service, now=now)
         fields.update(
             shares=snapshot.shares,
@@ -228,6 +237,25 @@ class PlaybookRunner:
         )
         await self._store.update(campaign["id"], now=now, **fields)
         return recorded
+
+    async def _book_orders(self, campaign: dict, service) -> list[dict]:
+        """The account's done option orders in the simulated book's row shape.
+        The simulated book already speaks it; a broker account's orders go
+        through alpaca_adapter, and its assignments, expirations and
+        exercises -- which are activities there, not orders -- are appended
+        as settlement rows."""
+        raw = await service.orders("closed")
+        if campaign["account"] == "sim":
+            return list(raw)
+        out = [b for b in (book_order_from_alpaca(o) for o in raw if isinstance(o, dict)) if b is not None]
+        if hasattr(service, "activities"):
+            try:
+                activities = await service.activities(after=campaign.get("created_at"))
+            except Exception:
+                logger.exception("Playbook activities fetch failed for %s", campaign["symbol"])
+                activities = []
+            out.extend(b for b in (book_order_from_activity(a) for a in activities if isinstance(a, dict)) if b is not None)
+        return out
 
     async def snapshot(self, campaign: dict, service, *, now: datetime):
         marks = await service.marked_positions()

@@ -1569,8 +1569,32 @@ proposal twice; a failure trips the switch and records `execute_failed`.
 Orders filled before a campaign started are not its premiums (the cursor
 starts at creation).
 
-**The tab.** Options widget → **Playbooks** (Simulation mode only for
-now): start a campaign on the selected symbol with the script's
+**Paper account.** A campaign in the paper account reads Alpaca instead of
+the simulated book: `OptionsService.orders("closed")` (option orders,
+MLEG parents with legs nested) go through `playbooks/alpaca_adapter.py`
+into the book's row shape -- a lone sell-to-open put is
+`cash_secured_put`, a lone sell-to-open call `covered_call`, a lone close
+`close`, an MLEG with one leg closing and one opening `roll` -- and the
+settlements Alpaca reports as **account activities** rather than orders
+(`OPASN` assignment, `OPEXP` expiration, `OPEXC` exercise;
+`app/alpaca/activities.py`, `GET /v2/account/activities` through the
+client's own REST layer, since this alpaca-py's TradingClient has no
+method for it) become settlement rows: an assigned put `assigned` with
+the shares at the strike, an assigned call `called_away`, an expiration
+`expiry`. Cursors compare as instants, not strings (Alpaca stamps end in
+`Z`). `playbooks/paper_loop.py` ticks every user with an active paper
+campaign once a minute on their own broker, in and out of session, so a
+weekend assignment shows Saturday morning; a paper campaign never
+executes, whatever its switch says. The same activities now close the
+contract's round trip in the **Trading Journal** (`fills_from_activities`
+in `app/trading/trades.py`: a fill at 0.00 on the side that flattens the
+contract's earlier fills -- the premium is the trip, the shares carry the
+rest), which order history alone never did. Live is not offered
+(`ALLOWED_ACCOUNTS`); a campaign there would propose real orders on a real
+account.
+
+**The tab.** Options widget → **Playbooks** (Simulation and Paper modes;
+not Live): start a campaign on the selected symbol with the script's
 parameters; each campaign card shows phase, shares and entry, basis,
 premiums, realized P&L, the **next step** with its reason ("Load into
 ticket" prefills the Chain tab, "Open roll ticket" the roll ticket,
@@ -1580,10 +1604,8 @@ share lot of 100+ opens the tab with the form for that symbol
 (`components/options/playbookIntent.ts`, the same bus as the scanner's
 Opt). API: `GET /api/trading/options/playbooks/scripts`,
 `GET/POST /campaigns`, `PATCH /campaigns/{id}`, `POST /campaigns/{id}/propose`,
-`POST /campaigns/{id}/note`; anything but `account=sim` is a 422
-`sim_only`. Paper/Live later: the runner reads orders, so the lift is an
-adapter over Alpaca's account activities (OPASN / OPEXP / OPEXC) that turns
-assignments into events and journal fills.
+`POST /campaigns/{id}/note`; `account` is `sim` or `paper`, anything else
+a 422 `account_not_allowed`.
 
 **Synthetic backtest** (`POST /api/trading/options/playbooks/backtest`,
 `backtest.py` + `synthetic_chain.py`, the panel at the bottom of the tab).

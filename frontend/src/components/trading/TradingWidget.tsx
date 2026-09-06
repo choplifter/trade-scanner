@@ -940,7 +940,7 @@ function PositionsTable({
                   >
                     Close
                   </button>
-                  {mode === "simulation" && (num(p.qty) ?? 0) >= 100 && (
+                  {mode !== "live" && (num(p.qty) ?? 0) >= 100 && (
                     <button
                       type="button"
                       className="row-action"

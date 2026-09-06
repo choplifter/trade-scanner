@@ -90,7 +90,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const [rollTarget, setRollTarget] = useState<RollTarget | null>(null);
   // Playbook campaigns (Simulation only): polled while the tab shows, and
   // a "Wheel…" from the Positions tab opens it with the start form.
-  const campaigns = useCampaigns(tab === "playbooks" && mode === "simulation");
+  const campaigns = useCampaigns(tab === "playbooks" && mode !== "live", mode === "paper" ? "paper" : "sim");
   const [playbookIntent, setPlaybookIntent] = useState<PlaybookIntent | null>(null);
   useEffect(
     () =>
@@ -443,10 +443,10 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           >
             {optimizer.loading ? "Optimizer…" : "Optimizer"}
           </button>
-          {/* Simulation only for now: the runner reconciles the simulated
-            * book's orders; the Paper lift (Alpaca's activities for
-            * assignments) is a later step. */}
-          {mode === "simulation" && (
+          {/* Simulation and Paper: the runner reconciles the simulated book's
+            * orders, or the paper account's orders and activities. Not Live:
+            * a campaign there would propose real orders on a real account. */}
+          {mode !== "live" && (
             <button
               type="button"
               className="timeframe-button"

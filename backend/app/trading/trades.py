@@ -18,7 +18,7 @@ results and backtests read side by side. A stop that was moved later
 """
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from app.options.occ import try_parse_occ
 from app.services.market_clock import ET
@@ -402,3 +402,48 @@ def fills_from_orders(orders: list[dict]) -> list[Fill]:
         if isinstance(order, dict):
             visit(order)
     return fills
+
+
+def fills_from_activities(activities: list[dict], fills: list[Fill]) -> list[Fill]:
+    """The fills Alpaca never writes: an option contract assigned (OPASN),
+    expired (OPEXP) or exercised (OPEXC) leaves its position at the broker
+    without an order, so its round trip would never close here. Each such
+    activity becomes a fill at 0.00 on the side that flattens what the
+    contract's earlier fills net to -- a short put assigned closes with a
+    buy at zero (its trip is the premium kept, the loss sits in the shares'
+    trip, the way the simulated book settles it too), a long call expired
+    closes with a sell at zero. Activities on symbols the fills know nothing
+    about, or whose position is already flat, are skipped."""
+    from app.options.occ import try_parse_occ
+
+    if not activities:
+        return []
+    known = {f.order_id for f in fills}
+    out: list[Fill] = []
+    for activity in activities:
+        if not isinstance(activity, dict):
+            continue
+        kind = str(activity.get("activity_type") or "").upper()
+        if kind not in ("OPASN", "OPEXP", "OPEXC"):
+            continue
+        symbol = str(activity.get("symbol") or "").upper()
+        parsed = try_parse_occ(symbol)
+        activity_id = str(activity.get("id") or "")
+        if parsed is None or not activity_id or activity_id in known:
+            continue
+        raw_day = str(activity.get("date") or "")
+        at = _when(activity.get("transaction_time")) or (
+            datetime.combine(date.fromisoformat(raw_day[:10]), time(16, 0), tzinfo=ET) if len(raw_day) >= 10 else None
+        )
+        if at is None:
+            continue
+        net = 0.0
+        for f in fills + out:
+            if f.symbol == symbol and f.at <= at:
+                net += f.qty if f.side == "buy" else -f.qty
+        if abs(net) < 1e-9:
+            continue
+        qty = _number(activity.get("qty"))
+        qty = min(abs(qty), abs(net)) if qty else abs(net)
+        out.append(Fill(symbol=symbol, side="buy" if net < 0 else "sell", qty=qty, price=0.0, at=at, order_id=activity_id))
+    return out

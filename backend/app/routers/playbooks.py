@@ -21,6 +21,7 @@ from app.auth.dependency import get_current_user
 from app.playbooks import loader
 from app.playbooks.backtest import BacktestRequest, run_backtest
 from app.playbooks.store import ACTIVE, CLOSED, PAUSED, PlaybookStore
+from app.routers.trading_options import _service as _paper_service
 from app.routers.trading_sim_options import _service as _sim_service
 from app.trading.errors import TradingError
 
@@ -28,8 +29,20 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/trading/options/playbooks", tags=["playbooks"])
 
-Account = Literal["sim"]
+# The accounts a campaign can run in. Live is left out on purpose: a
+# campaign there would propose real orders on a real account, and the
+# propose-not-trade posture wants a deliberate later decision for that.
+ALLOWED_ACCOUNTS = ("sim", "paper")
 EVENTS_SHOWN = 50
+
+
+async def _service_for(request: Request, user: dict, account: str):
+    """The options service the campaign's account is read through: the
+    simulated book, or this user's paper broker (the same resolution the
+    paper options router does)."""
+    if account == "sim":
+        return await _sim_service(request, user)
+    return await _paper_service(request, user)
 
 
 def _store(request: Request) -> PlaybookStore:
@@ -47,10 +60,16 @@ def _runner(request: Request):
 
 
 def _sim_only(account: str) -> None:
-    if account != "sim":
+    """Historically the sim-only gate; now the allowed-accounts gate, kept
+    under its name at the call sites. Live stays out (see ALLOWED_ACCOUNTS)."""
+    if account not in ALLOWED_ACCOUNTS:
         raise HTTPException(
             status_code=422,
-            detail={"code": "sim_only", "message": "Playbooks run in the Simulation account for now.", "field": "account"},
+            detail={
+                "code": "account_not_allowed",
+                "message": "Playbooks run in the Simulation and Paper accounts; the live account is not offered.",
+                "field": "account",
+            },
         )
 
 
@@ -107,14 +126,17 @@ async def create_campaign(body: CampaignCreate, request: Request, user: dict = D
         raise HTTPException(status_code=422, detail={"code": "campaign_exists", "message": str(exc), "field": "symbol"}) from exc
     await store.add_event(campaign["id"], user["id"], "started", at=now, note=f"{playbook.name} started with {params}")
     try:
-        service = await _sim_service(request, user)
+        service = await _service_for(request, user, body.account)
         await _runner(request).run_one(campaign, service, now=now, force=True)
     except HTTPException:
         raise
     except TradingError as exc:
         await store.update(campaign["id"], proposal_error=exc.to_detail().get("message"), now=now)
-    except Exception:
+    except Exception as exc:
+        # The campaign exists either way; the card says why its first
+        # proposal is missing rather than showing an empty slot.
         logger.exception("First proposal failed for campaign %s", campaign["id"])
+        await store.update(campaign["id"], proposal_error=f"{type(exc).__name__}: {exc}", now=now)
     return await _with_events(store, await store.get(campaign["id"]) or campaign)
 
 
@@ -166,15 +188,16 @@ async def propose_now(campaign_id: str, request: Request, user: dict = Depends(g
     campaign = await _owned(store, campaign_id, user)
     _sim_only(campaign["account"])
     try:
-        service = await _sim_service(request, user)
+        service = await _service_for(request, user, campaign["account"])
         await _runner(request).run_one(campaign, service, now=datetime.now(UTC), force=True)
     except HTTPException:
         raise
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
-    except Exception:
+    except Exception as exc:
         logger.exception("Proposal failed for campaign %s", campaign_id)
-        raise HTTPException(status_code=502, detail="Failed to compute the proposal")
+        await store.update(campaign_id, proposal_error=f"{type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=502, detail=f"Failed to compute the proposal: {type(exc).__name__}: {exc}")
     return await _with_events(store, await store.get(campaign_id) or campaign)
 
 
