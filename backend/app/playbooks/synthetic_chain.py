@@ -26,8 +26,12 @@ VOL_WINDOW = 20
 VOL_FLOOR = 0.10
 # Strikes within this fraction of the spot: the wheel sells near 0.30
 # delta (a few percent out) and lifts a call to the cost basis; a fifth
-# either way covers both without pricing a board nobody reads.
+# either way covers both without pricing a board nobody reads. A far
+# expiry gets a wider grid: a 0.80 delta call a year out sits a good way
+# below the spot.
 STRIKES_PCT = 0.20
+FAR_STRIKES_PCT = 0.45
+FAR_DTE = 180
 
 
 def strike_step(spot: float) -> float:
@@ -59,12 +63,14 @@ def _third_friday(year: int, month: int) -> date:
     return first + timedelta(days=offset + 14)
 
 
-def synthetic_expiries(today: date, *, weeks: int = 8, monthlies_to_days: int = 180) -> list[date]:
-    """Weekly Fridays for the next `weeks`, then the third Fridays out to
-    `monthlies_to_days` -- the shape of a liquid name's board."""
+def synthetic_expiries(today: date, *, weeks: int = 8, monthlies_to_days: int = 365, january_years: int = 3) -> list[date]:
+    """Weekly Fridays for the next `weeks`, the third Fridays out to
+    `monthlies_to_days`, and the January third Fridays of the next
+    `january_years` years -- the shape of a liquid name's board, LEAPS
+    included."""
     out = set(_fridays(today, weeks))
     y, m = today.year, today.month
-    for _ in range(8):
+    for _ in range(14):
         third = _third_friday(y, m)
         if today < third <= today + timedelta(days=monthlies_to_days):
             out.add(third)
@@ -72,6 +78,8 @@ def synthetic_expiries(today: date, *, weeks: int = 8, monthlies_to_days: int = 
         if m > 12:
             m = 1
             y += 1
+    for year in range(today.year + 1, today.year + 1 + january_years):
+        out.add(_third_friday(year, 1))
     return sorted(out)
 
 

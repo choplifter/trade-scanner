@@ -27,8 +27,10 @@ def test_synthetic_expiries_are_fridays_weekly_then_monthly():
     assert all(e.weekday() == 4 for e in expiries)
     assert expiries[0] == date(2026, 3, 6) and expiries[1] == date(2026, 3, 13)
     assert len([e for e in expiries if e <= TODAY + timedelta(weeks=8)]) >= 8
-    # Third Fridays further out.
+    # Third Fridays further out, and the January LEAPS beyond a year.
     assert date(2026, 6, 19) in expiries and date(2026, 7, 17) in expiries
+    assert date(2027, 1, 15) in expiries and date(2028, 1, 21) in expiries
+    assert max(expiries) > TODAY + timedelta(days=365)
 
 
 def test_realized_vol_needs_a_full_window_and_is_annualised():
@@ -89,6 +91,34 @@ def test_the_walk_sells_a_put_gets_assigned_sells_a_call_and_is_called_away():
     assert 0 < s["days_in_shares_pct"] < 100
     # Premiums were collected and the equity curve is continuous (no day jumps by more than the shares' move).
     assert s["premiums"] > 0
+    equities = [p["equity"] for p in result["equity"]]
+    assert all(abs(b - a) < 50_000 * 0.15 for a, b in zip(equities, equities[1:]))
+
+
+def test_the_poor_mans_wheel_buys_a_leaps_sells_calls_and_turns_on_a_rally():
+    pmw = loader.get_playbook("poor_mans_wheel")
+    params = pmw.resolve_params({"min_dte": 14, "max_dte": 45, "roll_at_dte": 3, "take_profit_pct": 100, "avoid_earnings": False, "leaps_min_delta": 0})
+    # Flat for the window, then a rally of 60 % over five months: the short
+    # call ends in the money near expiry and the wheel turns, a fresh long
+    # call is bought, and so on.
+    path = [100.0 + (0.4 if i % 2 else -0.4) for i in range(25)]
+    path += [100.0 * (1 + 0.60 * i / 110) for i in range(1, 111)]
+    result = walk("XYZ", pmw, params, _sessions(path), iv_premium=1.2, starting_cash=50_000.0, spread_frac=0.02)
+
+    kinds = [e["kind"] for e in result["events"]]
+    assert kinds[0] == "bought_call"
+    assert "sold_call" in kinds and kinds.index("sold_call") > kinds.index("bought_call")
+    assert "sold_long" in kinds and "closed" in kinds  # the turn
+    assert "assigned" not in kinds and "called_away" not in kinds and "sold_put" not in kinds
+    s = result["summary"]
+    assert s["calls_bought"] == kinds.count("bought_call") >= 2 and s["turns"] >= 1
+    assert s["long_closed"] == kinds.count("sold_long") and s["calls_sold"] == kinds.count("sold_call")
+    assert s["days_in_shares_pct"] == 0.0 and s["days_in_long_pct"] > 50
+    assert s["puts_sold"] == 0 and s["shares_at_end"] == 0
+    # The long call took the rally: the long side made money, the campaign beat cash.
+    assert s["long_pnl"] > 0 and s["final_equity"] > 50_000.0
+    for leg in result["open_legs"]:
+        assert leg["side"] in ("long", "short")
     equities = [p["equity"] for p in result["equity"]]
     assert all(abs(b - a) < 50_000 * 0.15 for a, b in zip(equities, equities[1:]))
 

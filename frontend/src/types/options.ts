@@ -164,7 +164,10 @@ export interface Payoff {
 }
 
 export interface Coverage {
-  kind: "shares" | "cash";
+  /** shares: held outright; cash: buying power for the strike; cover:
+   * shares plus longer-dated long calls at or below the strike, in share
+   * equivalents (the poor man's cover). */
+  kind: "shares" | "cash" | "cover";
   have: number;
   need: number;
   ok: boolean;

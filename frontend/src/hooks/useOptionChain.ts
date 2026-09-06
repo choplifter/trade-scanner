@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getChain, getExpiries } from "../api/options";
+import { daysUntil, getChain, getExpiries } from "../api/options";
 import { subscribeReplaySession } from "../api/replayMode";
 import type { ChainResponse, ExpiryInfo } from "../types/options";
 
@@ -20,6 +20,10 @@ export interface OptionChainState {
   loading: boolean;
   error: string | null;
   refresh: () => void;
+  /** Make sure `expiry` is in the strip: true when it already is, else the
+   * far strip (beyond the picker's window) is fetched and merged in, and
+   * the answer says whether it was there. */
+  ensureExpiry: (expiry: string) => Promise<boolean>;
 }
 
 /** The picker's data: the expiry strip once per symbol (the nearest expiry
@@ -101,5 +105,23 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
-  return { expiries, expiry, setExpiry, chain, spot, loading, error, refresh };
+  const ensureExpiry = useCallback(
+    async (wanted: string): Promise<boolean> => {
+      if (!underlying) return false;
+      if (expiries.some((e) => e.expiry === wanted)) return true;
+      const dte = daysUntil(wanted);
+      const res = await getExpiries(underlying, { from: dte, to: dte });
+      if (cancelledRef.current) return false;
+      const merged = [...expiries];
+      for (const e of res.expiries) {
+        if (!merged.some((m) => m.expiry === e.expiry)) merged.push(e);
+      }
+      merged.sort((a, b) => a.expiry.localeCompare(b.expiry));
+      setExpiries(merged);
+      return merged.some((e) => e.expiry === wanted);
+    },
+    [underlying, expiries],
+  );
+
+  return { expiries, expiry, setExpiry, chain, spot, loading, error, refresh, ensureExpiry };
 }

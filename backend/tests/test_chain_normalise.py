@@ -198,3 +198,39 @@ def test_chain_cache_refuses_an_unknown_expiry():
         assert "expiry" in str(exc)
     else:
         raise AssertionError("expected LookupError")
+    # The far strip was looked at too (one fetch, its own window and band).
+    far = [r for r in clients.trading.requests if r.expiration_date_gte != clients.trading.requests[0].expiration_date_gte]
+    assert far and float(far[0].strike_price_gte) < 750.0 * 0.7 and float(far[0].strike_price_lte) < 750.0 * 1.2
+
+
+class _FarTrading(_FakeTrading):
+    """The near window has the September contract; the far window a LEAPS."""
+
+    def get_option_contracts(self, request):
+        self.requests.append(request)
+        if date.fromisoformat(request.expiration_date_gte) > EXPIRY:
+            return _Page([_Contract("SPY271217C00650000", 3, ContractType.CALL, 650.0, expiration_date=date(2027, 12, 17))], None)
+        return super().get_option_contracts(request)
+
+
+def test_chain_cache_serves_a_far_expiry_from_the_far_strip():
+    clients = _FakeClients()
+    clients.trading = _FarTrading()
+
+    async def spot(_symbol):
+        return 750.0
+
+    cache = ChainCache(clients, spot)
+    _spot, _contracts, near = asyncio.run(cache.contracts("SPY"))
+    assert [e.expiry for e in near] == [EXPIRY]
+    _spot, far = asyncio.run(cache.far_expiries("SPY", 270, 540))
+    assert [e.expiry for e in far] == [date(2027, 12, 17)] and far[0].dte > 365
+    chain = asyncio.run(cache.chain("SPY", date(2027, 12, 17)))
+    assert chain.expiry == date(2027, 12, 17) and [r.strike for r in chain.rows] == [650.0]
+    # That one expiry was fetched as its own window; the window is cached
+    # like the near strip, so asking again fetches nothing.
+    before = len(clients.trading.requests)
+    asyncio.run(cache.far_expiries("SPY", 270, 540))
+    asyncio.run(cache.chain("SPY", date(2027, 12, 17)))
+    assert len(clients.trading.requests) == before
+    assert clients.trading.requests[-1].expiration_date_gte == "2027-12-17" and clients.trading.requests[-1].expiration_date_lte == "2027-12-17"

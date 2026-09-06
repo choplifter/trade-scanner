@@ -42,6 +42,16 @@ logger = logging.getLogger(__name__)
 # full screen; single names with $1 strikes are bounded the same way.
 CHAIN_DAYS_AHEAD = 60
 STRIKE_PCT_RANGE = 0.10
+# The far strip, fetched only when asked for and only for the window asked
+# for (a playbook's LEAPS window, the one expiry a ticket loads): the
+# expiries beyond the picker's, with a strike band that reaches the deep
+# in-the-money calls a long-dated call is bought at (a 0.80 delta call a
+# year out sits some 15 % below the spot) and does not waste pages above
+# the spot. A liquid name lists thousands of far contracts; the window
+# keeps the fetch to a few pages.
+FAR_DAYS_AHEAD = 800
+FAR_STRIKE_BELOW = 0.35
+FAR_STRIKE_ABOVE = 0.05
 _CONTRACTS_PAGE_LIMIT = 1000
 _MAX_CONTRACT_PAGES = 20
 
@@ -165,6 +175,7 @@ class ChainCache:
         self._spot_fn = spot_fn
         self._now = now
         self._contracts: dict[str, _Entry] = {}
+        self._far: dict[tuple[str, str, str], _Entry] = {}
         self._chains: dict[tuple[str, str], _Entry] = {}
         self._locks: dict[object, asyncio.Lock] = {}
 
@@ -181,6 +192,8 @@ class ChainCache:
 
     def invalidate(self, underlying: str) -> None:
         self._contracts.pop(underlying, None)
+        for key in [k for k in self._far if k[0] == underlying]:
+            self._far.pop(key, None)
         for key in [k for k in self._chains if k[0] == underlying]:
             self._chains.pop(key, None)
 
@@ -209,6 +222,39 @@ class ChainCache:
             self._contracts[underlying] = _Entry(self._now(), value)
             return value
 
+    async def far_contracts(self, underlying: str, gte: date, lte: date) -> tuple[float, dict[str, ContractMeta], list[ExpiryInfo]]:
+        """(spot, contracts, expiries) for the expiries `gte`..`lte` in the
+        far strike band -- fetched on demand, per window, and kept as long
+        as the near strip."""
+        underlying = underlying.upper()
+        key = (underlying, gte.isoformat(), lte.isoformat())
+        async with self._lock(("far", key)):
+            entry = self._far.get(key)
+            if entry is not None and self._now() - entry.fetched_at < CONTRACTS_TTL_SECONDS:
+                return entry.value  # type: ignore[return-value]
+            spot = await self._spot_fn(underlying)
+            if spot is None or spot <= 0:
+                raise LookupError(f"No price for {underlying}")
+            today = datetime.now(timezone.utc).date()
+            contracts = await fetch_contracts(
+                self._clients,
+                underlying,
+                max(gte, today),
+                min(lte, today + timedelta(days=FAR_DAYS_AHEAD)),
+                round(spot * (1 - FAR_STRIKE_BELOW), 2),
+                round(spot * (1 + FAR_STRIKE_ABOVE), 2),
+            )
+            expiries = expiries_from_contracts(contracts.values(), today)
+            value = (spot, contracts, expiries)
+            self._far[key] = _Entry(self._now(), value)
+            return value
+
+    async def far_expiries(self, underlying: str, lo_days: int, hi_days: int) -> tuple[float, list[ExpiryInfo]]:
+        """The far strip's (spot, expiries) `lo_days`..`hi_days` out."""
+        today = datetime.now(timezone.utc).date()
+        spot, _contracts, expiries = await self.far_contracts(underlying, today + timedelta(days=lo_days), today + timedelta(days=hi_days))
+        return spot, expiries
+
     async def chain(self, underlying: str, expiry: date) -> Chain:
         underlying = underlying.upper()
         key = (underlying, expiry.isoformat())
@@ -217,14 +263,19 @@ class ChainCache:
             if entry is not None and self._now() - entry.fetched_at < CHAIN_TTL_SECONDS:
                 return entry.value  # type: ignore[return-value]
             spot, contracts, expiries = await self.contracts(underlying)
+            below, above = STRIKE_PCT_RANGE, STRIKE_PCT_RANGE
             if not any(e.expiry == expiry for e in expiries):
-                raise LookupError(f"{underlying} has no {expiry.isoformat()} expiry within {CHAIN_DAYS_AHEAD} days")
+                # Beyond the picker's window: that one expiry of the far strip.
+                spot, contracts, expiries = await self.far_contracts(underlying, expiry, expiry)
+                below, above = FAR_STRIKE_BELOW, FAR_STRIKE_ABOVE
+                if not any(e.expiry == expiry for e in expiries):
+                    raise LookupError(f"{underlying} has no {expiry.isoformat()} expiry within {FAR_DAYS_AHEAD} days")
             snapshots = await fetch_snapshots(
                 self._clients,
                 underlying,
                 expiry,
-                round(spot * (1 - STRIKE_PCT_RANGE), 2),
-                round(spot * (1 + STRIKE_PCT_RANGE), 2),
+                round(spot * (1 - below), 2),
+                round(spot * (1 + above), 2),
             )
             chain = Chain(
                 underlying=underlying,

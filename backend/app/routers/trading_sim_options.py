@@ -80,9 +80,12 @@ async def options_account(request: Request, user: dict = Depends(get_current_use
 
 
 @router.get("/expiries/{underlying}")
-async def expiries(underlying: str, request: Request, user: dict = Depends(get_current_user)) -> dict:
+async def expiries(
+    underlying: str, request: Request, far_from: int | None = None, far_to: int | None = None, user: dict = Depends(get_current_user)
+) -> dict:
     try:
-        return await (await _service(request, user)).expiries(underlying.upper())
+        far = (far_from, far_to) if far_from is not None and far_to is not None else None
+        return await (await _service(request, user)).expiries(underlying.upper(), far=far)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:

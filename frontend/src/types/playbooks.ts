@@ -32,9 +32,29 @@ export interface PlaybookScriptsResponse {
 }
 
 export type CampaignStatus = "active" | "paused" | "closed";
-export type CampaignPhase = "cash" | "short_put" | "assigned" | "covered_call" | "mixed";
+/** cash / short_put / assigned / covered_call / mixed are the wheel's;
+ * long_call (a LEAPS held in place of shares) and diagonal (the LEAPS with
+ * a short call against it) the poor man's wheel's. */
+export type CampaignPhase = "cash" | "short_put" | "assigned" | "covered_call" | "mixed" | "long_call" | "diagonal";
 
-export type ProposalKind = "sell_put" | "sell_call" | "roll" | "close" | "hold";
+export type ProposalKind = "sell_put" | "sell_call" | "buy_call" | "roll" | "close" | "hold";
+
+/** A leg as the proposal saw it: a short leg's entry is its credit and its
+ * profit the share of that credit earned; a long leg's entry is the debit
+ * paid and its profit the gain on it. */
+export interface ProposalLeg {
+  occ: string;
+  side: "long" | "short";
+  kind: "call" | "put";
+  strike: number;
+  expiry: string;
+  dte: number;
+  qty: number;
+  entry_credit: number;
+  mark: number | null;
+  profit_pct: number | null;
+  delta: number | null;
+}
 
 /** What the playbook proposes next: a sentence, its reason, and the
  * executable part -- an income ticket, a roll, or a close. */
@@ -50,6 +70,8 @@ export interface Proposal {
   phase: CampaignPhase;
   expiries_loaded: string[];
   key: string | null;
+  /** Older proposals (before the poor man's wheel) carry no legs. */
+  open_legs?: ProposalLeg[];
 }
 
 export type EventKind =
@@ -62,6 +84,8 @@ export type EventKind =
   | "cash_settled"
   | "assigned"
   | "called_away"
+  | "bought_call"
+  | "sold_long"
   | "shares_changed"
   | "manual_note"
   | "paused"
@@ -167,14 +191,22 @@ export interface BacktestSummary {
   buy_and_hold_return_pct: number;
   premiums: number;
   realized_pnl: number;
+  /** The long side: long calls bought and sold again (a poor man's wheel). */
+  long_pnl: number;
   puts_sold: number;
   calls_sold: number;
+  calls_bought: number;
+  long_closed: number;
   rolls: number;
+  long_rolls: number;
+  /** A short call in the money near expiry closed together with the long call. */
+  turns: number;
   assignments: number;
   called_away: number;
   expired: number;
   max_drawdown_pct: number;
   days_in_shares_pct: number;
+  days_in_long_pct: number;
   shares_at_end: number;
   cost_basis_at_end: number | null;
 }

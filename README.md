@@ -1505,31 +1505,37 @@ response says so in as many words. Nothing here recommends; it describes
 what each shape pays if the target is reached, how much of the market's
 own distribution it covers, and what it costs.
 
-### Playbooks: the Wheel as a script
+### Playbooks: the Wheel and the Poor Man's Wheel as scripts
 
 `backend/app/playbooks/` is the third script family next to indicators and
 strategies. A strategy is stateless, evaluated per bar, on shares, and
 answers with a Signal; a **playbook** is stateful (a *campaign* with a
 phase, a cost basis and a history), event-driven (fills, expiries,
 assignments) and answers with an **action on option positions** --
-`SellPut`, `SellCall`, `Roll`, `Close` or `Hold`. Drop a `.py` file in the
-package and it is offered; the contract (`loader.py`) mirrors the
-strategies loader: `NAME`, `DESCRIPTION`, `ENABLED`, `PARAMS` (a list of
-`ParamSpec`s the tab renders as a form and validates with
-`resolve_params`), `def next_step(ctx: PlaybookContext) -> Action | None`.
-A file that fails to load is reported in the tab, not swallowed.
+`SellPut`, `SellCall`, `BuyCall`, `Roll`, `Close` or `Hold`. Drop a `.py`
+file in the package and it is offered; the contract (`loader.py`) mirrors
+the strategies loader: `NAME`, `DESCRIPTION`, `ENABLED`, `PARAMS` (a list
+of `ParamSpec`s the tab renders as a form and validates with
+`resolve_params`), `def next_step(ctx: PlaybookContext) -> Action | None`,
+and optionally `def chain_windows(params) -> [(min_dte, max_dte), ...]`
+naming the DTE windows whose chains the runner and the backtest load
+(default: the script's `min_dte..max_dte`). A file that fails to load is
+reported in the tab, not swallowed.
 
 `context.py` is what a script may look at: symbol, spot, shares held and
 their average entry, the **cost basis** ((average entry × shares −
-premiums collected) / shares), the open short legs with entry credit,
-mark, DTE and profit %, the events so far, a `ChainView` over several
+premiums collected) / shares -- or, with a long call standing in for the
+shares, its strike + (its debit − premiums) per share), the open short
+legs (`open_legs`) and long legs (`long_legs`) with entry, mark, DTE,
+delta and profit %, the events so far, a `ChainView` over several
 expiries (`expiry_in(min_dte, max_dte, avoid=earnings)`,
 `strike_at_delta(kind, |δ|, expiry)`, `first_strike_at_or_above(expiry,
-basis)`, `mid`), a `CalendarView` (next earnings, macro dates) and the
-account's options buying power. `actions.py` renders an action into the
-ticket the widget already loads (`SpreadTicket` JSON for a put or call,
-`RollRequest` JSON for a roll, `CloseSpreadRequest` for a close) plus a
-sentence.
+basis)`, `mid`, `delta`), a `CalendarView` (next earnings, macro dates)
+and the account's options buying power. `actions.py` renders an action
+into the ticket the widget already loads (`SpreadTicket` JSON for a put,
+a call or a long call, `RollRequest` JSON for a roll -- a short leg into a
+short leg, or a long leg into a long leg -- `CloseSpreadRequest` for a
+close of one or more held legs) plus a sentence.
 
 **wheel.py**, the first script, in this order: (1) an open leg that has
 earned `take_profit_pct` of its credit or has `roll_at_dte` days or fewer
@@ -1544,26 +1550,56 @@ first strike at or above the cost basis; (4) otherwise hold, saying how
 the open leg stands. `avoid_earnings` leaves out every expiry on or after
 the next report (a contract expiring on the report day is held through it).
 
+**poor_mans_wheel.py**, the second script: the wheel's call side with a
+long-dated, deep in-the-money call (a LEAPS) in place of the 100 shares --
+the capital tied up is the call's debit, not the shares' price. In order:
+(1) a short call at `take_profit_pct` or `roll_at_dte` is rolled to the
+next expiry in the window *before the long call's* (same strike while out
+of the money and at or above the floor, else the `call_delta` strike
+lifted to the floor: the cost basis, and always above the long strike);
+in the money near expiry with `turn_on_itm` on **the wheel turns**
+instead -- both legs are closed as one package (the long call has taken
+the move the short call gave away) and the next round starts with a fresh
+LEAPS; nothing to roll to, the short call is closed alone rather than
+assigned; (2) the long call with `leaps_roll_at_dte` days or fewer left,
+or a delta below `leaps_min_delta`, is rolled out (or down) to the
+`leaps_delta` strike in the LEAPS window; (3) no cover: buy the
+`leaps_delta` call on the first expiry `leaps_min_dte..leaps_max_dte`
+days out, unless its debit exceeds the budget or the cash; (4) cover and
+no short call: sell the `call_delta` call at or above the floor; (5) hold.
+The short call is an ordinary `covered_call` ticket whose **cover** is the
+long call: `OptionsService.preview` counts long calls at or below the
+strike expiring no earlier as 100 shares each (`Coverage.kind ==
+"cover"`), in the simulated book and at Alpaca alike. Shares held count
+as cover too.
+
 **Campaigns** (`store.py`, sqlite alongside the triggers): one live per
 user, account and symbol, with parameters, status (active / paused /
 closed), an auto-execute switch and cached snapshot numbers; **events**
 are the only history -- started, sold_put, sold_call, closed, rolled,
-expired, cash_settled, assigned, called_away, shares_changed, notes,
-executed. `snapshot.py` rebuilds shares, open legs, premiums, basis,
-realized P&L (premiums plus the shares' round trips, assigned at the put
-strike and called away at the call strike) and the phase (cash / short_put
-/ assigned / covered_call / mixed) from the books and the events.
+expired, cash_settled, assigned, called_away, bought_call, sold_long,
+shares_changed, notes, executed. `snapshot.py` rebuilds shares, open
+legs (short and long), premiums (the short side), the long side's P&L
+(`bought_call` / `sold_long`, kept apart so premiums stay premiums),
+basis, realized P&L (premiums plus the shares' round trips, assigned at
+the put strike and called away at the call strike, plus the long side) and
+the phase (cash / short_put / assigned / covered_call / mixed / long_call
+/ diagonal) from the books and the events.
 
 **The runner** (`runner.py`) is called by the sim loop and the replay loop
 after settlement: it *reconciles* the account's closed option orders on
 the symbol since a cursor into events by their `strategy`
-(`cash_secured_put`, `covered_call`, `close`, `roll`, `expiry`,
-`cash_settled`, `assigned`, `called_away`; anything else on the symbol is
-a note, a share count that moved without a settlement is a
+(`cash_secured_put`, `covered_call`, `long_call`, `close`, `roll`,
+`expiry`, `cash_settled`, `assigned`, `called_away`; a leg sold to close
+was held long and lands as `sold_long`, a long leg's roll as `sold_long`
++ `bought_call`, a two-leg close as one event per leg; anything else on
+the symbol is a note, a share count that moved without a settlement is a
 `shares_changed` note -- recorded, not fought), *proposes* every five
-minutes or on an event (up to six chains around the DTE window, the
-calendar, the account; the script's answer rendered and stored with its
-error if it threw), and *executes* only with the campaign's auto_execute
+minutes or on an event (up to eight chains around the script's DTE
+windows plus every held leg's expiry, the calendar, the account; the
+script's answer rendered and stored with its error if it threw, and the
+legs it saw stored with it so the tab can show a long call), and
+*executes* only with the campaign's auto_execute
 on, in the simulated account, in the regular session, never the same
 proposal twice; a failure trips the switch and records `execute_failed`.
 Orders filled before a campaign started are not its premiums (the cursor
@@ -1595,10 +1631,14 @@ account.
 
 **The tab.** Options widget → **Playbooks** (Simulation and Paper modes;
 not Live): start a campaign on the selected symbol with the script's
-parameters; each campaign card shows phase, shares and entry, basis,
-premiums, realized P&L, the **next step** with its reason ("Load into
-ticket" prefills the Chain tab, "Open roll ticket" the roll ticket,
-"Recompute" asks again), pause / resume / close, the auto-execute switch
+parameters (the script menu next to the start button picks the Wheel or
+the Poor Man's Wheel); each campaign card shows phase, shares and entry
+or the long call held (entry, delta, DTE, gain), basis, premiums,
+realized P&L, the **next step** with its reason ("Load into ticket"
+prefills the Chain tab, "Open roll ticket" the roll ticket -- which rolls
+one leg of a diagonal too, and a long call into a long call -- "Close…"
+prices a close and places it at the natural on confirmation, "Recompute"
+asks again), pause / resume / close, the auto-execute switch
 (tick twice), the events, a note field. The Positions tab's **Wheel…** on a
 share lot of 100+ opens the tab with the form for that symbol
 (`components/options/playbookIntent.ts`, the same bus as the scanner's
@@ -1613,16 +1653,21 @@ The app has no historical option prices, so the walk *builds* each day's
 chain: Black-Scholes on the trailing 20-session realized volatility times
 an **IV premium** factor (1.15 by default -- options usually trade above
 what the stock then realizes), one flat sigma per day, weekly Fridays for
-eight weeks then third Fridays out to six months, strikes on the exchange
-grid within ±30 % of the spot, a bid/ask of `spread_frac` around the mid,
-fills at the bid to sell and the ask to buy back. Each session settles the
-expired legs with the simulated book's own decision table
-(`decide_settlement`: assignment into shares, calls called away), rebuilds
-the campaign snapshot with `build_snapshot`, asks the script for its next
-step and carries it out. The result is the equity curve against buying the
-shares outright, the events, and a summary (return, premiums, realized
-P&L, puts and calls sold, assignments, called away, rolls, expired, max
-drawdown, share of days in shares); it carries `synthetic: true` and a
+eight weeks, third Fridays out to a year and the January LEAPS of the next
+three years, strikes on the exchange grid within ±20 % of the spot (±45 %
+beyond 180 days, where a 0.80 delta call sits), a bid/ask of
+`spread_frac` around the mid, fills at the bid to sell and the ask to buy
+(a long call is bought at the ask and sold at the bid). Only the script's
+`chain_windows` are priced each day, plus the expiries it holds. Each
+session settles the expired legs with the simulated book's own decision
+table (`decide_settlement`: assignment into shares, calls called away, a
+long call's intrinsic paid out), rebuilds the campaign snapshot with
+`build_snapshot`, asks the script for its next step and carries it out.
+The result is the equity curve against buying the shares outright, the
+events, and a summary (return, premiums, realized P&L, the long side's
+P&L, puts and calls sold, calls bought, long calls closed, turns,
+assignments, called away, rolls, expired, max drawdown, share of days in
+shares / in a long call); it carries `synthetic: true` and a
 disclaimer the panel shows. It says how the rules *behave*, not what they
 would have earned: no skew, no dividends, no early assignment, European
 exercise.

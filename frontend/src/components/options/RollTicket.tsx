@@ -10,11 +10,14 @@ import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import { quoted } from "./legPicker";
 
-/** What a roll starts from: the held group (its single short leg) and,
- * optionally, where to roll it -- a playbook proposal names the expiry and
- * strike, a click on "Roll…" leaves them to the defaults. */
+/** What a roll starts from: the held group and the leg of it to move --
+ * its single leg, or, for a calendar/diagonal, the one `legSymbol` names
+ * (the short leg by default) -- and, optionally, where to roll it: a
+ * playbook proposal names the expiry and strike, a click on "Roll…" leaves
+ * them to the defaults. */
 export interface RollTarget {
   group: SpreadGroup;
+  legSymbol?: string;
   presetExpiry?: string;
   presetStrike?: number;
 }
@@ -26,32 +29,47 @@ interface RollTicketProps {
   onClose: () => void;
 }
 
-/** The single short leg a roll moves: a lone short put, or the short call
- * of a covered call. Null for anything else (a roll of a spread is a later
- * feature). */
-export function rollableLeg(group: SpreadGroup): SpreadPositionLeg | null {
-  const shorts = group.legs.filter((l) => l.qty < 0);
-  if (group.legs.length !== 1 || shorts.length !== 1) return null;
-  return shorts[0];
+/** The one leg a roll moves: a lone leg (a short put, the short call of a
+ * covered call, a long call held outright), or one leg of a calendar /
+ * diagonal -- the short one unless `legSymbol` names the other (a poor
+ * man's wheel rolling its LEAPS out). Null for anything else (a roll of a
+ * vertical is a later feature). */
+export function rollableLeg(group: SpreadGroup, legSymbol?: string): SpreadPositionLeg | null {
+  if (group.legs.length === 1) return group.legs[0];
+  if (group.strategy === "calendar" || group.strategy === "diagonal") {
+    const named = legSymbol ? group.legs.find((l) => l.symbol === legSymbol) : undefined;
+    return named ?? group.legs.find((l) => l.qty < 0) ?? null;
+  }
+  return null;
 }
 
 const ROLL_DELTA = 0.3;
+const LONG_ROLL_DELTA = 0.8;
 
-/** The default strike for the new leg: the same strike while it is still
- * out of the money, else the listed strike nearest 0.30 delta on the new
- * expiry's chain -- the wheel's usual re-pick. */
+/** The default strike for the new leg. A short leg: the same strike while
+ * it is still out of the money, else the listed strike nearest 0.30 delta
+ * on the new expiry's chain -- the wheel's usual re-pick. A long leg: the
+ * same strike when listed, else the one nearest 0.80 delta -- a LEAPS
+ * rolled out stays deep in the money. */
 function defaultStrike(leg: SpreadPositionLeg, chain: ChainResponse): number | null {
   const rows = quoted(chain.rows, leg.kind);
   if (rows.length === 0) return null;
+  const long = leg.qty > 0;
   const otm = leg.kind === "put" ? leg.strike < chain.spot : leg.strike > chain.spot;
-  if (otm && rows.some((r) => r.strike === leg.strike)) return leg.strike;
+  if ((long || otm) && rows.some((r) => r.strike === leg.strike)) return leg.strike;
+  const wanted = long ? LONG_ROLL_DELTA : ROLL_DELTA;
   const withDelta = rows.filter((r) => (leg.kind === "put" ? r.put?.delta : r.call?.delta) != null);
   if (withDelta.length) {
     return withDelta.reduce((best, r) => {
       const d = Math.abs((leg.kind === "put" ? r.put!.delta! : r.call!.delta!) as number);
       const b = Math.abs((leg.kind === "put" ? best.put!.delta! : best.call!.delta!) as number);
-      return Math.abs(d - ROLL_DELTA) < Math.abs(b - ROLL_DELTA) ? r : best;
+      return Math.abs(d - wanted) < Math.abs(b - wanted) ? r : best;
     }).strike;
+  }
+  if (long) {
+    // No deltas: a strike about 15 % in the money.
+    const itm = leg.kind === "call" ? chain.spot * 0.85 : chain.spot * 1.15;
+    return rows.reduce((best, r) => (Math.abs(r.strike - itm) < Math.abs(best.strike - itm) ? r : best)).strike;
   }
   // No deltas: the nearest OTM strike about 5 % away.
   const target = leg.kind === "put" ? chain.spot * 0.95 : chain.spot * 1.05;
@@ -72,7 +90,8 @@ function errorText(err: unknown): string {
  */
 export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps) {
   const group = target?.group ?? null;
-  const leg = group ? rollableLeg(group) : null;
+  const leg = group ? rollableLeg(group, target?.legSymbol) : null;
+  const long = leg != null && leg.qty > 0;
   const [expiries, setExpiries] = useState<ExpiryInfo[]>([]);
   const [expiry, setExpiry] = useState<string>("");
   const [chain, setChain] = useState<ChainResponse | null>(null);
@@ -103,7 +122,9 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
       return;
     }
     let cancelled = false;
-    getExpiries(group.underlying)
+    // A long leg (a LEAPS) rolls out beyond the picker's window: the far
+    // strip is fetched for it, from just past the strip to two years out.
+    getExpiries(group.underlying, long ? { from: 61, to: 750 } : undefined)
       .then((res) => {
         if (cancelled) return;
         setExpiries(res.expiries);
@@ -118,7 +139,7 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group?.id, target?.presetExpiry, target?.presetStrike]);
+  }, [group?.id, target?.legSymbol, target?.presetExpiry, target?.presetStrike]);
 
   // The chain of the chosen expiry, and a default strike on it.
   useEffect(() => {
@@ -137,21 +158,24 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group?.id, expiry]);
+  }, [group?.id, target?.legSymbol, expiry]);
 
   const count = Math.max(1, Math.min(Math.floor(Number(qty)) || 1, group?.qty || 1));
   const request = useMemo<RollRequest | null>(() => {
     if (!group || !leg || !expiry || strike == null) return null;
-    return {
-      close: { legs: [{ symbol: leg.symbol, qty: leg.qty }], qty: count },
-      open: {
-        underlying: group.underlying,
-        strategy: leg.kind === "put" ? "cash_secured_put" : "covered_call",
-        expiry,
-        qty: count,
-        legs: [{ kind: leg.kind, strike, side: "sell" }],
-      },
-    };
+    // A held long leg is rolled into a long leg (an outright call/put, the
+    // strike-field shape); a short leg into its income shape.
+    const open: RollRequest["open"] =
+      leg.qty > 0
+        ? { underlying: group.underlying, strategy: leg.kind === "put" ? "long_put" : "long_call", expiry, qty: count, long_strike: strike }
+        : {
+            underlying: group.underlying,
+            strategy: leg.kind === "put" ? "cash_secured_put" : "covered_call",
+            expiry,
+            qty: count,
+            legs: [{ kind: leg.kind, strike, side: "sell" }],
+          };
+    return { close: { legs: [{ symbol: leg.symbol, qty: leg.qty }], qty: count }, open };
   }, [group, leg, expiry, strike, count]);
 
   // Price the roll whenever its shape changes (debounced a little: a strike
@@ -217,7 +241,7 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
 
   return (
     <Modal open={target !== null} title="Roll" onClose={onClose}>
-      {group && !leg && <p className="order-rejection">Only a single short leg can be rolled here.</p>}
+      {group && !leg && <p className="order-rejection">Only a single leg, or one leg of a calendar/diagonal, can be rolled here.</p>}
       {group && leg && (
         <div className="order-confirm roll-ticket">
           <div className="roll-columns">
@@ -226,14 +250,14 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
                 <strong>Close</strong> {formatLeg(leg.symbol)}
               </p>
               <p className="order-hint">
-                {Math.abs(leg.qty)} short · entry {leg.avg_entry_price.toFixed(2)} · now {leg.current_price.toFixed(2)}
+                {Math.abs(leg.qty)} {long ? "long" : "short"} · entry {leg.avg_entry_price.toFixed(2)} · now {leg.current_price.toFixed(2)}
                 {preview ? ` · ${preview.close.direction === "debit" ? "pay" : "receive"} mid ${preview.close.net_mid.toFixed(2)}` : ""}
                 {group.dte <= 0 ? " · expires today" : ` · ${group.dte}d`}
               </p>
             </div>
             <div className="roll-column">
               <p className="order-confirm-line">
-                <strong>Open</strong> sell {leg.kind === "put" ? "put" : "call"}
+                <strong>Open</strong> {long ? "buy" : "sell"} {leg.kind === "put" ? "put" : "call"}
               </p>
               <label className="order-confirm-line">
                 Expiry{" "}

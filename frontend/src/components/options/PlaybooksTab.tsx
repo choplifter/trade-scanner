@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { OrderRejectedError } from "../../api/http";
+import { previewCloseSpread } from "../../api/options";
 import { runPlaybookBacktest } from "../../api/playbooks";
 import type { TradingMode } from "../../api/tradingMode";
 import type { CampaignsActions, CampaignsState } from "../../hooks/useCampaigns";
-import type { LoadableStructure, SpreadGroup } from "../../types/options";
-import type { BacktestResult, Campaign, CampaignEvent, ParamSpec, PlaybookScript, Proposal } from "../../types/playbooks";
+import type { ClosePreview, CloseSpreadRequest, LoadableStructure, SpreadGroup } from "../../types/options";
+import type { BacktestResult, Campaign, CampaignEvent, ParamSpec, PlaybookScript, Proposal, ProposalLeg } from "../../types/playbooks";
 import { formatMoney } from "../../utils/format";
 import { formatExpiry, formatLeg } from "../../utils/occ";
 import { formatDateTime } from "../../utils/time";
@@ -23,6 +24,10 @@ interface PlaybooksTabProps {
   onLoad: (structure: LoadableStructure) => boolean;
   onSelectSymbol?: (symbol: string) => void;
   onRoll: (target: RollTarget) => void;
+  /** Places a close proposal (both legs of a poor man's wheel turning, or a
+   * short call that cannot be rolled) -- the same call the Positions tab's
+   * close dialog makes. */
+  onCloseSpread: (req: CloseSpreadRequest) => Promise<unknown>;
 }
 
 const PHASE_LABEL: Record<string, string> = {
@@ -31,12 +36,16 @@ const PHASE_LABEL: Record<string, string> = {
   assigned: "Assigned",
   covered_call: "Covered call",
   mixed: "Mixed",
+  long_call: "LEAPS",
+  diagonal: "LEAPS + call",
 };
 
 const EVENT_LABEL: Record<string, string> = {
   started: "Started",
   sold_put: "Sold put",
   sold_call: "Sold call",
+  bought_call: "Bought call",
+  sold_long: "Sold long",
   closed: "Closed",
   rolled: "Rolled",
   expired: "Expired",
@@ -114,6 +123,7 @@ function ProposalCard({
   onLoad,
   onSelectSymbol,
   onRoll,
+  onCloseSpread,
   onRecompute,
   busy,
 }: {
@@ -124,11 +134,42 @@ function ProposalCard({
   onLoad: (structure: LoadableStructure) => boolean;
   onSelectSymbol?: (symbol: string) => void;
   onRoll: (target: RollTarget) => void;
+  onCloseSpread: (req: CloseSpreadRequest) => Promise<unknown>;
   onRecompute: () => void;
   busy: boolean;
 }) {
   const [note, setNote] = useState<string | null>(null);
+  const [closePreview, setClosePreview] = useState<ClosePreview | null>(null);
+  const [closing, setClosing] = useState(false);
   const onSymbol = symbol === campaign.symbol;
+  // A close proposal: price it first, then place it at the natural -- the
+  // same two steps as the Positions tab's close dialog, inline.
+  const previewClose = async () => {
+    if (!proposal.close) return;
+    setClosing(true);
+    setNote(null);
+    try {
+      setClosePreview(await previewCloseSpread(proposal.close));
+    } catch (err: unknown) {
+      setNote(errorText(err));
+    } finally {
+      setClosing(false);
+    }
+  };
+  const runClose = async () => {
+    if (!proposal.close || !closePreview) return;
+    setClosing(true);
+    setNote(null);
+    try {
+      await onCloseSpread({ ...proposal.close, limit_price: closePreview.suggested_limit });
+      setClosePreview(null);
+      setNote("Close placed; the campaign picks it up on its next tick.");
+    } catch (err: unknown) {
+      setNote(errorText(err));
+    } finally {
+      setClosing(false);
+    }
+  };
   const load = () => {
     if (!proposal.ticket) return;
     if (!onSymbol) {
@@ -142,12 +183,19 @@ function ProposalCard({
   const roll = () => {
     if (!proposal.roll) return;
     const occ = proposal.roll.close.legs[0]?.symbol;
+    // The leg may sit in a diagonal group (the poor man's wheel's pair):
+    // the ticket is told which leg of it to roll.
     const group = spreads.find((g) => g.legs.some((l) => l.symbol === occ));
     if (!group) {
       setNote("The leg to roll is not among the open spreads yet.");
       return;
     }
-    onRoll({ group, presetExpiry: proposal.roll.open.expiry, presetStrike: proposal.roll.open.legs?.[0]?.strike });
+    onRoll({
+      group,
+      legSymbol: occ,
+      presetExpiry: proposal.roll.open.expiry,
+      presetStrike: proposal.roll.open.legs?.[0]?.strike ?? proposal.roll.open.long_strike,
+    });
   };
   return (
     <div className={`pb-proposal ${proposal.kind}`}>
@@ -171,10 +219,30 @@ function ProposalCard({
             Open roll ticket
           </button>
         )}
+        {proposal.close && !closePreview && (
+          <button type="button" className="generate-button" onClick={() => void previewClose()} disabled={closing}>
+            {closing ? "Pricing…" : proposal.close.legs.length > 1 ? "Close both legs…" : "Close…"}
+          </button>
+        )}
         <button type="button" className="row-action" onClick={onRecompute} disabled={busy}>
           {busy ? "Computing…" : "Recompute"}
         </button>
       </div>
+      {proposal.close && closePreview && (
+        <div className="pb-close-confirm">
+          <span className="order-hint">
+            Net {closePreview.direction} mid {closePreview.net_mid.toFixed(2)}
+            {closePreview.net_natural != null ? ` · natural ${closePreview.net_natural.toFixed(2)}` : ""} per package · limit{" "}
+            {closePreview.suggested_limit.toFixed(2)}
+          </span>
+          <button type="button" className="generate-button" onClick={() => void runClose()} disabled={closing}>
+            {closing ? "Placing…" : "Confirm close"}
+          </button>
+          <button type="button" className="row-action" onClick={() => setClosePreview(null)} disabled={closing}>
+            Keep
+          </button>
+        </div>
+      )}
       {note && <p className="order-hint">{note}</p>}
     </div>
   );
@@ -189,6 +257,7 @@ function CampaignCard({
   onLoad,
   onSelectSymbol,
   onRoll,
+  onCloseSpread,
 }: {
   campaign: Campaign;
   symbol: string | null;
@@ -198,12 +267,15 @@ function CampaignCard({
   onLoad: (structure: LoadableStructure) => boolean;
   onSelectSymbol?: (symbol: string) => void;
   onRoll: (target: RollTarget) => void;
+  onCloseSpread: (req: CloseSpreadRequest) => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [armAuto, setArmAuto] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [showAll, setShowAll] = useState(false);
+  // The long call standing in for shares, when the proposal saw one.
+  const longs: ProposalLeg[] = (campaign.proposal?.open_legs ?? []).filter((l) => l.side === "long");
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -232,16 +304,31 @@ function CampaignCard({
         <span className="order-hint">since {formatDateTime(campaign.created_at)}</span>
       </div>
       <div className="pb-numbers">
-        <span title="Shares held in the underlying, with their average entry (an assignment enters at the strike).">
-          <strong>{campaign.shares}</strong> shares{campaign.shares_avg_entry != null ? ` @ ${campaign.shares_avg_entry.toFixed(2)}` : ""}
-        </span>
-        <span title="(average entry × shares − premiums collected) / shares: what the shares must be called away above for the campaign to have made money.">
+        {(campaign.shares > 0 || longs.length === 0) && (
+          <span title="Shares held in the underlying, with their average entry (an assignment enters at the strike).">
+            <strong>{campaign.shares}</strong> shares{campaign.shares_avg_entry != null ? ` @ ${campaign.shares_avg_entry.toFixed(2)}` : ""}
+          </span>
+        )}
+        {longs.map((l) => (
+          <span key={l.occ} title="The long call held in place of shares: its entry debit, delta and days to expiry, and the gain on it so far.">
+            LEAPS <strong>{l.qty}× {formatLeg(l.occ)}</strong> @ {l.entry_credit.toFixed(2)}
+            {l.delta != null ? ` · Δ ${Math.abs(l.delta).toFixed(2)}` : ""} · {l.dte} d
+            {l.profit_pct != null ? <span className={l.profit_pct >= 0 ? " delta-up" : " delta-down"}> {l.profit_pct >= 0 ? "+" : ""}{l.profit_pct.toFixed(0)} %</span> : null}
+          </span>
+        ))}
+        <span
+          title={
+            longs.length && campaign.shares === 0
+              ? "Long call strike + (its debit − premiums collected) per share: what the stock must be above at the turn for the campaign to have made money."
+              : "(average entry × shares − premiums collected) / shares: what the shares must be called away above for the campaign to have made money."
+          }
+        >
           basis <strong>{campaign.cost_basis != null ? campaign.cost_basis.toFixed(2) : "—"}</strong>
         </span>
         <span title="Every option credit less every debit since the campaign started.">
           premiums <strong className={campaign.premiums_collected >= 0 ? "delta-up" : "delta-down"}>{formatMoney(campaign.premiums_collected)}</strong>
         </span>
-        <span title="Premiums plus the shares' round trips (assigned at the put strike, called away at the call strike).">
+        <span title="Premiums plus the shares' round trips (assigned at the put strike, called away at the call strike) plus the long calls bought and sold again.">
           realized <strong className={campaign.realized_pnl >= 0 ? "delta-up" : "delta-down"}>{formatMoney(campaign.realized_pnl)}</strong>
         </span>
       </div>
@@ -256,6 +343,7 @@ function CampaignCard({
           onLoad={onLoad}
           onSelectSymbol={onSelectSymbol}
           onRoll={onRoll}
+          onCloseSpread={onCloseSpread}
           onRecompute={() => void run(() => actions.propose(campaign.id))}
           busy={busy}
         />
@@ -473,26 +561,58 @@ function BacktestPanel({ symbol, script, params }: { symbol: string | null; scri
                 <span>
                   realized <strong>{formatMoney(s.realized_pnl)}</strong>
                 </span>
+                {s.calls_bought > 0 && (
+                  <span title="The long calls bought and sold again: what the LEAPS side made or lost.">
+                    long side <strong className={s.long_pnl >= 0 ? "delta-up" : "delta-down"}>{formatMoney(s.long_pnl)}</strong>
+                  </span>
+                )}
                 <span>
                   max drawdown <strong>{s.max_drawdown_pct.toFixed(1)} %</strong>
                 </span>
-                <span>
-                  in shares <strong>{s.days_in_shares_pct.toFixed(0)} %</strong> of days
-                </span>
+                {s.calls_bought > 0 ? (
+                  <span>
+                    in LEAPS <strong>{s.days_in_long_pct.toFixed(0)} %</strong> of days
+                  </span>
+                ) : (
+                  <span>
+                    in shares <strong>{s.days_in_shares_pct.toFixed(0)} %</strong> of days
+                  </span>
+                )}
               </div>
               <div className="pb-numbers">
-                <span>
-                  puts sold <strong>{s.puts_sold}</strong>
-                </span>
-                <span>
-                  assigned <strong>{s.assignments}</strong>
-                </span>
+                {s.calls_bought > 0 ? (
+                  <>
+                    <span>
+                      calls bought <strong>{s.calls_bought}</strong>
+                    </span>
+                    <span title="Long calls sold again: by a turn, a roll, or their intrinsic paid out at expiry.">
+                      long closed <strong>{s.long_closed}</strong>
+                    </span>
+                    <span title="A short call in the money near expiry closed together with the long call.">
+                      turns <strong>{s.turns}</strong>
+                    </span>
+                    <span>
+                      long rolls <strong>{s.long_rolls}</strong>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      puts sold <strong>{s.puts_sold}</strong>
+                    </span>
+                    <span>
+                      assigned <strong>{s.assignments}</strong>
+                    </span>
+                  </>
+                )}
                 <span>
                   calls sold <strong>{s.calls_sold}</strong>
                 </span>
-                <span>
-                  called away <strong>{s.called_away}</strong>
-                </span>
+                {s.calls_bought === 0 && (
+                  <span>
+                    called away <strong>{s.called_away}</strong>
+                  </span>
+                )}
                 <span>
                   rolls <strong>{s.rolls}</strong>
                 </span>
@@ -538,14 +658,15 @@ function BacktestPanel({ symbol, script, params }: { symbol: string | null; scri
 }
 
 /**
- * Campaigns of the playbook scripts (the Wheel first) in the Simulation
- * account: start one on the selected symbol with its parameters, and for
- * each running campaign see its phase, shares, cost basis, premiums and
- * realized P&L, the next step the script proposes (loaded into the ticket
- * or the roll ticket with a click), its history, and the switches. The app
- * proposes; the user places -- unless auto-execute is on in the simulation.
+ * Campaigns of the playbook scripts (the Wheel, the Poor Man's Wheel) in
+ * the Simulation and Paper accounts: start one on the selected symbol with
+ * its parameters, and for each running campaign see its phase, shares or
+ * long call, cost basis, premiums and realized P&L, the next step the
+ * script proposes (loaded into the ticket, the roll ticket, or placed as a
+ * close with a click), its history, and the switches. The app proposes;
+ * the user places -- unless auto-execute is on in the simulation.
  */
-export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onIntentHandled, onLoad, onSelectSymbol, onRoll }: PlaybooksTabProps) {
+export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onIntentHandled, onLoad, onSelectSymbol, onRoll, onCloseSpread }: PlaybooksTabProps) {
   const [scriptStem, setScriptStem] = useState<string>("wheel");
   const [values, setValues] = useState<Record<string, number | boolean>>({});
   const [autoExecute, setAutoExecute] = useState(false);
@@ -554,9 +675,14 @@ export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onInten
   const [formOpen, setFormOpen] = useState(false);
 
   const script = campaigns.scripts.find((s) => s.stem === scriptStem) ?? campaigns.scripts[0] ?? null;
+  // The form's values follow the script: seeded from its defaults when it
+  // first loads, and again whenever another script is picked (its
+  // parameters are different ones).
+  const seededFor = useRef<string | null>(null);
   useEffect(() => {
-    if (script) {
-      setValues((cur) => (Object.keys(cur).length ? cur : Object.fromEntries(script.params.map((p) => [p.name, p.default]))));
+    if (script && seededFor.current !== script.stem) {
+      seededFor.current = script.stem;
+      setValues(Object.fromEntries(script.params.map((p) => [p.name, p.default])));
     }
   }, [script]);
 
@@ -674,13 +800,14 @@ export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onInten
             onLoad={onLoad}
             onSelectSymbol={onSelectSymbol}
             onRoll={onRoll}
+            onCloseSpread={onCloseSpread}
           />
         ))}
       </ul>
       <BacktestPanel symbol={symbol} script={script} params={values} />
       <p className="idea-disclaimer">
-        A playbook proposes; you place. Cost basis = (average entry × shares − premiums collected) / shares. Nothing here
-        is advice.
+        A playbook proposes; you place. Cost basis = (average entry × shares − premiums collected) / shares — or, with a
+        long call in place of the shares, its strike + (its debit − premiums) per share. Nothing here is advice.
       </p>
     </div>
   );

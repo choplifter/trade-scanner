@@ -546,16 +546,18 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dt>What a playbook is</dt>
           <dd>
             A script that runs an options <em>campaign</em> over weeks — the Wheel first: sell a cash-secured put; when
-            assigned, hold the shares and sell covered calls above the cost basis; when called away, start again. Like
-            the indicator and strategy scripts it is a file (backend/app/playbooks/), but stateful and event-driven: it
-            reads the campaign's phase, shares, cost basis, open legs, the chain around its DTE window and the calendar,
-            and answers with one action — sell a put, sell a call, roll, close, or hold with a reason.
+            assigned, hold the shares and sell covered calls above the cost basis; when called away, start again. The
+            Poor Man's Wheel second (below). Like the indicator and strategy scripts it is a file
+            (backend/app/playbooks/), but stateful and event-driven: it reads the campaign's phase, shares, cost basis,
+            open legs (short and long), the chains around its DTE windows and the calendar, and answers with one action
+            — sell a put, sell a call, buy a call, roll, close, or hold with a reason.
           </dd>
           <dt>Propose, not trade</dt>
           <dd>
             The runner refreshes each campaign's <strong>next step</strong> every few minutes and after every fill,
             expiry or assignment. You place it: "Load into ticket" prefills the Chain tab's ticket, "Open roll ticket"
-            the roll. Only the Simulation account offers <strong>auto-execute</strong> (tick twice to confirm): the
+            the roll (the roll ticket also rolls one leg of a diagonal, and a long call into a long call), "Close…"
+            prices the close and places it at the natural on confirmation. Only the Simulation account offers <strong>auto-execute</strong> (tick twice to confirm): the
             runner then places proposals itself during the regular session, and switches itself off after a failure.
           </dd>
           <dt>Paper account</dt>
@@ -586,10 +588,28 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             an in-the-money leg near expiry is left to be assigned or called away — the wheel turning — rather than
             rolled; off rolls it out).
           </dd>
+          <dt>Poor Man's Wheel</dt>
+          <dd>
+            The wheel's call side with a long-dated, deep in-the-money call (a LEAPS) in place of the 100 shares: the
+            campaign buys the call at the <strong>LEAPS delta</strong> (0.80) in the LEAPS window (270–540 days), then
+            sells shorter calls against it at the call delta, before the LEAPS expires. The short call is rolled at the
+            take-profit % or near expiry as in the wheel; <strong>in the money near expiry</strong> the wheel turns
+            instead (switchable, "Turn when ITM"): both legs are closed as one package — the long call has taken the
+            move the short call gave away — and a fresh long call is bought. The long call itself is rolled out with
+            <strong>Roll LEAPS at DTE</strong> days or fewer left, or down when its delta has fallen below
+            <strong>LEAPS min delta</strong> (the stock dropped). Cost basis here is the long call's strike plus its
+            debit less the premiums collected, per share — the same question as the wheel's, and the same floor for the
+            short strike. The short call is a covered call whose <em>cover</em> is the long call (a strike at or below,
+            an expiry no earlier); the ticket preview says "cover" rather than "shares". Phases: <em>LEAPS</em>
+            (the long call alone), <em>LEAPS + call</em>. The long side's buys and sells are counted apart from the
+            premiums; realized P&amp;L adds them. Capital tied up is the call's debit, not the shares' price — and a
+            long call, unlike shares, decays and expires.
+          </dd>
           <dt>From the Positions tab</dt>
           <dd>
             "Wheel…" on a share lot of 100 or more (Simulation) opens this tab with the start form for that symbol:
-            the campaign adopts the shares and proposes the first covered call.
+            the campaign adopts the shares and proposes the first covered call. The Poor Man's Wheel starts from cash:
+            pick it in the script menu next to the start button.
           </dd>
           <dt>Backtest (synthetic)</dt>
           <dd>

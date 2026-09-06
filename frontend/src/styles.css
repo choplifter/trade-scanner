@@ -4590,6 +4590,7 @@ td.chain-side.chain-stale {
   --pb-put: #d03b3b;
   --pb-shares: #3b82d0;
   --pb-call: #1f9d55;
+  --pb-long: #c26a1f;
 }
 
 .pb-start {
@@ -4700,6 +4701,8 @@ td.chain-side.chain-stale {
 .pb-phase.assigned { background: var(--pb-shares); }
 .pb-phase.covered_call { background: var(--pb-call); }
 .pb-phase.mixed { background: #8e5bd6; }
+.pb-phase.long_call { background: var(--pb-long); }
+.pb-phase.diagonal { background: var(--pb-long); }
 
 .pb-status,
 .pb-auto {
@@ -4742,6 +4745,7 @@ td.chain-side.chain-stale {
 
 .pb-proposal.sell_put { border-left-color: var(--pb-put); }
 .pb-proposal.sell_call { border-left-color: var(--pb-call); }
+.pb-proposal.buy_call { border-left-color: var(--pb-long); }
 .pb-proposal.roll { border-left-color: #8e5bd6; }
 .pb-proposal.close { border-left-color: #d6a11c; }
 
@@ -4814,6 +4818,8 @@ td.chain-side.chain-stale {
 .pb-event.called_away .pb-event-kind,
 .pb-event.sold_call .pb-event-kind { color: var(--pb-call); }
 .pb-event.rolled .pb-event-kind { color: #8e5bd6; }
+.pb-event.bought_call .pb-event-kind,
+.pb-event.sold_long .pb-event-kind { color: var(--pb-long); }
 .pb-event.execute_failed .pb-event-kind { color: var(--status-critical, #d03b3b); }
 
 .pb-note {

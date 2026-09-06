@@ -75,8 +75,20 @@ export function getOptionsAccount(): Promise<OptionsAccountResponse> {
   return getJson<OptionsAccountResponse>(tradingPath("/trading/options/account"));
 }
 
-export function getExpiries(underlying: string): Promise<ExpiriesResponse> {
-  return getJson<ExpiriesResponse>(tradingPath(`/trading/options/expiries/${encodeURIComponent(underlying)}`));
+/** The expiry strip; `far` = {from, to} in days out appends the expiries in
+ * that window beyond the picker's (a LEAPS ticket, a long call's roll) --
+ * a heavier fetch, asked for only when one is needed and only that wide. */
+export function getExpiries(underlying: string, far?: { from: number; to: number }): Promise<ExpiriesResponse> {
+  const query = far ? `?far_from=${Math.max(0, Math.floor(far.from))}&far_to=${Math.max(0, Math.floor(far.to))}` : "";
+  return getJson<ExpiriesResponse>(tradingPath(`/trading/options/expiries/${encodeURIComponent(underlying)}${query}`));
+}
+
+/** Days from today to an ISO date (calendar days, local midnight). */
+export function daysUntil(iso: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const [y, m, d] = iso.split("-").map(Number);
+  return Math.round((new Date(y, m - 1, d).getTime() - today.getTime()) / 86_400_000);
 }
 
 export function getContractQuote(symbol: string): Promise<LegQuote> {

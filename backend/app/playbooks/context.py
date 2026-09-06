@@ -31,11 +31,16 @@ Kind = Literal["call", "put"]
 _FALLBACK_OTM_FRACTION = 0.05
 
 
+Side = Literal["long", "short"]
+
+
 @dataclass(frozen=True)
 class OpenLeg:
-    """A short leg the campaign holds, as the runner sees it: the entry
-    credit per share, today's mark, and the profit taken so far as a share
-    of the credit (100 % = the option is worthless)."""
+    """A leg the campaign holds, as the runner sees it. For a short leg (the
+    default): the entry credit per share, today's mark, and the profit taken
+    so far as a share of the credit (100 % = the option is worthless). For a
+    long leg (a LEAPS standing in for shares): `entry_credit` is the debit
+    paid per share and `profit_pct` the gain on it."""
 
     occ: str
     kind: Kind
@@ -47,6 +52,7 @@ class OpenLeg:
     mark: float | None
     profit_pct: float | None
     delta: float | None = None
+    side: Side = "short"
 
 
 @dataclass(frozen=True)
@@ -166,8 +172,14 @@ class PlaybookContext:
     entry (an assignment enters at the strike). cost_basis: per share, the
     average entry less every premium the campaign has collected -- what the
     shares have to be called away above for the campaign to have made
-    money; None before any shares are held. cash_available: the account's
-    options buying power, collateral of open positions already deducted.
+    money; None before any shares are held. With no shares but a long call
+    standing in for them, the call's strike plus its net debit (the debit
+    paid less the premiums collected) per share -- the same question, the
+    same answer. cash_available: the account's options buying power,
+    collateral of open positions already deducted.
+
+    open_legs are the short legs; long_legs the long ones (a wheel never
+    holds any, a poor man's wheel holds its LEAPS there).
     """
 
     symbol: str
@@ -187,6 +199,7 @@ class PlaybookContext:
     params: dict
     phase: str
     cash_available: float
+    long_legs: tuple[OpenLeg, ...] = ()
 
     @property
     def short_puts(self) -> tuple[OpenLeg, ...]:
@@ -195,6 +208,10 @@ class PlaybookContext:
     @property
     def short_calls(self) -> tuple[OpenLeg, ...]:
         return tuple(l for l in self.open_legs if l.kind == "call")
+
+    @property
+    def long_calls(self) -> tuple[OpenLeg, ...]:
+        return tuple(l for l in self.long_legs if l.kind == "call")
 
     def leg_is_itm(self, leg: OpenLeg) -> bool:
         return leg.strike > self.spot if leg.kind == "put" else leg.strike < self.spot

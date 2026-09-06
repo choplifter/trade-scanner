@@ -86,8 +86,11 @@ STATUSES = (ACTIVE, PAUSED, CLOSED)
 
 # Event kinds. Option events carry cash_delta (dollars, signed: a credit
 # positive); share events carry qty (shares) and price (the strike).
+# bought_call / sold_long are the long side (a poor man's wheel's LEAPS
+# bought and sold again), kept apart so "premiums" stays the short side.
 EVENT_KINDS = (
     "started", "sold_put", "sold_call", "closed", "rolled", "expired", "cash_settled", "assigned", "called_away",
+    "bought_call", "sold_long",
     "shares_changed", "manual_note", "paused", "resumed", "campaign_closed", "executed", "execute_failed",
 )
 

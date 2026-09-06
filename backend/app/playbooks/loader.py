@@ -13,6 +13,10 @@ Each playbook file exposes:
     ENABLED: bool        -- optional, default True; False parks the file
     PARAMS: list[ParamSpec]  -- the knobs a campaign is started with
     def next_step(ctx: PlaybookContext) -> Action | None
+    def chain_windows(params) -> list[tuple[int, int]]  -- optional: the DTE
+        windows whose chains the runner and the backtest load for the
+        script (default: min_dte..max_dte). A script that also holds a
+        long-dated leg names that window here too.
 
 Unlike a strategy a playbook has no dashboard switch: it is instantiated per
 campaign, not scanned over a universe, so ENABLED is enough. A file that
@@ -109,9 +113,20 @@ class LoadedPlaybook:
     description: str
     params: tuple[ParamSpec, ...]
     _next_step: object = field(repr=False)
+    _chain_windows: object = field(default=None, repr=False)
 
     def next_step(self, ctx):
         return self._next_step(ctx)  # type: ignore[operator]
+
+    def chain_windows(self, params: dict) -> list[tuple[int, int]]:
+        """The DTE windows whose chains the script reads, (min, max) each:
+        the script's own `chain_windows(params)` when it defines one, else
+        its min_dte..max_dte (21..45 when it has neither)."""
+        if self._chain_windows is not None:
+            out = [(int(lo), int(hi)) for lo, hi in self._chain_windows(params)]  # type: ignore[operator]
+            if out:
+                return out
+        return [(int(params.get("min_dte", 21)), int(params.get("max_dte", 45)))]
 
     def resolve_params(self, given: dict | None) -> dict:
         """Defaults filled in, types coerced, bounds checked; an unknown key
@@ -166,8 +181,12 @@ def _validate(module: ModuleType, path: Path) -> LoadedPlaybook:
     next_step = getattr(module, "next_step", None)
     if not callable(next_step):
         raise TypeError("next_step(ctx) is missing or not callable.")
+    chain_windows = getattr(module, "chain_windows", None)
+    if chain_windows is not None and not callable(chain_windows):
+        raise TypeError("chain_windows(params), when present, must be callable.")
     return LoadedPlaybook(
-        name=name, stem=path.stem, filename=path.name, description=description, params=tuple(params), _next_step=next_step
+        name=name, stem=path.stem, filename=path.name, description=description, params=tuple(params), _next_step=next_step,
+        _chain_windows=chain_windows,
     )
 
 

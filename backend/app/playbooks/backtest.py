@@ -27,10 +27,19 @@ from pydantic import BaseModel, Field
 
 from app.options.occ import format_occ, try_parse_occ
 from app.playbooks import loader
-from app.playbooks.actions import Close, Hold, Roll, SellCall, SellPut
+from app.playbooks.actions import BuyCall, Close, Hold, Roll, SellCall, SellPut
 from app.playbooks.context import CalendarView, ChainView, PlaybookContext
 from app.playbooks.snapshot import build_snapshot
-from app.playbooks.synthetic_chain import VOL_FLOOR, VOL_WINDOW, build_chain, realized_vol, synthetic_expiries
+from app.playbooks.synthetic_chain import (
+    FAR_DTE,
+    FAR_STRIKES_PCT,
+    STRIKES_PCT,
+    VOL_FLOOR,
+    VOL_WINDOW,
+    build_chain,
+    realized_vol,
+    synthetic_expiries,
+)
 from app.services.market_clock import ET
 from app.trading.errors import OrderRejected
 from app.trading.sim.settlement import decide_settlement
@@ -39,6 +48,9 @@ logger = logging.getLogger(__name__)
 
 MAX_MONTHS = 24
 MIN_SESSIONS = VOL_WINDOW + 5
+# Expiries priced per window per day: a script takes the nearest one in
+# its window and rolls to the next, so three are plenty.
+EXPIRIES_PER_WINDOW = 3
 
 
 class BacktestRequest(BaseModel):
@@ -61,7 +73,8 @@ class _Leg:
     strike: float
     expiry: date
     qty: int
-    entry_credit: float
+    entry_credit: float  # per share: the credit received (short) or the debit paid (long)
+    side: str = "short"
 
 
 @dataclass
@@ -110,12 +123,19 @@ def closes_by_session(bars) -> list[tuple[date, float]]:
 
 def _settle(book: _Book, day: date, spot: float) -> None:
     """Every leg whose expiry has passed (the first session on or after it),
-    settled the way the simulated book settles it."""
-    for leg in [l for l in book.legs if l.expiry <= day]:
+    settled the way the simulated book settles it. Short legs first, so a
+    short call settles against the shares held going into the close; a long
+    leg in the money pays out its intrinsic."""
+    due = sorted((l for l in book.legs if l.expiry <= day), key=lambda l: 0 if l.side == "short" else 1)
+    for leg in due:
         book.legs.remove(leg)
-        for s in decide_settlement(side="short", kind=leg.kind, strike=leg.strike, spot=spot, contracts=leg.qty, shares_long=book.shares):
+        for s in decide_settlement(side=leg.side, kind=leg.kind, strike=leg.strike, spot=spot, contracts=leg.qty, shares_long=book.shares):
             if s.outcome == "expired":
                 book.event(day, "expired", occ=leg.occ, qty=s.contracts, price=0.0, cash_delta=0.0)
+            elif s.outcome == "cash_settled" and leg.side == "long":
+                proceeds = s.option_price * 100 * s.contracts
+                book.cash += proceeds
+                book.event(day, "sold_long", occ=leg.occ, qty=s.contracts, price=s.option_price, cash_delta=proceeds, note="intrinsic at expiry")
             elif s.outcome == "cash_settled":
                 cost = s.option_price * 100 * s.contracts
                 book.cash -= cost
@@ -132,12 +152,20 @@ def _marks(book: _Book, chain: ChainView) -> list[dict]:
     marks = []
     for leg in book.legs:
         mid = chain.mid(leg.kind, leg.strike, leg.expiry)
-        marks.append({"symbol": leg.occ, "qty": str(-leg.qty), "avg_entry_price": str(leg.entry_credit), "current_price": str(mid if mid is not None else leg.entry_credit)})
+        marks.append(
+            {
+                "symbol": leg.occ,
+                "qty": str(-leg.qty if leg.side == "short" else leg.qty),
+                "avg_entry_price": str(leg.entry_credit),
+                "current_price": str(mid if mid is not None else leg.entry_credit),
+                "delta": chain.delta(leg.kind, leg.strike, leg.expiry),
+            }
+        )
     return marks
 
 
 def _reserved(book: _Book) -> float:
-    return sum(l.strike * 100 * l.qty for l in book.legs if l.kind == "put")
+    return sum(l.strike * 100 * l.qty for l in book.legs if l.kind == "put" and l.side == "short")
 
 
 def _sell(book: _Book, day: date, chain: ChainView, kind: str, strike: float, expiry: date, qty: int, spread_frac: float, event_kind: str, symbol: str) -> float | None:
@@ -153,14 +181,50 @@ def _sell(book: _Book, day: date, chain: ChainView, kind: str, strike: float, ex
     return price
 
 
-def _close(book: _Book, day: date, chain: ChainView, leg: _Leg, event_kind: str, note: str | None = None) -> float:
+def _buy(book: _Book, day: date, chain: ChainView, kind: str, strike: float, expiry: date, qty: int, symbol: str, note: str | None = None) -> float | None:
+    """A long leg bought at the ask."""
+    quote = chain.quote(kind, strike, expiry)
+    if quote is None or quote.ask is None:
+        return None
+    price = float(quote.ask)
+    occ = format_occ(symbol, expiry, kind, strike)
+    book.legs.append(_Leg(occ=occ, kind=kind, strike=strike, expiry=expiry, qty=qty, entry_credit=price, side="long"))
+    debit = price * 100 * qty
+    book.cash -= debit
+    book.event(day, "bought_call" if kind == "call" else "manual_note", occ=occ, qty=qty, price=price, cash_delta=-debit, note=note)
+    return price
+
+
+def _close(book: _Book, day: date, chain: ChainView, leg: _Leg, event_kind: str | None = None, note: str | None = None) -> float:
+    """A short leg bought back at the ask (event `closed`), a long leg sold
+    at the bid (event `sold_long`)."""
     quote = chain.quote(leg.kind, leg.strike, leg.expiry)
-    price = float(quote.ask) if quote is not None and quote.ask is not None else max(chain.spot - leg.strike, 0.0) if leg.kind == "call" else max(leg.strike - chain.spot, 0.0)
+    intrinsic = max(chain.spot - leg.strike, 0.0) if leg.kind == "call" else max(leg.strike - chain.spot, 0.0)
     book.legs.remove(leg)
+    if leg.side == "long":
+        price = float(quote.bid) if quote is not None and quote.bid is not None else intrinsic
+        proceeds = price * 100 * leg.qty
+        book.cash += proceeds
+        book.event(day, event_kind or "sold_long", occ=leg.occ, qty=leg.qty, price=price, cash_delta=proceeds, note=note)
+        return price
+    price = float(quote.ask) if quote is not None and quote.ask is not None else intrinsic
     cost = price * 100 * leg.qty
     book.cash -= cost
-    book.event(day, event_kind, occ=leg.occ, qty=leg.qty, price=price, cash_delta=-cost, note=note)
+    book.event(day, event_kind or "closed", occ=leg.occ, qty=leg.qty, price=price, cash_delta=-cost, note=note)
     return price
+
+
+def _day_expiries(board: list[date], day: date, windows: list[tuple[int, int]], held: list[date]) -> set[date]:
+    """The expiries priced for one session: the first few of the board in
+    each of the script's windows (with the runner's slack), plus the ones
+    the book holds."""
+    out: set[date] = set(held)
+    for lo, hi in windows:
+        # The window proper first, nearest first, then the slack either side.
+        candidates = [(e, (e - day).days) for e in board if lo - 7 <= (e - day).days <= hi + 14]
+        candidates.sort(key=lambda x: (not lo <= x[1] <= hi, x[1]))
+        out.update(e for e, _d in candidates[:EXPIRIES_PER_WINDOW])
+    return out
 
 
 def walk(symbol: str, playbook, params: dict, sessions: list[tuple[date, float]], *, iv_premium: float, starting_cash: float, spread_frac: float, earnings_dates: list[date] | None = None) -> dict:
@@ -174,8 +238,11 @@ def walk(symbol: str, playbook, params: dict, sessions: list[tuple[date, float]]
     equity: list[dict] = []
     first_spot = None
     days_in_shares = 0
+    days_in_long = 0
+    turns = 0
     walked = 0
     earnings = sorted(earnings_dates or [])
+    windows = playbook.chain_windows(params)
     for day, spot in sessions:
         closes.append(spot)
         if len(closes) <= VOL_WINDOW:
@@ -185,18 +252,17 @@ def walk(symbol: str, playbook, params: dict, sessions: list[tuple[date, float]]
             first_spot = spot
         _settle(book, day, spot)
         sigma = max((realized_vol(closes) or VOL_FLOOR) * iv_premium, VOL_FLOOR)
-        # Only the expiries the script can act on -- its DTE window with some
-        # slack -- plus the ones it holds; the whole board every day would be
-        # most of the walk's cost for chains nobody reads.
-        lo = int(params.get("min_dte", 21)) - 7
-        hi = int(params.get("max_dte", 45)) + 14
+        # Only the expiries the script can act on -- its windows with some
+        # slack -- plus the ones it holds; the whole board every day would
+        # be most of the walk's cost for chains nobody reads.
         board = synthetic_expiries(day)
-        # The script takes the nearest expiry in its window (and rolls to the
-        # next one after a held leg), so three in the window are plenty.
-        expiries = set([e for e in board if lo <= (e - day).days <= hi][:3]) | {l.expiry for l in book.legs if l.expiry > day}
+        expiries = _day_expiries(board, day, windows, [l.expiry for l in book.legs if l.expiry > day])
         if not expiries:
-            expiries = set(board[:3])
-        chains = {e: build_chain(symbol, day, spot, sigma, e, spread_frac=spread_frac) for e in sorted(expiries)}
+            expiries = set(board[:EXPIRIES_PER_WINDOW])
+        chains = {
+            e: build_chain(symbol, day, spot, sigma, e, spread_frac=spread_frac, strikes_pct=FAR_STRIKES_PCT if (e - day).days > FAR_DTE else STRIKES_PCT)
+            for e in sorted(expiries)
+        }
         chain = ChainView(chains, day)
         snapshot = build_snapshot(
             symbol,
@@ -211,36 +277,50 @@ def walk(symbol: str, playbook, params: dict, sessions: list[tuple[date, float]]
             shares=snapshot.shares, shares_avg_entry=snapshot.shares_avg_entry, cost_basis=snapshot.cost_basis,
             open_legs=snapshot.open_legs, premiums_collected=snapshot.premiums_collected, realized_pnl=snapshot.realized_pnl,
             events=(), chain=chain, calendar=CalendarView(next_earnings=next_earnings), params=params, phase=snapshot.phase,
-            cash_available=max(book.cash - _reserved(book), 0.0),
+            cash_available=max(book.cash - _reserved(book), 0.0), long_legs=snapshot.long_legs,
         )
         action = playbook.next_step(ctx)
         if isinstance(action, SellPut):
             _sell(book, day, chain, "put", action.strike, action.expiry, action.qty, spread_frac, "sold_put", symbol)
         elif isinstance(action, SellCall):
             _sell(book, day, chain, "call", action.strike, action.expiry, action.qty, spread_frac, "sold_call", symbol)
+        elif isinstance(action, BuyCall):
+            _buy(book, day, chain, "call", action.strike, action.expiry, action.qty, symbol)
         elif isinstance(action, Roll):
             leg = next((l for l in book.legs if l.occ == action.close_occ), None)
-            if leg is not None:
+            if leg is not None and action.new_side == "buy":
+                closed_at = _close(book, day, chain, leg, note="rolled")
+                opened_at = _buy(book, day, chain, action.new_kind, action.new_strike, action.new_expiry, action.qty, symbol, note=f"rolled from {leg.occ} sold at {closed_at:.2f}")
+                if opened_at is not None:
+                    book.counts["long_rolls"] = book.counts.get("long_rolls", 0) + 1
+            elif leg is not None:
                 closed_at = _close(book, day, chain, leg, "closed", note="rolled")
                 opened_at = _sell(book, day, chain, action.new_kind, action.new_strike, action.new_expiry, action.qty, spread_frac, "rolled", symbol)
                 if opened_at is not None:
                     book.events[-1]["note"] = f"closed {leg.occ} at {closed_at:.2f}, net {(opened_at - closed_at):+.2f}"
         elif isinstance(action, Close):
-            leg = next((l for l in book.legs if l.occ == action.occ), None)
-            if leg is not None:
-                _close(book, day, chain, leg, "closed")
+            legs = [l for occ, _q in action.legs for l in book.legs if l.occ == occ]
+            if len(legs) > 1:
+                turns += 1
+            for leg in legs:
+                _close(book, day, chain, leg, note="both legs closed" if len(legs) > 1 else None)
         elif isinstance(action, Hold) or action is None:
             pass
         if book.shares > 0:
             days_in_shares += 1
-        legs_value = sum((chain.mid(l.kind, l.strike, l.expiry) or 0.0) * 100 * l.qty for l in book.legs)
-        total = book.cash + book.shares * spot - legs_value
+        if any(l.side == "long" for l in book.legs):
+            days_in_long += 1
+        legs_value = sum(
+            (chain.mid(l.kind, l.strike, l.expiry) or 0.0) * 100 * l.qty * (1 if l.side == "long" else -1) for l in book.legs
+        )
+        total = book.cash + book.shares * spot + legs_value
         benchmark = starting_cash / first_spot * spot if first_spot else starting_cash
         equity.append({"date": day.isoformat(), "equity": round(total, 2), "benchmark": round(benchmark, 2), "spot": spot, "shares": book.shares, "legs": len(book.legs)})
 
     if not equity:
         raise OrderRejected("Nothing to walk: no session after the volatility window.", field="months")
     premiums = sum(e["cash_delta"] or 0.0 for e in book.events if e["kind"] in ("sold_put", "sold_call", "closed", "rolled", "cash_settled"))
+    long_pnl = sum(e["cash_delta"] or 0.0 for e in book.events if e["kind"] in ("bought_call", "sold_long"))
     final = equity[-1]["equity"]
     peak = -float("inf")
     max_dd = 0.0
@@ -263,7 +343,10 @@ def walk(symbol: str, playbook, params: dict, sessions: list[tuple[date, float]]
         "to": equity[-1]["date"],
         "equity": equity,
         "events": book.events,
-        "open_legs": [{"occ": l.occ, "kind": l.kind, "strike": l.strike, "expiry": l.expiry.isoformat(), "qty": l.qty, "entry_credit": l.entry_credit} for l in book.legs],
+        "open_legs": [
+            {"occ": l.occ, "side": l.side, "kind": l.kind, "strike": l.strike, "expiry": l.expiry.isoformat(), "qty": l.qty, "entry_credit": l.entry_credit}
+            for l in book.legs
+        ],
         "summary": {
             "starting_cash": starting_cash,
             "final_equity": round(final, 2),
@@ -271,14 +354,20 @@ def walk(symbol: str, playbook, params: dict, sessions: list[tuple[date, float]]
             "buy_and_hold_return_pct": round((equity[-1]["benchmark"] / starting_cash - 1) * 100, 2),
             "premiums": round(premiums, 2),
             "realized_pnl": round(last_snapshot.realized_pnl, 2),
+            "long_pnl": round(long_pnl, 2),
             "puts_sold": book.counts.get("sold_put", 0),
             "calls_sold": book.counts.get("sold_call", 0),
+            "calls_bought": book.counts.get("bought_call", 0),
+            "long_closed": book.counts.get("sold_long", 0),
             "rolls": book.counts.get("rolled", 0),
+            "long_rolls": book.counts.get("long_rolls", 0),
+            "turns": turns,
             "assignments": book.counts.get("assigned", 0),
             "called_away": book.counts.get("called_away", 0),
             "expired": book.counts.get("expired", 0),
             "max_drawdown_pct": round(max_dd, 2),
             "days_in_shares_pct": round(days_in_shares / walked * 100, 1) if walked else 0.0,
+            "days_in_long_pct": round(days_in_long / walked * 100, 1) if walked else 0.0,
             "shares_at_end": book.shares,
             "cost_basis_at_end": round(last_snapshot.cost_basis, 2) if last_snapshot.cost_basis is not None else None,
         },

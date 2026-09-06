@@ -258,7 +258,14 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     if (!symbol || idea.ticket.underlying !== symbol) return false;
     const resolved = legsFromTicket(idea.strategy, idea.ticket);
     if (!resolved) return false;
-    if (!expiries.some((e) => e.expiry === idea.ticket.expiry)) return false;
+    if (!expiries.some((e) => e.expiry === idea.ticket.expiry)) {
+      // Beyond the strip (a LEAPS a playbook proposes): the far expiries
+      // are fetched and merged in; the pending idea then lands the way it
+      // does for a listed expiry, once the strip has it.
+      void chainState.ensureExpiry(idea.ticket.expiry).then((ok) => {
+        if (!ok) pendingIdeaRef.current = null;
+      });
+    }
 
     pendingIdeaRef.current = { ...resolved, expiry: idea.ticket.expiry };
     // A calendar or diagonal is traded in one kind; the ticket's legs say
@@ -538,6 +545,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             onLoad={loadStructure}
             onSelectSymbol={onSelectSymbol}
             onRoll={setRollTarget}
+            onCloseSpread={spreads.close}
           />
         ) : !symbol ? (
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>

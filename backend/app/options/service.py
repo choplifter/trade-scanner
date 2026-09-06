@@ -8,6 +8,7 @@ builder is a pure function with its own tests.
 
 import asyncio
 import logging
+from datetime import date
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
@@ -215,9 +216,16 @@ class OptionsService:
             logger.debug("No spot for %s", underlying, exc_info=True)
             return None
 
-    async def expiries(self, underlying: str) -> dict:
+    async def expiries(self, underlying: str, *, far: tuple[int, int] | None = None) -> dict:
+        """The picker's expiry strip; with `far` = (lo_days, hi_days), the
+        expiries in that window beyond the strip (where a LEAPS lives)
+        appended -- fetched only then, and only for that window, since a
+        liquid name lists thousands of far contracts."""
         try:
             spot, expiries = await self._source.expiries(underlying)
+            if far is not None:
+                listed = {e.expiry for e in expiries}
+                expiries = [*expiries, *(e for e in await self.far_expiries(underlying, far[0], far[1]) if e.expiry not in listed)]
         except LookupError as exc:
             raise OrderRejected(str(exc), field="underlying") from exc
         return {
@@ -225,6 +233,15 @@ class OptionsService:
             "spot": spot,
             "expiries": [e.to_dict() for e in expiries],
         }
+
+    async def far_expiries(self, underlying: str, lo_days: int, hi_days: int) -> list:
+        """The far strip's ExpiryInfos `lo_days`..`hi_days` out; empty when
+        the source has none (a replay)."""
+        fetch = getattr(self._source, "far_expiries", None)
+        if fetch is None or hi_days < lo_days:
+            return []
+        _spot, expiries = await fetch(underlying, lo_days, hi_days)
+        return list(expiries)
 
     async def chain(self, underlying: str, expiry) -> Chain:
         try:
@@ -235,6 +252,24 @@ class OptionsService:
     async def spreads(self) -> list[SpreadGroup]:
         positions = _plain(await asyncio.to_thread(self._trading.get_all_positions)) or []
         return group_spreads(positions, account=self._account, equity_positions=positions)
+
+    async def _long_call_cover(self, underlying: str, strike: float, expiry: date) -> int:
+        """Long calls held on `underlying` that cover a short call at
+        `strike` / `expiry`: a lower-or-equal strike and a later-or-equal
+        expiry, in contracts. Short calls already written against them are
+        not subtracted -- the playbooks never write twice, and the broker
+        refuses a truly naked call itself."""
+        contracts = 0
+        for p in await self.marked_positions():
+            qty = _number(p.get("qty")) or 0.0
+            if qty <= 0:
+                continue
+            parsed = try_parse_occ(str(p.get("symbol") or ""))
+            if parsed is None or parsed.underlying != underlying.upper() or parsed.kind != "call":
+                continue
+            if parsed.strike <= strike + 1e-9 and parsed.expiry >= expiry:
+                contracts += int(round(qty))
+        return contracts
 
     async def _shares_held(self, underlying: str) -> int:
         positions = _plain(await asyncio.to_thread(self._trading.get_all_positions)) or []
@@ -344,11 +379,21 @@ class OptionsService:
         # a clear number beats its message.
         coverage: Coverage | None = None
         if ticket.strategy == "covered_call":
-            have = await self._shares_held(ticket.underlying)
+            shares = await self._shares_held(ticket.underlying)
             need = 100 * ticket.qty
-            coverage = Coverage(kind="shares", have=have, need=need, ok=have >= need)
-            if not coverage.ok:
-                warnings.append(f"Covered call needs {need} shares of {ticket.underlying.upper()}; {have} held.")
+            if shares >= need:
+                coverage = Coverage(kind="shares", have=shares, need=need, ok=True)
+            else:
+                # The poor man's cover: a long call at or below the strike
+                # that expires no earlier stands in for 100 shares.
+                calls = await self._long_call_cover(ticket.underlying, ticket.strikes[0], ticket.expiry)
+                have = shares + 100 * calls
+                coverage = Coverage(kind="cover" if calls else "shares", have=have, need=need, ok=have >= need)
+                if not coverage.ok:
+                    warnings.append(
+                        f"Covered call needs {need} shares of {ticket.underlying.upper()}, or a longer-dated call at or "
+                        f"below {ticket.strikes[0]:g} per contract; {shares} shares and {calls} such call{'s' if calls != 1 else ''} held."
+                    )
         elif ticket.strategy == "cash_secured_put":
             have = _number(account.get("buying_power")) or 0.0
             need = ticket.strikes[0] * 100 * ticket.qty

@@ -52,6 +52,9 @@ Intent = Literal["buy_to_open", "sell_to_open", "buy_to_close", "sell_to_close"]
 SINGLE_LEG_STRATEGIES: frozenset[str] = frozenset({"long_call", "long_put", "covered_call", "cash_secured_put"})
 # Sold against held shares / cash rather than against another contract.
 INCOME_STRATEGIES: frozenset[str] = frozenset({"covered_call", "cash_secured_put"})
+# What a roll may open: the income shapes, and an outright long (a LEAPS
+# rolled out to a later expiry).
+ROLL_OPEN_STRATEGIES: frozenset[str] = frozenset({"covered_call", "cash_secured_put", "long_call", "long_put"})
 # Two expiries: the short leg in the nearer one.
 TIME_STRATEGIES: frozenset[str] = frozenset({"calendar", "diagonal"})
 # Strategies described by an explicit `legs` list rather than strike fields.
@@ -386,7 +389,10 @@ class SpreadLeg(BaseModel):
 class Coverage(BaseModel):
     """What a covered call / cash-secured put is written against."""
 
-    kind: Literal["shares", "cash"]
+    kind: Literal["shares", "cash", "cover"]
+    # shares: 100 per contract held outright. cash: buying power for the
+    # strike. cover: shares plus long calls at or below the strike expiring
+    # no earlier (the poor man's cover), in share equivalents.
     have: float
     need: float
     ok: bool
@@ -498,8 +504,9 @@ class RollRequest(BaseModel):
     neither; Alpaca gets two orders in sequence (see OptionsService.roll).
 
     `close` names the held leg(s) as a close would; `open` is an ordinary
-    ticket for the new leg (a cash-secured put or covered call for now:
-    the shapes a wheel rolls). `limit_net` is the net per package the roll
+    ticket for the new leg: a cash-secured put or covered call (the shapes
+    a wheel rolls), or a long call / long put (a poor man's wheel rolling
+    its LEAPS out). `limit_net` is the net per package the roll
     must achieve, read with `limit_direction` -- a credit at least this
     large, or a debit at most this large; None fills at the natural in the
     simulation and lets each Alpaca order carry its own limit."""
@@ -517,8 +524,8 @@ class RollRequest(BaseModel):
         parsed = try_parse_occ(self.close.legs[0].symbol)
         if parsed is None or parsed.underlying != self.open.underlying.upper():
             raise ValueError("the closed and the opened legs must share the underlying")
-        if self.open.strategy not in INCOME_STRATEGIES:
-            raise ValueError("a roll opens a cash-secured put or a covered call")
+        if self.open.strategy not in ROLL_OPEN_STRATEGIES:
+            raise ValueError("a roll opens a cash-secured put, a covered call, or a long call/put")
         if (self.limit_net is None) != (self.limit_direction is None):
             raise ValueError("limit_net and limit_direction go together")
         return self
