@@ -216,16 +216,24 @@ class OptionsService:
             logger.debug("No spot for %s", underlying, exc_info=True)
             return None
 
-    async def expiries(self, underlying: str, *, far: tuple[int, int] | None = None) -> dict:
-        """The picker's expiry strip; with `far` = (lo_days, hi_days), the
-        expiries in that window beyond the strip (where a LEAPS lives)
-        appended -- fetched only then, and only for that window, since a
-        liquid name lists thousands of far contracts."""
+    async def expiries(self, underlying: str, *, far: tuple[int, int] | None = None, board: bool = False) -> dict:
+        """The picker's expiry strip. With `board`, every listed expiry
+        beyond it (out to about three years, learned from the strikes
+        nearest the spot) is appended -- what the expiry axis draws. With
+        `far` = (lo_days, hi_days), the expiries in that window beyond the
+        strip are appended instead, with their full contract counts."""
         try:
             spot, expiries = await self._source.expiries(underlying)
+            extra = []
+            if board:
+                fetch = getattr(self._source, "board_expiries", None)
+                if fetch is not None:
+                    _spot, extra = await fetch(underlying)
             if far is not None:
+                extra = [*extra, *(await self.far_expiries(underlying, far[0], far[1]))]
+            if extra:
                 listed = {e.expiry for e in expiries}
-                expiries = [*expiries, *(e for e in await self.far_expiries(underlying, far[0], far[1]) if e.expiry not in listed)]
+                expiries = [*expiries, *(e for e in sorted(extra, key=lambda e: e.expiry) if e.expiry not in listed and not listed.add(e.expiry))]
         except LookupError as exc:
             raise OrderRejected(str(exc), field="underlying") from exc
         return {

@@ -52,6 +52,12 @@ STRIKE_PCT_RANGE = 0.10
 FAR_DAYS_AHEAD = 800
 FAR_STRIKE_BELOW = 0.35
 FAR_STRIKE_ABOVE = 0.05
+# The expiry board: every listed expiry out to BOARD_DAYS_AHEAD, learned
+# from the contracts in a sliver of strikes around the spot -- one or two
+# strikes a side, so a name with weeklies and LEAPS comes back in a page.
+# The dates are what the strip draws; a chain is fetched when one is picked.
+BOARD_DAYS_AHEAD = 1000
+BOARD_STRIKE_PCT = 0.015
 _CONTRACTS_PAGE_LIMIT = 1000
 _MAX_CONTRACT_PAGES = 20
 
@@ -176,6 +182,7 @@ class ChainCache:
         self._now = now
         self._contracts: dict[str, _Entry] = {}
         self._far: dict[tuple[str, str, str], _Entry] = {}
+        self._board: dict[str, _Entry] = {}
         self._chains: dict[tuple[str, str], _Entry] = {}
         self._locks: dict[object, asyncio.Lock] = {}
 
@@ -194,6 +201,7 @@ class ChainCache:
         self._contracts.pop(underlying, None)
         for key in [k for k in self._far if k[0] == underlying]:
             self._far.pop(key, None)
+        self._board.pop(underlying, None)
         for key in [k for k in self._chains if k[0] == underlying]:
             self._chains.pop(key, None)
 
@@ -247,6 +255,34 @@ class ChainCache:
             expiries = expiries_from_contracts(contracts.values(), today)
             value = (spot, contracts, expiries)
             self._far[key] = _Entry(self._now(), value)
+            return value
+
+    async def board_expiries(self, underlying: str) -> tuple[float, list[ExpiryInfo]]:
+        """(spot, expiries) beyond the picker's window out to
+        BOARD_DAYS_AHEAD, from the strikes nearest the spot only. Cached as
+        long as the near strip. The contract counts are those of the sliver,
+        not of the expiry."""
+        underlying = underlying.upper()
+        async with self._lock(("board", underlying)):
+            entry = self._board.get(underlying)
+            if entry is not None and self._now() - entry.fetched_at < CONTRACTS_TTL_SECONDS:
+                return entry.value  # type: ignore[return-value]
+            spot = await self._spot_fn(underlying)
+            if spot is None or spot <= 0:
+                raise LookupError(f"No price for {underlying}")
+            today = datetime.now(timezone.utc).date()
+            half = max(spot * BOARD_STRIKE_PCT, 1.0)
+            contracts = await fetch_contracts(
+                self._clients,
+                underlying,
+                today + timedelta(days=CHAIN_DAYS_AHEAD + 1),
+                today + timedelta(days=BOARD_DAYS_AHEAD),
+                round(spot - half, 2),
+                round(spot + half, 2),
+            )
+            expiries = expiries_from_contracts(contracts.values(), today)
+            value = (spot, expiries)
+            self._board[underlying] = _Entry(self._now(), value)
             return value
 
     async def far_expiries(self, underlying: str, lo_days: int, hi_days: int) -> tuple[float, list[ExpiryInfo]]:

@@ -6,7 +6,7 @@ interface OptionsHelpProps {
 }
 
 /** Every term on the Options widget, in the order the eye meets them:
- * header, expiry strip, chain, ticket, risk chart, Open spreads, Idea. A
+ * header, expiry axis, chain, ticket, risk chart, Open spreads, Idea. A
  * reference for the reader who knows what an iron condor is but not what
  * this widget means by Width, Short Δ or Min credit. The mechanics it
  * describes live in SpreadTicket, legPicker and app/options; keep the
@@ -45,23 +45,34 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dd>This page.</dd>
         </dl>
 
-        <h3>Expiry strip</h3>
+        <h3>Expiry axis</h3>
         <dl>
-          <dt>4 Sep 0d, 8 Sep 4d, …</dt>
+          <dt>Sep · Oct · … · Jan '27 · … · Dec '28</dt>
           <dd>
-            Every listed expiration within the next ~60 days, with days to expiry. Click one to load its chain; [ and
-            ] step through them. 0d is a contract expiring today: no greeks from the feed, fastest time decay.
+            The whole board on one line: a band of months, the listed days beneath as chips, out to the LEAPS two
+            or three years off. The pressed chip is the ticket's expiry; click another to load its chain, [ and ]
+            step through them, and the head shows its days to expiry. A chip expiring today has no greeks from the
+            feed and the fastest time decay. Hover a chip for the weekday, the year and the contract count. When
+            the axis is wider than the panel, drag it sideways or roll the wheel over it.
+          </dd>
+          <dt>Two legs</dt>
+          <dd>
+            A calendar or diagonal marks its long leg's expiry in purple next to the short leg's blue, and the head
+            shows both (33d · 75d). A click moves the leg being picked (the one whose strike you last clicked on
+            the rail); ⇧-click moves the other. The far expiries' quotes are fetched when one is picked, so the
+            first click on a LEAPS date takes a moment longer.
           </dd>
         </dl>
 
-        <h3>Events on the strip</h3>
+        <h3>Events on the axis</h3>
         <dl>
           <dt>E · FOMC · CPI …</dt>
           <dd>
-            A red <strong>E</strong> marks the first expiry held through the next earnings report, a purple tag the
-            first expiry held through a scheduled US release (FOMC decision, CPI, payrolls, PCE, GDP).
-            Every later expiry is held through the same event; the mark sits where it enters the strip. Dates come
-            from FMP; without a key nothing is marked, which means "not known", not "nothing scheduled".
+            A red dot under a chip marks the first expiry held through the next earnings report, a purple dot the
+            first expiry held through a scheduled US release (FOMC decision, CPI, payrolls, PCE, GDP); hover the
+            chip to read which. Every later expiry is held through the same event; the mark sits where it enters
+            the axis. Dates come from FMP; without a key nothing is marked, which means "not known", not "nothing
+            scheduled".
           </dd>
           <dt>The line below</dt>
           <dd>
@@ -79,7 +90,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
         <dl>
           <dt>Ticks · spot</dt>
           <dd>
-            The rail under the expiry strip is the chain's price axis: one tick per listed strike, the ends labelled,
+            The rail under the expiry axis is the chain's price axis: one tick per listed strike, the ends labelled,
             the spot marked in amber. It shows the expiry the chain shows.
           </dd>
           <dt>Handles</dt>

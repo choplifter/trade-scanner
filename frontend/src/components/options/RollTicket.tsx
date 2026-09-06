@@ -122,9 +122,9 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
       return;
     }
     let cancelled = false;
-    // A long leg (a LEAPS) rolls out beyond the picker's window: the far
-    // strip is fetched for it, from just past the strip to two years out.
-    getExpiries(group.underlying, long ? { from: 61, to: 750 } : undefined)
+    // A long leg (a LEAPS) rolls out beyond the picker's window: the whole
+    // board is listed for it.
+    getExpiries(group.underlying, { board: long })
       .then((res) => {
         if (cancelled) return;
         setExpiries(res.expiries);

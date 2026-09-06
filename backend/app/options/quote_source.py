@@ -76,6 +76,10 @@ class LiveQuoteSource:
         (see ChainCache.far_contracts)."""
         return await self._chain_cache.far_expiries(underlying, lo_days, hi_days)
 
+    async def board_expiries(self, underlying: str) -> tuple[float, list[ExpiryInfo]]:
+        """Every expiry beyond the picker's window (see ChainCache.board_expiries)."""
+        return await self._chain_cache.board_expiries(underlying)
+
     async def chain(self, underlying: str, expiry: date) -> Chain:
         return await self._chain_cache.chain(underlying, expiry)
 

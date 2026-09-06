@@ -3,7 +3,6 @@ import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 
 import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, clampShortTarget, getSettings, updateSettings } from "../../api/settings";
 import { modeBadge, setTradingMode, type TradingMode } from "../../api/tradingMode";
-import { useDragScroll } from "../../hooks/useDragScroll";
 import { useOptionChain } from "../../hooks/useOptionChain";
 import { useOptionEvents } from "../../hooks/useOptionEvents";
 import { useOptionsIdeas } from "../../hooks/useOptionsIdeas";
@@ -23,10 +22,11 @@ import {
 } from "../../types/options";
 import { atmIv } from "../../utils/atmIv";
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
-import { formatExpiry, weekdayOf, type ParsedOcc } from "../../utils/occ";
+import type { ParsedOcc } from "../../utils/occ";
 import { formatDateTime } from "../../utils/time";
 import type { LoadableStructure } from "../../types/options";
 import { AiIdeaTab } from "./AiIdeaTab";
+import { ExpiryAxis } from "./ExpiryAxis";
 import { OptimizerTab } from "./OptimizerTab";
 import { earningsSentence, eventMarks, ivRankSentence, ivTone, macroInWindow, macroSentence } from "./eventMarks";
 import { subscribeOptimizerIntent, type OptimizerIntent } from "./optimizerIntent";
@@ -131,9 +131,6 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const badge = modeBadge(mode);
   const replayFeed = spreads.account?.feed === "replay";
   const { chain, expiries, expiry, setExpiry } = chainState;
-  // The strip overflows once the far expiries are in: drag it like a
-  // chart's time axis, or roll the wheel over it.
-  const expiryDrag = useDragScroll<HTMLDivElement>();
   // What the expiries are held through (earnings, FOMC, CPI) and where the
   // chain's ATM IV sits in its history; the strip and the Optimizer show it.
   const eventsState = useOptionEvents(symbol, atmIv(chain), expiries.find((e) => e.expiry === chain?.expiry)?.dte ?? null);
@@ -555,37 +552,20 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
         ) : (
           <>
-            <div className="expiry-strip timeframe-selector" {...expiryDrag}>
-              {expiries.map((e) => (
-                <button
-                  key={e.expiry}
-                  type="button"
-                  className="timeframe-button"
-                  aria-pressed={e.expiry === expiry}
-                  onClick={() => setExpiry(e.expiry)}
-                  title={[
-                    `${e.expiry} · ${e.contract_count} contracts${isTime ? " (short leg)" : ""}`,
-                    marks.get(e.expiry)?.earnings && events?.earnings?.report_date
-                      ? `first expiry held through earnings on ${formatExpiry(events.earnings.report_date)}`
-                      : null,
-                    ...(marks.get(e.expiry)?.macro ?? []).map((m) => `${m.label} ${formatExpiry(m.date)} (${m.event})`),
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                >
-                  <small>{weekdayOf(e.expiry)}</small> {formatExpiry(e.expiry)} <small>{e.dte}d</small>
-                  {marks.get(e.expiry)?.earnings && <span className="expiry-mark earnings">E</span>}
-                  {marks.get(e.expiry)?.macro.map((m) => (
-                    <span key={`${m.date}-${m.label}`} className="expiry-mark macro">
-                      {m.label}
-                    </span>
-                  ))}
-                </button>
-              ))}
-              {mode !== "live" && (
-                <span className="order-hint">[ ] expiry · 5–9 strategy · + − width · drag a leg on the rail, ⇧ moves all</span>
-              )}
-            </div>
+            <ExpiryAxis
+              expiries={expiries}
+              expiry={expiry}
+              longExpiry={isTime ? longChainState.expiry : null}
+              picking={picking}
+              marks={marks}
+              earningsDate={events?.earnings?.report_date ?? null}
+              onSelect={setExpiry}
+              onSelectLong={(value) => {
+                manualRef.current = false;
+                longChainState.setExpiry(value);
+              }}
+              hint={mode !== "live" ? "[ ] expiry · 5–9 strategy · + − width · drag a leg on the rail, ⇧ moves all" : null}
+            />
             {events && (events.earnings || events.macro.length > 0 || events.iv.atm_iv != null) && (
               <div className="expiry-events order-hint">
                 {events.earnings && (

@@ -93,13 +93,18 @@ async def options_account(request: Request, service: OptionsService = Depends(_s
 
 @router.get("/expiries/{underlying}")
 async def expiries(
-    underlying: str, request: Request, far_from: int | None = None, far_to: int | None = None, service: OptionsService = Depends(_service)
+    underlying: str,
+    request: Request,
+    far_from: int | None = None,
+    far_to: int | None = None,
+    board: bool = False,
+    service: OptionsService = Depends(_service),
 ) -> dict:
-    """The expiry strip; `far_from`/`far_to` (days out) append the expiries
-    in that window beyond the picker's (a LEAPS ticket, a long call's roll)."""
+    """The expiry strip; `board=true` appends every listed expiry beyond it
+    (the axis), `far_from`/`far_to` (days out) the expiries in that window."""
     try:
         far = (far_from, far_to) if far_from is not None and far_to is not None else None
-        return await service.expiries(underlying.upper(), far=far)
+        return await service.expiries(underlying.upper(), far=far, board=board)
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:

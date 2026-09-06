@@ -50,7 +50,7 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
     if (!underlying || !enabled) return;
     cancelledRef.current = false;
     setLoading(true);
-    getExpiries(underlying)
+    getExpiries(underlying, { board: true })
       .then((res) => {
         if (cancelledRef.current) return;
         setExpiries(res.expiries);
@@ -110,7 +110,7 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
       if (!underlying) return false;
       if (expiries.some((e) => e.expiry === wanted)) return true;
       const dte = daysUntil(wanted);
-      const res = await getExpiries(underlying, { from: dte, to: dte });
+      const res = await getExpiries(underlying, { far: { from: dte, to: dte } });
       if (cancelledRef.current) return false;
       const merged = [...expiries];
       for (const e of res.expiries) {

@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+import pytest
 from alpaca.trading.enums import ContractType
 
 from app.options.chain import (
@@ -234,3 +235,24 @@ def test_chain_cache_serves_a_far_expiry_from_the_far_strip():
     asyncio.run(cache.chain("SPY", date(2027, 12, 17)))
     assert len(clients.trading.requests) == before
     assert clients.trading.requests[-1].expiration_date_gte == "2027-12-17" and clients.trading.requests[-1].expiration_date_lte == "2027-12-17"
+
+
+def test_the_board_lists_far_expiries_from_a_sliver_of_strikes():
+    clients = _FakeClients()
+    clients.trading = _FarTrading()
+
+    async def spot(_symbol):
+        return 750.0
+
+    cache = ChainCache(clients, spot)
+    _spot, board = asyncio.run(cache.board_expiries("SPY"))
+    assert [e.expiry for e in board] == [date(2027, 12, 17)]
+    request = clients.trading.requests[-1]
+    # A sliver around the spot (1.5 % a side), from just past the strip out to the LEAPS.
+    assert float(request.strike_price_gte) == pytest.approx(738.75) and float(request.strike_price_lte) == pytest.approx(761.25)
+    assert date.fromisoformat(request.expiration_date_gte) > EXPIRY
+    assert (date.fromisoformat(request.expiration_date_lte) - date.fromisoformat(request.expiration_date_gte)).days > 900
+    # Cached: a second ask fetches nothing.
+    before = len(clients.trading.requests)
+    asyncio.run(cache.board_expiries("SPY"))
+    assert len(clients.trading.requests) == before

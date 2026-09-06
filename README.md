@@ -622,7 +622,7 @@ past dates.
   and Simulation -- in Simulation mode the dashboard's own options book
   fills the orders, live or at the replayed moment of a history replay).
   Pick a symbol
-  anywhere and the widget loads its expiries (next 60 days, with DTE) and
+  anywhere and the widget loads its expiry board (the whole board, with DTE) and
   the **option chain** for the selected one — calls left, puts right, OI /
   IV / delta / bid / mid / ask per side, in-the-money shading, a spot
   divider row the table scrolls to, greeks shown as "—" where Alpaca has
@@ -986,16 +986,28 @@ open positions in brackets), and on the right the account's options
 buying power, level and feed. Pick a symbol anywhere (scanner, watchlist,
 news feed, a dropped row) and the widget loads that underlying.
 
-The **expiry strip** lists every expiration within the next 60 days with
-its days-to-expiry (`0d`, `1d`, `5d` …) and, on hover, the number of
-contracts. The first expiry with at least one day left is preselected, so a
-0DTE is a deliberate click. Contracts are fetched once per underlying and
-cached for five minutes; the selected expiry's quotes refresh every 15 s
-(server-side cache of 15 s, so two viewers share one fetch).
+The **expiry axis** (`components/options/ExpiryAxis.tsx`) draws the whole
+board on one line the way a strategy builder does: a band of months, the
+listed days beneath as chips, out to the LEAPS two or three years off. The
+pressed chip is the ticket's expiry (its days-to-expiry in the head); a
+calendar's or diagonal's long leg is marked in purple and the head shows
+both DTEs; a click moves the leg being picked, ⇧-click the other. Hover a
+chip for weekday, year and contract count. The first expiry with at least
+a day left is preselected, so a 0DTE is a deliberate click. The near strip
+(60 days, ±10 % of spot) is fetched once per underlying and cached for five
+minutes; the board beyond it comes from one more contracts call over a
+sliver of strikes around the spot (`ChainCache.board_expiries`,
+`?board=true`), cached the same, and a far expiry's chain is fetched when
+one is picked (`far_contracts`, that one expiry, a wider band below the
+spot). The selected expiry's quotes refresh every 15 s (server-side cache
+of 15 s, so two viewers share one fetch). When the axis is wider than the
+panel it is dragged sideways (`hooks/useDragScroll.ts`) or scrolled with
+the wheel.
 
-**Events on the strip.** A red `E` marks the first expiry held through the
-next earnings report, a purple tag (`FOMC`, `CPI`, `NFP`, `PCE`,
-`GDP`) the first expiry held through a scheduled US release; the line
+**Events on the axis.** A red dot marks the first expiry held through the
+next earnings report, a purple dot the first expiry held through a
+scheduled US release (`FOMC`, `CPI`, `NFP`, `PCE`, `GDP`; hover the chip
+to read which); the line
 beneath gives the report date, the stock's typical move over its past
 reports (median of the close-to-close move from the close before each
 report date to the first close after it -- two sessions, because FMP's
@@ -1743,7 +1755,7 @@ day, which is how you rehearse a strategy at the weekend.
   of decay), each cell the model P/L there with the IV slider applied,
   coloured on the app's heatmap scale, with a $ / % of risk switch. The
   Time slider hides in table view because the columns are its axis.
-- **The strike rail.** Between the expiry strip and the chain: a tick per
+- **The strike rail.** Between the expiry axis and the chain: a tick per
   listed strike, the spot marked, one draggable handle per leg coloured
   like the chain's cells. A drag snaps to the nearest strike quoted for
   that leg's kind and goes through `legPicker.moveLeg`, which repairs the
@@ -1753,7 +1765,7 @@ day, which is how you rehearse a strategy at the weekend.
   whole strikes with the offsets kept (`shiftLegs`; it stops at the chain's
   edge rather than bunching), arrow keys nudge a focused handle, Shift +
   arrows all of them. Like a click, a drag switches the auto-pick off. The **?** button in the widget header
-  opens a reference for every term on the widget, from the expiry strip to
+  opens a reference for every term on the widget, from the expiry axis to
   Min credit, Mid/Natural and the sliders, plus one entry per strategy:
   what is held, debit or credit, where it makes and loses money at expiry,
   what it is usually for, what to watch, and the options level it needs.

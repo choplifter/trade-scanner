@@ -75,11 +75,19 @@ export function getOptionsAccount(): Promise<OptionsAccountResponse> {
   return getJson<OptionsAccountResponse>(tradingPath("/trading/options/account"));
 }
 
-/** The expiry strip; `far` = {from, to} in days out appends the expiries in
- * that window beyond the picker's (a LEAPS ticket, a long call's roll) --
- * a heavier fetch, asked for only when one is needed and only that wide. */
-export function getExpiries(underlying: string, far?: { from: number; to: number }): Promise<ExpiriesResponse> {
-  const query = far ? `?far_from=${Math.max(0, Math.floor(far.from))}&far_to=${Math.max(0, Math.floor(far.to))}` : "";
+/** The expiry strip. `board` appends every listed expiry beyond it (out to
+ * about three years, from the strikes nearest the spot -- what the expiry
+ * axis draws); `far` = {from, to} in days out appends the expiries in that
+ * window with their full contract counts (a LEAPS ticket, a long call's
+ * roll). */
+export function getExpiries(underlying: string, opts: { far?: { from: number; to: number }; board?: boolean } = {}): Promise<ExpiriesResponse> {
+  const params = new URLSearchParams();
+  if (opts.far) {
+    params.set("far_from", String(Math.max(0, Math.floor(opts.far.from))));
+    params.set("far_to", String(Math.max(0, Math.floor(opts.far.to))));
+  }
+  if (opts.board) params.set("board", "true");
+  const query = params.size ? `?${params.toString()}` : "";
   return getJson<ExpiriesResponse>(tradingPath(`/trading/options/expiries/${encodeURIComponent(underlying)}${query}`));
 }
 
