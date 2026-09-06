@@ -3,6 +3,7 @@ import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 
 import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, clampShortTarget, getSettings, updateSettings } from "../../api/settings";
 import { modeBadge, setTradingMode, type TradingMode } from "../../api/tradingMode";
+import { useDragScroll } from "../../hooks/useDragScroll";
 import { useOptionChain } from "../../hooks/useOptionChain";
 import { useOptionEvents } from "../../hooks/useOptionEvents";
 import { useOptionsIdeas } from "../../hooks/useOptionsIdeas";
@@ -130,6 +131,9 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const badge = modeBadge(mode);
   const replayFeed = spreads.account?.feed === "replay";
   const { chain, expiries, expiry, setExpiry } = chainState;
+  // The strip overflows once the far expiries are in: drag it like a
+  // chart's time axis, or roll the wheel over it.
+  const expiryDrag = useDragScroll<HTMLDivElement>();
   // What the expiries are held through (earnings, FOMC, CPI) and where the
   // chain's ATM IV sits in its history; the strip and the Optimizer show it.
   const eventsState = useOptionEvents(symbol, atmIv(chain), expiries.find((e) => e.expiry === chain?.expiry)?.dte ?? null);
@@ -551,7 +555,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           <div className="widget-empty">Select a symbol in a scanner or the watchlist to load its option chain.</div>
         ) : (
           <>
-            <div className="expiry-strip timeframe-selector">
+            <div className="expiry-strip timeframe-selector" {...expiryDrag}>
               {expiries.map((e) => (
                 <button
                   key={e.expiry}

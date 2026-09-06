@@ -2863,6 +2863,27 @@ a.news-feed-headline:hover {
   align-items: center;
   gap: 4px;
   padding-bottom: 2px;
+  /* Dragged sideways like a chart's time axis (useDragScroll). */
+  cursor: grab;
+  scrollbar-width: thin;
+  touch-action: pan-y;
+}
+
+.expiry-strip.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* The buttons keep their width so the strip overflows and scrolls rather
+   than squeezing every expiry onto two lines. */
+.expiry-strip .timeframe-button,
+.expiry-strip .order-hint {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.expiry-strip.dragging .timeframe-button {
+  pointer-events: none;
 }
 
 .expiry-strip small {
