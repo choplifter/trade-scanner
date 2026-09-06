@@ -4583,6 +4583,26 @@ td.chain-side.chain-stale {
   white-space: nowrap;
 }
 
+/* --- Roll ticket ---------------------------------------------------------- */
+
+.roll-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin-bottom: 6px;
+}
+
+.roll-column select {
+  font-size: 12px;
+  max-width: 100%;
+}
+
+@media (max-width: 520px) {
+  .roll-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* --- Events: earnings / macro marks on expiries, IV-rank light ----------- */
 
 .opt-tab,

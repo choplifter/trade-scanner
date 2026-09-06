@@ -403,6 +403,45 @@ export interface ClosePreview {
   alpaca_limit_price: number;
 }
 
+/** Close a held leg and open its replacement as one decision -- backend
+ * models.RollRequest. `limit_net` with `limit_direction` is the net per
+ * package the roll must achieve (a credit at least this large, a debit at
+ * most this large); null fills at the natural in the simulation. */
+export interface RollRequest {
+  close: CloseSpreadRequest;
+  open: SpreadTicketRequest;
+  limit_net?: number | null;
+  limit_direction?: SpreadDirection | null;
+  client_order_id?: string | null;
+}
+
+export interface RollNet {
+  direction: SpreadDirection;
+  mid: number;
+  natural: number | null;
+  suggested_limit: number;
+}
+
+export interface RollPreview {
+  close: ClosePreview;
+  open: ResolvedSpread;
+  net: RollNet;
+  /** The new leg's collateral less what the closed leg gives back. */
+  collateral_delta: number;
+  warnings: string[];
+  can_submit: boolean;
+}
+
+/** The simulation books one package (`order`); Alpaca places two orders
+ * and reports the open's refusal in `open_error` when the close went
+ * through alone. */
+export interface RollResponse {
+  order: Order | null;
+  close_order: Order | null;
+  open_order: Order | null;
+  open_error: string | null;
+}
+
 export interface TriggerCreateRequest {
   underlying: string;
   expiry: string;

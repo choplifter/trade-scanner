@@ -22,7 +22,7 @@ from datetime import datetime
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
 from app.options.chain_fetch import ChainCache
-from app.options.models import STRATEGY_LABELS, CloseLeg, CloseSpreadRequest, ResolvedSpread, SpreadTicket
+from app.options.models import STRATEGY_LABELS, CloseLeg, CloseSpreadRequest, ResolvedSpread, RollRequest, SpreadTicket
 from app.options.occ import try_parse_occ
 from app.options.positions import SpreadGroup, group_spreads
 from app.options.pricing import alpaca_limit
@@ -379,6 +379,55 @@ class SimOptionsService(OptionsService):
             as_of=self._as_of(),
         )
         return public_option_order(order)
+
+    async def preview_roll(self, req: RollRequest) -> dict:
+        """As the base preview, with the suggested net at the natural of the
+        combined package -- the price the book fills at -- rather than the
+        mid, for the same reason preview_close does it."""
+        preview = await super().preview_roll(req)
+        natural = preview["net"].get("natural")
+        if natural is not None and natural > 0:
+            preview["net"]["suggested_limit"] = round(natural, 2)
+        return preview
+
+    async def roll(self, req: RollRequest, confirm: str | None = None) -> dict:
+        """A roll as one package: the closing legs and the new leg booked
+        together, so both fill or neither (the book applies every leg of a
+        package in one pass, see SimOptionsBook._fill). The net limit is
+        read against the package's combined natural; with none the roll
+        fills at the natural now. The new leg's coverage is judged with the
+        closing leg's collateral already released -- a put rolled to the
+        same strike needs no new cash."""
+        legs_close, dir_close, mid_close, _nat_close = await self._priced_close(req.close)
+        await self._assert_not_over_closing(legs_close, req.close.qty)
+        resolved = await self.preview(req.open, account=await self._account_after_closing(req.close))
+        if resolved.coverage is not None and not resolved.coverage.ok:
+            raise OrderRejected(
+                f"{STRATEGY_LABELS[req.open.strategy]} is not covered once the old leg is closed: "
+                f"{resolved.coverage.need:,.0f} {resolved.coverage.kind} needed, {resolved.coverage.have:,.0f} available",
+                field="qty",
+            )
+        signed_mid = (mid_close if dir_close == "debit" else -mid_close) + (
+            resolved.net_mid if resolved.direction == "debit" else -resolved.net_mid
+        )
+        direction = req.limit_direction or ("debit" if signed_mid > 0 else "credit")
+        limit = round(req.limit_net, 2) if req.limit_net is not None else None
+        legs = [*legs_close, *resolved.legs]
+        quotes = await self._source.leg_quotes([leg.symbol for leg in legs])
+        order = await self._book.submit(
+            legs=legs,
+            qty=req.close.qty,
+            direction=direction,
+            limit_price=limit,
+            underlying=resolved.underlying,
+            strategy="roll",
+            client_order_id=req.client_order_id,
+            quotes=quotes,
+            now=self._now(),
+            source=self._source.feed,
+            as_of=self._as_of(),
+        )
+        return {"order": public_option_order(order), "close_order": None, "open_order": None, "open_error": None}
 
     async def close_contract(self, symbol: str, qty: int | None = None) -> dict:
         """The positions tab's close button on a held contract."""

@@ -21,6 +21,7 @@ import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import { PayoffChart } from "./PayoffChart";
+import { rollableLeg } from "./RollTicket";
 import { symbolDragProps } from "../../utils/dragSymbol";
 
 interface OpenSpreadsProps {
@@ -35,6 +36,8 @@ interface OpenSpreadsProps {
   onArm: (req: TriggerCreateRequest, confirm?: string) => Promise<unknown>;
   onCancelTrigger: (id: string) => Promise<void>;
   onSelectSymbol?: (symbol: string) => void;
+  /** Opens the roll ticket on a group with a single short leg. */
+  onRoll?: (group: SpreadGroup) => void;
 }
 
 interface PendingClose {
@@ -135,6 +138,7 @@ export function OpenSpreads({
   onArm,
   onCancelTrigger,
   onSelectSymbol,
+  onRoll,
 }: OpenSpreadsProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingClose | null>(null);
@@ -344,6 +348,19 @@ export function OpenSpreads({
                     : "—"}
                 </td>
                 <td className="row-actions">
+                  {onRoll && rollableLeg(group) && (
+                    <button
+                      type="button"
+                      className="row-action"
+                      title="Close this short leg and open its replacement on another expiry or strike as one ticket"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRoll(group);
+                      }}
+                    >
+                      Roll…
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="row-action"

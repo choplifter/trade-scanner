@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.ai.options_suggest import suggest_options_ideas
 from app.options.optimize import OptimizeRequest, optimize_structures
 from app.auth.dependency import get_current_user
-from app.options.models import CloseSpreadRequest, PayoffRequest, SpreadTicket, TriggerCreate
+from app.options.models import CloseSpreadRequest, PayoffRequest, RollRequest, SpreadTicket, TriggerCreate
 from app.options.occ import try_parse_occ
 from app.routers.trading_options import IdeaRequest
 from app.routers.trading_sim import _replay_seam
@@ -236,6 +236,34 @@ async def close_spread(body: CloseSpreadRequest, request: Request, user: dict = 
         logger.exception("Sim spread close failed")
         raise HTTPException(status_code=502, detail="Failed to book the closing order")
     return {"order": order}
+
+
+@router.post("/spreads/roll/preview")
+async def preview_roll(body: RollRequest, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    try:
+        return await (await _service(request, user)).preview_roll(body)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Sim roll preview failed")
+        raise HTTPException(status_code=502, detail="Failed to price the roll")
+
+
+@router.post("/spreads/roll")
+async def roll_spread(body: RollRequest, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """Close a held leg and open its replacement as one package -- both
+    legs fill or neither (see SimOptionsService.roll)."""
+    try:
+        return await (await _service(request, user)).roll(body)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Sim roll failed")
+        raise HTTPException(status_code=502, detail="Failed to book the roll")
 
 
 # --- triggers -----------------------------------------------------------------

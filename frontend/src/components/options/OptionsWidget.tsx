@@ -45,6 +45,7 @@ import {
 import { StrikeRail } from "./StrikeRail";
 import { BrokerMissing } from "../common/BrokerMissing";
 import { OpenSpreads } from "./OpenSpreads";
+import { RollTicket, type RollTarget } from "./RollTicket";
 import { OptionsHelp } from "./OptionsHelp";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
@@ -80,6 +81,10 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // that "Load into ticket" causes.
   const optimizer = useOptionsOptimizer();
   const [helpOpen, setHelpOpen] = useState(false);
+  // The roll ticket: opened from a row's "Roll…" (defaults) or a playbook
+  // proposal (expiry and strike preset). Lives here, above the tabs, so a
+  // roll can be started from any of them.
+  const [rollTarget, setRollTarget] = useState<RollTarget | null>(null);
   // A replay only reaches this widget in Simulation mode: Paper and Live
   // keep showing the real account's chain, which next to a replayed chart
   // reads as "the chain does not move". Say so, and offer the switch.
@@ -434,6 +439,15 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           </button>
         </div>
         <OptionsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+        <RollTicket
+          target={rollTarget}
+          mode={mode}
+          onRolled={() => {
+            setRollTarget(null);
+            spreads.refresh();
+          }}
+          onClose={() => setRollTarget(null)}
+        />
         {spreads.account && (
           <span className="widget-count" title="Options buying power · options trading level · data feed">
             BP {spreads.account.options_buying_power?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? "—"} ·
@@ -468,6 +482,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               onArm={spreads.armTrigger}
               onCancelTrigger={spreads.cancelTrigger}
               onSelectSymbol={onSelectSymbol}
+              onRoll={(group) => setRollTarget({ group })}
             />
           </>
         ) : tab === "idea" ? (

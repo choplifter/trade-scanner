@@ -491,6 +491,39 @@ class CloseSpreadRequest(BaseModel):
         return self
 
 
+class RollRequest(BaseModel):
+    """Close a held leg and open its replacement as one decision: the same
+    contract count out and in, priced as a net (what the roll costs or
+    pays). The simulated book fills it as one package -- both legs or
+    neither; Alpaca gets two orders in sequence (see OptionsService.roll).
+
+    `close` names the held leg(s) as a close would; `open` is an ordinary
+    ticket for the new leg (a cash-secured put or covered call for now:
+    the shapes a wheel rolls). `limit_net` is the net per package the roll
+    must achieve, read with `limit_direction` -- a credit at least this
+    large, or a debit at most this large; None fills at the natural in the
+    simulation and lets each Alpaca order carry its own limit."""
+
+    close: CloseSpreadRequest
+    open: SpreadTicket
+    limit_net: float | None = Field(default=None, gt=0)
+    limit_direction: Direction | None = None
+    client_order_id: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def check_roll(self) -> "RollRequest":
+        if self.close.qty != self.open.qty:
+            raise ValueError("a roll opens as many packages as it closes")
+        parsed = try_parse_occ(self.close.legs[0].symbol)
+        if parsed is None or parsed.underlying != self.open.underlying.upper():
+            raise ValueError("the closed and the opened legs must share the underlying")
+        if self.open.strategy not in INCOME_STRATEGIES:
+            raise ValueError("a roll opens a cash-secured put or a covered call")
+        if (self.limit_net is None) != (self.limit_direction is None):
+            raise ValueError("limit_net and limit_direction go together")
+        return self
+
+
 class PayoffRequest(BaseModel):
     """The risk chart of a held position: its legs as held, how many of the
     package, and the net entry per share (positive was paid)."""

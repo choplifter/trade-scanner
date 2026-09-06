@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from app.ai.options_suggest import suggest_options_ideas
 from app.options.optimize import OptimizeRequest, optimize_structures
 from app.auth.dependency import get_current_user
-from app.options.models import CloseSpreadRequest, PayoffRequest, SpreadTicket, TriggerCreate
+from app.options.models import CloseSpreadRequest, PayoffRequest, RollRequest, SpreadTicket, TriggerCreate
 from app.options.service import OptionsService
 from app.routers.trading import _account, _confirm
 from app.trading.errors import BrokerNotConnected, TradingError
@@ -228,6 +228,36 @@ async def close_spread(body: CloseSpreadRequest, request: Request, service: Opti
         logger.exception("Spread close failed")
         raise HTTPException(status_code=502, detail="Failed to submit the closing order")
     return {"order": order}
+
+
+@router.post("/spreads/roll/preview")
+async def preview_roll(body: RollRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
+    """Both halves of a roll priced together and the net per package -- see
+    OptionsService.preview_roll."""
+    try:
+        return await service.preview_roll(body)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Roll preview failed")
+        raise HTTPException(status_code=502, detail="Failed to price the roll")
+
+
+@router.post("/spreads/roll")
+async def roll_spread(body: RollRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
+    """At Alpaca two orders in sequence, the close then the open; the
+    response carries both and the open's error when it was refused."""
+    try:
+        return await service.roll(body, confirm=_confirm(request))
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Roll failed")
+        raise HTTPException(status_code=502, detail="Failed to submit the roll")
 
 
 # --- underlying-price triggers --------------------------------------------------

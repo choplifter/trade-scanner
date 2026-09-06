@@ -411,6 +411,17 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dd>The position's own price now: the mid of closing it, per share.</dd>
           <dt>Close</dt>
           <dd>Previews the closing package at the current market, then sends it as one order (typed LIVE on Live).</dd>
+          <dt>Roll…</dt>
+          <dd>
+            On a single short leg (a cash-secured put, the call of a covered call): close it and open its replacement
+            on another expiry or strike as one ticket. The new strike defaults to the same strike while it is still
+            out of the money, else the strike nearest 0.30 delta on the new expiry; the net per package is what the
+            roll pays or brings, and the new leg is judged with the old leg's collateral already released, so a put
+            rolled to the same strike needs no new cash. In Simulation the book fills the roll as one package — both
+            legs or neither — at the natural unless a net limit is typed; at Alpaca it is two orders in sequence, and
+            the result says if the second was refused (coverage the broker frees only once the close fills, a limit
+            the market has left).
+          </dd>
           <dt>Triggers</dt>
           <dd>
             Server-side rules that close a position when the underlying crosses a price or the position's own premium

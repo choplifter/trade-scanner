@@ -21,6 +21,7 @@ from app.options.models import (
     Payoff,
     PayoffRequest,
     CloseSpreadRequest,
+    RollRequest,
     ResolvedSpread,
     SpreadLeg,
     SpreadTicket,
@@ -39,7 +40,7 @@ from app.options.pricing import (
     net_price,
     spread_risk,
 )
-from app.trading.errors import OrderRejected, rejection_from_api_error
+from app.trading.errors import OrderRejected, TradingError, rejection_from_api_error
 from app.trading.guards import Account, assert_can_trade, limits_for
 from app.trading.service import OrderService, _number, _plain
 
@@ -98,6 +99,47 @@ def build_single_leg_request(leg: SpreadLeg, qty: int, limit_price: float, clien
         limit_price=round(abs(limit_price), 2),
         **kwargs,
     )
+
+
+
+def released_collateral(legs: list[SpreadLeg], qty: int) -> float:
+    """What closing `legs` gives back to buying power: the strike for a lone
+    short put (a cash-secured put's collateral -- SimOptionsService's
+    collateral_for and Alpaca agree on it), nothing otherwise. A roll's open
+    leg is judged against buying power plus this, so rolling a put to the
+    same strike needs no new cash. Deliberately narrow: the shapes a wheel
+    rolls are single short legs."""
+    if len(legs) != 1:
+        return 0.0
+    leg = legs[0]
+    if leg.kind == "put" and leg.position_intent == "buy_to_close":
+        return round(leg.strike * 100 * qty * int(leg.ratio_qty or 1), 2)
+    return 0.0
+
+
+def roll_net(close: dict, opened: ResolvedSpread) -> dict:
+    """The net of a roll per package from its two halves: what the close
+    costs (positive = pay) plus what the open brings (negative = receive).
+    The natural is reported only when both halves have one and the sum
+    points the same way as the mid; a roll whose mid is a credit but whose
+    natural is a debit has no honest single number for it."""
+    signed_close_mid = close["net_mid"] if close["direction"] == "debit" else -close["net_mid"]
+    signed_open_mid = opened.net_mid if opened.direction == "debit" else -opened.net_mid
+    signed_mid = signed_close_mid + signed_open_mid
+    direction = "debit" if signed_mid > 0 else "credit"
+    natural = None
+    if close.get("net_natural") is not None and opened.net_natural is not None:
+        signed_close_nat = close["net_natural"] if close["direction"] == "debit" else -close["net_natural"]
+        signed_open_nat = opened.net_natural if opened.direction == "debit" else -opened.net_natural
+        signed_nat = signed_close_nat + signed_open_nat
+        if (signed_nat > 0) == (signed_mid > 0) or signed_nat == 0:
+            natural = round(abs(signed_nat), 4)
+    return {
+        "direction": direction,
+        "mid": round(abs(signed_mid), 4),
+        "natural": natural,
+        "suggested_limit": round(abs(signed_mid), 2),
+    }
 
 
 class OptionsService:
@@ -389,6 +431,63 @@ class OptionsService:
             "suggested_limit": suggested,
             "alpaca_limit_price": alpaca_limit(direction, suggested) if suggested > 0 else 0.0,
         }
+
+    async def _account_after_closing(self, req: CloseSpreadRequest) -> dict:
+        """The account as it stands once `req` has closed: the collateral the
+        closing legs hold is given back to buying power, so the leg a roll
+        opens is judged against the cash it will actually have -- a
+        cash-secured put rolled to the same strike needs no new cash."""
+        account = await self.account()
+        released = released_collateral(closing_legs(req.legs), req.qty)
+        if released <= 0:
+            return account
+        bumped = dict(account)
+        for key in ("options_buying_power", "buying_power"):
+            value = _number(account.get(key))
+            if value is not None:
+                bumped[key] = round(value + released, 2)
+        return bumped
+
+    async def preview_roll(self, req: RollRequest) -> dict:
+        """Both halves of a roll priced together: the close as preview_close
+        prices it, the open as preview prices it with the closing legs'
+        collateral already released, and the net per package -- a credit
+        when the new leg brings in more than the old one costs to close."""
+        close = await self.preview_close(req.close)
+        opened = await self.preview(req.open, account=await self._account_after_closing(req.close))
+        net = roll_net(close, opened)
+        warnings = list(opened.warnings)
+        if opened.coverage is not None and not opened.coverage.ok:
+            warnings.append(
+                f"The new leg is not covered: {opened.coverage.need:,.0f} {opened.coverage.kind} needed, "
+                f"{opened.coverage.have:,.0f} available once the old leg is closed."
+            )
+        return {
+            "close": close,
+            "open": opened.model_dump(mode="json"),
+            "net": net,
+            "collateral_delta": round(opened.collateral - released_collateral(closing_legs(req.close.legs), req.close.qty), 2),
+            "warnings": warnings,
+            "can_submit": opened.coverage is None or opened.coverage.ok,
+        }
+
+    async def roll(self, req: RollRequest, confirm: str | None = None) -> dict:
+        """At Alpaca a roll is two orders in sequence: the close, then the
+        open. The second can be refused (coverage the broker only frees
+        once the close fills, a limit the market has left) or the first can
+        rest unfilled; the response reports both orders and the open's
+        error, and the caller says so rather than pretending a package."""
+        assert_can_trade(self._settings, self._account, confirm, live_available=self._live_available)
+        close_order = await self.close_spread(req.close, confirm)
+        try:
+            open_order = await self.submit(req.open, confirm)
+        except TradingError as exc:
+            logger.warning("Roll: close placed, open refused: %s", exc)
+            return {"order": None, "close_order": close_order, "open_order": None, "open_error": str(exc)}
+        except Exception as exc:
+            logger.exception("Roll: close placed, open failed")
+            return {"order": None, "close_order": close_order, "open_order": None, "open_error": str(exc)}
+        return {"order": None, "close_order": close_order, "open_order": open_order, "open_error": None}
 
     # --- writes -------------------------------------------------------------
 

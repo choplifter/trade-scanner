@@ -1207,6 +1207,27 @@ same kind → calendar / diagonal, anything else → **custom**. A lone short co
 quantities are flagged **broken** (the remains of a spread closed one leg
 at a time); **expires today** flags a 0DTE position.
 
+**Roll…** on a row with a single short leg (a cash-secured put, the call
+of a covered call) closes it and opens its replacement on another expiry
+or strike as one ticket (`RollRequest` in `app/options/models.py`: the
+held leg as a close would name it, the new leg as an ordinary income
+ticket, and a net limit read with its direction). The preview
+(`POST /spreads/roll/preview`) prices both halves and the **net per
+package** -- a credit when the new leg brings more than the old costs to
+close (`roll_net`) -- and judges the new leg's coverage with the closed
+leg's collateral already released (`released_collateral`: the strike of a
+lone short put), so a put rolled to the same strike needs no new cash. In
+the simulation `POST /spreads/roll` books the roll as **one package**:
+`SimOptionsBook._fill` applies every leg of a package in one pass, so both
+legs fill or neither, and a net limit the market does not meet leaves the
+whole roll resting (a second roll while it rests is refused as
+over-closing). At Alpaca a roll is two orders in sequence, the close then
+the open; the response carries both and `open_error` when the second was
+refused -- coverage the broker frees only once the close fills, a limit
+the market has left -- and the ticket says so instead of pretending a
+package. The new strike defaults to the same strike while it is still out
+of the money, else the listed strike nearest 0.30 delta on the new expiry.
+
 Columns: account, expiry with DTE, strategy, quantity, **net entry** (per
 share, positive was paid, negative received), mark, P&L. Click a row for
 its legs (each draggable to a chart, each a link to the premium chart)

@@ -26,6 +26,9 @@ import type {
   OptimizeRequest,
   OptimizeResponse,
   OptionEventsResponse,
+  RollPreview,
+  RollRequest,
+  RollResponse,
   UnderlyingTrigger,
 } from "../types/options";
 import type { Order, TradingRejection } from "../types/trading";
@@ -118,6 +121,17 @@ export function cancelOptionOrder(id: string): Promise<{ cancelled: string }> {
 
 export function closeSpread(body: CloseSpreadRequest, confirm?: string): Promise<OrderResponse> {
   return send<OrderResponse>("POST", "/trading/options/spreads/close", body, confirm);
+}
+
+/** Both halves of a roll priced together with the net per package. */
+export function previewRoll(body: RollRequest): Promise<RollPreview> {
+  return send<RollPreview>("POST", "/trading/options/spreads/roll/preview", body);
+}
+
+/** Close a held leg and open its replacement: one package in the
+ * simulation (both legs or neither), two orders in sequence at Alpaca. */
+export function rollSpread(body: RollRequest, confirm?: string): Promise<RollResponse> {
+  return send<RollResponse>("POST", "/trading/options/spreads/roll", body, confirm);
 }
 
 export function getTriggers(): Promise<{ triggers: UnderlyingTrigger[] }> {
