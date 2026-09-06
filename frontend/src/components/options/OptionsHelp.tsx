@@ -572,12 +572,26 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             Contracts; put and call delta; the DTE window to sell into; roll at DTE and take-profit % (a leg is rolled
             to the next expiry in the window once it has earned that share of its credit or has that few days left —
             same strike while out of the money, else the delta strike); avoid earnings (no expiry on or after the
-            next report); a collateral budget per put; call ≥ basis.
+            next report); a collateral budget per put; call ≥ basis; <strong>accept assignment</strong> (on by default:
+            an in-the-money leg near expiry is left to be assigned or called away — the wheel turning — rather than
+            rolled; off rolls it out).
           </dd>
           <dt>From the Positions tab</dt>
           <dd>
             "Wheel…" on a share lot of 100 or more (Simulation) opens this tab with the start form for that symbol:
             the campaign adopts the shares and proposes the first covered call.
+          </dd>
+          <dt>Backtest (synthetic)</dt>
+          <dd>
+            Walks the playbook over up to 24 months of the symbol's daily closes. There are no historical option
+            prices in this app, so each day's chain is <em>built</em>: Black-Scholes on the trailing 20-session
+            realized volatility times an IV-premium factor (1.15 by default — options usually trade above what the
+            stock then realizes), one flat sigma per day, weekly and monthly Fridays, strikes on the exchange grid, a
+            bid/ask of a fixed fraction around the mid, fills at the bid to sell and the ask to buy back, expiries
+            settled by the same table as the simulated book (assignment into shares, calls called away). The equity
+            line is shown against buying the shares outright. It tells you how the rules <em>behave</em> — how often
+            a put is assigned, how many rolls, how long the shares are held, what the premiums add up to — not what
+            they would have earned: no skew, no dividends, no early assignment, European exercise.
           </dd>
         </dl>
 

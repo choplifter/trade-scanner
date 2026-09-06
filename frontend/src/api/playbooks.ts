@@ -6,7 +6,7 @@
  */
 
 import { API_BASE, OrderRejectedError, checkUnauthorized, extractErrorMessage, getJson } from "./http";
-import type { Campaign, CampaignCreate, CampaignPatch, PlaybookScriptsResponse } from "../types/playbooks";
+import type { BacktestRequest, BacktestResult, Campaign, CampaignCreate, CampaignPatch, PlaybookScriptsResponse } from "../types/playbooks";
 import type { TradingRejection } from "../types/trading";
 
 const BASE = "/trading/options/playbooks";
@@ -59,4 +59,10 @@ export function proposeNow(id: string): Promise<Campaign> {
 
 export function addCampaignNote(id: string, note: string): Promise<Campaign> {
   return send<Campaign>("POST", `${BASE}/campaigns/${encodeURIComponent(id)}/note`, { note });
+}
+
+/** Walk a playbook over months of daily closes with synthetic
+ * (Black-Scholes) chains -- how the rules behave, not what they earned. */
+export function runPlaybookBacktest(body: BacktestRequest): Promise<BacktestResult> {
+  return send<BacktestResult>("POST", `${BASE}/backtest`, body);
 }

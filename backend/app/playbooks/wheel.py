@@ -8,6 +8,9 @@ Pure rules over a PlaybookContext, in this order:
      the DTE window -- same strike while it is still out of the money (a
      call also stays at or above the cost basis), else the strike at the
      target delta. No expiry in the window that avoids earnings: hold.
+     An in-the-money leg near expiry is *not* rolled while
+     `accept_assignment` is on: being assigned the shares, or having them
+     called away, is the wheel turning, not a leg in trouble.
   2. Fewer than 100 shares per contract and no short put: sell a put at
      `put_delta`, stepping down while the strike's collateral exceeds the
      budget or the cash available; none fits: hold.
@@ -43,6 +46,10 @@ PARAMS = [
     ParamSpec("avoid_earnings", "bool", True, "Avoid earnings", help="Never sell an expiry held through the next report."),
     ParamSpec("budget", "float", 0.0, "Budget $", min=0, step=500, help="Most collateral per put (strike × 100 × qty); 0 = no cap."),
     ParamSpec("min_call_above_basis", "bool", True, "Call ≥ basis", help="Never sell a call below the cost basis."),
+    ParamSpec(
+        "accept_assignment", "bool", True, "Accept assignment",
+        help="An in-the-money leg near expiry is left to be assigned or called away -- the wheel's turn -- rather than rolled. Off: roll it.",
+    ),
 ]
 
 
@@ -83,11 +90,16 @@ def next_step(ctx: PlaybookContext) -> Action | None:
         else ""
     )
 
-    # 1. Roll what is due.
+    # 1. Roll what is due -- unless it is in the money near expiry and the
+    #    campaign accepts assignment: that is the wheel turning, not a leg
+    #    in trouble. A profit-target roll is by construction out of the money.
     for leg in ctx.open_legs:
         why = _roll_due(ctx, leg)
         if why is None:
             continue
+        if ctx.leg_is_itm(leg) and ctx.param("accept_assignment", True):
+            turn = "assigned into shares" if leg.kind == "put" else "called away"
+            return Hold(f"{leg.occ}: in the money with {leg.dte} day{'s' if leg.dte != 1 else ''} left; left to be {turn} at {leg.strike:g}.")
         later = [e for e in window if e > leg.expiry]
         if not later:
             return Hold(f"{leg.occ}: {why}, but no expiry {ctx.param('min_dte')}–{ctx.param('max_dte')} days out to roll to{earnings_note}.")

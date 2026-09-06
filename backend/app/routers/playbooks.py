@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.dependency import get_current_user
 from app.playbooks import loader
+from app.playbooks.backtest import BacktestRequest, run_backtest
 from app.playbooks.store import ACTIVE, CLOSED, PAUSED, PlaybookStore
 from app.routers.trading_sim_options import _service as _sim_service
 from app.trading.errors import TradingError
@@ -175,6 +176,23 @@ async def propose_now(campaign_id: str, request: Request, user: dict = Depends(g
         logger.exception("Proposal failed for campaign %s", campaign_id)
         raise HTTPException(status_code=502, detail="Failed to compute the proposal")
     return await _with_events(store, await store.get(campaign_id) or campaign)
+
+
+@router.post("/backtest")
+async def backtest(body: BacktestRequest, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """Walk a playbook over months of daily closes with Black-Scholes chains
+    built from realized volatility -- synthetic prices, and the response
+    says so. See app.playbooks.backtest."""
+    clients = getattr(request.app.state, "alpaca_clients", None)
+    if clients is None:
+        raise HTTPException(status_code=503, detail="Market data not configured")
+    try:
+        return await run_backtest(clients, body, earnings_calendar=getattr(request.app.state, "earnings_calendar", None))
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except Exception:
+        logger.exception("Playbook backtest failed for %s", body.symbol)
+        raise HTTPException(status_code=502, detail="Failed to run the backtest")
 
 
 class NoteBody(BaseModel):

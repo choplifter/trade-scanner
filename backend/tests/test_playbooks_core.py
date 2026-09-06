@@ -183,9 +183,13 @@ def test_an_open_leg_is_rolled_at_the_profit_target_or_near_expiry_else_held():
     assert isinstance(action, Roll) and action.new_expiry == E_MID and action.new_strike == 95.0 and action.close_occ == leg.occ
     rendered = render(action, "XYZ")
     assert rendered["roll"]["close"]["legs"] == [{"symbol": leg.occ, "qty": -1}] and rendered["roll"]["open"]["expiry"] == E_MID.isoformat()
-    # In the money and near expiry: re-pick the delta strike on the new expiry.
+    # In the money and near expiry: by default the wheel lets it be assigned
+    # (that is the turn); with accept_assignment off it rolls and re-picks
+    # the delta strike on the new expiry.
     itm = _leg("put", 105.0, E_SHORT, entry=6.0, mark=6.5)
     action = _wheel().next_step(_ctx(legs=[itm], params={"roll_at_dte": 10}))
+    assert isinstance(action, Hold) and "assigned into shares" in action.reason
+    action = _wheel().next_step(_ctx(legs=[itm], params={"roll_at_dte": 10, "accept_assignment": False}))
     assert isinstance(action, Roll) and action.new_strike == 95.0 and "10 days" in action.reason
     # Comfortable leg: hold.
     calm = _leg("put", 95.0, E_LATE, entry=3.0, mark=2.5)

@@ -4827,6 +4827,96 @@ td.chain-side.chain-stale {
   font-size: 11px;
 }
 
+.pb-backtest {
+  margin: 8px 8px 4px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.pb-bt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pb-bt-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 6px 0 2px;
+  color: var(--text-secondary);
+}
+
+.pb-bt-form label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pb-bt-form input[type="number"] {
+  width: 76px;
+  font-size: 11px;
+}
+
+.pb-bt-chart {
+  width: 100%;
+  height: 160px;
+  display: block;
+  margin-top: 4px;
+  border-radius: 4px;
+  background: var(--bg-input, rgba(127, 127, 127, 0.06));
+}
+
+.pb-bt-axis {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.pb-bt-tick {
+  font-size: 9px;
+  fill: var(--text-muted);
+}
+
+.pb-bt-benchmark {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.2;
+}
+
+.pb-bt-equity {
+  fill: none;
+  stroke: var(--pb-call, #1f9d55);
+  stroke-width: 1.6;
+}
+
+.pb-bt-legend {
+  display: flex;
+  gap: 14px;
+  margin: 2px 0 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.pb-bt-legend-equity::before,
+.pb-bt-legend-benchmark::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+  background: var(--text-muted);
+}
+
+.pb-bt-legend-equity::before {
+  background: var(--pb-call, #1f9d55);
+}
+
 /* --- Roll ticket ---------------------------------------------------------- */
 
 .roll-columns {

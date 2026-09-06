@@ -125,3 +125,68 @@ export interface CampaignPatch {
   params?: Record<string, number | boolean>;
   auto_execute?: boolean;
 }
+
+/** POST /playbooks/backtest -- backend app/playbooks/backtest.py. */
+export interface BacktestRequest {
+  symbol: string;
+  playbook: string;
+  params: Record<string, number | boolean>;
+  months: number;
+  iv_premium: number;
+  starting_cash: number;
+  spread_frac: number;
+}
+
+export interface BacktestPoint {
+  date: string;
+  equity: number;
+  benchmark: number;
+  spot: number;
+  shares: number;
+  legs: number;
+}
+
+export interface BacktestEvent {
+  at: string;
+  kind: EventKind;
+  occ: string | null;
+  qty: number;
+  price: number | null;
+  cash_delta: number | null;
+  note: string | null;
+}
+
+export interface BacktestSummary {
+  starting_cash: number;
+  final_equity: number;
+  total_return_pct: number;
+  buy_and_hold_return_pct: number;
+  premiums: number;
+  realized_pnl: number;
+  puts_sold: number;
+  calls_sold: number;
+  rolls: number;
+  assignments: number;
+  called_away: number;
+  expired: number;
+  max_drawdown_pct: number;
+  days_in_shares_pct: number;
+  shares_at_end: number;
+  cost_basis_at_end: number | null;
+}
+
+export interface BacktestResult {
+  symbol: string;
+  playbook: string;
+  params: Record<string, number | boolean>;
+  synthetic: true;
+  iv_premium: number;
+  spread_frac: number;
+  sessions: number;
+  from: string;
+  to: string;
+  equity: BacktestPoint[];
+  events: BacktestEvent[];
+  summary: BacktestSummary;
+  disclaimer: string;
+}

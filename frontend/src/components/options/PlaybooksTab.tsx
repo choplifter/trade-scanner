@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { OrderRejectedError } from "../../api/http";
+import { runPlaybookBacktest } from "../../api/playbooks";
 import type { TradingMode } from "../../api/tradingMode";
 import type { CampaignsActions, CampaignsState } from "../../hooks/useCampaigns";
 import type { LoadableStructure, SpreadGroup } from "../../types/options";
-import type { Campaign, CampaignEvent, ParamSpec, PlaybookScript, Proposal } from "../../types/playbooks";
+import type { BacktestResult, Campaign, CampaignEvent, ParamSpec, PlaybookScript, Proposal } from "../../types/playbooks";
 import { formatMoney } from "../../utils/format";
 import { formatExpiry, formatLeg } from "../../utils/occ";
 import { formatDateTime } from "../../utils/time";
@@ -340,6 +341,202 @@ function CampaignCard({
   );
 }
 
+/** Equity against buy-and-hold over the walk, as a small SVG line chart. */
+function EquityChart({ result }: { result: BacktestResult }) {
+  const W = 600;
+  const H = 160;
+  const PAD = { l: 52, r: 8, t: 8, b: 18 };
+  const pts = result.equity;
+  if (pts.length < 2) return null;
+  const values = pts.flatMap((p) => [p.equity, p.benchmark]);
+  const yMin = Math.min(...values);
+  const yMax = Math.max(...values);
+  const span = yMax - yMin || 1;
+  const x = (i: number) => PAD.l + (i / (pts.length - 1)) * (W - PAD.l - PAD.r);
+  const y = (v: number) => PAD.t + ((yMax - v) / span) * (H - PAD.t - PAD.b);
+  const line = (key: "equity" | "benchmark") => pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(" ");
+  const fmt = (v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toFixed(0));
+  const ticks = [0, Math.floor((pts.length - 1) / 2), pts.length - 1];
+  return (
+    <svg className="pb-bt-chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Equity versus buy and hold">
+      <line className="pb-bt-axis" x1={PAD.l} x2={W - PAD.r} y1={y(result.summary.starting_cash)} y2={y(result.summary.starting_cash)} />
+      <text className="pb-bt-tick" x={PAD.l - 4} y={y(yMax) + 4} textAnchor="end">
+        {fmt(yMax)}
+      </text>
+      <text className="pb-bt-tick" x={PAD.l - 4} y={y(yMin) + 4} textAnchor="end">
+        {fmt(yMin)}
+      </text>
+      <text className="pb-bt-tick" x={PAD.l - 4} y={y(result.summary.starting_cash) + 4} textAnchor="end">
+        {fmt(result.summary.starting_cash)}
+      </text>
+      {ticks.map((i) => (
+        <text key={i} className="pb-bt-tick" x={x(i)} y={H - 4} textAnchor={i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle"}>
+          {formatExpiry(pts[i].date)}
+        </text>
+      ))}
+      <path className="pb-bt-benchmark" d={line("benchmark")} />
+      <path className="pb-bt-equity" d={line("equity")} />
+    </svg>
+  );
+}
+
+/** The synthetic backtest: months of daily closes walked with
+ * Black-Scholes chains on realized volatility. How the rules behave, not
+ * what they earned -- and the panel says so. */
+function BacktestPanel({ symbol, script, params }: { symbol: string | null; script: PlaybookScript | null; params: Record<string, number | boolean> }) {
+  const [months, setMonths] = useState("12");
+  const [ivPremium, setIvPremium] = useState("1.15");
+  const [spread, setSpread] = useState("0.02");
+  const [cash, setCash] = useState("100000");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<BacktestResult | null>(null);
+  const [showEvents, setShowEvents] = useState(false);
+
+  const run = async () => {
+    if (!symbol || !script) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const filled = Object.fromEntries(script.params.map((p) => [p.name, params[p.name] ?? p.default]));
+      setResult(
+        await runPlaybookBacktest({
+          symbol,
+          playbook: script.stem,
+          params: filled,
+          months: Math.max(1, Math.min(24, Math.floor(Number(months)) || 12)),
+          iv_premium: Number(ivPremium) || 1.15,
+          starting_cash: Number(cash) || 100_000,
+          spread_frac: Number(spread) || 0,
+        }),
+      );
+    } catch (err: unknown) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const s = result?.summary;
+  return (
+    <div className="pb-backtest">
+      <div className="pb-bt-head">
+        <button type="button" className="row-action" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          {open ? "Hide backtest" : "Backtest (synthetic)"}
+        </button>
+        <span className="order-hint">
+          Walk the {script?.name ?? "playbook"} over past daily closes with Black-Scholes chains — mechanics, not earnings.
+        </span>
+      </div>
+      {open && (
+        <>
+          <div className="pb-bt-form">
+            <label>
+              Months <input type="number" min={1} max={24} step={1} value={months} onChange={(e) => setMonths(e.target.value)} />
+            </label>
+            <label title="sigma = realized volatility × this factor: options usually trade above what the stock then realizes.">
+              IV premium <input type="number" min={0.5} max={3} step={0.05} value={ivPremium} onChange={(e) => setIvPremium(e.target.value)} />
+            </label>
+            <label title="Bid/ask as a fraction of the mid; fills at the bid to sell and the ask to buy back.">
+              Spread <input type="number" min={0} max={0.2} step={0.01} value={spread} onChange={(e) => setSpread(e.target.value)} />
+            </label>
+            <label>
+              Cash $ <input type="number" min={1000} step={1000} value={cash} onChange={(e) => setCash(e.target.value)} />
+            </label>
+            <button type="button" className="generate-button" disabled={busy || !symbol || !script} onClick={() => void run()}>
+              {busy ? "Walking…" : `Run on ${symbol ?? "—"}`}
+            </button>
+          </div>
+          <p className="order-hint">Uses the parameters in the start form above (or the script's defaults).</p>
+          {error && <p className="order-rejection">{error}</p>}
+          {result && s && (
+            <div className="pb-bt-result">
+              <p className="idea-context">
+                {result.symbol} · {formatExpiry(result.from)} – {formatExpiry(result.to)} · {result.sessions} sessions · IV premium {result.iv_premium}
+              </p>
+              <EquityChart result={result} />
+              <div className="pb-bt-legend">
+                <span className="pb-bt-legend-equity">playbook</span>
+                <span className="pb-bt-legend-benchmark">buy &amp; hold</span>
+              </div>
+              <div className="pb-numbers">
+                <span>
+                  return <strong className={s.total_return_pct >= 0 ? "delta-up" : "delta-down"}>{s.total_return_pct.toFixed(1)} %</strong>
+                </span>
+                <span>
+                  buy &amp; hold <strong className={s.buy_and_hold_return_pct >= 0 ? "delta-up" : "delta-down"}>{s.buy_and_hold_return_pct.toFixed(1)} %</strong>
+                </span>
+                <span>
+                  premiums <strong>{formatMoney(s.premiums)}</strong>
+                </span>
+                <span>
+                  realized <strong>{formatMoney(s.realized_pnl)}</strong>
+                </span>
+                <span>
+                  max drawdown <strong>{s.max_drawdown_pct.toFixed(1)} %</strong>
+                </span>
+                <span>
+                  in shares <strong>{s.days_in_shares_pct.toFixed(0)} %</strong> of days
+                </span>
+              </div>
+              <div className="pb-numbers">
+                <span>
+                  puts sold <strong>{s.puts_sold}</strong>
+                </span>
+                <span>
+                  assigned <strong>{s.assignments}</strong>
+                </span>
+                <span>
+                  calls sold <strong>{s.calls_sold}</strong>
+                </span>
+                <span>
+                  called away <strong>{s.called_away}</strong>
+                </span>
+                <span>
+                  rolls <strong>{s.rolls}</strong>
+                </span>
+                <span>
+                  expired <strong>{s.expired}</strong>
+                </span>
+                {s.shares_at_end > 0 && (
+                  <span>
+                    still holding <strong>{s.shares_at_end}</strong> shares{s.cost_basis_at_end != null ? ` @ basis ${s.cost_basis_at_end.toFixed(2)}` : ""}
+                  </span>
+                )}
+              </div>
+              <button type="button" className="row-action" onClick={() => setShowEvents((v) => !v)}>
+                {showEvents ? "Hide events" : `${result.events.length} events`}
+              </button>
+              {showEvents && (
+                <ul className="pb-events">
+                  {[...result.events].reverse().map((e, i) => (
+                    <li key={`${e.at}-${i}`} className={`pb-event ${e.kind}`}>
+                      <span className="pb-event-at">{formatExpiry(e.at.slice(0, 10))}</span>
+                      <span className="pb-event-kind">{EVENT_LABEL[e.kind] ?? e.kind}</span>
+                      <span className="pb-event-text">
+                        {[
+                          e.occ ? formatLeg(e.occ) : null,
+                          e.kind === "assigned" || e.kind === "called_away" ? `${e.qty > 0 ? "+" : ""}${e.qty} shares at ${e.price?.toFixed(2)}` : e.price != null ? `${e.qty}× at ${e.price.toFixed(2)}` : null,
+                          e.cash_delta ? `${e.cash_delta > 0 ? "+" : ""}${formatMoney(e.cash_delta)}` : null,
+                          e.note,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="idea-disclaimer">{result.disclaimer}</p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /**
  * Campaigns of the playbook scripts (the Wheel first) in the Simulation
  * account: start one on the selected symbol with its parameters, and for
@@ -472,6 +669,7 @@ export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onInten
           />
         ))}
       </ul>
+      <BacktestPanel symbol={symbol} script={script} params={values} />
       <p className="idea-disclaimer">
         A playbook proposes; you place. Cost basis = (average entry × shares − premiums collected) / shares. Nothing here
         is advice.
