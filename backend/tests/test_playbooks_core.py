@@ -177,12 +177,20 @@ def test_with_shares_the_wheel_sells_a_call_at_or_above_the_cost_basis():
 
 
 def test_an_open_leg_is_rolled_at_the_profit_target_or_near_expiry_else_held():
-    # 60 % of the credit earned: roll to the next in-window expiry, same strike (still OTM).
-    leg = _leg("put", 95.0, E_SHORT, entry=2.0, mark=0.8)
+    # 60 % of the credit earned: roll to the next in-window expiry at the
+    # delta strike again -- 90 is far out of the money now, 95 is the 0.30
+    # delta put; the strike follows the stock rather than staying put.
+    leg = _leg("put", 90.0, E_SHORT, entry=2.0, mark=0.8)
     action = _wheel().next_step(_ctx(legs=[leg]))
     assert isinstance(action, Roll) and action.new_expiry == E_MID and action.new_strike == 95.0 and action.close_occ == leg.occ
     rendered = render(action, "XYZ")
     assert rendered["roll"]["close"]["legs"] == [{"symbol": leg.occ, "qty": -1}] and rendered["roll"]["open"]["expiry"] == E_MID.isoformat()
+    # A call rolled at its target is lifted to the cost basis as a fresh one would be.
+    call = _leg("call", 115.0, E_SHORT, entry=2.0, mark=0.8)
+    action = _wheel().next_step(_ctx(shares=100, avg_entry=112.0, premiums=100.0, legs=[call]))
+    assert isinstance(action, Roll) and action.new_strike == 115.0 and "cost basis" in action.reason
+    action = _wheel().next_step(_ctx(shares=100, avg_entry=100.0, premiums=100.0, legs=[call]))
+    assert isinstance(action, Roll) and action.new_strike == 105.0
     # In the money and near expiry: by default the wheel lets it be assigned
     # (that is the turn); with accept_assignment off it rolls and re-picks
     # the delta strike on the new expiry.

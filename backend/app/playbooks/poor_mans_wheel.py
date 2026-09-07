@@ -10,9 +10,9 @@ Pure rules over a PlaybookContext, in this order:
 
   1. A short call that has earned `take_profit_pct` of its credit, or has
      `roll_at_dte` days or fewer left, is rolled to the next expiry in the
-     DTE window (before the LEAPS expires) -- same strike while it is still
-     out of the money and at or above the floor, else the strike at the
-     target delta, lifted to the floor. The floor is the cost basis (the
+     DTE window (before the LEAPS expires) at the target delta again,
+     lifted to the floor -- the strike follows the stock. The floor is the
+     cost basis (the
      LEAPS strike plus its net debit per share, `min_call_above_basis`) and
      always above the LEAPS strike. In the money near expiry with
      `turn_on_itm` on, the wheel turns instead: both legs are closed as one
@@ -111,12 +111,10 @@ def _floor(ctx: PlaybookContext, leaps: OpenLeg | None) -> float | None:
     return floor
 
 
-def _short_strike(ctx: PlaybookContext, expiry: date, floor: float | None, same: float | None = None) -> tuple[float | None, str]:
-    """The strike for a short call on `expiry`: `same` while it is listed and
-    at or above the floor, else the target-delta strike lifted to the
-    floor. Returns (strike, note)."""
-    if same is not None and same in ctx.chain.strikes(expiry, "call") and (floor is None or same >= floor - 1e-9):
-        return same, ""
+def _short_strike(ctx: PlaybookContext, expiry: date, floor: float | None) -> tuple[float | None, str]:
+    """The strike for a short call on `expiry`: the target-delta strike,
+    lifted to the floor. Re-picked every roll, so the strike follows the
+    stock. Returns (strike, note)."""
     strike = ctx.chain.strike_at_delta("call", float(ctx.param("call_delta", 0.25)), expiry)
     if strike is not None and floor is not None and strike < floor - 1e-9:
         lifted = ctx.chain.first_strike_at_or_above(expiry, floor, "call")
@@ -179,7 +177,7 @@ def next_step(ctx: PlaybookContext) -> Action | None:
                 )
             return Hold(f"{leg.occ}: {why}, but no expiry {ctx.param('min_dte')}–{ctx.param('max_dte')} days out before the long call's to roll to{earnings_note}.")
         new_expiry = later[0]
-        strike, note = _short_strike(ctx, new_expiry, floor, same=leg.strike if not itm else None)
+        strike, note = _short_strike(ctx, new_expiry, floor)
         if strike is None:
             if itm and near:
                 return close_one(leg.occ, leg.qty, f"{leg.occ}: in the money with {_days(leg.dte)} left and no call strike on {new_expiry.isoformat()} above the floor: closed rather than assigned.")
@@ -188,7 +186,7 @@ def next_step(ctx: PlaybookContext) -> Action | None:
         est_net = (new_mid - leg.mark) if new_mid is not None and leg.mark is not None else None
         return Roll(
             close_occ=leg.occ, qty=leg.qty, new_kind="call", new_strike=strike, new_expiry=new_expiry, est_net=est_net,
-            reason=f"{why}. Same strike while out of the money, else the {ctx.param('call_delta')} delta strike{note}.",
+            reason=f"{why}. The {ctx.param('call_delta')} delta strike on the new expiry{note}.",
         )
 
     # 2. The long call: near its own expiry, or its delta has fallen away.

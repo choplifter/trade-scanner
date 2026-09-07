@@ -5,9 +5,10 @@ Pure rules over a PlaybookContext, in this order:
 
   1. An open short leg that has earned `take_profit_pct` of its credit, or
      has `roll_at_dte` days or fewer left, is rolled to the next expiry in
-     the DTE window -- same strike while it is still out of the money (a
-     call also stays at or above the cost basis), else the strike at the
-     target delta. No expiry in the window that avoids earnings: hold.
+     the DTE window at the target delta again (a call lifted to the cost
+     basis) -- the strike follows the stock, so a put does not sit forty
+     points below a rally collecting cents. No expiry in the window that
+     avoids earnings: hold.
      An in-the-money leg near expiry is *not* rolled while
      `accept_assignment` is on: being assigned the shares, or having them
      called away, is the wheel turning, not a leg in trouble.
@@ -59,12 +60,12 @@ def _window(ctx: PlaybookContext) -> list:
 
 
 def _roll_target_strike(ctx: PlaybookContext, leg: OpenLeg, expiry) -> float | None:
+    """The strike the leg is rolled to: the target delta on the new expiry,
+    a call lifted to the cost basis. Re-picked every roll rather than kept
+    -- a leg rolled at its profit target is far out of the money by then,
+    and keeping its strike would leave the next one earning nothing."""
     kind = leg.kind
     delta = float(ctx.param("call_delta" if kind == "call" else "put_delta", 0.30))
-    still_otm = not ctx.leg_is_itm(leg)
-    if still_otm and leg.strike in ctx.chain.strikes(expiry, kind):
-        if kind == "put" or not ctx.param("min_call_above_basis", True) or ctx.cost_basis is None or leg.strike >= ctx.cost_basis:
-            return leg.strike
     strike = ctx.chain.strike_at_delta(kind, delta, expiry)
     if kind == "call" and strike is not None and ctx.param("min_call_above_basis", True) and ctx.cost_basis is not None and strike < ctx.cost_basis:
         strike = ctx.chain.first_strike_at_or_above(expiry, ctx.cost_basis, "call")
@@ -116,7 +117,7 @@ def next_step(ctx: PlaybookContext) -> Action | None:
             new_strike=strike,
             new_expiry=new_expiry,
             est_net=est_net,
-            reason=f"{why}. Same strike while out of the money, else the {ctx.param('call_delta' if leg.kind == 'call' else 'put_delta')} delta strike.",
+            reason=f"{why}. The {ctx.param('call_delta' if leg.kind == 'call' else 'put_delta')} delta strike on the new expiry{' (at or above the cost basis)' if leg.kind == 'call' and ctx.param('min_call_above_basis', True) and ctx.cost_basis is not None else ''}.",
         )
 
     # 2. No shares: sell a put.

@@ -594,7 +594,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dd>
             Contracts; put and call delta; the DTE window to sell into; roll at DTE and take-profit % (a leg is rolled
             to the next expiry in the window once it has earned that share of its credit or has that few days left —
-            same strike while out of the money, else the delta strike); avoid earnings (no expiry on or after the
+            at the delta strike again, so the strike follows the stock); avoid earnings (no expiry on or after the
             next report); a collateral budget per put; call ≥ basis; <strong>accept assignment</strong> (on by default:
             an in-the-money leg near expiry is left to be assigned or called away — the wheel turning — rather than
             rolled; off rolls it out).

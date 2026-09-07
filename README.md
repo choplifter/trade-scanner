@@ -1551,8 +1551,9 @@ close of one or more held legs) plus a sentence.
 
 **wheel.py**, the first script, in this order: (1) an open leg that has
 earned `take_profit_pct` of its credit or has `roll_at_dte` days or fewer
-left is rolled to the next expiry in the DTE window (same strike while out
-of the money, a call also at or above the basis, else the delta strike) --
+left is rolled to the next expiry in the DTE window at the delta strike
+again (a call lifted to the basis) -- the strike follows the stock, so a
+put rolled at its profit target does not sit far below a rally --
 but an in-the-money leg near expiry is left alone while `accept_assignment`
 is on: being assigned, or called away, is the wheel turning, not a leg in
 trouble; (2) no shares and no put: sell the `put_delta` put, stepping the strike
@@ -1566,9 +1567,9 @@ the next report (a contract expiring on the report day is held through it).
 long-dated, deep in-the-money call (a LEAPS) in place of the 100 shares --
 the capital tied up is the call's debit, not the shares' price. In order:
 (1) a short call at `take_profit_pct` or `roll_at_dte` is rolled to the
-next expiry in the window *before the long call's* (same strike while out
-of the money and at or above the floor, else the `call_delta` strike
-lifted to the floor: the cost basis, and always above the long strike);
+next expiry in the window *before the long call's* at the `call_delta`
+strike again, lifted to the floor (the cost basis, and always above the
+long strike);
 in the money near expiry with `turn_on_itm` on **the wheel turns**
 instead -- both legs are closed as one package (the long call has taken
 the move the short call gave away) and the next round starts with a fresh

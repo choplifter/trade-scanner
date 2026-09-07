@@ -153,8 +153,10 @@ def test_with_the_leaps_held_it_sells_the_delta_call_at_or_above_the_basis_befor
     assert isinstance(action, Hold) and "before the long call" in action.reason
 
 
-def test_the_short_call_is_rolled_at_the_profit_target_same_strike_while_otm():
-    short = _leg("call", 105.0, E_SHORT, entry=2.0, mark=0.8)
+def test_the_short_call_is_rolled_at_the_profit_target_to_the_delta_strike_again():
+    # 110 has earned 60 % of its credit; the 0.25 delta call on the next
+    # expiry is 105, above the basis 103.50 -- the strike follows the stock.
+    short = _leg("call", 110.0, E_SHORT, entry=2.0, mark=0.8)
     action = _pmw().next_step(_ctx(longs=[_leaps()], legs=[short]))
     assert isinstance(action, Roll) and action.close_occ == short.occ and action.new_expiry == E_MID and action.new_strike == 105.0
     assert action.new_side == "sell" and action.close_side == "short"
