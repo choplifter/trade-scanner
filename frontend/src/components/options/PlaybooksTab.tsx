@@ -597,23 +597,25 @@ function BacktestPanel({ symbol, script, params }: { symbol: string | null; scri
                   </>
                 ) : (
                   <>
-                    <span>
+                    <span title="Every put written: fresh ones plus the new leg of each roll (in brackets: the fresh ones).">
                       puts sold <strong>{s.puts_sold}</strong>
+                      {s.puts_sold !== s.puts_opened ? <span className="order-hint"> ({s.puts_opened} fresh)</span> : null}
                     </span>
                     <span>
                       assigned <strong>{s.assignments}</strong>
                     </span>
                   </>
                 )}
-                <span>
+                <span title="Every call written: fresh ones plus the new leg of each roll (in brackets: the fresh ones).">
                   calls sold <strong>{s.calls_sold}</strong>
+                  {s.calls_sold !== s.calls_opened ? <span className="order-hint"> ({s.calls_opened} fresh)</span> : null}
                 </span>
                 {s.calls_bought === 0 && (
                   <span>
                     called away <strong>{s.called_away}</strong>
                   </span>
                 )}
-                <span>
+                <span title="A short leg closed and its replacement sold on a later expiry, as one step.">
                   rolls <strong>{s.rolls}</strong>
                 </span>
                 <span>

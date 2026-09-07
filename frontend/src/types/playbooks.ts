@@ -193,8 +193,12 @@ export interface BacktestSummary {
   realized_pnl: number;
   /** The long side: long calls bought and sold again (a poor man's wheel). */
   long_pnl: number;
+  /** Short legs written, the rolls' new legs included. */
   puts_sold: number;
   calls_sold: number;
+  /** Fresh legs only (not rolled into). */
+  puts_opened: number;
+  calls_opened: number;
   calls_bought: number;
   long_closed: number;
   rolls: number;

@@ -86,7 +86,10 @@ def test_the_walk_sells_a_put_gets_assigned_sells_a_call_and_is_called_away():
     assert "called_away" in kinds and kinds.index("called_away") > kinds.index("sold_call")
     s = result["summary"]
     assert s["assignments"] == kinds.count("assigned") and s["called_away"] == kinds.count("called_away")
-    assert s["puts_sold"] == kinds.count("sold_put") and s["calls_sold"] == kinds.count("sold_call")
+    # Puts/calls sold count the rolls' new legs too; opened counts the fresh ones.
+    assert s["puts_opened"] == kinds.count("sold_put") and s["calls_opened"] == kinds.count("sold_call")
+    rolled_puts = sum(1 for e in result["events"] if e["kind"] == "rolled" and e["occ"][-9] == "P")
+    assert s["puts_sold"] == kinds.count("sold_put") + rolled_puts and s["puts_sold"] + s["calls_sold"] == kinds.count("sold_put") + kinds.count("sold_call") + kinds.count("rolled")
     assert result["synthetic"] is True and len(result["equity"]) == result["sessions"]
     assert 0 < s["days_in_shares_pct"] < 100
     # Premiums were collected and the equity curve is continuous (no day jumps by more than the shares' move).
@@ -112,7 +115,7 @@ def test_the_poor_mans_wheel_buys_a_leaps_sells_calls_and_turns_on_a_rally():
     assert "assigned" not in kinds and "called_away" not in kinds and "sold_put" not in kinds
     s = result["summary"]
     assert s["calls_bought"] == kinds.count("bought_call") >= 2 and s["turns"] >= 1
-    assert s["long_closed"] == kinds.count("sold_long") and s["calls_sold"] == kinds.count("sold_call")
+    assert s["long_closed"] == kinds.count("sold_long") and s["calls_sold"] == kinds.count("sold_call") + kinds.count("rolled")
     assert s["days_in_shares_pct"] == 0.0 and s["days_in_long_pct"] > 50
     assert s["puts_sold"] == 0 and s["shares_at_end"] == 0
     # The long call took the rally: the long side made money, the campaign beat cash.

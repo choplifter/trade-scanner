@@ -298,6 +298,7 @@ def walk(symbol: str, playbook, params: dict, sessions: list[tuple[date, float]]
                 opened_at = _sell(book, day, chain, action.new_kind, action.new_strike, action.new_expiry, action.qty, spread_frac, "rolled", symbol)
                 if opened_at is not None:
                     book.events[-1]["note"] = f"closed {leg.occ} at {closed_at:.2f}, net {(opened_at - closed_at):+.2f}"
+                    book.counts[f"rolled_{action.new_kind}"] = book.counts.get(f"rolled_{action.new_kind}", 0) + 1
         elif isinstance(action, Close):
             legs = [l for occ, _q in action.legs for l in book.legs if l.occ == occ]
             if len(legs) > 1:
@@ -355,8 +356,13 @@ def walk(symbol: str, playbook, params: dict, sessions: list[tuple[date, float]]
             "premiums": round(premiums, 2),
             "realized_pnl": round(last_snapshot.realized_pnl, 2),
             "long_pnl": round(long_pnl, 2),
-            "puts_sold": book.counts.get("sold_put", 0),
-            "calls_sold": book.counts.get("sold_call", 0),
+            # Every short leg written, the rolls' new legs included: a roll
+            # closes one contract and sells another, and "puts sold: 1,
+            # rolls: 42" read as a wheel that had stopped selling.
+            "puts_sold": book.counts.get("sold_put", 0) + book.counts.get("rolled_put", 0),
+            "calls_sold": book.counts.get("sold_call", 0) + book.counts.get("rolled_call", 0),
+            "puts_opened": book.counts.get("sold_put", 0),
+            "calls_opened": book.counts.get("sold_call", 0),
             "calls_bought": book.counts.get("bought_call", 0),
             "long_closed": book.counts.get("sold_long", 0),
             "rolls": book.counts.get("rolled", 0),

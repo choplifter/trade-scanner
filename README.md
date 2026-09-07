@@ -1678,7 +1678,7 @@ long call's intrinsic paid out), rebuilds the campaign snapshot with
 `build_snapshot`, asks the script for its next step and carries it out.
 The result is the equity curve against buying the shares outright, the
 events, and a summary (return, premiums, realized P&L, the long side's
-P&L, puts and calls sold, calls bought, long calls closed, turns,
+P&L, puts and calls sold (the rolls' new legs included, the fresh ones in brackets), calls bought, long calls closed, turns,
 assignments, called away, rolls, expired, max drawdown, share of days in
 shares / in a long call); it carries `synthetic: true` and a
 disclaimer the panel shows. It says how the rules *behave*, not what they
