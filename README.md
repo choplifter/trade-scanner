@@ -1215,9 +1215,11 @@ share a strike), two longs of both kinds → straddle / strangle, three of
 one kind 1-2-1 → a butterfly, one long contract → long call/put, a lone
 short put → cash-secured put, a short call with 100 held shares per
 contract → covered call, a short leg and a later-expiry long leg of the
-same kind → calendar / diagonal, anything else → **custom**. A lone short contract or unequal
-quantities are flagged **broken** (the remains of a spread closed one leg
-at a time); **expires today** flags a 0DTE position.
+same kind → calendar / diagonal, long legs of one kind at several
+strikes → one long call / put row each, anything else → **custom**. A lone
+short call without shares, or unequal quantities with a short leg among
+them, is flagged **broken** (the remains of a spread closed one leg at a
+time); **expires today** flags a 0DTE position.
 
 **Roll…** on a row with a single short leg (a cash-secured put, the call
 of a covered call) closes it and opens its replacement on another expiry

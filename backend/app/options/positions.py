@@ -196,6 +196,13 @@ def split_by_shape(legs: list[SpreadPositionLeg]) -> list[tuple[list[SpreadPosit
 
     parts: list[tuple[list[SpreadPositionLeg], str, int, bool]] = []
     remaining = list(legs)
+    # Long legs of one kind that make no structure -- puts at two strikes
+    # bought in separate orders, say -- are separate positions, one row
+    # each. Nothing about them is broken: there is no short leg they could
+    # be the remains of, and a straddle/strangle (mixed kinds) or a
+    # butterfly (a short body) would have been recognised above.
+    if all(leg.qty > 0 for leg in legs) and len({leg.kind for leg in legs}) == 1:
+        return [([leg], *classify([leg])) for leg in legs]
     for size in (4, 3, 2):
         found = True
         while found and len(remaining) >= size:

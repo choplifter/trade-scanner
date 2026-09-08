@@ -191,6 +191,27 @@ def test_a_vertical_plus_a_stray_long_leg_is_peeled_apart():
     assert [(g.strategy, g.qty) for g in groups] == [("bull_put", 2), ("long_call", 1)]
 
 
+def test_long_legs_of_one_kind_are_separate_positions_not_broken():
+    # 3x 766P and 10x 767P bought in single-leg orders over a morning: two
+    # long puts, not the remains of anything. Seen on the paper account as
+    # one "broken" row.
+    groups = group_spreads(
+        [_pos("SPY260909P00766000", 3, "1.47"), _pos("SPY260909P00767000", 10, "1.934")], today=TODAY
+    )
+    assert [(g.strategy, g.qty, g.broken, len(g.legs)) for g in groups] == [("long_put", 3, False, 1), ("long_put", 10, False, 1)]
+    assert len({g.id for g in groups}) == 2
+    # Two long calls, equal size, still two positions.
+    groups = group_spreads(
+        [_pos("SPY260918C00745000", 2, "3"), _pos("SPY260918C00750000", 2, "1")], today=TODAY
+    )
+    assert [g.strategy for g in groups] == ["long_call", "long_call"]
+    # A long put and a long call at different strikes stay a strangle.
+    groups = group_spreads(
+        [_pos("SPY260918P00740000", 1, "1"), _pos("SPY260918C00750000", 1, "1")], today=TODAY
+    )
+    assert [g.strategy for g in groups] == ["long_strangle"]
+
+
 def test_unrecognisable_legs_stay_one_group_up_to_four_then_split_singly():
     # Two short calls without shares: no known shape, still one row.
     groups = group_spreads(
