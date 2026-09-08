@@ -69,6 +69,24 @@ def test_live_submit_needs_switch_and_confirmation():
         )
 
 
+def test_cancel_is_a_write_and_goes_through_the_same_gate():
+    # Cancelling a resting option order from the Open spreads tab: refused
+    # before the SDK is touched when trading is off, and in Live without
+    # the typed confirmation.
+    with pytest.raises(TradingDisabled):
+        asyncio.run(_service(trading_enabled=False).cancel("abc"))
+    with pytest.raises(LiveConfirmationRequired):
+        asyncio.run(
+            _service(
+                "live",
+                trading_enabled=True,
+                trading_allow_live=True,
+                alpaca_live_api_key_id="lk",
+                alpaca_live_api_secret_key="ls",
+            ).cancel("abc")
+        )
+
+
 def test_single_leg_needs_level_two_and_spreads_level_three():
     from app.options.models import options_level_required
 

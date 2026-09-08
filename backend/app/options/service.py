@@ -311,6 +311,18 @@ class OptionsService:
 
         return [o for o in rows if isinstance(o, dict) and is_option(o)]
 
+    async def cancel(self, order_id: str, confirm: str | None = None) -> None:
+        """Cancel one resting option order (an MLEG parent takes its legs
+        with it). A write, so it goes through the same guard as a submit."""
+        assert_can_trade(self._settings, self._account, confirm, live_available=self._live_available)
+        try:
+            await asyncio.to_thread(self._trading.cancel_order_by_id, order_id)
+        except Exception as exc:
+            rejection = rejection_from_api_error(exc)
+            if rejection is not None:
+                raise rejection from exc
+            raise
+
     async def activities(self, after: str | None = None) -> list[dict]:
         """Assignments, expirations and exercises on the account since
         `after` -- see app.alpaca.activities. Empty when the broker cannot be

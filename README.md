@@ -1793,7 +1793,12 @@ day, which is how you rehearse a strategy at the weekend.
   resting package to be checked); a limit the market has not reached rests as a **working
   package** (listed above *Open spreads*, with a cancel) and is checked on
   every tick of the sim fill loop, or on every replay step while
-  replaying. Where a leg has no quote on the side it needs (a one-sided
+  replaying. Paper and Live list their resting option orders in the same
+  place (`GET /api/trading/options/orders?status=open`, Alpaca's option
+  orders with MLEG legs nested; `DELETE .../orders/{id}` cancels one, in
+  Live with the typed confirmation), so a put sold a minute ago that has
+  not filled is found next to the spreads rather than only under the
+  trading widget's Orders tab. Where a leg has no quote on the side it needs (a one-sided
   live quote), its mid or last plus the same slippage stands in.
 - **Positions, P&L, journal.** Contracts are held per contract, grouped
   into spreads exactly like Alpaca's (bull put x2, iron condor...), marked

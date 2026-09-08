@@ -185,6 +185,40 @@ async def submit_spread(ticket: SpreadTicket, request: Request, service: Options
     return {"order": order}
 
 
+@router.get("/orders")
+async def list_orders(request: Request, status: str = "open", service: OptionsService = Depends(_service)) -> dict:
+    """The account's option orders -- resting ("open") by default, so the
+    Open spreads tab can show a package the market has not filled yet, the
+    way the simulated book's Working packages does. "closed" / "all" for
+    history. Equity orders are the trading widget's business."""
+    try:
+        orders = await service.orders(status)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Option orders fetch failed")
+        raise HTTPException(status_code=502, detail="Failed to reach the trading API")
+    return {"orders": orders, "status": status}
+
+
+@router.delete("/orders/{order_id}")
+async def cancel_order(order_id: str, request: Request, service: OptionsService = Depends(_service)) -> dict:
+    """Cancel one resting option order (an MLEG parent cancels its legs).
+    Same guard as every write: live needs the typed confirmation."""
+    try:
+        await service.cancel(order_id, confirm=_confirm(request))
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Option order cancel failed for %s", order_id)
+        raise HTTPException(status_code=502, detail="Failed to cancel the order")
+    return {"cancelled": order_id}
+
+
 @router.get("/spreads")
 async def spreads(request: Request, service: OptionsService = Depends(_service), user: dict = Depends(get_current_user)) -> dict:
     store = getattr(request.app.state, "options_trigger_store", None)

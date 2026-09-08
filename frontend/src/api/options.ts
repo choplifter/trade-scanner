@@ -129,14 +129,15 @@ export function getSpreadPayoff(body: PayoffRequest): Promise<Payoff> {
   return send<Payoff>("POST", "/trading/options/spreads/payoff", body);
 }
 
-/** The simulated book's packages -- Simulation mode only (Alpaca's own
- * orders come through the trading widget). */
+/** The account's option orders: the simulated book's packages in
+ * Simulation, Alpaca's option orders in Paper and Live -- resting ones by
+ * default, what the Open spreads tab lists as Working packages. */
 export function getOptionOrders(status: "open" | "closed" | "all" = "open"): Promise<{ orders: Order[] }> {
   return getJson<{ orders: Order[] }>(tradingPath(`/trading/options/orders?status=${status}`));
 }
 
-export function cancelOptionOrder(id: string): Promise<{ cancelled: string }> {
-  return send<{ cancelled: string }>("DELETE", `/trading/options/orders/${encodeURIComponent(id)}`);
+export function cancelOptionOrder(id: string, confirm?: string): Promise<{ cancelled: string }> {
+  return send<{ cancelled: string }>("DELETE", `/trading/options/orders/${encodeURIComponent(id)}`, undefined, confirm);
 }
 
 export function closeSpread(body: CloseSpreadRequest, confirm?: string): Promise<OrderResponse> {

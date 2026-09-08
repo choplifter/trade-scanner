@@ -364,7 +364,10 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dt>Place / Sell … on SPY</dt>
           <dd>
             Sends the package as one multi-leg limit order. On Live a dialog asks you to type LIVE first. In
-            Simulation it fills against the practice book at the natural, or rests as a working package.
+            Simulation it fills against the practice book at the natural, or rests as a working package. A limit
+            the market has not reached rests in every mode: <strong>Working packages</strong> above Open spreads
+            lists it (Alpaca's own resting option orders in Paper and Live), with a cancel each — so a put you sold
+            a minute ago that has not filled is found there, not in the spreads yet.
           </dd>
         </dl>
 

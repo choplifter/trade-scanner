@@ -506,7 +506,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           <BrokerMissing mode={mode} />
         ) : tab === "spreads" ? (
           <>
-            {mode === "simulation" && <OptionOrders onChanged={spreads.afterAction} />}
+            <OptionOrders mode={mode} onChanged={spreads.afterAction} />
             <OpenSpreads
               spreads={spreads.spreads}
               triggers={spreads.triggers}
