@@ -112,11 +112,16 @@ function fillNote(order: Order, quotes: Record<string, LegQuote>): { text: strin
  * no modifier at all. */
 function Describe({ order }: { order: Order }) {
   const legs = order.legs && order.legs.length > 0 ? order.legs : [order];
-  const price = order.limit_price != null ? `@ ${Number(order.limit_price).toFixed(2)}` : "market";
+  const signed = signedLimit(order);
+  const price = signed == null ? "market" : `@ ${Math.abs(signed).toFixed(2)}`;
   const multi = !!order.legs && order.legs.length > 0;
+  // Which way the package points comes from the signed limit, not from
+  // `side`: a multi-leg parent has no side of its own, and reading it
+  // there labelled every debit package "Receive".
   return (
     <>
-      {order.side === "buy" ? "Pay" : "Receive"} {price} · {order.qty ?? "?"} ×{" "}
+      {signed == null ? (order.side === "buy" ? "Pay" : "Receive") : signed > 0 ? "Pay" : "Receive"} {price} ·{" "}
+      {order.qty ?? "?"} ×{" "}
       {legs.map((leg, i) => (
         <span key={leg.symbol ?? i}>
           {i > 0 ? " " : ""}
