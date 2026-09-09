@@ -33,6 +33,7 @@ from app.ai.options_context import _chain_block, pick_expiries
 from app.options.chain import ExpiryInfo
 from app.options.models import STRATEGY_LABELS, Strategy
 from app.options.optimizer import (
+    CONDOR_SHORT_DELTA,
     DEFAULT_STRATEGIES,
     FINALISTS,
     OUTLOOK_STRATEGIES,
@@ -95,6 +96,25 @@ class OptimizeRequest(BaseModel):
     # one the switch is a no-op and the response says so.
     avoid_earnings: bool = False
     top_n: int = Field(default=8, ge=1, le=FINALISTS)
+    # Three knobs the event path needs and nothing else sets. Left None,
+    # every one of them keeps the module default, so an ordinary request
+    # behaves exactly as it did.
+    #
+    # `strike_pct_range` is the window condense_chain keeps around spot
+    # (default 12 %); `condor_short_delta_max` the top of the band a
+    # condor may sell (default 0.40). Into a print both defaults exclude
+    # the only strikes a condor could be built from -- the deltas shift
+    # toward the money and the wings sit further out in percent terms.
+    #
+    # `horizon_only` loads the horizon's expiry alone. Every leg then
+    # expires on the horizon, so the P/L is intrinsic and the "implied
+    # volatility unchanged" assumption in the ranking does no work --
+    # which is the honest way to value a structure across an event that
+    # will collapse the IV in its price. It also makes calendars
+    # unenumerable, by construction: they need two expiries.
+    strike_pct_range: float | None = Field(default=None, ge=0.05, le=0.5)
+    condor_short_delta_max: float | None = Field(default=None, gt=0.1, le=0.5)
+    horizon_only: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> "OptimizeRequest":
@@ -235,11 +255,17 @@ async def optimize_structures(
     # Earnings inside the horizon: said, or -- on request -- avoided by
     # dropping every expiry the report falls on or before.
     earnings_block, infos = await _apply_earnings(earnings_calendar, underlying, horizon, infos, req.avoid_earnings, warnings)
-    expiries = choose_expiries(infos, horizon, today)
+    if req.horizon_only:
+        # Only the horizon's own expiry: every leg expires there.
+        expiries = [e.expiry for e in infos if e.expiry == horizon and e.dte >= 1 and e.contract_count > 0]
+    else:
+        expiries = choose_expiries(infos, horizon, today)
     if not expiries:
         raise OrderRejected(f"No listed expiry on or after {horizon.isoformat()} for {underlying}", field="horizon")
 
-    rows_by_expiry_payload, _strikes, _chains = await _chain_block(service, underlying, expiries, today)
+    rows_by_expiry_payload, _strikes, _chains = await _chain_block(
+        service, underlying, expiries, today, strike_pct_range=req.strike_pct_range
+    )
     rows_by_expiry = {expiry: block["strikes"] for expiry, block in rows_by_expiry_payload.items()}
     horizon_moment = datetime.combine(horizon, time(16, 0), tzinfo=ET)
     target = req.target
@@ -252,7 +278,8 @@ async def optimize_structures(
     sigma = atm_sigma(rows_by_expiry.get(expiries[0], []), spot)
     implied_move = round(spot * sigma * math.sqrt(years), 2) if sigma and years > 0 else None
 
-    raws, skipped = enumerate_candidates(rows_by_expiry, spot, target, strategies)
+    short_delta = CONDOR_SHORT_DELTA if req.condor_short_delta_max is None else (CONDOR_SHORT_DELTA[0], req.condor_short_delta_max)
+    raws, skipped = enumerate_candidates(rows_by_expiry, spot, target, strategies, short_delta=short_delta)
     candidates: list[Candidate] = []
     for raw in raws:
         priced = price_candidate(raw, rows_by_expiry, spot, target, horizon_moment, sigma=sigma, years=years)

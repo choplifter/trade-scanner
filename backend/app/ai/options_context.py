@@ -123,15 +123,23 @@ def pick_expiries(expiries: list[ExpiryInfo], *, targets=EXPIRY_TARGET_DTE, limi
     return sorted(picked)[:limit]
 
 
-async def _chain_block(service, underlying: str, expiries: list[date], today: date) -> tuple[dict, dict, list]:
+async def _chain_block(
+    service, underlying: str, expiries: list[date], today: date, *, strike_pct_range: float | None = None
+) -> tuple[dict, dict, list]:
     """(rows per expiry for the prompt, strikes per expiry for the resolver,
     the loaded chains). The one part that may not fail quietly: with no
-    chain there is nothing to propose."""
+    chain there is nothing to propose.
+
+    `strike_pct_range` widens or narrows the window condense_chain keeps
+    around spot; None is its own default. A name whose implied move is a
+    fifth of its price has every interesting strike outside the default
+    window, so the earnings path passes its own (app.options.optimize)."""
     chains = await asyncio.gather(*(service.chain(underlying, expiry) for expiry in expiries))
     rows_by_expiry = {}
     strikes_by_expiry = {}
+    window = {} if strike_pct_range is None else {"strike_pct_range": strike_pct_range}
     for chain in chains:
-        rows, strikes = condense_chain(chain)
+        rows, strikes = condense_chain(chain, **window)
         if not rows:
             continue
         rows_by_expiry[chain.expiry] = {

@@ -524,6 +524,18 @@ export interface OptimizeRequest {
   max_loss?: number | null;
   strategies?: Strategy[] | null;
   top_n?: number;
+  /** The window of strikes around spot the chain is condensed to (0.12 by
+   * default). The Earnings screen widens it in proportion to the implied
+   * move: into a print the strikes a condor needs sit outside 12 %. */
+  strike_pct_range?: number | null;
+  /** The top of the delta band a condor may sell (0.40 by default), for
+   * the same reason -- a print pushes the whole chain's deltas toward the
+   * money. */
+  condor_short_delta_max?: number | null;
+  /** Load only the horizon's own expiry, so every leg expires there and
+   * the P/L is intrinsic rather than resting on unchanged implied
+   * volatility. Rules out calendars, which need two expiries. */
+  horizon_only?: boolean;
 }
 
 /** One ranked structure: the pipeline's numbers (`spread`, the preview the

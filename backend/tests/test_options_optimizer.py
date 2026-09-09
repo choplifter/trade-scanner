@@ -299,3 +299,42 @@ def test_outlooks_map_to_strategy_families_that_fit_the_view():
     assert "bear_put" in OUTLOOK_STRATEGIES["bearish"] and "bull_call" not in OUTLOOK_STRATEGIES["bearish"]
     assert OUTLOOK_STRATEGIES["neutral"] & {"iron_condor", "iron_butterfly"}
     assert OUTLOOK_STRATEGIES["directional"] == {"long_straddle", "long_strangle"}
+
+
+def test_a_wider_short_delta_band_admits_the_strikes_a_hot_chain_pushes_past_it():
+    """Into an earnings print the whole chain's deltas shift toward the
+    money, and the strike that would have been a 0.25-delta short on a
+    calm day is a 0.43-delta one -- outside the default band, and the
+    only strike a condor could be sold on. The band is a parameter for
+    exactly that case (AEO, 2026-09-09: the 18 call at delta 0.43)."""
+    rows = {NEAR: _rows(NEAR, iv=0.60)}
+    target = Target(low=SPOT, high=SPOT)
+
+    def shorts(cands) -> set[float]:
+        return {cand.legs[2].strike for cand in cands}  # the short call of each condor
+
+    default, _ = enumerate_candidates(rows, SPOT, target, frozenset({"iron_condor"}))
+    widened, _ = enumerate_candidates(rows, SPOT, target, frozenset({"iron_condor"}), short_delta=(0.10, 0.45))
+
+    added = shorts(widened) - shorts(default)
+    assert added, "a wider band should sell strikes the default one skips"
+    for strike in added:
+        delta = abs(next(r for r in rows[NEAR] if r["strike"] == strike)["call"]["delta"])
+        assert 0.40 < delta <= 0.45
+
+    # Everything the wider band admits is still out of the money and still
+    # inside the band it was given.
+    for cand in widened:
+        put_long, put_short, call_short, call_long = (leg.strike for leg in cand.legs)
+        assert put_long < put_short < SPOT < call_short < call_long
+        for strike, kind in ((put_short, "put"), (call_short, "call")):
+            row = next(r for r in rows[NEAR] if r["strike"] == strike)
+            assert 0.10 <= abs(row[kind]["delta"]) <= 0.45
+
+
+def test_the_default_band_is_untouched_when_no_one_asks_for_another():
+    rows = {NEAR: _rows(NEAR)}
+    target = Target(low=SPOT, high=SPOT)
+    assert enumerate_candidates(rows, SPOT, target, frozenset({"iron_condor"})) == enumerate_candidates(
+        rows, SPOT, target, frozenset({"iron_condor"}), short_delta=(0.10, 0.40)
+    )

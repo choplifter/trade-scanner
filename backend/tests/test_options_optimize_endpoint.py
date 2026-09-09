@@ -317,3 +317,37 @@ def test_an_outlook_sets_the_families_when_none_are_given():
     assert body["outlook"] == "bearish"
     assert body["results"]
     assert {r["strategy"] for r in body["results"]} <= {"long_put", "bear_put", "bear_call"}
+
+
+def test_horizon_only_reads_one_expiry_and_rules_out_calendars_by_construction():
+    """The event path's answer to "IV held still": with every leg expiring
+    on the horizon the P/L is intrinsic, so nothing rests on an implied
+    volatility that an earnings print is about to collapse. A calendar
+    needs two expiries and therefore cannot be enumerated at all."""
+    service = _Service()
+    body = _run(service, _req(horizon_only=True, strategies=["iron_condor", "calendar", "bull_call"]))
+
+    assert service.chain_calls == [NEAR]
+    assert body["horizon"]["expiries_considered"] == [NEAR.isoformat()]
+    assert all(r["strategy"] != "calendar" for r in body["results"])
+    assert body["results"], "the single-expiry shapes should still price"
+
+    # Left off, the same request loads the usual spread of expiries.
+    wide = _Service()
+    _run(wide, _req(strategies=["iron_condor", "calendar", "bull_call"]))
+    assert len(wide.chain_calls) > 1
+
+
+def test_the_window_and_the_delta_band_reach_the_enumerator():
+    narrow = _Service()
+    body = _run(narrow, _req(strike_pct_range=0.05, strategies=["iron_condor"], horizon_only=True))
+    wide = _Service()
+    wider = _run(wide, _req(strike_pct_range=0.2, strategies=["iron_condor"], horizon_only=True))
+
+    # A 5 % window around a 100 spot keeps 95..105; a 20 % one keeps the
+    # whole fixture chain, so there is strictly more to enumerate.
+    assert wider["skipped"]["total"] > body["skipped"]["total"]
+
+    banded = _Service()
+    loose = _run(banded, _req(condor_short_delta_max=0.45, strategies=["iron_condor"], horizon_only=True))
+    assert loose["skipped"]["total"] >= body["skipped"]["total"]

@@ -270,6 +270,7 @@ def enumerate_candidates(
     strategies: frozenset[str] = DEFAULT_STRATEGIES,
     *,
     max_candidates: int = MAX_CANDIDATES,
+    short_delta: tuple[float, float] = CONDOR_SHORT_DELTA,
 ) -> tuple[list[RawCandidate], Skipped]:
     """Every shape worth pricing, per expiry, within the bounds above.
 
@@ -327,8 +328,8 @@ def enumerate_candidates(
                         emit(bear, expiry, [_leg(kind, hi, "buy"), _leg(kind, lo, "sell")])
 
         if "iron_condor" in strategies:
-            short_puts = [i for i, r in enumerate(puts) if _short_candidate(r, "put", spot)]
-            short_calls = [i for i, r in enumerate(calls) if _short_candidate(r, "call", spot)]
+            short_puts = [i for i, r in enumerate(puts) if _short_candidate(r, "put", spot, short_delta)]
+            short_calls = [i for i, r in enumerate(calls) if _short_candidate(r, "call", spot, short_delta)]
             for pi in short_puts:
                 for ci in short_calls:
                     if puts[pi]["strike"] >= calls[ci]["strike"]:
@@ -424,9 +425,15 @@ def enumerate_candidates(
     return out, skipped
 
 
-def _short_candidate(row: dict, kind: str, spot: float) -> bool:
+def _short_candidate(row: dict, kind: str, spot: float, short_delta: tuple[float, float] = CONDOR_SHORT_DELTA) -> bool:
     """A strike a condor might sell: out of the money, and -- when the feed
-    gave a delta -- inside the delta band."""
+    gave a delta -- inside the delta band.
+
+    The band is a parameter rather than only the constant because it is
+    what a condor's existence turns on: into an earnings print the whole
+    chain's deltas shift toward the money, and a 0.43-delta call that
+    would be a 0.25 one on a calm day is the only short strike left. The
+    earnings path widens it deliberately; nothing else does."""
     quote = _side(row, kind)
     if quote is None:
         return False
@@ -437,7 +444,7 @@ def _short_candidate(row: dict, kind: str, spot: float) -> bool:
     delta = quote.get("delta")
     if delta is None:
         return True
-    lo, hi = CONDOR_SHORT_DELTA
+    lo, hi = short_delta
     return lo <= abs(delta) <= hi
 
 
