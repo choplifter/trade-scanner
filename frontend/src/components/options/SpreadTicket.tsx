@@ -10,6 +10,7 @@ import {
   SHORT_DELTA_MIN,
   SHORT_OFFSET_MAX,
   shortTargetGroup,
+  type ResolvedSpread,
   type ShortTarget,
 } from "../../types/options";
 import {
@@ -202,6 +203,56 @@ export function ticketFor(
  * the mid when a leg has no quote. */
 export function prefillLimit(mid: number, natural: number | null, mode = getSettings().optionsLimitMode): number {
   return mode === "natural" && natural != null ? natural : mid;
+}
+
+/** Whether the limit about to be sent crosses the market, and by how far
+ * it misses when it does not.
+ *
+ * The numbers were already on the ticket -- the limit above, the natural
+ * beside it -- but reading a resting limit out of two figures is exactly
+ * the step that gets skipped, and a package that rests looks identical to
+ * one that fills until it doesn't. Both directions reduce to the same
+ * comparison: a debit crosses when it pays at least the natural, a credit
+ * when it asks no more than the natural pays.
+ *
+ * It also catches the quiet case where the natural is unavailable for a
+ * moment (a leg without a two-sided quote): the prefill then falls back to
+ * the mid while the toggle still reads Natural, and the ticket would
+ * otherwise say nothing about it. */
+function CrossHint({ spread, limit }: { spread: ResolvedSpread; limit: string }) {
+  // The typed limit, not the preview's own suggestion: the preview prices
+  // the *shape* and returns the limit it would suggest, which stays at the
+  // mid however the field is edited. Comparing that would call every
+  // ticket resting, including the ones already moved to the natural.
+  const typed = Number(limit.replace(",", "."));
+  if (!Number.isFinite(typed) || typed <= 0) return null;
+  if (spread.net_natural == null) {
+    return (
+      <span className="order-hint" title="One leg has no two-sided quote, so there is no natural price to compare with. A limit prefilled from Natural falls back to the mid, which rests rather than crosses.">
+        {" "}
+        · no natural to compare with
+      </span>
+    );
+  }
+  const debit = spread.direction === "debit";
+  const gap = debit ? spread.net_natural - typed : typed - spread.net_natural;
+  if (gap <= 0.0001) {
+    return (
+      <span className="order-cross fills" title="This limit crosses the market: it pays at least, or asks no more than, what taking the other side gives. Quotes, not fills -- the size has to be there too, and these numbers move by the second.">
+        {" "}
+        · crosses now
+      </span>
+    );
+  }
+  return (
+    <span
+      className="order-cross rests"
+      title={`This limit does not cross the market. ${debit ? "Taking the offer costs" : "Taking the bid pays"} ${spread.net_natural.toFixed(2)}, and this ${debit ? "pays" : "asks"} ${typed.toFixed(2)} -- the market has ${gap.toFixed(2)} per share to travel before it can fill. Submit it to rest, or press Natural to move the limit onto the market.`}
+    >
+      {" "}
+      · rests, {gap.toFixed(2)} from crossing
+    </span>
+  );
 }
 
 /** Mid | Natural: which price the tickets prefill. Persists in settings.
@@ -627,6 +678,7 @@ export function SpreadTicket({
             mid {spread.net_mid.toFixed(2)}
             {spread.net_natural != null ? ` · natural ${spread.net_natural.toFixed(2)}` : ""} · spot{" "}
             {spread.spot.toFixed(2)} · {spread.dte}d
+            <CrossHint spread={spread} limit={limit} />
           </span>
           <span>
             Max profit {spread.max_profit == null ? "unlimited" : money(spread.max_profit)} · max loss{" "}

@@ -5644,3 +5644,12 @@ td.chain-side.chain-stale {
 .opt-cross.wide {
   color: var(--status-warning);
 }
+
+/* Whether the limit on the ticket crosses the market or would rest. */
+.order-cross.fills {
+  color: var(--delta-up);
+}
+
+.order-cross.rests {
+  color: var(--status-warning);
+}
