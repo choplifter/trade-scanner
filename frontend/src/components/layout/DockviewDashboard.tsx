@@ -107,7 +107,7 @@ const DOCK_LAYOUT_KEY = "layout:dock";
  * added widget (or referencing a removed one) is worse than starting over. */
 // 2: added "trade_journal".
 // 3: added "options", tabbed with "trading".
-const DOCK_LAYOUT_VERSION = 3;
+const DOCK_LAYOUT_VERSION = 4;
 const DOCK_WRITE_DEBOUNCE_MS = 200;
 
 interface StoredDockLayout {
@@ -168,6 +168,7 @@ function buildDefaultLayout(api: DockviewApi) {
   addWidgetPanel(api, "replay", { referencePanel: "ideas", direction: "within" });
   addWidgetPanel(api, "trade_journal", { referencePanel: "ideas", direction: "within" });
   addWidgetPanel(api, "options", { referencePanel: "trading", direction: "within" });
+  addWidgetPanel(api, "earnings", { referencePanel: "ideas", direction: "within" });
 }
 
 /**

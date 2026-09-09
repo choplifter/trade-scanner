@@ -11,6 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.ai.trade_idea_tracker import TradeIdeaTracker
 from app.market_data.earnings import EarningsCalendar
+from app.market_data.earnings_screen import EarningsDayCalendar
 from app.market_data.macro_calendar import MacroCalendar
 from app.playbooks.paper_loop import run_playbook_paper_loop
 from app.playbooks.runner import PlaybookRunner
@@ -42,6 +43,7 @@ from app.routers import (
     admin,
     auth,
     broker,
+    earnings,
     meta,
     news_feed,
     replay,
@@ -148,6 +150,9 @@ async def lifespan(app: FastAPI):
     # The coming weeks' FOMC/CPI/NFP/PCE/GDP dates for the expiry strip and
     # the Optimizer -- same key, same posture (app.market_data.macro_calendar).
     app.state.macro_calendar = MacroCalendar(settings.fmp_api_key)
+    # Who reports on a given day, for the Earnings screen -- the calendar
+    # by date rather than by symbol (app.market_data.earnings_screen).
+    app.state.earnings_day_calendar = EarningsDayCalendar(settings.fmp_api_key)
 
     scanner_history_store = ScannerHistoryStore(settings.scanner_history_db_path)
     await scanner_history_store.init_schema()
@@ -407,6 +412,7 @@ app.include_router(admin.router)
 app.include_router(trading_sim.router)
 app.include_router(trading_sim_options.router)
 app.include_router(playbooks_router.router, dependencies=_auth_gate)
+app.include_router(earnings.router, dependencies=_auth_gate)
 app.include_router(replay.router)
 app.include_router(news_feed.router)
 app.include_router(watchlist.router)

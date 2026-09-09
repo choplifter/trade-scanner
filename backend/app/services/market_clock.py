@@ -52,6 +52,18 @@ def current_session(now: datetime | None = None) -> Session:
     return "closed"
 
 
+def next_trading_day(day: date, *, max_lookahead: int = 10) -> date:
+    """The first NYSE trading day strictly after `day` -- the session an
+    after-close report moves. Walks forward over weekends and holidays;
+    `max_lookahead` is a guard, not a limit anyone expects to hit."""
+    candidate = day
+    for _ in range(max_lookahead):
+        candidate = candidate + timedelta(days=1)
+        if trading_hours_for(candidate) is not None:
+            return candidate
+    return candidate
+
+
 def day_of_week(day: date) -> str:
     """Weekday label ("Monday".."Sunday") for bucketing seasonality stats."""
     return day.strftime("%A")

@@ -10,13 +10,18 @@
  * saw. A consumer marks an intent handled by its `seq`.
  */
 
-import type { OptimizerOutlook } from "../../types/options";
+import type { OptimizeRequest, OptimizerOutlook } from "../../types/options";
 
 export interface OptimizerIntent {
   symbol: string;
   outlook: OptimizerOutlook;
   /** Why the view was chosen, shown above the results ("gap +12.4 %"). */
   reason?: string;
+  /** Fields to override on the request the outlook would have produced --
+   * the Earnings screen sends the families and the horizon it scored, so
+   * the tab opens on the same question it was asked. Whatever is left out
+   * keeps the outlook's own answer. */
+  request?: Partial<OptimizeRequest>;
   seq: number;
 }
 

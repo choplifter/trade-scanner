@@ -12,6 +12,7 @@ import { ChartWidget } from "./components/chart/ChartWidget";
 import { SymbolInfoWidget } from "./components/chart/SymbolInfoWidget";
 import { GexPlanWidget } from "./components/gex/GexPlanWidget";
 import { chartSymbolOf, parseOcc } from "./utils/occ";
+import EarningsWidget from "./components/earnings/EarningsWidget";
 import { OptionsWidget } from "./components/options/OptionsWidget";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { DockviewDashboard } from "./components/layout/DockviewDashboard";
@@ -211,6 +212,10 @@ function AppShell({ user, onLogout }: AppShellProps) {
           focusContract={focusContract}
         />
       ),
+      // Who reports today and next session, and the structures the signals
+      // argue for. Takes no symbol: it is a list of its own, and a row
+      // click drives the dashboard's symbol rather than following it.
+      earnings: <EarningsWidget key="earnings" onSelectSymbol={selectSymbol} selectedSymbol={underlying} />,
     }),
     // tradingMode.mode is deliberately a dependency, unlike the poll-tick
     // state the comment above guards against: switching modes should
@@ -392,6 +397,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               {widgets.gex_plan}
               {widgets.trade_journal}
               {widgets.options}
+              {widgets.earnings}
             </div>
           ) : (
             // No session -- replay collapses to its own content-sized strip
@@ -417,6 +423,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               {widgets.gex_plan}
               {widgets.trade_journal}
               {widgets.options}
+              {widgets.earnings}
             </div>
           )}
         </main>

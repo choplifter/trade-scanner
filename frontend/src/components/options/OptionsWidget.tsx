@@ -49,6 +49,7 @@ import { OpenSpreads } from "./OpenSpreads";
 import { RollTicket, type RollTarget } from "./RollTicket";
 import { PlaybooksTab } from "./PlaybooksTab";
 import { subscribePlaybookIntent, type PlaybookIntent } from "./playbookIntent";
+import { subscribeTicketIntent, type TicketIntent } from "./ticketIntent";
 import { useCampaigns } from "../../hooks/useCampaigns";
 import { OptionsHelp } from "./OptionsHelp";
 import { OptionOrders } from "./OptionOrders";
@@ -279,6 +280,28 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     setTab("chain");
     return true;
   };
+  // A structure sent from another widget (the Earnings screen). It cannot
+  // just call loadStructure: that widget selects the symbol at the same
+  // moment, so this one is still on the old one for a render or two. Hold
+  // the structure until the symbol prop catches up, then plant it the
+  // ordinary way.
+  const pendingTicketRef = useRef<TicketIntent | null>(null);
+  useEffect(
+    () =>
+      subscribeTicketIntent((next) => {
+        pendingTicketRef.current = next;
+        setTicketSeq(next.seq);
+      }),
+    [],
+  );
+  const [ticketSeq, setTicketSeq] = useState(0);
+  useEffect(() => {
+    const pending = pendingTicketRef.current;
+    if (!pending || !symbol || pending.symbol !== symbol || expiries.length === 0) return;
+    if (loadStructure(pending.structure)) pendingTicketRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketSeq, symbol, expiries.length]);
+
   useEffect(() => {
     const pending = pendingIdeaRef.current;
     if (!pending) return;

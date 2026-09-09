@@ -29,6 +29,7 @@ export const WIDGET_TITLES: Record<WidgetId, string> = {
   gex_plan: "GEX Plan",
   trade_journal: "Trading Journal",
   options: "Options",
+  earnings: "Earnings",
 };
 
 export interface DockContextValue {

@@ -29,7 +29,8 @@ export type WidgetId =
   | "symbol_info"
   | "gex_plan"
   | "trade_journal"
-  | "options";
+  | "options"
+  | "earnings";
 
 /** Render order of grid cells. Deliberately constant and independent of
  * `layout` -- position comes from the layout item's x/y, never from DOM
@@ -48,6 +49,7 @@ export const WIDGET_IDS: readonly WidgetId[] = [
   "gex_plan",
   "trade_journal",
   "options",
+  "earnings",
 ];
 
 export const GRID_COLS = 12;
@@ -112,6 +114,10 @@ export const DEFAULT_LAYOUT: Layout = [
   // to the spread ticket needs the whole width, and the open-spreads table
   // its own rows.
   { i: "options", x: 0, y: 32, w: 12, h: 8, minW: 6, minH: 4 },
+  // Full-width row below the options widget: a reporter table with an
+  // expandable detail (signals, scored families, priced cards) needs the
+  // whole width, same as the journal and the chain above it.
+  { i: "earnings", x: 0, y: 40, w: 12, h: 6, minW: 4, minH: 3 },
 ];
 
 const LAYOUT_STORAGE_KEY = "layout:grid";
@@ -143,7 +149,8 @@ const MODE_STORAGE_KEY = "layout:mode";
 // 13: added "gex_plan" as a new full-width row below "symbol_info"/"news_feed".
 // 14: added "trade_journal" as a new full-width row below "gex_plan".
 // 15: added "options" as a new full-width row below "trade_journal".
-const LAYOUT_VERSION = 15;
+// 16: added "earnings" as a new full-width row below "options".
+const LAYOUT_VERSION = 16;
 /** react-grid-layout fires onLayoutChange on every pointermove during a
  * drag, and this payload is far larger than ResizablePanels' size array --
  * so unlike that component, don't write synchronously on every change. */
