@@ -8,6 +8,7 @@
 import { useState } from "react";
 
 import type { LoadableStructure, OptimizerResult, Payoff } from "../../types/options";
+import { packageDragProps } from "../../utils/dragSymbol";
 import { formatMoney, formatNum, formatPrice } from "../../utils/format";
 import { formatExpiry, weekdayOf } from "../../utils/occ";
 
@@ -121,8 +122,16 @@ export function ResultCard({
 }) {
   const [failed, setFailed] = useState(false);
   const rorPct = r.return_on_risk * 100;
+  // A structure has both an underlying and contracts, so it drags like an
+  // option package: plain onto the chart for the stock, shift-drag for the
+  // first leg's premium. Same gesture as a resting or held package.
+  const contract = r.spread.legs.find((leg) => leg.symbol)?.symbol ?? null;
   return (
-    <li className="opt-card">
+    <li
+      className="opt-card"
+      title="Drag onto the chart for the underlying; hold ⇧ while dragging for the first leg's premium"
+      {...packageDragProps(r.spread.underlying, contract)}
+    >
       <div className="opt-card-title">{r.strategy_label}</div>
       <div className="opt-card-legs">
         {legsSentence(r.legs_label)} · {weekdayOf(r.expiry)} {formatExpiry(r.expiry)}
