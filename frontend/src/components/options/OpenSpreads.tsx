@@ -22,7 +22,7 @@ import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import { PayoffChart } from "./PayoffChart";
 import { rollableLeg } from "./RollTicket";
-import { symbolDragProps } from "../../utils/dragSymbol";
+import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 
 interface OpenSpreadsProps {
   spreads: SpreadGroup[];
@@ -310,9 +310,11 @@ export function OpenSpreads({
                 key={group.id}
                 aria-selected={group.underlying === symbol}
                 // The package as a whole stands for its underlying, so it
-                // drags onto the chart like a scanner row. Its legs drag
-                // too (below), each as its own contract's premium chart.
-                {...symbolDragProps(group.underlying)}
+                // drags onto the chart like a scanner row; ⇧-drag carries
+                // its first leg's contract instead, for that leg's premium.
+                // The legs themselves drag one by one when expanded.
+                title="Drag onto the chart for the underlying; hold ⇧ while dragging for the first leg's premium"
+                {...packageDragProps(group.underlying, group.legs[0]?.symbol ?? null)}
                 onClick={() => {
                   setExpanded(isOpen ? null : group.id);
                   setArmError(null);

@@ -5,7 +5,7 @@ import { liveConfirmed, type TradingMode } from "../../api/tradingMode";
 import { useReplaySession } from "../../hooks/useReplaySession";
 import type { LegQuote } from "../../types/options";
 import type { Order } from "../../types/trading";
-import { symbolDragProps } from "../../utils/dragSymbol";
+import { packageDragProps } from "../../utils/dragSymbol";
 import { formatLeg, parseOcc } from "../../utils/occ";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 
@@ -23,6 +23,14 @@ function underlyingOf(order: Order): string | null {
 /** The package's legs, with a single-leg order standing in as its own. */
 function legsOf(order: Order): Order[] {
   return order.legs && order.legs.length > 0 ? order.legs : [order];
+}
+
+/** The contract a ⇧-drag carries: the package's own on a single-leg
+ * order, its first leg's on a package (the long leg, the way the ticket
+ * orders them). */
+function contractOf(order: Order): string | null {
+  const occ = legsOf(order).find((leg) => leg.symbol)?.symbol ?? null;
+  return occ && parseOcc(occ) ? occ : null;
 }
 
 function ratioOf(leg: Order): number {
@@ -87,7 +95,9 @@ function fillNote(order: Order, quotes: Record<string, LegQuote>): { text: strin
       ? `The market has ${gap.toFixed(2)} per share to travel before this package can fill. Quotes, not fills: a package fills when the two sides meet, and a wide chain can leave a limit resting all day.`
       : "The market is already at your limit; a fill should follow, and if it does not the quote may be stale or the size not there.");
   return {
-    text: gap > 0 ? `natural ${money(natural)}${midPart} · ${gap.toFixed(2)} short of your limit` : `natural ${money(natural)}${midPart} · at your limit`,
+    // "away from", not "short of": on a debit the market sits *above* the
+    // limit and on a credit *below* it, and one word has to fit both.
+    text: gap > 0 ? `natural ${money(natural)}${midPart} · ${gap.toFixed(2)} away from your limit` : `natural ${money(natural)}${midPart} · at your limit`,
     title,
     reachable: gap <= 0,
   };
@@ -163,10 +173,16 @@ export function OptionOrders({ mode, onChanged }: { mode: TradingMode; onChanged
       <ul className="spread-legs">
         {orders.map((order) => {
           const underlying = underlyingOf(order);
+          const contract = contractOf(order);
           const fill = fillNote(order, quotes);
           return (
-          // Drags onto the chart as its underlying, like a held package.
-          <li key={order.id} {...(underlying ? symbolDragProps(underlying) : {})}>
+          // Drags onto the chart as its underlying; ⇧-drag as the contract
+          // itself, which is the premium chart this package rests in.
+          <li
+            key={order.id}
+            title="Drag onto the chart for the underlying; hold ⇧ while dragging for the contract's premium"
+            {...packageDragProps(underlying, contract)}
+          >
             {describe(order)}
             {order.status && order.status !== "new" && order.status !== "accepted" ? <span className="order-hint"> · {order.status}</span> : null}
             {fill && (

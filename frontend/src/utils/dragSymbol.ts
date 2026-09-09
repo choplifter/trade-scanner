@@ -51,3 +51,26 @@ export function symbolDragProps(symbol: string) {
     },
   };
 }
+
+/** A drag source for something that is both a stock and a contract -- an
+ * option package: plain drag carries the underlying (the chart shows the
+ * stock), ⇧-drag the contract itself (the chart shows its premium).
+ *
+ * ⇧ for "the other one" is the idiom this widget already uses on the
+ * expiry axis, where a plain click moves the leg being picked and a
+ * ⇧-click moves the other. Either side may be missing -- a package whose
+ * legs do not parse has no underlying, a stock row has no contract -- and
+ * whichever exists is then what both gestures carry. */
+export function packageDragProps(underlying: string | null, contract: string | null) {
+  const draggable = !!(underlying || contract);
+  return {
+    draggable,
+    onDragStart: (e: DragEvent<HTMLElement>) => {
+      e.stopPropagation();
+      const wanted = e.shiftKey ? contract : underlying;
+      const symbol = wanted ?? contract ?? underlying;
+      if (symbol) startSymbolDrag(e, symbol);
+      else e.preventDefault();
+    },
+  };
+}
