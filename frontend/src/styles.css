@@ -5604,3 +5604,13 @@ td.chain-side.chain-stale {
 .earn-score-reasons li {
   margin-top: 2px;
 }
+
+/* The gap between a resting package's limit and what crossing the market
+   would give: amber while it cannot fill, green once it can. */
+.order-fill-gap {
+  color: var(--status-warning);
+}
+
+.order-fill-gap.reachable {
+  color: var(--delta-up);
+}

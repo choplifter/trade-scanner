@@ -93,6 +93,9 @@ export interface Order {
   created_at: string | null;
   filled_at: string | null;
   legs: Order[] | null;
+  /** On a multi-leg leg: how many contracts of it per package (1:2:1 for a
+   * butterfly). Alpaca's field, passed through; absent on plain orders. */
+  ratio_qty?: string | number | null;
 }
 
 export interface PositionsResponse {

@@ -309,6 +309,10 @@ export function OpenSpreads({
               <tr
                 key={group.id}
                 aria-selected={group.underlying === symbol}
+                // The package as a whole stands for its underlying, so it
+                // drags onto the chart like a scanner row. Its legs drag
+                // too (below), each as its own contract's premium chart.
+                {...symbolDragProps(group.underlying)}
                 onClick={() => {
                   setExpanded(isOpen ? null : group.id);
                   setArmError(null);
