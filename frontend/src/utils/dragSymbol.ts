@@ -19,7 +19,12 @@ export const TICKER_RE = /^[A-Z]{1,5}(\.[A-Z])?$/;
 export function startSymbolDrag(e: DragEvent, symbol: string): void {
   e.dataTransfer.setData(SYMBOL_MIME, symbol);
   e.dataTransfer.setData("text/plain", symbol);
-  e.dataTransfer.effectAllowed = "copy";
+  // "copyMove", not "copy": holding shift (which packageDragProps reads to
+  // carry the contract instead of the stock) makes the browser ask for a
+  // move, and an operation the source did not allow is refused before any
+  // drop handler sees it. Nothing here is moved either way -- a drop reads
+  // the symbol and leaves the source alone.
+  e.dataTransfer.effectAllowed = "copyMove";
 }
 
 /** Call from a drop zone's onDrop. Returns the dragged symbol, uppercased,

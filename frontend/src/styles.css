@@ -5614,3 +5614,13 @@ td.chain-side.chain-stale {
 .order-fill-gap.reachable {
   color: var(--delta-up);
 }
+
+/* Draggable with a modifier: shift+mousedown would otherwise extend a text
+   selection, and Chrome then drags that selection instead of the element,
+   so the drop arrives without the symbol MIME and every drop zone ignores
+   it. Only the rows whose drag reads a modifier need this. */
+.opt-card,
+.option-orders .spread-legs li,
+.performance-table tbody tr[draggable="true"] {
+  user-select: none;
+}
