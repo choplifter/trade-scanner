@@ -5,7 +5,7 @@ import { liveConfirmed, type TradingMode } from "../../api/tradingMode";
 import { useReplaySession } from "../../hooks/useReplaySession";
 import type { LegQuote } from "../../types/options";
 import type { Order } from "../../types/trading";
-import { packageDragProps } from "../../utils/dragSymbol";
+import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 import { formatLeg, parseOcc } from "../../utils/occ";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 
@@ -103,13 +103,35 @@ function fillNote(order: Order, quotes: Record<string, LegQuote>): { text: strin
   };
 }
 
-function describe(order: Order): string {
-  const legs = order.legs && order.legs.length > 0 ? order.legs : null;
-  const what = legs
-    ? legs.map((leg) => `${leg.side === "buy" ? "+" : "−"}${formatLeg(leg.symbol ?? "")}`).join(" ")
-    : formatLeg(order.symbol ?? "");
+/** The package in words, with each contract a drag source of its own.
+ *
+ * Dragging the row carries the underlying and shift-dragging the
+ * contract, but a modifier is a poor thing to depend on: the browser
+ * reads shift as "move" and the gesture has three ways to be swallowed
+ * before a drop handler sees it. Dragging the contract you can see needs
+ * no modifier at all. */
+function Describe({ order }: { order: Order }) {
+  const legs = order.legs && order.legs.length > 0 ? order.legs : [order];
   const price = order.limit_price != null ? `@ ${Number(order.limit_price).toFixed(2)}` : "market";
-  return `${order.side === "buy" ? "Pay" : "Receive"} ${price} · ${order.qty ?? "?"} × ${what}`;
+  const multi = !!order.legs && order.legs.length > 0;
+  return (
+    <>
+      {order.side === "buy" ? "Pay" : "Receive"} {price} · {order.qty ?? "?"} ×{" "}
+      {legs.map((leg, i) => (
+        <span key={leg.symbol ?? i}>
+          {i > 0 ? " " : ""}
+          <span
+            className="order-contract"
+            title="Drag onto the chart for this contract's premium"
+            {...(leg.symbol ? symbolDragProps(leg.symbol) : {})}
+          >
+            {multi ? (leg.side === "buy" ? "+" : "−") : ""}
+            {formatLeg(leg.symbol ?? "")}
+          </span>
+        </span>
+      ))}
+    </>
+  );
 }
 
 /** The account's resting option orders (a limit the market has not
@@ -183,7 +205,7 @@ export function OptionOrders({ mode, onChanged }: { mode: TradingMode; onChanged
             title="Drag onto the chart for the underlying; hold ⇧ while dragging for the contract's premium"
             {...packageDragProps(underlying, contract)}
           >
-            {describe(order)}
+            <Describe order={order} />
             {order.status && order.status !== "new" && order.status !== "accepted" ? <span className="order-hint"> · {order.status}</span> : null}
             {fill && (
               <span className={`order-hint order-fill-gap${fill.reachable ? " reachable" : ""}`} title={fill.title}>

@@ -8,7 +8,7 @@
 import { useState } from "react";
 
 import type { LoadableStructure, OptimizerResult, Payoff } from "../../types/options";
-import { packageDragProps } from "../../utils/dragSymbol";
+import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 import { formatMoney, formatNum, formatPrice } from "../../utils/format";
 import { formatExpiry, weekdayOf } from "../../utils/occ";
 
@@ -22,6 +22,32 @@ export function legsSentence(label: string): string {
       return `${sign === "+" ? "Buy" : "Sell"} ${rest}`;
     })
     .join(" · ");
+}
+
+/** The legs line, each leg a drag source for its own contract -- the
+ * premium chart of the leg you are looking at, with no modifier to hold.
+ * The label's parts and the previewed legs are built from the same list
+ * in the same order; if that ever stops being true the line falls back to
+ * plain text rather than labelling a leg with the wrong contract. */
+function Legs({ label, legs }: { label: string; legs: { symbol: string }[] }) {
+  const parts = label.split(" ");
+  if (parts.length !== legs.length) return <>{legsSentence(label)}</>;
+  return (
+    <>
+      {parts.map((part, i) => (
+        <span key={legs[i].symbol}>
+          {i > 0 ? " · " : ""}
+          <span
+            className="order-contract"
+            title={`Drag onto the chart for ${legs[i].symbol}'s premium`}
+            {...symbolDragProps(legs[i].symbol)}
+          >
+            {part[0] === "+" ? "Buy" : "Sell"} {part.slice(1)}
+          </span>
+        </span>
+      ))}
+    </>
+  );
 }
 
 /** A metric coloured against the best of the list: the best is green, the
@@ -134,7 +160,7 @@ export function ResultCard({
     >
       <div className="opt-card-title">{r.strategy_label}</div>
       <div className="opt-card-legs">
-        {legsSentence(r.legs_label)} · {weekdayOf(r.expiry)} {formatExpiry(r.expiry)}
+        <Legs label={r.legs_label} legs={r.spread.legs} /> · {weekdayOf(r.expiry)} {formatExpiry(r.expiry)}
       </div>
       <div className="opt-card-stats">
         <span

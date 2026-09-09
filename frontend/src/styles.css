@@ -5624,3 +5624,17 @@ td.chain-side.chain-stale {
 .performance-table tbody tr[draggable="true"] {
   user-select: none;
 }
+
+/* A contract inside a package row or a result card's legs line: its own
+   drag source, so the premium chart needs no modifier to reach. */
+.order-contract {
+  cursor: grab;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--border);
+}
+
+.order-contract:hover {
+  text-decoration-color: var(--accent);
+}

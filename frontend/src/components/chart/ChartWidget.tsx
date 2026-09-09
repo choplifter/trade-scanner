@@ -165,7 +165,12 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
         onDragOver: (e: DragEvent<HTMLDivElement>) => {
           if (!isSymbolDrag(e)) return;
           e.preventDefault();
-          e.dataTransfer.dropEffect = "copy";
+          // Not while shift is held: the browser derives "move" from that
+          // modifier, and forcing "copy" against it leaves some builds with
+          // no allowed operation at all, which drops the drag on the floor.
+          // Shift is how a package drags its contract instead of its stock
+          // (utils/dragSymbol), so that gesture has to survive the trip.
+          if (!e.shiftKey) e.dataTransfer.dropEffect = "copy";
           if (!dropActive) setDropActive(true);
         },
         onDragLeave: (e: DragEvent<HTMLDivElement>) => {

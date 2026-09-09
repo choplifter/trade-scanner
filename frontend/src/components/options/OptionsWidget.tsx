@@ -412,7 +412,9 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
       onDragOver={(e) => {
         if (!onSelectSymbol || !isSymbolDrag(e)) return;
         e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
+        // See ChartWidget: forcing "copy" against a held shift can leave
+        // the drag with no allowed operation.
+        if (!e.shiftKey) e.dataTransfer.dropEffect = "copy";
       }}
       onDrop={(e) => {
         if (!onSelectSymbol) return;

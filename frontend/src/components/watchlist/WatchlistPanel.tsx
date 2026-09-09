@@ -182,7 +182,9 @@ export function WatchlistPanel({ selectedSymbol, onSelectSymbol }: WatchlistPane
     // Required for onDrop to fire at all -- a dragover the browser doesn't
     // see preventDefault() on is treated as "not a valid drop target".
     e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
+    // See ChartWidget's onDragOver: not while shift is held, or the
+    // modifier's "move" and this "copy" can cancel each other out.
+    if (!e.shiftKey) e.dataTransfer.dropEffect = "copy";
   }
 
   function handleDrop(e: DragEvent) {
