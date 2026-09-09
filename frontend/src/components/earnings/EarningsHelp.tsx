@@ -39,11 +39,20 @@ export function EarningsHelp({ open, onClose }: EarningsHelpProps) {
             Each family lists the sentences that produced its points, with the numbers in them. If you disagree with
             a sentence, the score built on it is worth nothing to you — that is the intended way to use it.
           </dd>
-          <dt>4. Load a card, or open the Optimizer</dt>
+          <dt>4. Check what it costs to cross</dt>
+          <dd>
+            Every card says so, in cents per share. A structure whose market is wide fills only at a price well away
+            from the numbers on the card, however good those look. This is the difference between a suggestion you
+            can act on and one that rests all day.
+          </dd>
+          <dt>5. Load a card, or open the Optimizer</dt>
           <dd>
             <strong>Load into ticket</strong> plants the structure in the Options widget's ticket, where you check it
-            and submit it by hand. <strong>Open optimizer</strong> hands a family this screen does not price over to
-            the Optimizer tab with the horizon and family preset.
+            and submit it by hand. Its <strong>Mid | Natural</strong> switch decides which price the limit starts at:
+            Natural crosses the market and fills at once, Mid is the better price and may rest.{" "}
+            <strong>Open optimizer</strong> hands a family this screen does not price over to the Optimizer tab with
+            the horizon and family preset — note that those runs are not filtered for fillability the way this screen
+            is.
           </dd>
         </dl>
 
@@ -135,11 +144,15 @@ export function EarningsHelp({ open, onClose }: EarningsHelpProps) {
 
         <h3>The scores</h3>
         <dl>
-          <dt>+3 Bear call spread</dt>
+          <dt>+4 Bear call spread</dt>
           <dd>
-            How many of the available signals point at that family and how strongly, relative to the others in the
-            list. It is not a probability, not a forecast and not a recommendation. A family with no rule to its name
-            scores zero, which means "nothing here argues either way", not "bad idea".
+            The sum of the rules that fired for that family: each adds one point, or two where the signal is the
+            stronger kind, and the same rules subtract. So a +4 is four rules agreeing, and the long straddle beside
+            it at −3 is three arguing against. It measures how many of the <em>available</em> signals point at a
+            family and how strongly, relative to the others in this list. It is not a probability, not a forecast and
+            not a recommendation — the chance of profit on each card is a separate number from the market's own
+            implied distribution. A family with no rule to its name scores zero, which means "nothing here argues
+            either way" rather than "bad idea", and those are left out of the list.
           </dd>
           <dt>The sentences beneath</dt>
           <dd>
@@ -159,9 +172,26 @@ export function EarningsHelp({ open, onClose }: EarningsHelpProps) {
         <dl>
           <dt>The target</dt>
           <dd>
-            Structures are judged over a range of the stock's median past report move either side of spot, and ranked
-            by their <em>worst</em> point in it. A credit structure therefore has to survive a typical earnings move
-            to score at all — which is why a screen full of rich-looking premium can still price nothing.
+            Structures are judged over a range of <em>half</em> the stock's median past report move either side of
+            spot, and ranked by their <em>worst</em> point in it — so one has to earn at both ends of that range, not
+            merely somewhere inside it. Half, because judging one over the whole move only leaves structures whose
+            short strikes sit beyond it, and beyond a typical earnings move a chain is thin, badly quoted or simply
+            stops: measured on ORCL into its report, all 92 shapes were dropped at the full move and six survived at
+            half of it. The full move is shown beside the target as context.
+          </dd>
+          <dt>0.06 to cross</dt>
+          <dd>
+            What taking this package costs against its own mid, per share. The card's numbers are the mid's, and the
+            mid is a point nobody has to trade at; this says how far a limit there is from a fill, and what crossing
+            gives up. Amber past a quarter of the package's price — past that the figures above it describe a fill
+            you are unlikely to get. A structure whose market eats more than half its price is dropped outright and
+            reported with the number.
+          </dd>
+          <dt>Dragging a card</dt>
+          <dd>
+            The card drags onto the chart as the underlying; each leg in its legs line drags as its own contract and
+            lands as that contract's premium chart. Holding ⇧ while dragging the card does the same without aiming
+            at a leg.
           </dd>
           <dt>Only one expiry</dt>
           <dd>

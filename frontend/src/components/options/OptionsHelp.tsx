@@ -369,6 +369,22 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             lists it (Alpaca's own resting option orders in Paper and Live), with a cancel each — so a put you sold
             a minute ago that has not filled is found there, not in the spreads yet.
           </dd>
+          <dt>natural 1.30 · mid 0.85 · 0.48 away</dt>
+          <dd>
+            Why a working package is still working. <em>Natural</em> is what crossing the market right now would pay
+            or cost, <em>mid</em> the midpoint, and the last number how far the market still has to travel before
+            your limit can be met — amber while it cannot fill, green once it can. Both directions reduce to the
+            same comparison: a debit fills when the market stops asking more than you offer, a credit when it stops
+            bidding less than you ask. Quotes, not fills: size has to be there too, and a wide chain can leave a
+            limit resting all day.
+          </dd>
+          <dt>Dragging a package</dt>
+          <dd>
+            A row drags onto the chart as its underlying. Each contract in it drags on its own — the dotted
+            underline marks them — and lands as that contract's premium chart, which is the axis the fill question
+            lives on. Holding ⇧ while dragging the row does the same thing without aiming at the contract. The same
+            applies to a held package below and to the Optimizer's and Earnings screen's result cards.
+          </dd>
         </dl>
 
         <h3>Risk chart</h3>
