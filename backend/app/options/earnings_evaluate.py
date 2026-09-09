@@ -67,6 +67,11 @@ WINDOW_MAX = 0.40
 WIDE_BAND_MOVE_PCT = 10.0
 WIDE_BAND_DELTA_MAX = 0.45
 TOP_N = 8
+# A structure whose market costs more than half its own price to cross is
+# not one a limit fills at anything like the number on its card. Generous
+# on purpose: an earnings chain is wide everywhere, and this is meant to
+# catch the shapes nobody could trade rather than to pick winners.
+MAX_CROSS_FRACTION = 0.5
 
 DISCLAIMER = (
     "Signals read from the listed chain, the stock's own past reports, and this app's recorded history; "
@@ -278,6 +283,7 @@ async def evaluate_symbol(
                     horizon_only=True,
                     strike_pct_range=window,
                     condor_short_delta_max=delta_max,
+                    max_cross_fraction=MAX_CROSS_FRACTION,
                     preference=0.5,
                     top_n=TOP_N,
                 ),
@@ -297,6 +303,7 @@ async def evaluate_symbol(
                     horizon_only=True,
                     strike_pct_range=window,
                     condor_short_delta_max=delta_max,
+                    max_cross_fraction=MAX_CROSS_FRACTION,
                     preference=0.5,
                     top_n=TOP_N,
                 ),

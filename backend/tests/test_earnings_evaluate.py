@@ -216,12 +216,15 @@ def test_the_calendar_and_the_directional_families_come_back_unpriced_with_a_way
     assert "calendar" not in body["picks"] and "bull_call" not in body["picks"]
 
 
-def test_the_target_is_the_typical_past_move_not_the_implied_one(monkeypatch):
+def test_the_target_is_half_the_typical_past_move_not_the_implied_one(monkeypatch):
     body = _evaluate(monkeypatch)
-    assert body["target"]["neutral"]["move"] == pytest.approx(0.04)
-    assert body["target"]["neutral"]["basis"] == "median past report move"
+    # The stock moved ±4 % over its past reports; a neutral structure is
+    # judged over half of that, with the full move alongside as context.
+    assert body["target"]["neutral"]["move"] == pytest.approx(0.02)
+    assert body["target"]["neutral"]["full_move"] == pytest.approx(0.04)
+    assert body["target"]["neutral"]["basis"] == "half the median past report move"
     target = body["optimizer"]["neutral"]["target"]
-    assert (target["low"], target["high"]) == (96.0, 104.0)
+    assert (target["low"], target["high"]) == (98.0, 102.0)
 
 
 def test_missing_pieces_are_reported_as_unknown_rather_than_scored(monkeypatch):

@@ -5638,3 +5638,9 @@ td.chain-side.chain-stale {
 .order-contract:hover {
   text-decoration-color: var(--accent);
 }
+
+/* What a card's package costs to cross. Amber past a quarter of its own
+   price: past that the card's numbers describe a mid nobody trades at. */
+.opt-cross.wide {
+  color: var(--status-warning);
+}

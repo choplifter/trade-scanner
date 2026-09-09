@@ -188,6 +188,15 @@ export function ResultCard({
           {r.direction === "debit" ? "Pay" : "Receive"} {formatMoney(Math.abs(r.net_price) * 100 * r.spread.qty)} · max{" "}
           {r.max_profit == null ? "unlimited" : formatMoney(r.max_profit)} / {r.max_loss == null ? "—" : formatMoney(r.max_loss)}
           {r.breakevens.length ? ` · BE ${r.breakevens.map((b) => formatPrice(b)).join(" / ")}` : ""}
+          {r.cross_cost != null && (
+            <span
+              className={`opt-cross${r.cross_fraction != null && r.cross_fraction > 0.25 ? " wide" : ""}`}
+              title="What crossing the market costs against this package's mid, per share. A limit at the mid waits for the market to come this far; a limit at the natural fills now. The wider it is, the less the numbers above describe a fill you would actually get."
+            >
+              {" "}
+              · {r.cross_cost.toFixed(2)} to cross
+            </span>
+          )}
         </span>
         <button type="button" className="generate-button opt-load" onClick={() => setFailed(!onLoad({ strategy: r.strategy, ticket: r.ticket }))}>
           Load into ticket

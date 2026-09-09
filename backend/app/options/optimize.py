@@ -115,6 +115,13 @@ class OptimizeRequest(BaseModel):
     strike_pct_range: float | None = Field(default=None, ge=0.05, le=0.5)
     condor_short_delta_max: float | None = Field(default=None, gt=0.1, le=0.5)
     horizon_only: bool = False
+    # Drop a finalist whose market costs more than this share of its own
+    # price to cross -- the distance from the package's mid to its
+    # natural, over the mid. A structure quoted so wide that taking it
+    # eats half the credit is not one a limit order fills at anything
+    # like the number on the card, and the card should not carry it.
+    # None leaves every priced finalist in, as before.
+    max_cross_fraction: float | None = Field(default=None, gt=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _check(self) -> "OptimizeRequest":
@@ -325,6 +332,25 @@ async def optimize_structures(
                 continue
             points, risk, chance = repriced
             pnl_min = min(points)
+            # What the market charges to take this package, against its
+            # own price. A card whose numbers only exist at a mid nobody
+            # trades at is worse than no card.
+            cross = None
+            if spread.net_natural is not None and spread.net_mid:
+                cross = abs(spread.net_natural - spread.net_mid) / abs(spread.net_mid)
+            if req.max_cross_fraction is not None and cross is not None and cross > req.max_cross_fraction:
+                rejected.append(
+                    {
+                        "strategy": cand.strategy,
+                        "strategy_label": cand.label,
+                        "expiry": cand.expiry.isoformat(),
+                        "legs_label": cand.legs_label(),
+                        "rejected_because": (
+                            f"costs {cross:.0%} of its own price to cross -- quoted too wide to fill near these numbers"
+                        ),
+                    }
+                )
+                continue
             if risk <= 0 or pnl_min <= 0:
                 rejected.append(
                     {
@@ -344,6 +370,13 @@ async def optimize_structures(
                     "legs_label": legs_label([leg for leg in _ticket_legs(spread)], cand.expiry),
                     "direction": spread.direction,
                     "net_price": round(_signed_limit(spread), 2),
+                    # Distance from the mid to the natural, per share and
+                    # as a share of the mid: what a limit at the mid is
+                    # waiting for, and what taking the market costs.
+                    "cross_cost": None
+                    if spread.net_natural is None
+                    else round(abs(spread.net_natural - spread.net_mid), 4),
+                    "cross_fraction": None if cross is None else round(cross, 4),
                     "risk": round(risk, 2),
                     "pnl_at_target": round(sum(points) / len(points), 2),
                     "pnl_min": round(pnl_min, 2),

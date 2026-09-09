@@ -163,18 +163,22 @@ def test_a_red_tape_caps_the_picks_at_two():
     assert len(pick_families(score_families(signals), market_level="red")) <= 2
 
 
-def test_the_neutral_target_is_the_typical_move_and_the_volatility_one_the_larger():
+def test_the_neutral_target_is_half_the_typical_move_and_the_volatility_one_the_larger():
     signals = Signals(spot=SPOT, implied_move_pct=18.0, hist_median_pct=10.0, samples=6)
     policy = target_policy(signals, ["iron_condor", "long_strangle"])
-    assert policy["neutral"]["move"] == pytest.approx(0.10)
-    assert policy["neutral"]["basis"] == "median past report move"
+
+    # Half, not the whole move: a structure judged over the full one has to
+    # place its shorts beyond it, where the chain is thin or stops.
+    assert policy["neutral"]["move"] == pytest.approx(0.05)
+    assert policy["neutral"]["full_move"] == pytest.approx(0.10)
+    assert policy["neutral"]["basis"] == "half the median past report move"
     assert policy["volatility"]["move"] == pytest.approx(0.18)
     assert policy["neutral"]["families"] == ["iron_condor"]
 
     # No history: the implied move stands in, and the basis says so.
     only_implied = target_policy(Signals(spot=SPOT, implied_move_pct=18.0), ["iron_condor"])
-    assert only_implied["neutral"]["move"] == pytest.approx(0.18)
-    assert only_implied["neutral"]["basis"] == "implied move"
+    assert only_implied["neutral"]["move"] == pytest.approx(0.09)
+    assert only_implied["neutral"]["basis"] == "half the implied move"
     assert only_implied["volatility"] is None
 
 

@@ -527,6 +527,9 @@ export interface OptimizeRequest {
   /** The window of strikes around spot the chain is condensed to (0.12 by
    * default). The Earnings screen widens it in proportion to the implied
    * move: into a print the strikes a condor needs sit outside 12 %. */
+  /** Drop a finalist whose market costs more than this share of its own
+   * price to cross. */
+  max_cross_fraction?: number | null;
   strike_pct_range?: number | null;
   /** The top of the delta band a condor may sell (0.40 by default), for
    * the same reason -- a print pushes the whole chain's deltas toward the
@@ -551,6 +554,11 @@ export interface OptimizerResult {
   direction: "debit" | "credit";
   /** Per share, signed like the ticket: positive paid, negative received. */
   net_price: number;
+  /** Distance from the package's mid to its natural, per share, and as a
+   * share of the mid: what a limit at the mid waits for, and what taking
+   * the market costs. Null when a leg has no two-sided quote. */
+  cross_cost: number | null;
+  cross_fraction: number | null;
   /** What the account puts up per position -- the denominator. */
   risk: number;
   pnl_at_target: number;

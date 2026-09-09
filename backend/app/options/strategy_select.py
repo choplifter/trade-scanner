@@ -80,6 +80,9 @@ SKEW_HEAVY = 0.05  # put IV minus call IV
 MIN_WING_STRIKES = 3  # offerable strikes each side beyond the expected move
 MAX_PICKS = 3
 MAX_PICKS_RED_MARKET = 2
+# How much of the typical earnings move a neutral structure is judged
+# over. See target_policy for why this is a half and not the whole move.
+NEUTRAL_MOVE_FRACTION = 0.5
 
 
 @dataclass(frozen=True)
@@ -324,22 +327,33 @@ def target_policy(signals: Signals, picks: list[str]) -> dict:
     """The move each group's target should be built from, as a fraction
     of spot.
 
-    A neutral structure is judged over the range the stock usually
-    travels on a print (the median past move): the Optimizer ranks a
-    range target by its *worst* point, so a condor has to survive a
-    typical move to score at all. A volatility structure is judged at the
-    larger of the implied and the typical move -- it needs the move to
-    happen, so the honest question is what it pays if one does."""
+    The Optimizer ranks a range target by its *worst* point, so whatever
+    range a neutral structure is given, it has to earn at both ends of
+    it. Judging one over the *whole* typical earnings move turned out to
+    reject everything a person could actually trade: only structures
+    whose short strikes sit beyond that move survive it, and beyond that
+    move a chain is thin, badly quoted, or simply stops. Measured on ORCL
+    into its report, all 92 enumerated shapes were dropped at the full
+    move, while the same chain at half of it produced six, the best of
+    them quoted five cents wide.
+
+    So a neutral structure is judged over half the typical move, and the
+    full one travels alongside as context (`full_move`) rather than as a
+    hurdle. A volatility structure keeps the larger of the implied and
+    the typical move: it needs the move to happen, so the honest question
+    is what it pays if one does."""
     hist = (signals.hist_median_pct or 0.0) / 100.0
     implied = (signals.implied_move_pct or 0.0) / 100.0
-    neutral_move = hist or implied
+    full_move = hist or implied
+    neutral_move = round(full_move * NEUTRAL_MOVE_FRACTION, 4)
     directional_move = max(hist, implied)
     groups = {FAMILY_GROUPS[f] for f in picks}
     return {
         "neutral": {
             "families": [f for f in picks if FAMILY_GROUPS[f] == "neutral"],
-            "move": round(neutral_move, 4),
-            "basis": "median past report move" if hist else "implied move",
+            "move": neutral_move,
+            "full_move": round(full_move, 4),
+            "basis": f"half the {'median past report move' if hist else 'implied move'}",
         }
         if "neutral" in groups and neutral_move > 0
         else None,

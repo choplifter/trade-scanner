@@ -351,3 +351,36 @@ def test_the_window_and_the_delta_band_reach_the_enumerator():
     banded = _Service()
     loose = _run(banded, _req(condor_short_delta_max=0.45, strategies=["iron_condor"], horizon_only=True))
     assert loose["skipped"]["total"] >= body["skipped"]["total"]
+
+
+def test_a_package_too_wide_to_cross_is_rejected_with_the_number():
+    """A card's numbers are the mid's. When taking the market costs a
+    large share of that mid, the card describes a fill nobody gets, so
+    the event path drops it rather than showing it."""
+
+    class _Wide(_Service):
+        """Same chain, but every leg quoted a dollar wide."""
+
+        async def preview(self, ticket, *, account=None):
+            spread = await super().preview(ticket, account=account)
+            for leg in spread.legs:
+                leg.bid, leg.ask = round(leg.mid - 0.5, 2), round(leg.mid + 0.5, 2)
+            spread.net_natural = round(abs(spread.net_mid) + 1.0, 2)
+            return spread
+
+    loose = _run(_Wide(), _req(strategies=["bull_call"]))
+    assert loose["results"], "without the filter a wide market is still a result"
+
+    tight = _run(_Wide(), _req(strategies=["bull_call"], max_cross_fraction=0.25))
+    assert tight["results"] == []
+    assert tight["rejected"], "the reason has to be reported, not swallowed"
+    assert "to cross" in tight["rejected"][0]["rejected_because"]
+
+
+def test_a_result_carries_what_it_costs_to_cross():
+    body = _run(_Service(), _req(strategies=["bull_call"]))
+    first = body["results"][0]
+    # The stub quotes a cent either side of the mid, so crossing a
+    # two-legged package costs about two cents.
+    assert first["cross_cost"] == pytest.approx(0.02, abs=0.005)
+    assert 0 < first["cross_fraction"] < 1
