@@ -732,30 +732,35 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
     >
       <div className="widget-header">
         <div className="chart-toolbar">
-          {pinned ? (
-            <form className="chart-symbol-form" onSubmit={submitSymbol}>
-              <input
-                type="text"
-                value={symbolDraft}
-                placeholder="Symbol"
-                spellCheck={false}
-                autoCapitalize="characters"
-                onChange={(e) => setSymbolDraft(e.target.value.toUpperCase())}
-                title="This chart is pinned: type a symbol (or an option contract) and press Enter, or drop a row from a scanner. It does not follow the scanner's selection."
-              />
-              <span className="chart-pinned-badge">pinned</span>
-              {contract && symbol && <span className="symbol">{formatLeg(symbol)}</span>}
-            </form>
-          ) : (
-            <span className="symbol" title={contract ? `${symbol} -- option premium` : undefined}>
-              {contract && symbol ? formatLeg(symbol) : (symbol ?? "Select a symbol")}
-            </span>
-          )}
-          {companyName && (
-            <span className="chart-company" title={companyTitle ?? undefined}>
-              {companyName}
-            </span>
-          )}
+          {/* Ticker above, the name it stands for beneath -- two lines so a
+              long company name is readable in a narrow panel instead of
+              being cut to "Oracle Co…" beside the symbol. */}
+          <div className="chart-identity">
+            {pinned ? (
+              <form className="chart-symbol-form" onSubmit={submitSymbol}>
+                <input
+                  type="text"
+                  value={symbolDraft}
+                  placeholder="Symbol"
+                  spellCheck={false}
+                  autoCapitalize="characters"
+                  onChange={(e) => setSymbolDraft(e.target.value.toUpperCase())}
+                  title="This chart is pinned: type a symbol (or an option contract) and press Enter, or drop a row from a scanner. It does not follow the scanner's selection."
+                />
+                <span className="chart-pinned-badge">pinned</span>
+                {contract && symbol && <span className="symbol">{formatLeg(symbol)}</span>}
+              </form>
+            ) : (
+              <span className="symbol" title={contract ? `${symbol} -- option premium` : undefined}>
+                {contract && symbol ? formatLeg(symbol) : (symbol ?? "Select a symbol")}
+              </span>
+            )}
+            {companyName && (
+              <span className="chart-company" title={companyTitle ?? undefined}>
+                {companyName}
+              </span>
+            )}
+          </div>
           {contract && (
             <span className="chart-premium-badge" title="This chart shows the option's premium per share; the underlying's levels are not drawn here">
               premium

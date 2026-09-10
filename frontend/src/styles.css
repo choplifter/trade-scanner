@@ -5654,16 +5654,22 @@ td.chain-side.chain-stale {
   color: var(--status-warning);
 }
 
-/* The name behind the ticker in the chart header, the way a charting
-   package writes it: quieter than the symbol, and it gives way first when
-   the header runs out of room. */
+/* Ticker and the name it stands for, stacked: the name gets the width of
+   the symbol above it rather than competing with the toolbar for room. */
+.chart-identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  line-height: 1.15;
+}
+
 .chart-company {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 22ch;
-  min-width: 0;
+  max-width: 26ch;
 }
