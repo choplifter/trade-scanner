@@ -49,6 +49,7 @@ import { OpenSpreads } from "./OpenSpreads";
 import { RollTicket, type RollTarget } from "./RollTicket";
 import { PlaybooksTab } from "./PlaybooksTab";
 import { subscribePlaybookIntent, type PlaybookIntent } from "./playbookIntent";
+import { IvCurve } from "./IvCurve";
 import { subscribeTicketIntent, type TicketIntent } from "./ticketIntent";
 import { useCampaigns } from "../../hooks/useCampaigns";
 import { OptionsHelp } from "./OptionsHelp";
@@ -86,6 +87,10 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // that "Load into ticket" causes.
   const optimizer = useOptionsOptimizer();
   const [helpOpen, setHelpOpen] = useState(false);
+  // The volatility curve under the expiry strip: off by default, since
+  // the chain below it is what the tab is for, and remembered per
+  // session rather than persisted.
+  const [ivCurveOpen, setIvCurveOpen] = useState(false);
   // The roll ticket: opened from a row's "Roll…" (defaults) or a playbook
   // proposal (expiry and strike preset). Lives here, above the tabs, so a
   // roll can be started from any of them.
@@ -608,6 +613,20 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                     <span className="opt-ivrank-dot" aria-hidden="true" /> {ivRankSentence(events.iv)}
                   </span>
                 )}
+              </div>
+            )}
+            {shownChain && (
+              <div className="iv-curve-block">
+                <button
+                  type="button"
+                  className="row-action iv-curve-toggle"
+                  aria-expanded={ivCurveOpen}
+                  onClick={() => setIvCurveOpen((open) => !open)}
+                  title="Implied volatility across this expiry's strikes, calls against puts -- the shape the single skew number is read off"
+                >
+                  IV curve {ivCurveOpen ? "▴" : "▾"}
+                </button>
+                {ivCurveOpen && <IvCurve chain={shownChain} />}
               </div>
             )}
             {shownChain && (

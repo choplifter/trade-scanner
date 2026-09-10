@@ -5673,3 +5673,115 @@ td.chain-side.chain-stale {
   text-overflow: ellipsis;
   max-width: 26ch;
 }
+
+/* --- Volatility curve: implied vol by strike, calls against puts -------- */
+
+/* Two series, so two categorical hues rather than the up/down pair, which
+   means P&L everywhere else in this app. Blue and orange: validated for
+   colour-vision deficiency against both surfaces. */
+.iv-curve {
+  --iv-call: #2a78d6;
+  --iv-put: #eb6834;
+  padding: 2px 0 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .iv-curve {
+    --iv-call: #3987e5;
+    --iv-put: #d95926;
+  }
+}
+
+.iv-curve svg {
+  width: 100%;
+  height: 150px;
+  display: block;
+}
+
+.iv-curve-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.iv-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.iv-swatch {
+  width: 9px;
+  height: 2px;
+  display: inline-block;
+}
+
+.iv-swatch.call {
+  background: var(--iv-call);
+}
+
+.iv-swatch.put {
+  background: var(--iv-put);
+  margin-left: 8px;
+}
+
+.iv-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.iv-line {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.iv-line.call,
+.iv-dot.call {
+  stroke: var(--iv-call);
+}
+
+.iv-line.put,
+.iv-dot.put {
+  stroke: var(--iv-put);
+}
+
+.iv-dot {
+  fill: var(--surface);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The two strikes the skew number is read between. */
+.iv-mark {
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.iv-grid {
+  stroke: var(--gridline);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.iv-spot {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.iv-cursor {
+  stroke: var(--text-secondary);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.iv-tick {
+  fill: var(--text-muted);
+  font-size: 9px;
+}
