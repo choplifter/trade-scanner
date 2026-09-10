@@ -372,6 +372,22 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // See SymbolInfoContext for why this can't just be threaded through
   // App.tsx's memoized `widgets` object instead.
   const { symbolInfo, setHighlightedNews } = useSymbolInfoContext();
+  // The name behind the ticker, next to it in the header the way a charting
+  // package writes it. Only when the fetched info is for the symbol on this
+  // chart: a pinned copy follows its own symbol while the context follows
+  // the dashboard's, and a wrong company name is worse than none. On a
+  // premium chart the name belongs to the contract's underlying.
+  const companyName = useMemo(() => {
+    const info = symbolInfo.info;
+    const want = contract ? contract.underlying : symbol;
+    if (!info || !want || info.symbol !== want) return null;
+    return info.company_name;
+  }, [symbolInfo.info, contract, symbol]);
+  const companyTitle = useMemo(() => {
+    const info = symbolInfo.info;
+    if (!companyName || !info) return null;
+    return [info.company_name, info.sector, info.industry].filter(Boolean).join(" · ");
+  }, [companyName, symbolInfo.info]);
   // A rejected drag (wrong side of market, order already filled, trading
   // switched off, ...) needs somewhere to surface without switching to the
   // Positions tab -- same .order-rejection + Dismiss pattern TradingWidget's
@@ -733,6 +749,11 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
           ) : (
             <span className="symbol" title={contract ? `${symbol} -- option premium` : undefined}>
               {contract && symbol ? formatLeg(symbol) : (symbol ?? "Select a symbol")}
+            </span>
+          )}
+          {companyName && (
+            <span className="chart-company" title={companyTitle ?? undefined}>
+              {companyName}
             </span>
           )}
           {contract && (

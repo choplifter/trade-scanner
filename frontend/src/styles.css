@@ -5653,3 +5653,17 @@ td.chain-side.chain-stale {
 .order-cross.rests {
   color: var(--status-warning);
 }
+
+/* The name behind the ticker in the chart header, the way a charting
+   package writes it: quieter than the symbol, and it gives way first when
+   the header runs out of room. */
+.chart-company {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 22ch;
+  min-width: 0;
+}
