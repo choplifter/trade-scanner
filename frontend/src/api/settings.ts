@@ -64,6 +64,9 @@ export interface AppSettings {
   chainGreek: ChainGreek;
   /** The ticket's risk view: the payoff chart, or the date x price table. */
   riskView: "chart" | "table";
+  /** A short chime when a position or an option package changes size --
+   * a fill. Off makes the app silent. */
+  fillSound: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -88,6 +91,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   timeZone: "local",
   chainGreek: "delta",
   riskView: "chart",
+  fillSound: true,
 };
 
 /** One short target from storage, clamped to the picker's range. */
@@ -172,6 +176,7 @@ function load(): AppSettings {
       timeZone: oneOf(parsed.timeZone, ["local", "market"] as const, DEFAULT_SETTINGS.timeZone),
       chainGreek: oneOf(parsed.chainGreek, ["delta", "gamma", "theta"] as const, DEFAULT_SETTINGS.chainGreek),
       riskView: oneOf(parsed.riskView, ["chart", "table"] as const, DEFAULT_SETTINGS.riskView),
+      fillSound: typeof parsed.fillSound === "boolean" ? parsed.fillSound : DEFAULT_SETTINGS.fillSound,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

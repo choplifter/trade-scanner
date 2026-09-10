@@ -10,6 +10,7 @@ import {
   type ChartThemeId,
   type CustomColors,
 } from "../../api/chartTheme";
+import { playFillChime } from "../../api/fillSound";
 import { getCustomPalette, isDark, resetSettings, type AppSettings } from "../../api/settings";
 import type { SettingsTab } from "../../api/settingsDialog";
 import { useSettings } from "../../hooks/useSettings";
@@ -236,6 +237,24 @@ export function SettingsDialog({
                   { key: "off", label: "Off" },
                 ]}
                 onChange={(v) => set("sessionShading", v === "on")}
+              />
+            </Row>
+            <Row
+              label="Fill chime"
+              hint="A short sound when a position or an option package changes size — a fill. Not for an order that was cancelled or rejected."
+            >
+              <Segmented
+                value={settings.fillSound ? "on" : "off"}
+                options={[
+                  { key: "on", label: "On" },
+                  { key: "off", label: "Off" },
+                ]}
+                onChange={(v) => {
+                  set("fillSound", v === "on");
+                  // Play it on the way in, so the choice is audible and the
+                  // browser's audio is unlocked by this very click.
+                  if (v === "on") playFillChime();
+                }}
               />
             </Row>
           </div>

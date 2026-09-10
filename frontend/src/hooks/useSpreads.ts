@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { noteHoldings } from "../api/fillSound";
 import { closeSpread, createTrigger, deleteTrigger, getOptionsAccount, getSpreads } from "../api/options";
 import { OrderRejectedError } from "../api/http";
 import { subscribeReplaySession } from "../api/replayMode";
@@ -56,6 +57,12 @@ export function useSpreads(enabled: boolean): SpreadsState & SpreadsActions {
       const [account, spreads] = await Promise.all([getOptionsAccount(), getSpreads()]);
       if (cancelledRef.current) return;
       failuresRef.current = 0;
+      // The option side of the fill chime: a package that arrives, grows,
+      // shrinks or goes is a fill (see api/fillSound).
+      noteHoldings(
+        "options",
+        new Map(spreads.spreads.map((g) => [g.id, `${g.qty}:${g.legs.map((l) => `${l.symbol}x${l.qty}`).join("|")}`])),
+      );
       setState({
         account,
         spreads: spreads.spreads,

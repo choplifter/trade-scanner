@@ -33,6 +33,7 @@ const HOT_WINDOW_MS = 12_000;
  * immediately flickered an error banner over live positions every time that
  * happened. Wait for a few in a row before treating it as real; a genuine
  * outage still surfaces within a handful of seconds. */
+import { noteHoldings } from "../api/fillSound";
 import { OrderRejectedError } from "../api/http";
 import { subscribeBrokerChanged } from "../api/settingsDialog";
 
@@ -145,6 +146,12 @@ export function useTrading(): TradingState & TradingActions {
       ]);
       if (cancelledRef.current) return;
       failureCountRef.current = 0;
+      // What the account holds, for the fill chime: a size that changed
+      // since the last poll is a fill, whichever side it was on.
+      noteHoldings(
+        "equity",
+        new Map(positions.positions.map((p) => [p.symbol, String(p.qty)])),
+      );
       setState({
         account: account.account,
         tradingAccount: account.trading_account ?? "paper",
