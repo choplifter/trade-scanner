@@ -11,6 +11,7 @@ import { LoginPage } from "./components/auth/LoginPage";
 import { ChartWidget } from "./components/chart/ChartWidget";
 import { SymbolInfoWidget } from "./components/chart/SymbolInfoWidget";
 import { GexPlanWidget } from "./components/gex/GexPlanWidget";
+import { formatMoney } from "./utils/format";
 import { chartSymbolOf, parseOcc } from "./utils/occ";
 import EarningsWidget from "./components/earnings/EarningsWidget";
 import { OptionsWidget } from "./components/options/OptionsWidget";
@@ -122,7 +123,18 @@ function AppShell({ user, onLogout }: AppShellProps) {
   // content-level collapse regardless of layout mode, this only decides
   // whether panels mode gives the row its own resizable slot back.
   const replaySession = useReplaySession();
-  const { refresh: refreshTrading } = useTradingContext();
+  const { refresh: refreshTrading, account, tradingAccount, brokerMissing } = useTradingContext();
+  // The account line in the header: what the book is worth, and what it
+  // has done since the previous close. `last_equity` is that close, so the
+  // difference is the day, the same number the broker shows.
+  const balance = useMemo(() => {
+    if (!account || brokerMissing) return null;
+    const equity = Number(account.equity);
+    const previous = Number(account.last_equity);
+    if (!Number.isFinite(equity)) return null;
+    const change = Number.isFinite(previous) && previous > 0 ? equity - previous : null;
+    return { equity, change, pct: change != null && previous > 0 ? (change / previous) * 100 : null, cash: Number(account.cash), buying: Number(account.buying_power) };
+  }, [account, brokerMissing]);
 
   const handleTradingModeChange = useCallback(
     (next: TradingMode) => {
@@ -313,6 +325,28 @@ function AppShell({ user, onLogout }: AppShellProps) {
                 <span className="market-conditions-dot" />
                 {CONDITIONS_LABEL[conditions.level] ?? conditions.level}
               </a>
+            )}
+            {balance && (
+              <span
+                className="header-balance"
+                title={[
+                  `${tradingAccount === "live" ? "Live" : "Paper"} account equity`,
+                  Number.isFinite(balance.cash) ? `cash ${formatMoney(balance.cash)}` : null,
+                  Number.isFinite(balance.buying) ? `buying power ${formatMoney(balance.buying)}` : null,
+                  balance.change != null ? "change since the previous close" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              >
+                <strong>{formatMoney(balance.equity)}</strong>
+                {balance.change != null && (
+                  <span className={balance.change >= 0 ? "delta-up" : "delta-down"}>
+                    {balance.change >= 0 ? "+" : "−"}
+                    {formatMoney(Math.abs(balance.change))}
+                    {balance.pct != null ? ` (${balance.pct >= 0 ? "+" : "−"}${Math.abs(balance.pct).toFixed(2)} %)` : ""}
+                  </span>
+                )}
+              </span>
             )}
             <span className="session-badge" data-session={session}>
               <span className="session-dot" />

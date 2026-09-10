@@ -5825,3 +5825,20 @@ td.chain-side.chain-stale {
 .iv-offset {
   color: var(--text-muted);
 }
+
+/* Account equity in the header, next to the session badge: the number
+   first, the day's change beside it. */
+.header-balance {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.header-balance strong {
+  font-size: 13px;
+}
