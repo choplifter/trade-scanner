@@ -73,15 +73,25 @@ Outlook = Literal["very_bearish", "bearish", "neutral", "directional", "bullish"
 OUTLOOK_STRATEGIES: dict[str, frozenset[str]] = {
     "very_bearish": frozenset({"long_put", "bear_put"}),
     "bearish": frozenset({"long_put", "bear_put", "bear_call"}),
-    "neutral": frozenset({"iron_condor", "iron_butterfly", "call_butterfly", "put_butterfly", "calendar"}),
+    # A covered call is the neutral view expressed on shares already held:
+    # capped upside, the premium as the return. It belongs here even though
+    # its collateral is the position rather than a spread's width -- the
+    # budget is what decides whether it survives, not the view.
+    "neutral": frozenset({"iron_condor", "iron_butterfly", "call_butterfly", "put_butterfly", "calendar", "covered_call"}),
     "directional": frozenset({"long_straddle", "long_strangle"}),
-    "bullish": frozenset({"long_call", "bull_call", "bull_put"}),
+    # Selling a put is the bullish view with an obligation attached: happy
+    # to be assigned the shares at the strike, paid to wait.
+    "bullish": frozenset({"long_call", "bull_call", "bull_put", "cash_secured_put"}),
     "very_bullish": frozenset({"long_call", "bull_call"}),
 }
 
 # Diagonals are left out: strike x strike x expiry pairs multiply the count
 # for a shape the ticket can build by hand in a moment. Income strategies are
-# off by default because they need shares or cash the optimizer cannot see.
+# out of the *default* set because they put up the position itself rather
+# than a spread's width, and a run with no budget named would rank them
+# against shapes costing a hundredth as much -- but the outlooks that fit
+# them offer them (see OUTLOOK_STRATEGIES), and a budget large enough to
+# hold the shares or the strike is what lets them through.
 DEFAULT_STRATEGIES: frozenset[str] = frozenset(
     {
         "long_call",
@@ -624,6 +634,48 @@ def rank_score(candidates: list[Candidate], preference: float) -> dict[int, floa
     return {id(c): (1 - p) * ror_rank[id(c)] + p * chance_rank.get(id(c), 0.0) for c in candidates}
 
 
+
+def represent_each_family(items, strategy_of, *, top_k: int, per_strategy_cap: int) -> tuple[list, int]:
+    """(the finalists, how many were cut as duplicates) from a list already
+    ordered best first.
+
+    The best of every family goes in before any family takes a second seat.
+    Without that a list ranked on return on risk is decided by the size of
+    the denominator: a bull call risking 200 dollars shows 247 %, a
+    cash-secured put holding 15,500 shows 5.9 %, and the put never appears
+    however deliberately it was asked for -- which reads as "that family is
+    not implemented" rather than "it ranked lower". Both numbers are honest
+    and they are not comparable, so the list shows one of each and lets the
+    reader compare them.
+    """
+    chosen: list = []
+    taken: dict[str, int] = {}
+    picked: set[int] = set()
+    for item in items:
+        family = strategy_of(item)
+        if family in taken:
+            continue
+        taken[family] = 1
+        picked.add(id(item))
+        chosen.append(item)
+        if len(chosen) >= top_k:
+            return chosen, 0
+    dropped = 0
+    for item in items:
+        if id(item) in picked:
+            continue
+        if len(chosen) >= top_k:
+            break
+        family = strategy_of(item)
+        if taken.get(family, 0) >= per_strategy_cap:
+            dropped += 1
+            continue
+        taken[family] = taken.get(family, 0) + 1
+        picked.add(id(item))
+        chosen.append(item)
+    return chosen, dropped
+
+
 def filter_and_rank(
     candidates: list[Candidate],
     *,
@@ -668,17 +720,12 @@ def filter_and_rank(
 
     scores = rank_score(kept, preference)
     kept.sort(key=lambda c: (-scores[id(c)], -c.return_on_risk, -c.pnl_mean, c.risk))
-    out: list[Candidate] = []
-    seen: dict[tuple[str, date], int] = {}
-    for cand in kept:
-        key = (cand.strategy, cand.expiry)
-        if seen.get(key, 0) >= per_strategy_cap:
-            drop("strategy_cap")
-            continue
-        seen[key] = seen.get(key, 0) + 1
-        out.append(cand)
-        if len(out) >= top_k:
-            break
+    out, dropped = represent_each_family(
+        kept, lambda c: c.strategy, top_k=top_k, per_strategy_cap=per_strategy_cap
+    )
+    for _ in range(dropped):
+        drop("strategy_cap")
+    out.sort(key=lambda c: (-scores[id(c)], -c.return_on_risk))
     return out, reasons
 
 
@@ -693,6 +740,7 @@ __all__ = [
     "OUTLOOK_STRATEGIES",
     "chance_of_profit",
     "rank_score",
+    "represent_each_family",
     "DEFAULT_STRATEGIES",
     "FINALISTS",
     "MAX_CANDIDATES",

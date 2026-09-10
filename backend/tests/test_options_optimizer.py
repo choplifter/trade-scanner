@@ -338,3 +338,44 @@ def test_the_default_band_is_untouched_when_no_one_asks_for_another():
     assert enumerate_candidates(rows, SPOT, target, frozenset({"iron_condor"})) == enumerate_candidates(
         rows, SPOT, target, frozenset({"iron_condor"}), short_delta=(0.10, 0.40)
     )
+
+
+def test_every_family_that_priced_gets_a_seat_before_any_takes_a_second():
+    """A list ranked on return on risk is decided by the denominator. A
+    covered call holding the shares cannot out-rank a spread holding the
+    width, so without this rule a family the reader deliberately asked for
+    never appears -- which reads as "not implemented"."""
+    from app.options.optimizer import represent_each_family
+
+    # Best first, as filter_and_rank hands them over.
+    items = [
+        {"strategy": "bull_call", "ror": 2.5},
+        {"strategy": "bull_call", "ror": 2.1},
+        {"strategy": "bull_put", "ror": 2.0},
+        {"strategy": "bull_call", "ror": 1.9},
+        {"strategy": "cash_secured_put", "ror": 0.06},
+    ]
+    chosen, dropped = represent_each_family(items, lambda r: r["strategy"], top_k=4, per_strategy_cap=3)
+
+    assert [r["strategy"] for r in chosen[:3]] == ["bull_call", "bull_put", "cash_secured_put"]
+    assert len(chosen) == 4 and dropped == 0
+    # The order within what is left is still the ranking's.
+    assert chosen[3]["ror"] == 2.1
+
+
+def test_the_per_strategy_cap_still_holds_once_every_family_is_seated():
+    from app.options.optimizer import represent_each_family
+
+    items = [{"strategy": "bull_call", "ror": r} for r in (3.0, 2.5, 2.0, 1.5, 1.0)]
+    chosen, dropped = represent_each_family(items, lambda r: r["strategy"], top_k=5, per_strategy_cap=2)
+
+    assert len(chosen) == 2 and dropped == 3
+
+
+def test_more_families_than_seats_shows_one_of_each_it_can_fit():
+    from app.options.optimizer import represent_each_family
+
+    items = [{"strategy": s, "ror": 1.0} for s in ("a", "b", "c", "d")]
+    chosen, dropped = represent_each_family(items, lambda r: r["strategy"], top_k=2, per_strategy_cap=3)
+
+    assert [r["strategy"] for r in chosen] == ["a", "b"] and dropped == 0

@@ -55,9 +55,9 @@ const OUTLOOKS: { key: Outlook; label: string; move: number; tone: "bear" | "fla
 const OUTLOOK_STRATEGIES: Record<Outlook, Strategy[]> = {
   very_bearish: ["long_put", "bear_put"],
   bearish: ["long_put", "bear_put", "bear_call"],
-  neutral: ["iron_condor", "iron_butterfly", "call_butterfly", "put_butterfly", "calendar"],
+  neutral: ["iron_condor", "iron_butterfly", "call_butterfly", "put_butterfly", "calendar", "covered_call"],
   directional: ["long_straddle", "long_strangle"],
-  bullish: ["long_call", "bull_call", "bull_put"],
+  bullish: ["long_call", "bull_call", "bull_put", "cash_secured_put"],
   very_bullish: ["long_call", "bull_call"],
 };
 

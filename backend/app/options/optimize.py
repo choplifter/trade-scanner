@@ -34,6 +34,7 @@ from app.options.chain import ExpiryInfo
 from app.options.models import STRATEGY_LABELS, Strategy
 from app.options.optimizer import (
     CONDOR_SHORT_DELTA,
+    PER_STRATEGY_CAP,
     DEFAULT_STRATEGIES,
     FINALISTS,
     OUTLOOK_STRATEGIES,
@@ -48,6 +49,7 @@ from app.options.optimizer import (
     position_pnl,
     price_candidate,
     rank_score,
+    represent_each_family,
 )
 from app.options.payoff import PayoffLeg, years_between
 from app.services.market_clock import ET
@@ -403,7 +405,11 @@ async def optimize_structures(
     ]
     scores = rank_score(scored, req.preference)
     order = sorted(range(len(results)), key=lambda i: (-scores[id(scored[i])], -results[i]["return_on_risk"], results[i]["risk"]))
-    results = [results[i] for i in order][: req.top_n]
+    ranked = [results[i] for i in order]
+    # Same rule as the cheap pass: every family that priced gets a seat
+    # before any family takes a second one, or a shape whose collateral is
+    # the position itself never survives a list ranked on return on risk.
+    results, _ = represent_each_family(ranked, lambda r: r["strategy"], top_k=req.top_n, per_strategy_cap=PER_STRATEGY_CAP)
     for i, r in enumerate(results, start=1):
         r["rank"] = i
 
