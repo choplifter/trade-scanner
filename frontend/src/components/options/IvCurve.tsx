@@ -20,6 +20,9 @@ import type { ChainResponse } from "../../types/options";
  */
 
 const SKEW_DISTANCE = 0.05;
+/** How far either side of spot counts as near the money when measuring the
+ * gap between the two sides -- mirrors iv_context.NEAR_ATM_PCT. */
+const NEAR_ATM = 0.03;
 const W = 560;
 const H = 150;
 const PAD = { l: 40, r: 10, t: 12, b: 22 };
@@ -45,21 +48,40 @@ export function IvCurve({ chain }: { chain: ChainResponse }) {
       if (row.put?.iv) puts.push({ strike: row.strike, iv: row.put.iv });
     }
     if (calls.length + puts.length < 4) return null;
+    // What the two sides disagree by near the money. Put-call parity says
+    // one strike carries one implied vol; a feed that solves both sides
+    // against spot rather than the forward pushes them apart by roughly a
+    // constant, which is an artefact and not a view. Measured here so it
+    // can be taken back out -- see backend iv_context.parity_offset.
+    const gaps: number[] = [];
+    for (const row of chain.rows) {
+      if (!row.call?.iv || !row.put?.iv) continue;
+      if (Math.abs(row.strike - chain.spot) > chain.spot * NEAR_ATM) continue;
+      gaps.push(row.call.iv - row.put.iv);
+    }
+    const offset = gaps.length >= 2 ? gaps.reduce((a, b) => a + b, 0) / gaps.length : null;
+    // The curve the word skew actually names: out-of-the-money contracts
+    // only -- puts below spot, calls above -- with the call side brought
+    // onto the put side's footing, so one continuous line crosses spot.
+    const smile: Point[] = [
+      ...puts.filter((p) => p.strike <= chain.spot),
+      ...calls.filter((p) => p.strike >= chain.spot).map((p) => ({ strike: p.strike, iv: p.iv - (offset ?? 0) })),
+    ].sort((a, b) => a.strike - b.strike);
     const strikes = [...calls, ...puts].map((p) => p.strike);
-    const ivs = [...calls, ...puts].map((p) => p.iv);
+    const ivs = [...calls, ...puts, ...smile].map((p) => p.iv);
     const xMin = Math.min(...strikes);
     const xMax = Math.max(...strikes);
     const yMin = Math.min(...ivs);
     const yMax = Math.max(...ivs);
     // The two strikes the skew is read between, and the number itself.
-    const putMark = nearest(puts, chain.spot * (1 - SKEW_DISTANCE));
-    const callMark = nearest(calls, chain.spot * (1 + SKEW_DISTANCE));
+    const putMark = nearest(smile.filter((p) => p.strike <= chain.spot), chain.spot * (1 - SKEW_DISTANCE));
+    const callMark = nearest(smile.filter((p) => p.strike >= chain.spot), chain.spot * (1 + SKEW_DISTANCE));
     const skew = putMark && callMark ? putMark.iv - callMark.iv : null;
-    return { calls, puts, xMin, xMax, yMin, yMax: yMax === yMin ? yMin + 0.01 : yMax, putMark, callMark, skew };
+    return { calls, puts, smile, offset, xMin, xMax, yMin, yMax: yMax === yMin ? yMin + 0.01 : yMax, putMark, callMark, skew };
   }, [chain]);
 
   if (!model) return null;
-  const { calls, puts, xMin, xMax, yMin, yMax, putMark, callMark, skew } = model;
+  const { calls, puts, smile, offset, xMin, xMax, yMin, yMax, putMark, callMark, skew } = model;
 
   const x = (strike: number) => PAD.l + ((strike - xMin) / (xMax - xMin || 1)) * (W - PAD.l - PAD.r);
   const y = (iv: number) => PAD.t + ((yMax - iv) / (yMax - yMin)) * (H - PAD.t - PAD.b);
@@ -76,12 +98,22 @@ export function IvCurve({ chain }: { chain: ChainResponse }) {
     <div className="iv-curve">
       <div className="iv-curve-head order-hint">
         <span className="iv-legend">
+          <span className="iv-swatch skew" /> Skew
           <span className="iv-swatch call" /> Calls
           <span className="iv-swatch put" /> Puts
         </span>
+        {offset != null && (
+          <span
+            className="iv-offset"
+            title="How far the two raw sides disagree near the money. One strike carries one implied volatility, so a gap here is the feed solving both sides against spot rather than the forward -- a dividend or borrow cost, not a view. The skew line has it taken back out."
+          >
+            sides {offset >= 0 ? "+" : ""}
+            {(offset * 100).toFixed(1)} pts apart
+          </span>
+        )}
         {skew != null && (
           <span
-            title={`Put implied vol minus call implied vol, ${(SKEW_DISTANCE * 100).toFixed(0)} % either side of spot -- the ringed strikes. Positive is the usual equity shape, where downside insurance costs more.`}
+            title={`The skew line's own tilt: out-of-the-money put implied vol minus out-of-the-money call implied vol, ${(SKEW_DISTANCE * 100).toFixed(0)} % either side of spot -- the ringed points. Positive is the usual equity shape, where downside insurance costs more.`}
           >
             skew {skew >= 0 ? "+" : ""}
             {(skew * 100).toFixed(1)} pts
@@ -123,13 +155,17 @@ export function IvCurve({ chain }: { chain: ChainResponse }) {
         <text className="iv-tick" x={x(chain.spot)} y={PAD.t - 3} textAnchor="middle">
           spot
         </text>
-        <path className="iv-line put" d={path(puts)} />
-        <path className="iv-line call" d={path(calls)} />
+        <path className="iv-line raw put" d={path(puts)} />
+        <path className="iv-line raw call" d={path(calls)} />
+        <path className="iv-line smile" d={path(smile)} />
         {calls.map((p) => (
           <circle key={`c${p.strike}`} className="iv-dot call" cx={x(p.strike)} cy={y(p.iv)} r={2.5} />
         ))}
         {puts.map((p) => (
           <circle key={`p${p.strike}`} className="iv-dot put" cx={x(p.strike)} cy={y(p.iv)} r={2.5} />
+        ))}
+        {smile.map((p) => (
+          <circle key={`s${p.strike}`} className="iv-dot smile" cx={x(p.strike)} cy={y(p.iv)} r={2.5} />
         ))}
         {putMark && <circle className="iv-mark" cx={x(putMark.strike)} cy={y(putMark.iv)} r={5} />}
         {callMark && <circle className="iv-mark" cx={x(callMark.strike)} cy={y(callMark.iv)} r={5} />}

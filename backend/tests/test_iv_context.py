@@ -13,6 +13,7 @@ from app.options.iv_context import (
     atm_iv,
     iv_premium,
     realized_vol,
+    parity_offset,
     skew,
     term_structure,
 )
@@ -94,9 +95,10 @@ def test_atm_iv_is_none_on_an_empty_chain():
 
 
 def test_skew_is_positive_when_downside_costs_more():
-    chain = _chain({95: (0.30, 0.40), 100: (0.30, 0.32), 105: (0.26, 0.30)})
+    # Both sides agree at the money, so there is no parity offset to remove.
+    chain = _chain({95: (0.30, 0.40), 99: (0.32, 0.32), 100: (0.30, 0.30), 105: (0.26, 0.30)})
 
-    # put at 95 (0.40) minus call at 105 (0.26)
+    # out-of-the-money put at 95 (0.40) minus out-of-the-money call at 105 (0.26)
     assert skew(chain) == pytest.approx(0.14)
 
 
@@ -104,6 +106,43 @@ def test_skew_is_none_when_one_side_has_no_quotes():
     chain = _chain({95: (None, 0.40), 100: (None, 0.32)})
 
     assert skew(chain) is None
+
+
+def test_the_parity_offset_is_the_gap_between_the_sides_near_the_money():
+    # Calls read four points above puts on every strike that quotes both:
+    # a forward assumption, not a view (see parity_offset).
+    chain = _chain({99: (0.34, 0.30), 100: (0.36, 0.32), 101: (0.38, 0.34), 90: (0.50, 0.44)})
+
+    # Only the three strikes within 3 % of spot count; the far one does not.
+    assert parity_offset(chain) == pytest.approx(0.04)
+    assert parity_offset(_chain({100: (0.36, 0.32)})) is None  # one pair is not an average
+
+
+def test_skew_is_measured_after_the_two_sides_are_put_on_one_footing():
+    """The ORCL shape: calls quoted a constant four points above puts, and
+    the curve itself flat. The raw difference would call that a four-point
+    skew; there is none."""
+    chain = _chain({95: (0.36, 0.32), 99: (0.34, 0.30), 100: (0.34, 0.30), 101: (0.34, 0.30), 105: (0.34, 0.30)})
+
+    assert parity_offset(chain) == pytest.approx(0.04)
+    # put at 95 is 0.32; call at 105 is 0.34, worth 0.30 once corrected.
+    assert skew(chain) == pytest.approx(0.02, abs=1e-9)
+
+
+def test_a_chain_too_thin_to_measure_an_offset_falls_back_to_the_raw_gap():
+    chain = _chain({95: (None, 0.40), 100: (0.32, None), 105: (0.26, None)})
+
+    assert parity_offset(chain) is None
+    assert skew(chain) == pytest.approx(0.14)
+
+
+def test_skew_ignores_the_in_the_money_twins():
+    """A put above spot and a call below it are quoted off their OTM
+    partners; taking one of those would measure moneyness, not asymmetry."""
+    chain = _chain({95: (0.30, 0.40), 100: (0.30, 0.30), 105: (0.26, 0.90)})
+
+    # The 105 put (0.90) is in the money and must not be picked as "the put".
+    assert skew(chain) == pytest.approx(0.14)
 
 
 def test_term_structure_reports_each_expiry_nearest_first():

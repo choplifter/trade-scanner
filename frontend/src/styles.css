@@ -5785,3 +5785,43 @@ td.chain-side.chain-stale {
   fill: var(--text-muted);
   font-size: 9px;
 }
+
+/* The skew line is the answer; the two raw sides stay as faint context, so
+   a reader can see what was corrected rather than being asked to trust it. */
+.iv-curve {
+  --iv-skew: #1baf7a;
+}
+
+@media (prefers-color-scheme: dark) {
+  .iv-curve {
+    --iv-skew: #199e70;
+  }
+}
+
+.iv-line.raw {
+  stroke-width: 1;
+  opacity: 0.45;
+}
+
+.iv-line.smile,
+.iv-dot.smile {
+  stroke: var(--iv-skew);
+}
+
+.iv-line.smile {
+  stroke-width: 2.5;
+}
+
+.iv-swatch.skew {
+  background: var(--iv-skew);
+}
+
+.iv-swatch.call,
+.iv-swatch.put {
+  margin-left: 8px;
+  opacity: 0.55;
+}
+
+.iv-offset {
+  color: var(--text-muted);
+}

@@ -39,6 +39,9 @@ REALIZED_VOL_WINDOW = 20
 # How far out to look for the strike that stands in for "at the money" when
 # spot sits between two listed strikes.
 _ATM_TOLERANCE_PCT = 0.02
+# How far either side of spot counts as "near the money" when measuring the
+# gap between the two sides (see parity_offset).
+NEAR_ATM_PCT = 0.03
 
 
 @dataclass(frozen=True)
@@ -46,10 +49,16 @@ class ExpiryIv:
     expiry: date
     dte: int
     atm_iv: float | None
-    # Put IV minus call IV at comparable distance from spot. Positive is the
-    # usual equity shape (downside insurance costs more); a call-side bid is
-    # unusual enough to be worth naming.
+    # Out-of-the-money put IV minus out-of-the-money call IV, the two sides
+    # put on one footing first. Positive is the usual equity shape (downside
+    # insurance costs more); a call-side bid is unusual enough to be worth
+    # naming.
     skew: float | None
+    # The gap between the two sides near the money -- an artefact of the
+    # feed's forward assumption rather than a view, and what `skew` above
+    # has been corrected for. Worth carrying so a reader can see how much
+    # of the raw difference was never skew.
+    parity_offset: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -57,6 +66,7 @@ class ExpiryIv:
             "dte": self.dte,
             "atm_iv": None if self.atm_iv is None else round(self.atm_iv, 4),
             "skew": None if self.skew is None else round(self.skew, 4),
+            "parity_offset": None if self.parity_offset is None else round(self.parity_offset, 4),
         }
 
 
@@ -88,23 +98,62 @@ def atm_iv(chain: Chain) -> float | None:
     return sum(ivs) / len(ivs) if ivs else None
 
 
-def skew(chain: Chain, *, distance_pct: float = 0.05) -> float | None:
-    """Put IV minus call IV at roughly `distance_pct` either side of spot.
+def parity_offset(chain: Chain, *, near_pct: float = NEAR_ATM_PCT, min_pairs: int = 2) -> float | None:
+    """The systematic gap between the two sides, measured near the money:
+    the mean of call IV minus put IV on strikes that quote both.
 
-    Both legs are taken the same distance out so the number measures the
-    market's asymmetry rather than the moneyness of whichever strikes
-    happened to be picked."""
+    Put-call parity says the two sides of one strike carry the same
+    implied volatility. Where a feed solves both against the spot price
+    rather than the forward, a dividend or a borrow cost pushes them apart
+    by roughly a constant -- and on a short-dated contract, where a cent of
+    price is worth a lot of volatility, that constant is enormous. Measured
+    on ORCL the day before its report: a 27 to 30 point gap on the next
+    day's expiry, holding across every strike, and 8 to 11 points a week
+    out. That is an artefact of the pricing assumption, not a market view,
+    and a skew read straight off the two sides carries all of it.
+
+    None when too few strikes quote both sides to average over."""
+    spot = chain.spot
+    if spot <= 0:
+        return None
+    lo, hi = spot * (1 - near_pct), spot * (1 + near_pct)
+    gaps = [
+        row.call.iv - row.put.iv
+        for row in chain.rows
+        if lo <= row.strike <= hi and row.call is not None and row.put is not None and row.call.iv and row.put.iv
+    ]
+    if len(gaps) < min_pairs:
+        return None
+    return sum(gaps) / len(gaps)
+
+
+def skew(chain: Chain, *, distance_pct: float = 0.05) -> float | None:
+    """How much more the market charges for the downside than the upside,
+    in volatility points, at roughly `distance_pct` either side of spot.
+
+    Both legs are out of the money -- the put below spot, the call above --
+    because those are the contracts the market actually prices a view in;
+    their in-the-money twins are quoted off them and add nothing. Both are
+    taken the same distance out, so the number measures asymmetry rather
+    than the moneyness of whichever strikes happened to be picked.
+
+    The two sides are put on one footing first (see parity_offset), so what
+    is left is the tilt of the curve rather than the feed's forward
+    assumption. Without enough strikes to measure that offset the raw
+    difference is returned, which is the honest fallback: on a chain that
+    thin there is nothing better to correct with."""
     spot = chain.spot
     if spot <= 0:
         return None
     put_target = spot * (1 - distance_pct)
     call_target = spot * (1 + distance_pct)
 
-    puts = [(abs(r.strike - put_target), r.put.iv) for r in chain.rows if r.put is not None and r.put.iv]
-    calls = [(abs(r.strike - call_target), r.call.iv) for r in chain.rows if r.call is not None and r.call.iv]
+    puts = [(abs(r.strike - put_target), r.put.iv) for r in chain.rows if r.put is not None and r.put.iv and r.strike <= spot]
+    calls = [(abs(r.strike - call_target), r.call.iv) for r in chain.rows if r.call is not None and r.call.iv and r.strike >= spot]
     if not puts or not calls:
         return None
-    return min(puts)[1] - min(calls)[1]
+    offset = parity_offset(chain) or 0.0
+    return min(puts)[1] - (min(calls)[1] - offset)
 
 
 def term_structure(chains: Iterable[Chain], today: date) -> list[ExpiryIv]:
@@ -115,6 +164,7 @@ def term_structure(chains: Iterable[Chain], today: date) -> list[ExpiryIv]:
             dte=(chain.expiry - today).days,
             atm_iv=atm_iv(chain),
             skew=skew(chain),
+            parity_offset=parity_offset(chain),
         )
         for chain in chains
     ]
