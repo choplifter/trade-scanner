@@ -469,6 +469,11 @@ export function OptimizerTab({ symbol, chain, expiries, events, optimizer, inten
     return <div className="widget-empty">Select a symbol to optimize a structure for a price target.</div>;
   }
   const shown = result && result.underlying === symbol ? result : null;
+  // What produced the answer on screen, for the empty state's explanation:
+  // the budget it ran under, and whether it was asked for a structure that
+  // puts up shares or cash rather than a spread's width.
+  const shownBudget = remembered?.budget ?? null;
+  const shownHasIncome = (remembered?.strategies ?? []).some((s) => s === "covered_call" || s === "cash_secured_put");
   const bestRor = shown ? Math.max(0, ...shown.results.map((r) => r.return_on_risk)) : 0;
   const bestChance = shown ? Math.max(0, ...shown.results.map((r) => r.chance ?? 0)) : 0;
   const shownTargets = shown ? shown.target.points : [];
@@ -728,6 +733,14 @@ export function OptimizerTab({ symbol, chain, expiries, events, optimizer, inten
                 </li>
               ))}
             </ul>
+          )}
+          {shown.results.length === 0 && (shown.skipped.reasons.over_budget ?? 0) === shown.skipped.total && shown.skipped.total > 0 && (
+            <p className="idea-warning">
+              Every shape costs more than the budget{shownBudget != null ? ` of ${formatPrice(shownBudget)}` : ""}.
+              {shownHasIncome
+                ? " An income structure puts up the position itself: a covered call the hundred shares, a cash-secured put the strike in cash -- thousands, where a spread puts up the width. Raise the budget, or uncheck those families."
+                : " Raise it, or name a target a cheaper shape can still pay at."}
+            </p>
           )}
           <p className="optimizer-skipped">{skippedLine(shown.skipped)}</p>
           <p className="idea-disclaimer">{shown.disclaimer}</p>
