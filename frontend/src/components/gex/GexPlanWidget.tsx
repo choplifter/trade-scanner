@@ -1,4 +1,7 @@
+import { useState } from "react";
+
 import { useGexPlan } from "../../hooks/useGexPlan";
+import { GexHelp } from "./GexHelp";
 import { nearTag } from "../../hooks/useGexLevels";
 import type { GexPlanSymbol, GexSupport } from "../../types/gex";
 import { weekdayOf } from "../../utils/occ";
@@ -151,11 +154,22 @@ interface GexPlanWidgetProps {
  */
 export function GexPlanWidget({ symbol }: GexPlanWidgetProps) {
   const { plan, loading } = useGexPlan(symbol);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   return (
     <div className="widget gex-plan-widget">
       <div className="widget-header">
         <h2>GEX Plan</h2>
+        <button
+          type="button"
+          className="timeframe-button options-help-button"
+          onClick={() => setHelpOpen(true)}
+          title="What every level in this widget means"
+          aria-label="Help"
+        >
+          ?
+        </button>
+        <GexHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
       </div>
       <div className="widget-body">
         {!symbol ? (
