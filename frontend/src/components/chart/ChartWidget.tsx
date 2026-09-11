@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 
 import { useSymbolInfoContext } from "../../context/SymbolInfoContext";
+import { netGexRankSentence } from "../gex/netGexRank";
 import { TICKER_RE, isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatLeg, parseOcc } from "../../utils/occ";
 import { ContractTicket } from "./ContractTicket";
@@ -883,9 +884,10 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
             <span
               className="gex-net-badge"
               style={{ color: gexReading.net_gex >= 0 ? palette.up : palette.down }}
-              title="Net dealer gamma exposure -- see the GEX Plan widget for what this regime tends to mean"
+              title={`Net dealer gamma exposure -- see the GEX Plan widget for what this regime tends to mean. ${netGexRankSentence(gexReading.net_gex_rank)}`}
             >
               Net GEX {gexReading.net_gex >= 0 ? "+" : "-"}${(Math.abs(gexReading.net_gex) / 1e9).toFixed(2)}B
+              {gexReading.net_gex_rank?.rank && ` · ${gexReading.net_gex_rank.rank.percent.toFixed(0)} %`}
             </span>
           )}
           {gexReading?.expected_move && (

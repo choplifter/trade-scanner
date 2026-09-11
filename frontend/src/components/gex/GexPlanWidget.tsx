@@ -105,6 +105,11 @@ function SymbolPlan({ symbol, plan }: { symbol: string; plan: GexPlanSymbol | un
                   Flip <strong>{plan.near.gamma_flip_strike.toFixed(2)}</strong>
                 </span>
               )}
+              {plan.near.max_pain != null && (
+                <span title="The strike at which this expiry's open contracts are worth least in total -- computed exactly from open interest (yesterday's), but the claim that price gravitates there is folklore, not arithmetic.">
+                  Max pain <strong>{plan.near.max_pain.toFixed(2)}</strong>
+                </span>
+              )}
               <span className="order-hint">
                 net {plan.near.net_gex >= 0 ? "+" : "-"}${(Math.abs(plan.near.net_gex) / 1e6).toFixed(0)}M ·{" "}
                 {plan.near.source === "solved" ? "gamma solved from quotes" : "feed greeks"}

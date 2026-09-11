@@ -48,6 +48,15 @@ export interface ExpectedMove {
   high: number;
 }
 
+/** The percentile of today's net GEX within what has been recorded for the
+ * symbol, with the sample count so "no rank" can say why it is absent.
+ * `rank` is null below the 20-session floor -- see the backend's
+ * gex_history_store. */
+export interface NetGexRank {
+  rank: { percent: number; samples: number; low: number; high: number } | null;
+  samples: number;
+}
+
 export interface GexSymbolReading extends GexSupport {
   spot_price: number;
   as_of: string;
@@ -63,7 +72,7 @@ export interface GexSymbolReading extends GexSupport {
   /** Where today's net gamma sits in this symbol's own recorded range.
    * Absent until there are enough sessions -- not known, never a middling
    * fifty. */
-  net_gex_rank?: { rank: { percent: number; samples: number; low: number; high: number } | null; samples: number } | null;
+  net_gex_rank?: NetGexRank | null;
   near?: NearExpiryGex | null;
   expected_move?: ExpectedMove | null;
 }
