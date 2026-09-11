@@ -63,6 +63,7 @@ from app.scanners.engine import ScannerEngine
 from app.scanners.history_store import ScannerHistoryStore
 from app.scanners.momentum_cache import MomentumCache
 from app.options.chain_fetch import ChainCache
+from app.market_data.gex_history_store import GexHistoryStore
 from app.options.iv_history_store import IvHistoryStore
 from app.options.monitor import run_options_trigger_loop
 from app.options.trigger_store import TriggerStore
@@ -166,6 +167,12 @@ async def lifespan(app: FastAPI):
     iv_history_store = IvHistoryStore(settings.scanner_history_db_path)
     await iv_history_store.init_schema()
     app.state.iv_history_store = iv_history_store
+
+    # The same idea for dealer gamma: one net reading per symbol and
+    # session, so a number that means nothing alone gets a range to sit in.
+    gex_history_store = GexHistoryStore(settings.scanner_history_db_path)
+    await gex_history_store.init_schema()
+    app.state.gex_history_store = gex_history_store
 
     # Closed round trips with realized P&L. Same file as the scanner
     # history -- one thing to back up -- and the record that survives a

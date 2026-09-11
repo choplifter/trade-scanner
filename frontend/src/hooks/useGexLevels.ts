@@ -148,6 +148,12 @@ export function gexLevelsFrom(reading: GexSymbolReading | null): IndicatorResult
   if (reading.gamma_flip_strike != null) {
     setLevel("Flip", reading.gamma_flip_strike, FLIP_COLOR);
   }
+  // Max pain belongs to one expiry, so it comes off the near-expiry
+  // profile rather than the 45-day aggregate, and carries its own label
+  // to say so.
+  if (reading.near?.max_pain != null) {
+    setLevel(`Max pain ${reading.near.dte}d`, reading.near.max_pain, FLIP_COLOR);
+  }
 
   if (Object.keys(series).length === 0) return null;
   return { name: "GEX", kind: "level", series, colors };

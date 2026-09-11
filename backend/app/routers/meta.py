@@ -1,10 +1,13 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 
 from app.market_data.gamma_exposure import call_wall, gamma_flip_strike, put_wall, top_walls
 from app.market_data.gex_plan import compute_gex_plan
-from app.services.market_clock import current_session
+from app.services.market_clock import ET, current_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/meta", tags=["meta"])
 
@@ -80,6 +83,7 @@ def _near_payload(reading) -> dict | None:
         "net_gex": near.net_gex,
         "contracts_used": near.contracts_used,
         "open_interest_used": near.open_interest_used,
+        "max_pain": near.max_pain,
         "top_walls": [{"strike": row.strike, "net_gex": row.net_gex} for row in top_walls(near.by_strike, n=3)],
         "call_wall": _wall(call_wall(near.by_strike)),
         "put_wall": _wall(put_wall(near.by_strike)),
@@ -119,7 +123,33 @@ async def _readings(request: Request, symbol: str | None) -> dict:
     if symbol is None:
         return engine.gex
     reading = await engine.gex_cache.reading(symbol)
-    return {} if reading is None else {reading.symbol: reading}
+    if reading is None:
+        return {}
+    # One reading per symbol and session, so the next one has a range to be
+    # measured against (app.market_data.gex_history_store). A side effect of
+    # somebody looking, exactly as the IV history accumulates.
+    store = getattr(request.app.state, "gex_history_store", None)
+    if store is not None:
+        await store.record(reading.symbol, datetime.now(ET).date(), reading.net_gex, reading.spot_price)
+    return {reading.symbol: reading}
+
+
+async def _ranks(request: Request, readings: dict) -> dict:
+    """Where each reading's net GEX sits in its own recorded range. Absent
+    until there are enough sessions to make a range -- "not known", never
+    a middling 50."""
+    store = getattr(request.app.state, "gex_history_store", None)
+    if store is None or not readings:
+        return {}
+    out: dict = {}
+    for symbol_, reading in readings.items():
+        try:
+            rank, samples = await store.rank(symbol_, reading.net_gex)
+        except Exception:
+            logger.exception("GEX rank failed for %s", symbol_)
+            continue
+        out[symbol_] = {"rank": None if rank is None else rank.to_dict(), "samples": samples}
+    return out
 
 
 @router.get("/gex")
@@ -140,6 +170,7 @@ async def gex(request: Request, symbol: str | None = Query(default=None)) -> dic
     liquidity threshold this app cannot defend.
     """
     readings = await _readings(request, symbol)
+    ranks = await _ranks(request, readings)
 
     return {
         "available": bool(readings),
@@ -159,6 +190,7 @@ async def gex(request: Request, symbol: str | None = Query(default=None)) -> dic
                 "call_wall": _wall(call_wall(reading.by_strike)),
                 "put_wall": _wall(put_wall(reading.by_strike)),
                 "gamma_flip_strike": gamma_flip_strike(reading.by_strike),
+                "net_gex_rank": ranks.get(symbol_),
                 "near": _near_payload(reading),
                 "expected_move": _expected_move_payload(reading),
             }

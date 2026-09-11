@@ -29,6 +29,9 @@ export interface NearExpiryGex extends GexSupport {
   call_wall: GexWall | null;
   put_wall: GexWall | null;
   gamma_flip_strike: number | null;
+  /** The strike where this expiry's open contracts are worth least in
+   * total -- see backend gamma_exposure.max_pain. One expiry only. */
+  max_pain?: number | null;
 }
 
 /** The straddle-implied move to the nearest expiry -- see backend
@@ -57,6 +60,10 @@ export interface GexSymbolReading extends GexSupport {
   put_wall: GexWall | null;
   /** Approximate zero-gamma crossing -- see backend's gamma_flip_strike(). */
   gamma_flip_strike: number | null;
+  /** Where today's net gamma sits in this symbol's own recorded range.
+   * Absent until there are enough sessions -- not known, never a middling
+   * fifty. */
+  net_gex_rank?: { rank: { percent: number; samples: number; low: number; high: number } | null; samples: number } | null;
   near?: NearExpiryGex | null;
   expected_move?: ExpectedMove | null;
 }

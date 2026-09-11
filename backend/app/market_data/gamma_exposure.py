@@ -141,6 +141,10 @@ class NearExpiryGex:
     contracts_used: int
     open_interest_used: int
     by_strike: list[StrikeGex] = field(default_factory=list)
+    # Where this expiry's open contracts are worth least in total -- see
+    # max_pain. One expiry, because the number is meaningless across
+    # several.
+    max_pain: float | None = None
 
 
 @dataclass
@@ -276,6 +280,44 @@ _SQRT_HALF_PI = math.sqrt(math.pi / 2)
 _CLOSE_ET = time(16, 0)
 
 
+
+def max_pain(rows: list[OptionRow]) -> float | None:
+    """The listed strike at which the open contracts of one expiry are
+    worth the least in total -- the "max pain" strike.
+
+    For each candidate strike the intrinsic value of every open contract is
+    summed at that price: calls pay what they are in the money, puts the
+    same on their side, each weighted by its open interest. The strike
+    where that total is smallest is where the most premium expires
+    worthless, and it is read as a magnet into expiry on the argument that
+    the people short those contracts hedge toward it.
+
+    Treat it as folklore with arithmetic behind it, not as a forecast: the
+    computation is exact, the claim that price gravitates there is not.
+    Open interest is also yesterday's -- the clearing house publishes it
+    overnight -- so it describes positions taken before today.
+
+    One expiry at a time. Summed across expiries the number means nothing,
+    since contracts settling on different days cannot all expire worthless
+    at one price. None without strikes on both sides to weigh.
+    """
+    held = [row for row in rows if row.open_interest > 0]
+    strikes = sorted({row.strike for row in held})
+    if len(strikes) < 2:
+        return None
+    best_strike: float | None = None
+    best_value: float | None = None
+    for candidate in strikes:
+        total = 0.0
+        for row in held:
+            intrinsic = (candidate - row.strike) if row.is_call else (row.strike - candidate)
+            if intrinsic > 0:
+                total += intrinsic * row.open_interest
+        if best_value is None or total < best_value:
+            best_value, best_strike = total, candidate
+    return best_strike
+
+
 def nearest_expiry(expiries: "set[date] | list[date]", now: datetime) -> date | None:
     """Today's expiry while the session still trades (before 16:00 New
     York), else the first expiry after today. `now` may be any zone."""
@@ -336,6 +378,7 @@ def compute_near_expiry_gex(spot: float, expiry: date, rows: list[OptionRow], no
         contracts_used=reading.contracts_used,
         open_interest_used=reading.open_interest_used,
         by_strike=reading.by_strike,
+        max_pain=max_pain(rows),
     )
 
 
