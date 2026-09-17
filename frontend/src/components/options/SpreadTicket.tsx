@@ -26,6 +26,7 @@ import {
   type ChainResponse,
   type ExpiryInfo,
   type OptionKind,
+  type OptionOrderType,
   type OptionsAccountResponse,
   type SpreadPreview,
   type SpreadTicketRequest,
@@ -293,6 +294,32 @@ export function LimitModeToggle({
   );
 }
 
+/** Limit | Market for one order. Not persisted: every ticket starts at
+ * Limit, so a market order is a choice made for that order. */
+export function OrderTypeToggle({
+  value,
+  onChange,
+}: {
+  value: OptionOrderType;
+  onChange: (type: OptionOrderType) => void;
+}) {
+  return (
+    <span
+      className="short-target-mode"
+      role="group"
+      aria-label="Order type"
+      title="Limit: at most / at least the price typed. Market: fills at once at whatever the market gives -- on a wide spread, far from the mid."
+    >
+      <button type="button" aria-pressed={value === "limit"} onClick={() => onChange("limit")}>
+        Limit
+      </button>
+      <button type="button" aria-pressed={value === "market"} onClick={() => onChange("market")}>
+        Market
+      </button>
+    </span>
+  );
+}
+
 export function SpreadTicket({
   symbol,
   expiry,
@@ -318,6 +345,8 @@ export function SpreadTicket({
   const [qty, setQty] = useState("1");
   const [limit, setLimit] = useState("");
   const [limitEdited, setLimitEdited] = useState(false);
+  const [orderType, setOrderType] = useState<OptionOrderType>("limit");
+  const market = orderType === "market";
   const [preview, setPreview] = useState<SpreadPreview | null>(null);
   const [pricing, setPricing] = useState(false);
   const [rejection, setRejection] = useState<TradingRejection | null>(null);
@@ -348,6 +377,7 @@ export function SpreadTicket({
     setLimitEdited(false);
     setLimit("");
     setPlaced(null);
+    setOrderType("limit");
   }, [symbol, expiry, strategy, legsKey]);
 
   // Debounced server preview on every change -- and on every replay tick,
@@ -362,7 +392,8 @@ export function SpreadTicket({
     }
     const ticket = ticketFor(symbol, strategy, expiry, qtyNum, legs, ctx);
     const limitNum = Number(limit);
-    if (limitEdited && Number.isFinite(limitNum) && limitNum > 0) ticket.limit_price = limitNum;
+    if (market) ticket.order_type = "market";
+    else if (limitEdited && Number.isFinite(limitNum) && limitNum > 0) ticket.limit_price = limitNum;
     let cancelled = false;
     setPricing(true);
     timerRef.current = window.setTimeout(() => {
@@ -372,7 +403,9 @@ export function SpreadTicket({
           setPreview(res);
           setRejection(null);
           setError(null);
-          if (!limitEdited) setLimit(prefillLimit(res.spread.limit_price, res.spread.net_natural).toFixed(2));
+          if (!limitEdited && res.spread.order_type !== "market") {
+            setLimit(prefillLimit(res.spread.limit_price, res.spread.net_natural).toFixed(2));
+          }
         })
         .catch((err: unknown) => {
           if (cancelled) return;
@@ -390,7 +423,7 @@ export function SpreadTicket({
     // legsKey stands in for `legs` (rebuilt objects with equal values);
     // ctx.timeKind for the kind a calendar trades.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, expiry, strategy, legsKey, qtyNum, qtyOk, limit, limitEdited, ctx.timeKind, replayAsOf]);
+  }, [symbol, expiry, strategy, legsKey, qtyNum, qtyOk, limit, limitEdited, market, ctx.timeKind, replayAsOf]);
 
   // The strikes on the chart, for as long as this ticket is showing them.
   useEffect(() => {
@@ -403,7 +436,9 @@ export function SpreadTicket({
   }, [symbol, strategy, legsKey, setLevels]);
   useEffect(() => () => setLevels(null), [setLevels]);
 
-  const spread = preview?.spread ?? null;
+  // A preview still on its way back from the other order type prices the
+  // wrong order; don't submit off it.
+  const spread = preview && (preview.spread.order_type ?? "limit") === orderType ? preview.spread : null;
   const covered = !spread?.coverage || spread.coverage.ok;
   const canSubmit = Boolean(spread && preview?.can_submit) && covered && !submitting && !pricing;
   const badge = modeBadge(mode);
@@ -432,7 +467,8 @@ export function SpreadTicket({
     setSubmitting(true);
     try {
       const ticket = ticketFor(symbol, strategy, expiry, spread.qty, legs, ctx);
-      ticket.limit_price = spread.limit_price;
+      if (spread.order_type === "market") ticket.order_type = "market";
+      else ticket.limit_price = spread.limit_price;
       ticket.client_order_id = clientOrderIdRef.current ?? undefined;
       const result = await submitSpread(ticket, mode === "live" ? liveTyped.trim() : undefined);
       setPlaced(result.order?.id ?? "submitted");
@@ -620,30 +656,40 @@ export function SpreadTicket({
           {perContract ? "Contracts" : "Spreads"}{" "}
           <input type="number" min={1} step={1} value={qty} onChange={(e) => setQty(e.target.value)} />
         </label>
-        <label>
-          {income ? "Min premium" : single ? "Max premium" : direction === "debit" ? "Max debit" : "Min credit"}{" "}
-          <input
-            type="number"
-            min={0.01}
-            step={0.01}
-            value={limit}
-            placeholder={spread ? spread.net_mid.toFixed(2) : "mid"}
-            onChange={(e) => {
-              setLimit(e.target.value);
-              setLimitEdited(true);
+        <OrderTypeToggle value={orderType} onChange={setOrderType} />
+        {!market && (
+          <label>
+            {income ? "Min premium" : single ? "Max premium" : direction === "debit" ? "Max debit" : "Min credit"}{" "}
+            <input
+              type="number"
+              min={0.01}
+              step={0.01}
+              value={limit}
+              placeholder={spread ? spread.net_mid.toFixed(2) : "mid"}
+              onChange={(e) => {
+                setLimit(e.target.value);
+                setLimitEdited(true);
+              }}
+            />
+          </label>
+        )}
+        {!market && (
+          <LimitModeToggle
+            disabled={!spread}
+            onChange={(mode) => {
+              // Switching the mode also re-prefills, even after a manual edit:
+              // the click is the "put me at the mid / the natural" request.
+              setLimitEdited(false);
+              if (spread) setLimit(prefillLimit(spread.net_mid, spread.net_natural, mode).toFixed(2));
             }}
           />
-        </label>
-        <LimitModeToggle
-          disabled={!spread}
-          onChange={(mode) => {
-            // Switching the mode also re-prefills, even after a manual edit:
-            // the click is the "put me at the mid / the natural" request.
-            setLimitEdited(false);
-            if (spread) setLimit(prefillLimit(spread.net_mid, spread.net_natural, mode).toFixed(2));
-          }}
-        />
-        {limitEdited && (
+        )}
+        {market && (
+          <span className="order-hint" title="No price is sent. The estimate is the natural: what taking every leg's bid or offer costs right now.">
+            fills at the market, ≈ {spread ? spread.limit_price.toFixed(2) : "…"}
+          </span>
+        )}
+        {!market && limitEdited && (
           <button
             type="button"
             className="row-action"
@@ -671,14 +717,16 @@ export function SpreadTicket({
       {spread && (
         <div className="order-preview spread-summary">
           <strong>
-            {spread.direction === "debit" ? "Pay" : "Receive"} {money(spread.limit_price)} × 100 × {spread.qty} ={" "}
+            {spread.direction === "debit" ? "Pay" : "Receive"} {market ? "≈ " : ""}
+            {money(spread.limit_price)} × 100 × {spread.qty} = {market ? "≈ " : ""}
             {money(spread.limit_price * 100 * spread.qty)}
+            {market ? " (market)" : ""}
           </strong>
           <span>
             mid {spread.net_mid.toFixed(2)}
             {spread.net_natural != null ? ` · natural ${spread.net_natural.toFixed(2)}` : ""} · spot{" "}
             {spread.spot.toFixed(2)} · {spread.dte}d
-            <CrossHint spread={spread} limit={limit} />
+            {!market && <CrossHint spread={spread} limit={limit} />}
           </span>
           <span>
             Max profit {spread.max_profit == null ? "unlimited" : money(spread.max_profit)} · max loss{" "}
@@ -771,7 +819,9 @@ export function SpreadTicket({
               <strong>
                 {STRATEGY_LABELS[strategy]} {symbol} {expiry} × {spread.qty}
               </strong>{" "}
-              {spread.direction} {money(spread.limit_price)} per {unit} (limit {spread.alpaca_limit_price.toFixed(2)}, day)
+              {spread.order_type === "market"
+                ? `${spread.direction} ≈ ${money(spread.limit_price)} per ${unit} (market, day)`
+                : `${spread.direction} ${money(spread.limit_price)} per ${unit} (limit ${spread.alpaca_limit_price.toFixed(2)}, day)`}
             </p>
             <ul className="spread-legs">
               {spread.legs.map((leg) => (

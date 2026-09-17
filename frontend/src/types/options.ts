@@ -254,6 +254,8 @@ export interface SpreadTicketRequest {
   legs?: TicketLeg[];
   /** Positive net price per spread; omitted = current mid. */
   limit_price?: number;
+  /** "market" sends no price; limit_price is then ignored. Default limit. */
+  order_type?: OptionOrderType;
   client_order_id?: string;
 }
 
@@ -288,6 +290,8 @@ export interface ResolvedSpread {
   limit_price: number;
   /** +debit / -credit, what the MLEG order carries. */
   alpaca_limit_price: number;
+  /** For a market ticket, limit_price is the natural it should fill near. */
+  order_type: OptionOrderType;
   /** null = unlimited (a long call). */
   max_profit: number | null;
   max_loss: number | null;
@@ -389,10 +393,14 @@ export interface CloseLeg {
   qty: number;
 }
 
+export type OptionOrderType = "limit" | "market";
+
 export interface CloseSpreadRequest {
   legs: CloseLeg[];
   qty: number;
   limit_price?: number;
+  /** "market" sends no price; limit_price is then ignored. Default limit. */
+  order_type?: OptionOrderType;
   client_order_id?: string;
 }
 

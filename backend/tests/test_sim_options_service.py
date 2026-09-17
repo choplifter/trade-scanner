@@ -297,3 +297,17 @@ def test_a_second_close_while_the_first_rests_is_refused(env):
     closed = asyncio.run(service.close_spread(CloseSpreadRequest(legs=req.legs, qty=1)))
     assert closed["status"] == "filled"
 
+
+
+def test_a_market_close_fills_at_the_natural_whatever_limit_came_along(env):
+    from app.options.models import CloseLeg, CloseSpreadRequest
+
+    _open_bull_put(env, qty=1)
+    quotes = {PUT_745: _quote(PUT_745, 2.50, 2.60, "put", 745.0), PUT_740: _quote(PUT_740, 1.80, 1.90, "put", 740.0)}
+    service = _service(env, quotes)
+    req = CloseSpreadRequest(
+        legs=[CloseLeg(symbol=PUT_745, qty=-1), CloseLeg(symbol=PUT_740, qty=1)], qty=1, limit_price=0.10, order_type="market"
+    )
+    closed = asyncio.run(service.close_spread(req))
+    assert closed["status"] == "filled"
+    assert closed["order_type"] == "market" and closed["limit_price"] is None

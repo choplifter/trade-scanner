@@ -11,6 +11,7 @@ import {
   triggerBoundsLabel,
   type ClosePreview,
   type CloseSpreadRequest,
+  type OptionOrderType,
   type OptionsAccountResponse,
   type SpreadGroup,
   type TriggerCreateRequest,
@@ -22,6 +23,7 @@ import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import { PayoffChart } from "./PayoffChart";
 import { rollableLeg } from "./RollTicket";
+import { OrderTypeToggle } from "./SpreadTicket";
 import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 
 interface OpenSpreadsProps {
@@ -45,6 +47,7 @@ interface PendingClose {
   preview: ClosePreview | null;
   qty: string;
   limit: string;
+  orderType: OptionOrderType;
   error: string | null;
   busy: boolean;
 }
@@ -182,7 +185,7 @@ export function OpenSpreads({
 
   const openClose = (group: SpreadGroup) => {
     setLiveTyped("");
-    setPending({ group, preview: null, qty: String(group.qty || 1), limit: "", error: null, busy: false });
+    setPending({ group, preview: null, qty: String(group.qty || 1), limit: "", orderType: "limit", error: null, busy: false });
     previewCloseSpread({ legs: closeLegs(group), qty: group.qty || 1 })
       .then((preview) =>
         setPending((p) => (p && p.group.id === group.id ? { ...p, preview, limit: preview.suggested_limit.toFixed(2) } : p)),
@@ -204,7 +207,8 @@ export function OpenSpreads({
       setPending({ ...pending, error: `Enter a quantity between 1 and ${pending.group.qty || 1}.` });
       return;
     }
-    if (!Number.isFinite(limit) || limit <= 0) {
+    const market = pending.orderType === "market";
+    if (!market && (!Number.isFinite(limit) || limit <= 0)) {
       setPending({ ...pending, error: "Enter a positive net price." });
       return;
     }
@@ -212,7 +216,7 @@ export function OpenSpreads({
     setPending({ ...pending, busy: true, error: null });
     try {
       await onClose(
-        { legs: closeLegs(pending.group), qty, limit_price: limit },
+        { legs: closeLegs(pending.group), qty, ...(market ? { order_type: "market" as const } : { limit_price: limit }) },
         mode === "live" ? liveTyped.trim() : undefined,
       );
       setPending(null);
@@ -554,16 +558,28 @@ export function OpenSpreads({
                 onChange={(e) => setPending({ ...pending, qty: e.target.value })}
               />
             </label>
-            <label className="order-confirm-line">
-              Net limit{" "}
-              <input
-                type="number"
-                min={0.01}
-                step={0.01}
-                value={pending.limit}
-                onChange={(e) => setPending({ ...pending, limit: e.target.value })}
-              />
-            </label>
+            <p className="order-confirm-line">
+              <OrderTypeToggle value={pending.orderType} onChange={(orderType) => setPending({ ...pending, orderType })} />
+            </p>
+            {pending.orderType === "limit" ? (
+              <label className="order-confirm-line">
+                Net limit{" "}
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={pending.limit}
+                  onChange={(e) => setPending({ ...pending, limit: e.target.value })}
+                />
+              </label>
+            ) : (
+              <p className="order-warning">
+                Market order: closes at whatever the market gives
+                {pending.preview?.net_natural != null ? ` (natural ${pending.preview.net_natural.toFixed(2)} right now)` : ""}
+                {pending.group.legs.length > 1 ? "; a multi-leg package can fill well beyond it when a leg is wide" : ""}.
+                Alpaca takes option market orders in the regular session only.
+              </p>
+            )}
             <p className="order-confirm-mode">{badge.confirmLine}</p>
             <LiveConfirmField mode={mode} value={liveTyped} onChange={setLiveTyped} />
             {pending.error && <p className="order-rejection">{pending.error}</p>}
@@ -577,7 +593,7 @@ export function OpenSpreads({
                 disabled={pending.busy || !pending.preview || !liveConfirmed(mode, liveTyped)}
                 onClick={() => void runClose()}
               >
-                {pending.busy ? "Working" : "Close spread"}
+                {pending.busy ? "Working" : pending.orderType === "market" ? "Close at market" : "Close spread"}
               </button>
             </div>
           </div>

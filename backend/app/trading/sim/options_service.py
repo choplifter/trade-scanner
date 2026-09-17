@@ -297,7 +297,7 @@ class SimOptionsService(OptionsService):
             legs=resolved.legs,
             qty=resolved.qty,
             direction=resolved.direction,
-            limit_price=resolved.limit_price,
+            limit_price=None if resolved.order_type == "market" else resolved.limit_price,
             underlying=resolved.underlying,
             strategy=resolved.strategy,
             client_order_id=resolved.client_order_id,
@@ -370,7 +370,8 @@ class SimOptionsService(OptionsService):
         legs, direction, _net_mid, _net_natural = await self._priced_close(req)
         await self._assert_not_over_closing(legs, req.qty)
         parsed = try_parse_occ(legs[0].symbol)
-        limit = None if (marketable or req.limit_price is None) else round(req.limit_price, 2)
+        market = marketable or req.order_type == "market" or req.limit_price is None
+        limit = None if market else round(req.limit_price, 2)
         quotes = await self._source.leg_quotes([leg.symbol for leg in legs])
         order = await self._book.submit(
             legs=legs,

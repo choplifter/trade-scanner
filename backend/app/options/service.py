@@ -19,6 +19,7 @@ from app.options.models import (
     STRATEGY_LABELS,
     TIME_STRATEGIES,
     Coverage,
+    OrderType,
     Payoff,
     PayoffRequest,
     CloseSpreadRequest,
@@ -52,22 +53,44 @@ logger = logging.getLogger(__name__)
 _WIDE_MARKET_FRACTION = 0.25
 
 
-def build_mleg_request(legs: list[SpreadLeg], qty: int, alpaca_limit_price: float, client_order_id: str | None):
+def market_warning(leg_count: int, no_natural: bool) -> str:
+    """What a market order's preview has to say: the price shown is a
+    quote, not a promise -- and a package crosses every leg's spread."""
+    parts = ["Market order: fills at whatever the market gives; the price shown is the natural, not a guarantee."]
+    if leg_count > 1:
+        parts.append("A multi-leg market order can fill well beyond the natural when a leg is wide.")
+    if no_natural:
+        parts.append("No natural right now (a leg without a two-sided quote), so the estimate is the mid.")
+    parts.append("Alpaca takes option market orders in the regular session only.")
+    return " ".join(parts)
+
+
+def build_mleg_request(
+    legs: list[SpreadLeg],
+    qty: int,
+    alpaca_limit_price: float,
+    client_order_id: str | None,
+    order_type: OrderType = "limit",
+):
     """The multi-leg order. Pure and testable without a client, like
-    app.trading.service._build_request. Options at Alpaca are day orders,
-    and a multi-leg order must be a limit; the sign of the limit says
-    debit (+) or credit (-)."""
+    app.trading.service._build_request. Options at Alpaca are day orders;
+    the sign of a limit says debit (+) or credit (-). A market order sends
+    no price at all -- the legs' sides say which way the package goes."""
     from alpaca.trading.enums import OrderClass, OrderSide, PositionIntent, TimeInForce
-    from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
+    from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest, OptionLegRequest
 
     kwargs = {}
     if client_order_id:
         kwargs["client_order_id"] = client_order_id
-    return LimitOrderRequest(
+    if order_type == "market":
+        request_cls = MarketOrderRequest
+    else:
+        request_cls = LimitOrderRequest
+        kwargs["limit_price"] = alpaca_limit_price
+    return request_cls(
         qty=qty,
         order_class=OrderClass.MLEG,
         time_in_force=TimeInForce.DAY,
-        limit_price=alpaca_limit_price,
         legs=[
             OptionLegRequest(
                 symbol=leg.symbol,
@@ -81,23 +104,33 @@ def build_mleg_request(legs: list[SpreadLeg], qty: int, alpaca_limit_price: floa
     )
 
 
-def build_single_leg_request(leg: SpreadLeg, qty: int, limit_price: float, client_order_id: str | None):
+def build_single_leg_request(
+    leg: SpreadLeg,
+    qty: int,
+    limit_price: float,
+    client_order_id: str | None,
+    order_type: OrderType = "limit",
+):
     """A plain option order: a long call/put opened outright, or a broken
     spread down to one contract being closed -- the SDK refuses MLEG with
     fewer than two legs."""
     from alpaca.trading.enums import OrderSide, PositionIntent, TimeInForce
-    from alpaca.trading.requests import LimitOrderRequest
+    from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 
     kwargs = {}
     if client_order_id:
         kwargs["client_order_id"] = client_order_id
-    return LimitOrderRequest(
+    if order_type == "market":
+        request_cls = MarketOrderRequest
+    else:
+        request_cls = LimitOrderRequest
+        kwargs["limit_price"] = round(abs(limit_price), 2)
+    return request_cls(
         symbol=leg.symbol,
         qty=qty,
         side=OrderSide(leg.side),
         position_intent=PositionIntent(leg.position_intent),
         time_in_force=TimeInForce.DAY,
-        limit_price=round(abs(limit_price), 2),
         **kwargs,
     )
 
@@ -381,7 +414,13 @@ class OptionsService:
             if signed_natural is not None and signed_natural * expected > 0
             else None
         )
-        price = round(ticket.limit_price if ticket.limit_price is not None else net_mid, 2)
+        market = ticket.order_type == "market"
+        if market:
+            # No limit is sent; the natural is what the order is expected to
+            # fill near, and pricing the risk there keeps the ceilings honest.
+            price = round(net_natural if net_natural is not None else net_mid, 2)
+        else:
+            price = round(ticket.limit_price if ticket.limit_price is not None else net_mid, 2)
         risk = spread_risk(ticket.strategy, ticket.strikes, price, ticket.qty, stock_price=chain.spot)
 
         account = account if account is not None else await self.account()
@@ -440,7 +479,12 @@ class OptionsService:
             warnings.append("No greeks for at least one leg (Alpaca returns none close to expiry).")
         for leg in legs:
             if leg.bid is not None and leg.ask is not None and leg.mid and (leg.ask - leg.bid) > _WIDE_MARKET_FRACTION * leg.mid:
-                warnings.append(f"{leg.symbol}: wide market ({leg.bid:.2f} / {leg.ask:.2f}); a mid limit may not fill.")
+                if market:
+                    warnings.append(f"{leg.symbol}: wide market ({leg.bid:.2f} / {leg.ask:.2f}); a market order pays the spread.")
+                else:
+                    warnings.append(f"{leg.symbol}: wide market ({leg.bid:.2f} / {leg.ask:.2f}); a mid limit may not fill.")
+        if market:
+            warnings.append(market_warning(len(legs), net_natural is None))
 
         return ResolvedSpread(
             underlying=ticket.underlying.upper(),
@@ -455,6 +499,7 @@ class OptionsService:
             net_natural=round(net_natural, 4) if net_natural is not None else None,
             limit_price=price,
             alpaca_limit_price=alpaca_limit(ticket.direction, price),
+            order_type=ticket.order_type,
             max_profit=max_profit,
             max_loss=max_loss,
             breakevens=breakevens,
@@ -621,11 +666,11 @@ class OptionsService:
             )
         if len(resolved.legs) == 1:
             request = build_single_leg_request(
-                resolved.legs[0], resolved.qty, resolved.limit_price, resolved.client_order_id
+                resolved.legs[0], resolved.qty, resolved.limit_price, resolved.client_order_id, resolved.order_type
             )
         else:
             request = build_mleg_request(
-                resolved.legs, resolved.qty, resolved.alpaca_limit_price, resolved.client_order_id
+                resolved.legs, resolved.qty, resolved.alpaca_limit_price, resolved.client_order_id, resolved.order_type
             )
         try:
             order = await asyncio.to_thread(self._trading.submit_order, request)
@@ -635,12 +680,13 @@ class OptionsService:
                 raise rejection from exc
             raise
         logger.info(
-            "Submitted %s %s x%d on %s (%s limit %+.2f) account=%s client_order_id=%s",
+            "Submitted %s %s x%d on %s (%s %s %+.2f) account=%s client_order_id=%s",
             resolved.strategy,
             resolved.underlying,
             resolved.qty,
             resolved.expiry.isoformat(),
             resolved.direction,
+            resolved.order_type,
             resolved.alpaca_limit_price,
             self._account,
             resolved.client_order_id,
@@ -652,21 +698,27 @@ class OptionsService:
     ) -> dict:
         """Close `req.qty` spreads with a limit order: the caller's price,
         else the mid, else (for the trigger loop) a price stepped toward
-        the natural so it fills rather than rests."""
+        the natural so it fills rather than rests. Or, asked for, a market
+        order (the trigger loop keeps its marketable limit)."""
         assert_can_trade(self._settings, self._account, confirm, live_available=self._live_available)
         legs, direction, net_mid, net_natural = await self._priced_close(req)
-        if req.limit_price is not None:
+        order_type: OrderType = "market" if req.order_type == "market" and not marketable else "limit"
+        if order_type == "market":
+            price = round(net_natural if net_natural is not None else net_mid, 2)
+        elif req.limit_price is not None:
             price = round(req.limit_price, 2)
         elif marketable:
             price = marketable_close_limit(direction, net_mid, net_natural, self._settings.trading_options_trigger_slippage)
         else:
             price = round(net_mid, 2)
-        if price <= 0:
+        if order_type == "limit" and price <= 0:
             raise OrderRejected("The closing price must be positive", field="limit_price")
         if len(legs) == 1:
-            request = build_single_leg_request(legs[0], req.qty, price, req.client_order_id)
+            request = build_single_leg_request(legs[0], req.qty, price, req.client_order_id, order_type)
         else:
-            request = build_mleg_request(legs, req.qty, alpaca_limit(direction, price), req.client_order_id)
+            request = build_mleg_request(
+                legs, req.qty, alpaca_limit(direction, price) if price > 0 else 0.0, req.client_order_id, order_type
+            )
         try:
             order = await asyncio.to_thread(self._trading.submit_order, request)
         except Exception as exc:

@@ -47,6 +47,8 @@ Strategy = Literal[
 Direction = Literal["debit", "credit"]
 Side = Literal["buy", "sell"]
 Intent = Literal["buy_to_open", "sell_to_open", "buy_to_close", "sell_to_close"]
+# A market order ignores limit_price and takes whatever the market gives.
+OrderType = Literal["limit", "market"]
 
 # One contract, bought (level 2) or sold against cover (level 1).
 SINGLE_LEG_STRATEGIES: frozenset[str] = frozenset({"long_call", "long_put", "covered_call", "cash_secured_put"})
@@ -173,6 +175,7 @@ class SpreadTicket(BaseModel):
     # net mid", resolved server-side at preview time. Debit: the most to pay;
     # credit: the least to receive.
     limit_price: float | None = Field(default=None, gt=0)
+    order_type: OrderType = "limit"
     client_order_id: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
@@ -447,6 +450,9 @@ class ResolvedSpread(BaseModel):
     limit_price: float
     # Signed the way Alpaca's MLEG limit wants it: +debit / -credit.
     alpaca_limit_price: float
+    # "market": limit_price is the natural the order is expected to fill
+    # near, and no limit is sent.
+    order_type: OrderType = "limit"
     # None means unlimited (a long call).
     max_profit: float | None
     # None means unbounded on the grid used (see payoff).
@@ -485,6 +491,7 @@ class CloseSpreadRequest(BaseModel):
     qty: int = Field(gt=0)
     # Positive net price per spread, or None for the current mid.
     limit_price: float | None = Field(default=None, gt=0)
+    order_type: OrderType = "limit"
     client_order_id: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")

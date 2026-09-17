@@ -4,13 +4,13 @@ import { OrderRejectedError } from "../../api/http";
 import { closeSpread, previewCloseSpread, previewSpread, submitSpread } from "../../api/options";
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useSpreads } from "../../hooks/useSpreads";
-import { triggerBoundsLabel, type ClosePreview, type SpreadPreview } from "../../types/options";
+import { triggerBoundsLabel, type ClosePreview, type OptionOrderType, type SpreadPreview } from "../../types/options";
 import type { Order, Position, TradingRejection } from "../../types/trading";
 import { formatLeg, type ParsedOcc } from "../../utils/occ";
 import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
-import { LimitModeToggle, prefillLimit } from "../options/SpreadTicket";
+import { LimitModeToggle, OrderTypeToggle, prefillLimit } from "../options/SpreadTicket";
 import { positionStopColor, positionTargetColor, type OrderLevel } from "./CandleChart";
 
 interface ContractTicketProps {
@@ -67,6 +67,8 @@ export function ContractTicket({
 }: ContractTicketProps) {
   const [qty, setQty] = useState("1");
   const [limit, setLimit] = useState("");
+  const [orderType, setOrderType] = useState<OptionOrderType>("limit");
+  const market = orderType === "market";
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [liveTyped, setLiveTyped] = useState("");
@@ -124,6 +126,7 @@ export function ContractTicket({
       clientOrderIdRef.current = randomUUID();
       setLimit(prefillLimit(preview.spread.limit_price, preview.spread.net_natural).toFixed(2));
       setLiveTyped("");
+      setOrderType("limit");
       setPending({ side: "buy", preview });
     } catch (err) {
       fail(err);
@@ -144,6 +147,7 @@ export function ContractTicket({
       clientOrderIdRef.current = randomUUID();
       setLimit(prefillLimit(preview.suggested_limit, preview.net_natural).toFixed(2));
       setLiveTyped("");
+      setOrderType("limit");
       setPending({ side: "sell", preview, heldQty });
     } catch (err) {
       fail(err);
@@ -155,7 +159,7 @@ export function ContractTicket({
   const confirm = async () => {
     if (!pending || !liveConfirmed(mode, liveTyped)) return;
     const limitNum = Number(limit);
-    if (!Number.isFinite(limitNum) || limitNum <= 0) {
+    if (!market && (!Number.isFinite(limitNum) || limitNum <= 0)) {
       setError("The limit must be a positive price");
       return;
     }
@@ -171,7 +175,7 @@ export function ContractTicket({
             expiry: contract.expiry,
             qty: pending.preview.spread.qty,
             long_strike: contract.strike,
-            limit_price: limitNum,
+            ...(market ? { order_type: "market" as const } : { limit_price: limitNum }),
             client_order_id: clientOrderIdRef.current ?? undefined,
           },
           confirmWord,
@@ -182,7 +186,7 @@ export function ContractTicket({
           {
             legs: [{ symbol, qty: pending.heldQty }],
             qty: pending.preview.qty,
-            limit_price: limitNum,
+            ...(market ? { order_type: "market" as const } : { limit_price: limitNum }),
             client_order_id: clientOrderIdRef.current ?? undefined,
           },
           confirmWord,
@@ -199,6 +203,15 @@ export function ContractTicket({
       setBusy(false);
     }
   };
+
+  // What the dialog's amounts are computed from: the typed limit, or at
+  // market the natural (the mid when a side is missing) as an estimate.
+  const pendingNatural = pending
+    ? (pending.side === "buy" ? pending.preview.spread.net_natural : pending.preview.net_natural) ??
+      (pending.side === "buy" ? pending.preview.spread.net_mid : pending.preview.net_mid)
+    : 0;
+  const unitPrice = market ? pendingNatural : Number(limit) || 0;
+  const approx = market ? "≈ " : "";
 
   const working = orders.filter((o) => o.symbol === symbol);
   const label = formatLeg(symbol);
@@ -398,29 +411,38 @@ export function ContractTicket({
               })()}
               {pending.side === "buy" ? ` · spot ${pending.preview.spread.spot.toFixed(2)} · ${pending.preview.spread.dte}d` : ""}
             </p>
-            <label className="order-confirm-line">
-              Limit per contract{" "}
-              <input type="number" min={0.01} step={0.01} value={limit} onChange={(e) => setLimit(e.target.value)} />{" "}
-              <LimitModeToggle
-                onChange={(mode) => {
-                  const p = pending;
-                  const mid = p.side === "buy" ? p.preview.spread.net_mid : p.preview.net_mid;
-                  const natural = p.side === "buy" ? p.preview.spread.net_natural : p.preview.net_natural;
-                  setLimit(prefillLimit(mid, natural, mode).toFixed(2));
-                }}
-              />
-            </label>
+            <p className="order-confirm-line">
+              <OrderTypeToggle value={orderType} onChange={setOrderType} />
+            </p>
+            {!market && (
+              <label className="order-confirm-line">
+                Limit per contract{" "}
+                <input type="number" min={0.01} step={0.01} value={limit} onChange={(e) => setLimit(e.target.value)} />{" "}
+                <LimitModeToggle
+                  onChange={(mode) => {
+                    const p = pending;
+                    const mid = p.side === "buy" ? p.preview.spread.net_mid : p.preview.net_mid;
+                    const natural = p.side === "buy" ? p.preview.spread.net_natural : p.preview.net_natural;
+                    setLimit(prefillLimit(mid, natural, mode).toFixed(2));
+                  }}
+                />
+              </label>
+            )}
             {pending.side === "buy" && (
               <p className="order-confirm-line">
-                Pay {money(Number(limit) || 0)} × 100 × {pending.preview.spread.qty} ={" "}
-                {money((Number(limit) || 0) * 100 * pending.preview.spread.qty)} · max loss the premium · breakeven{" "}
+                Pay {approx}
+                {money(unitPrice)} × 100 × {pending.preview.spread.qty} = {approx}
+                {money(unitPrice * 100 * pending.preview.spread.qty)}
+                {market ? " (market)" : ""} · max loss the premium · breakeven{" "}
                 {pending.preview.spread.breakevens.map((b) => b.toFixed(2)).join(" / ")}
               </p>
             )}
             {pending.side === "sell" && (
               <p className="order-confirm-line">
-                Receive {money(Number(limit) || 0)} × 100 × {pending.preview.qty} ={" "}
-                {money((Number(limit) || 0) * 100 * pending.preview.qty)}
+                Receive {approx}
+                {money(unitPrice)} × 100 × {pending.preview.qty} = {approx}
+                {money(unitPrice * 100 * pending.preview.qty)}
+                {market ? " (market)" : ""}
                 {entry != null ? ` · entry ${entry.toFixed(2)}` : ""}
               </p>
             )}
@@ -432,6 +454,12 @@ export function ContractTicket({
               ))}
             {pending.side === "buy" && !pending.preview.can_submit && (
               <p className="order-rejection">Submitting is switched off server-side (TRADING_ENABLED / live switch).</p>
+            )}
+            {market && (
+              <p className="order-warning">
+                Market order: fills at once at whatever the market gives -- the natural shown is a quote, not a
+                guarantee. Alpaca takes option market orders in the regular session only.
+              </p>
             )}
             <p className="order-confirm-mode">{badge.confirmLine}</p>
             <LiveConfirmField mode={mode} value={liveTyped} onChange={setLiveTyped} />
@@ -445,7 +473,7 @@ export function ContractTicket({
                 disabled={busy || !liveConfirmed(mode, liveTyped) || (pending.side === "buy" && !pending.preview.can_submit)}
                 onClick={() => void confirm()}
               >
-                {busy ? "Submitting…" : pending.side === "buy" ? "Buy to open" : "Sell to close"}
+                {busy ? "Submitting…" : `${pending.side === "buy" ? "Buy to open" : "Sell to close"}${market ? " at market" : ""}`}
               </button>
             </div>
           </div>

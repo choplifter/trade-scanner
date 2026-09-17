@@ -328,6 +328,14 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           </dd>
           <dt>Spreads / Contracts</dt>
           <dd>Quantity. One spread is one of each leg; the summary line multiplies by 100 and by this number.</dd>
+          <dt>Limit / Market</dt>
+          <dd>
+            The order type, chosen per order (every ticket starts at Limit). Market sends no price: the order fills at
+            once at whatever the market gives, and the amounts shown are estimates at the natural. On a wide leg, and
+            above all on a multi-leg package, the fill can land well beyond it. Alpaca takes option market orders in
+            the regular session only; in Simulation a market order fills at the natural. The same choice is in the
+            Close dialog and on the chart's Buy / Sell.
+          </dd>
           <dt>Min credit · Max debit · Max premium</dt>
           <dd>
             The limit price per spread, named by direction: the least you will accept for a credit package, the most

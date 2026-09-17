@@ -99,3 +99,24 @@ def test_income_writes_are_plain_sell_to_open_orders():
     assert request.symbol == "SPY260918C00760000" and request.qty == 2
     assert request.side is OrderSide.SELL and request.position_intent is PositionIntent.SELL_TO_OPEN
     assert request.limit_price == 1.5 and request.legs is None
+
+
+def test_market_orders_carry_no_price_single_or_multi_leg():
+    from alpaca.trading.requests import MarketOrderRequest
+
+    legs = [
+        _leg("SPY260918P00740000", "buy", "buy_to_open"),
+        _leg("SPY260918P00745000", "sell", "sell_to_open", strike=745.0),
+    ]
+    request = build_mleg_request(legs, 2, -1.25, "cid-m", "market")
+    assert isinstance(request, MarketOrderRequest)
+    assert request.type is OrderType.MARKET and request.order_class is OrderClass.MLEG
+    assert request.time_in_force is TimeInForce.DAY
+    assert "limit_price" not in request.to_request_fields()
+    assert len(request.legs) == 2 and request.client_order_id == "cid-m"
+
+    leg = _leg("SPY260918C00760000", "buy", "buy_to_open", kind="call", strike=760.0)
+    request = build_single_leg_request(leg, 1, 1.5, None, "market")
+    assert isinstance(request, MarketOrderRequest) and request.type is OrderType.MARKET
+    assert request.symbol == "SPY260918C00760000" and request.legs is None
+    assert "limit_price" not in request.to_request_fields()

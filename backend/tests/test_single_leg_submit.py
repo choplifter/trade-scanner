@@ -113,3 +113,46 @@ def test_an_uncovered_write_is_refused_before_the_broker(monkeypatch):
     asyncio.run(service.submit(ticket))
     (request,) = trading.requests
     assert request.symbol == "SPY260918C00760000" and request.legs is None
+
+
+def test_a_market_ticket_goes_out_as_a_market_order(monkeypatch):
+    from alpaca.trading.enums import OrderClass, OrderType
+
+    resolved = _resolved("long_call", [_leg("SPY260918C00750000", "call", 750, "buy")], 2.5)
+    resolved.order_type = "market"
+    service, trading = _service(monkeypatch, resolved)
+    ticket = SpreadTicket(underlying="SPY", strategy="long_call", expiry=EXPIRY, qty=2, long_strike=750, order_type="market")
+    asyncio.run(service.submit(ticket))
+    (request,) = trading.requests
+    assert request.type == OrderType.MARKET and request.symbol == "SPY260918C00750000"
+
+    legs = [_leg("SPY260918P00740000", "put", 740, "buy"), _leg("SPY260918P00745000", "put", 745, "sell")]
+    spread = _resolved("bull_put", legs, -1.2)
+    spread.order_type = "market"
+    spread.options_level = 3
+    service, trading = _service(monkeypatch, spread)
+    asyncio.run(service.submit(ticket))
+    (request,) = trading.requests
+    assert request.type == OrderType.MARKET and request.order_class == OrderClass.MLEG and len(request.legs) == 2
+
+
+def test_a_market_close_ignores_the_limit_and_the_trigger_keeps_its_limit(monkeypatch):
+    from alpaca.trading.enums import OrderClass, OrderType
+
+    from app.options.models import CloseLeg, CloseSpreadRequest, closing_legs
+
+    service, trading = _service(monkeypatch, None)
+    held = [CloseLeg(symbol="SPY260918P00740000", qty=1), CloseLeg(symbol="SPY260918P00745000", qty=-1)]
+
+    async def priced(self, req):
+        return closing_legs(req.legs), "debit", 0.75, 0.80
+
+    monkeypatch.setattr(OptionsService, "_priced_close", priced)
+    req = CloseSpreadRequest(legs=held, qty=1, limit_price=0.10, order_type="market")
+    asyncio.run(service.close_spread(req))
+    request = trading.requests[-1]
+    assert request.type == OrderType.MARKET and request.order_class == OrderClass.MLEG
+    assert "limit_price" not in request.to_request_fields()
+
+    asyncio.run(service.close_spread(CloseSpreadRequest(legs=held, qty=1, order_type="market"), marketable=True))
+    assert trading.requests[-1].type == OrderType.LIMIT
