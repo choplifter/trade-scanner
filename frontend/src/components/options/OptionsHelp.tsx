@@ -402,7 +402,10 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dt>today (dashed)</dt>
           <dd>
             The same legs valued now by Black-Scholes with each leg's IV. What the position would be worth if the
-            underlying jumped there this instant.
+            underlying jumped there this instant. The curve is shifted so that at the spot it meets the package's
+            own mid, which is why it reads your actual P&amp;L there: the model prices with a zero rate and its own
+            time convention, and was landing tens of euros beside the market at the one price you check first. Only
+            the level moves, not the shape, and the Time and IV curves carry the same shift.
           </dd>
           <dt>Time slider</dt>
           <dd>

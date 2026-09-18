@@ -515,10 +515,17 @@ class OptionsService:
         )
 
     def _payoff(
-        self, legs: list[SpreadLeg], qty: int, net_price: float, spot: float, strategy: str | None = None
+        self, legs: list[SpreadLeg], qty: int, net_entry: float, spot: float, strategy: str | None = None
     ) -> Payoff | None:
         """The risk chart for `legs` (a covered call gets its share leg at
-        the spot). None when the curve cannot be built."""
+        the spot). None when the curve cannot be built.
+
+        The legs' mids anchor the today curve to the market (see
+        payoff_curve); a leg without a mid leaves it on the model alone.
+        The covered call's share leg is added afterwards on purpose: it is
+        worth nothing at the spot it is referenced to, so the mark stays
+        the options' own."""
+        mark = net_price(legs, "mid")
         payoff_legs = [
             PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
             for leg in legs
@@ -526,7 +533,7 @@ class OptionsService:
         if strategy == "covered_call":
             payoff_legs.append(PayoffLeg(kind="stock", strike=spot, side="buy"))
         try:
-            return Payoff(**payoff_curve(payoff_legs, qty, net_price, spot, self._source.now()))
+            return Payoff(**payoff_curve(payoff_legs, qty, net_entry, spot, self._source.now(), mark=mark))
         except (ValueError, ZeroDivisionError):
             logger.debug("No payoff curve", exc_info=True)
             return None

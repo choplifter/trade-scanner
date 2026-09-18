@@ -123,3 +123,36 @@ def test_the_curve_carries_the_legs_and_moment_for_client_side_repricing():
         ("sell", "put", 100.0, 0.22),
     ]
     assert curve["multiplier"] == 200
+
+
+def _today_at(curve: dict, price: float) -> float:
+    i = min(range(len(curve["prices"])), key=lambda k: abs(curve["prices"][k] - price))
+    return curve["today"][i]
+
+
+def test_a_mark_anchors_the_today_curve_to_the_market_at_the_spot():
+    """The model prices with a zero rate; the market does not. Given the
+    package's mid, the today curve passes through the position's actual
+    P&L at the spot -- and keeps its shape."""
+    legs = [PayoffLeg(kind="call", strike=100.0, side="buy", expiry=EXPIRY, iv=0.20)]
+    plain = payoff_curve(legs, qty=2, net_price=1.50, spot=100.0, now=NOW)
+    model_now = _today_at(plain, 100.0)
+
+    # The market pays 0.30 per share more than the model says.
+    mark = 1.80
+    anchored = payoff_curve(legs, qty=2, net_price=1.50, spot=100.0, now=NOW, mark=mark)
+    assert plain["mark_shift"] == 0.0
+    # P&L at the spot is the mark less what was paid, times 100 x qty.
+    assert _today_at(anchored, 100.0) == pytest.approx((mark - 1.50) * 200, abs=1.0)
+    shift = anchored["mark_shift"]
+    assert shift == pytest.approx(mark - (model_now / 200 + 1.50), abs=1e-4)
+    # A constant shift: the shape is untouched, and the expiry curve too.
+    diffs = [a - b for a, b in zip(anchored["today"], plain["today"])]
+    assert max(diffs) - min(diffs) < 0.02
+    assert anchored["at_expiry"] == plain["at_expiry"]
+
+
+def test_no_mark_leaves_the_curve_on_the_model():
+    legs = [PayoffLeg(kind="put", strike=100.0, side="sell", expiry=EXPIRY, iv=0.22)]
+    curve = payoff_curve(legs, qty=1, net_price=-1.0, spot=100.0, now=NOW, mark=None)
+    assert curve["mark_shift"] == 0.0

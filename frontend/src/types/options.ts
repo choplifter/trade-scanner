@@ -159,6 +159,9 @@ export interface Payoff {
   legs?: PayoffLegOut[];
   /** Per share, signed like the ticket: positive paid, negative received. */
   net_price?: number | null;
+  /** What the today curve was shifted by per share so it meets the market
+   * at the spot; the what-if curves add the same. */
+  mark_shift?: number;
   /** The moment the today curve was valued at (ISO). */
   as_of?: string | null;
 }

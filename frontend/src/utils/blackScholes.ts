@@ -80,7 +80,9 @@ export function positionPnl(payoff: Payoff, price: number, atMs: number, ivFacto
     if (value == null) return null;
     total += (leg.side === "buy" ? 1 : -1) * leg.ratio * value;
   }
-  return Math.round((total - payoff.net_price) * payoff.multiplier * 100) / 100;
+  // The same shift the backend put on the today curve, so a what-if hour
+  // starts from the market rather than from the model (see payoff_curve).
+  return Math.round((total + (payoff.mark_shift ?? 0) - payoff.net_price) * payoff.multiplier * 100) / 100;
 }
 
 const DAY_MS = 24 * 3600 * 1000;

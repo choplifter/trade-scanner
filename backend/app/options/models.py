@@ -429,6 +429,9 @@ class Payoff(BaseModel):
     legs: list[PayoffLegOut] = Field(default_factory=list)
     # Per share, signed like the ticket: positive paid, negative received.
     net_price: float | None = None
+    # What the today curve was shifted by, per share, to meet the market at
+    # the spot (see payoff_curve). The what-if curves add the same.
+    mark_shift: float = 0.0
     # The moment the today curve was valued at.
     as_of: datetime | None = None
 

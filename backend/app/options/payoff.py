@@ -210,9 +210,22 @@ def payoff_curve(
     now: datetime,
     *,
     points: int = GRID_POINTS,
+    mark: float | None = None,
 ) -> dict:
     """`net_price` is per share and signed: positive was (or will be) paid,
-    negative received. Returns prices, at_expiry, today (None if a leg lacks
+    negative received.
+
+    `mark` is what the package is worth per share right now (the legs'
+    mids, long-positive like the model's own value). Given, the today
+    curve is shifted so that it passes through that value at the spot:
+    the model prices with a zero rate and its own time convention, and
+    was reading tens of euros away from the position's actual P&L at the
+    one price the reader checks first. The shift is a constant, so the
+    curve's shape is untouched, and it is reported as `mark_shift` so the
+    browser's what-if curves can carry the same offset. The at-expiry
+    curve is left alone: intrinsic value needs no model.
+
+    Returns prices, at_expiry, today (None if a leg lacks
     IV), breakevens, max_profit/max_loss (None = unbounded on the upside/
     downside beyond the grid), spot, expiry (the evaluation date of the
     at-expiry curve) and the multiplier -- plus the legs as valued, the
@@ -243,6 +256,11 @@ def payoff_curve(
             prices.append(round(leg.strike, 4))
     prices = sorted(set(prices))
 
+    # What the model says the package is worth at the spot right now; the
+    # gap to `mark` is what the today curve is shifted by.
+    model_now = _position_value(legs, spot, now)
+    mark_shift = round(mark - model_now, 6) if mark is not None and model_now is not None else 0.0
+
     multiplier = CONTRACT_MULTIPLIER * qty
     at_expiry: list[float] = []
     today: list[float] | None = []
@@ -261,7 +279,7 @@ def payoff_curve(
             if now_value is None:
                 today = None
             else:
-                today.append(round((now_value - net_price) * multiplier, 2))
+                today.append(round((now_value + mark_shift - net_price) * multiplier, 2))
 
     net_calls = _net_calls(legs)
     max_profit: float | None = max(at_expiry)
@@ -285,5 +303,6 @@ def payoff_curve(
             for leg in legs
         ],
         "net_price": net_price,
+        "mark_shift": mark_shift,
         "as_of": now,
     }
