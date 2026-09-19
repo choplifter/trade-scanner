@@ -10,6 +10,7 @@ import type {
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 
+import { getStored, setStored, subscribeRemote } from "../../api/prefs";
 import { WIDGET_IDS, type WidgetId } from "../../hooks/useDashboardLayout";
 import { ChartCopyPanel } from "./ChartCopyPanel";
 import { DockTab } from "./DockTab";
@@ -115,9 +116,8 @@ interface StoredDockLayout {
   layout: SerializedDockview;
 }
 
-function loadDockLayout(): SerializedDockview | null {
+function loadDockLayout(raw = getStored(DOCK_LAYOUT_KEY)): SerializedDockview | null {
   try {
-    const raw = localStorage.getItem(DOCK_LAYOUT_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredDockLayout>;
     return parsed.version === DOCK_LAYOUT_VERSION && parsed.layout ? parsed.layout : null;
@@ -143,7 +143,7 @@ function saveDockLayout(layout: SerializedDockview) {
       const previous = loadDockLayout();
       if (previous && Object.keys(previous.panels ?? {}).length > 0) return;
     }
-    localStorage.setItem(DOCK_LAYOUT_KEY, JSON.stringify({ version: DOCK_LAYOUT_VERSION, layout } satisfies StoredDockLayout));
+    setStored(DOCK_LAYOUT_KEY, JSON.stringify({ version: DOCK_LAYOUT_VERSION, layout } satisfies StoredDockLayout));
   } catch {
     // Storage disabled -- the session still works, it just won't be
     // remembered next time.
@@ -196,6 +196,24 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
   // Dockview doesn't expose this as reactive state on its own -- resynced
   // off the same onDidLayoutChange the persistence write already listens to.
   const [openIds, setOpenIds] = useState<Set<WidgetId>>(new Set());
+
+  // The arrangement stored for this person arrives after the first paint
+  // (api/prefs.ts hydrates once /auth/me has answered). Applying it here is
+  // what carries a dock layout from one machine to another; a layout that
+  // fails to restore leaves what is on screen alone.
+  useEffect(() => {
+    return subscribeRemote(DOCK_LAYOUT_KEY, (raw) => {
+      if (!containerApi) return;
+      const saved = loadDockLayout(raw);
+      if (!saved) return;
+      try {
+        containerApi.fromJSON(saved);
+        setOpenIds(openWidgetIds(containerApi));
+      } catch (err) {
+        console.error("Dock layout from the server could not be restored, keeping the current one", err);
+      }
+    });
+  }, [containerApi]);
 
   const onReady = (event: DockviewReadyEvent) => {
     const saved = loadDockLayout();

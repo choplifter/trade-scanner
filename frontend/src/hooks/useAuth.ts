@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getMe, login as apiLogin, logout as apiLogout, type User } from "../api/auth";
+import { hydratePrefs, resetPrefs } from "../api/prefs";
 import { onUnauthorized } from "../api/http";
 
 export interface AuthState {
@@ -21,7 +22,11 @@ export function useAuth(): AuthState {
     let cancelled = false;
     getMe()
       .then((found) => {
-        if (!cancelled) setUser(found);
+        if (cancelled) return;
+        setUser(found);
+        // Their stored interface preferences, and the one-time hand-up of
+        // whatever this browser holds (see api/prefs.ts).
+        if (found) void hydratePrefs(found.id);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -40,10 +45,14 @@ export function useAuth(): AuthState {
   const login = useCallback(async (username: string, password: string) => {
     const found = await apiLogin(username, password);
     setUser(found);
+    void hydratePrefs(found.id);
   }, []);
 
   const logout = useCallback(async () => {
     await apiLogout();
+    // Before setUser(null): the next person at this browser must not read
+    // the last one's cached settings or layout.
+    resetPrefs();
     setUser(null);
   }, []);
 

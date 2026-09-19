@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { scannerSocket } from "../api/ws";
 import type { ScannerRow } from "../types/alpaca";
 
+import { getStored, setStored } from "../api/prefs";
+
 const VIEWS = ["gainers", "losers", "most_active"] as const;
 const STORAGE_KEY = "alarms:enabled";
 
@@ -29,7 +31,7 @@ export interface AlarmsState {
 
 function loadEnabled(): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY) === "true";
+    return getStored(STORAGE_KEY) === "true";
   } catch {
     return false;
   }
@@ -63,7 +65,7 @@ export function useAlarms(): AlarmsState {
   function setEnabled(value: boolean) {
     setEnabledState(value);
     try {
-      localStorage.setItem(STORAGE_KEY, String(value));
+      setStored(STORAGE_KEY, String(value));
     } catch {
       // Private browsing / storage disabled -- the toggle still works for
       // this session, it just won't be remembered next time.

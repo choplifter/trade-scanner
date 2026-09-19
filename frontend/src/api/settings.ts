@@ -6,6 +6,7 @@
  * here too, so the tables and the risk chart follow the same values the
  * charts read. */
 
+import { getStored, setStored, subscribeRemote } from "./prefs";
 import {
   chartTheme,
   customPalette,
@@ -145,9 +146,8 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
   return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
-function load(): AppSettings {
+function load(raw = getStored(STORAGE_KEY)): AppSettings {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<AppSettings> & { version?: number };
     // Field by field with the defaults filled in, so an older or foreign
@@ -256,11 +256,8 @@ export function updateSettings(patch: Partial<AppSettings>): void {
   const changed = (Object.keys(next) as (keyof AppSettings)[]).some((k) => next[k] !== settings[k]);
   if (!changed) return;
   settings = next;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: VERSION, ...settings }));
-  } catch {
-    // Works for this session, just not remembered next time.
-  }
+  // Cached locally and handed to the server for this user (api/prefs.ts).
+  setStored(STORAGE_KEY, JSON.stringify({ version: VERSION, ...settings }));
   notify();
 }
 
@@ -280,3 +277,11 @@ darkQuery?.addEventListener("change", () => {
 });
 
 applyDocumentTheme();
+
+// The server's copy arrives after the first paint (the user is only known
+// once /auth/me has answered). Adopting it here is what makes a setting
+// changed on another machine show up on this one.
+subscribeRemote(STORAGE_KEY, (raw) => {
+  settings = load(raw);
+  notify();
+});

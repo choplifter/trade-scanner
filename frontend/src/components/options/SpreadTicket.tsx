@@ -53,6 +53,8 @@ import {
 } from "./legPicker";
 import { PayoffChart } from "./PayoffChart";
 
+import { getStored, setStored } from "../../api/prefs";
+
 /** Widget-local hotkeys (see OptionsWidget); only the original spreads
  * have one, 0-4 belong to the equity ticket. */
 const STRATEGY_HOTKEY: Partial<Record<Strategy, number>> = {
@@ -101,7 +103,7 @@ const money = formatMoney;
 
 function loadRiskOpen(): boolean {
   try {
-    return localStorage.getItem(RISK_OPEN_KEY) !== "closed";
+    return getStored(RISK_OPEN_KEY) !== "closed";
   } catch {
     return true;
   }
@@ -445,11 +447,7 @@ export function SpreadTicket({
 
   const toggleRisk = () => {
     setRiskOpen((v) => {
-      try {
-        localStorage.setItem(RISK_OPEN_KEY, v ? "closed" : "open");
-      } catch {
-        // Not remembered; fine.
-      }
+      setStored(RISK_OPEN_KEY, v ? "closed" : "open");
       return !v;
     });
   };

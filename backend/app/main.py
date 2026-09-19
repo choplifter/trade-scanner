@@ -56,6 +56,7 @@ from app.routers import (
     trading_options,
     trading_sim,
     trading_sim_options,
+    prefs,
     watchlist,
 )
 from app.scanners.benchmark_tracker import ScannerBenchmarkTracker
@@ -73,6 +74,7 @@ from app.trading.sim.options_service import OptionsWiring
 from app.trading.sim.options_store import SimOptionsStore
 from app.trading.sim.store import SimStore
 from app.trading.trade_store import TradeStore
+from app.prefs.store import UserPrefsStore
 from app.watchlist.store import WatchlistStore
 from app.ws import chart_ws, news_feed_ws, replay_ws, scanner_ws
 from app.ws.connection_manager import ConnectionManager
@@ -208,6 +210,12 @@ async def lifespan(app: FastAPI):
     watchlist_store = WatchlistStore(settings.scanner_history_db_path)
     await watchlist_store.init_schema()
     app.state.watchlist_store = watchlist_store
+
+    # Per-user interface preferences (the settings object, the dashboard
+    # layout) -- localStorage-only for the same historical reason.
+    user_prefs_store = UserPrefsStore(settings.scanner_history_db_path)
+    await user_prefs_store.init_schema()
+    app.state.user_prefs_store = user_prefs_store
 
     # Per-user notes on closed trades -- same file, own table. See
     # app.trading.journal_store; trade_id alone (real or Simulation Mode) is
@@ -423,6 +431,7 @@ app.include_router(earnings.router, dependencies=_auth_gate)
 app.include_router(replay.router)
 app.include_router(news_feed.router)
 app.include_router(watchlist.router)
+app.include_router(prefs.router)
 app.include_router(scanner_ws.router)
 app.include_router(chart_ws.router)
 app.include_router(replay_ws.router)

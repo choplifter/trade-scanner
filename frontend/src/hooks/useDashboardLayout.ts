@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getStored, setStored, subscribeRemote } from "../api/prefs";
+
 import type { Layout } from "react-grid-layout";
 
 /** Which layout the dashboard is rendering: the fixed nested splitters
@@ -189,9 +191,8 @@ function withCodeOwnedConstraints(layout: Layout): Layout {
   });
 }
 
-function loadLayout(): Layout {
+function loadLayout(raw = getStored(LAYOUT_STORAGE_KEY)): Layout {
   try {
-    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
     if (!raw) return DEFAULT_LAYOUT;
     const parsed = JSON.parse(raw) as Partial<StoredLayout>;
     if (parsed?.version === LAYOUT_VERSION && isValidLayout(parsed.layout)) {
@@ -207,9 +208,8 @@ function loadLayout(): Layout {
 // Dock is the default: it is the mode actually used day to day, and a
 // fresh browser should come up the way the dashboard is worked in. Panels
 // and Grid stay one click away in the header and are remembered once chosen.
-function loadMode(): LayoutMode {
+function loadMode(raw = getStored(MODE_STORAGE_KEY)): LayoutMode {
   try {
-    const raw = localStorage.getItem(MODE_STORAGE_KEY);
     return raw === "grid" || raw === "panels" ? raw : "dock";
   } catch {
     return "dock";
@@ -247,14 +247,7 @@ export function useDashboardLayout(): DashboardLayoutState {
     const next = pending.current;
     if (!next) return;
     pending.current = null;
-    try {
-      localStorage.setItem(
-        LAYOUT_STORAGE_KEY,
-        JSON.stringify({ version: LAYOUT_VERSION, layout: next } satisfies StoredLayout),
-      );
-    } catch {
-      // Storage disabled -- the layout still works for this session.
-    }
+    setStored(LAYOUT_STORAGE_KEY, JSON.stringify({ version: LAYOUT_VERSION, layout: next } satisfies StoredLayout));
   }, []);
 
   // Don't lose the last drag if the tab closes inside the debounce window.
@@ -272,11 +265,18 @@ export function useDashboardLayout(): DashboardLayoutState {
 
   const setMode = useCallback((next: LayoutMode) => {
     setModeState(next);
-    try {
-      localStorage.setItem(MODE_STORAGE_KEY, next);
-    } catch {
-      // Same as useAlarms: the toggle works, it just won't be remembered.
-    }
+    setStored(MODE_STORAGE_KEY, next);
+  }, []);
+
+  // The server's copies land after the first paint (see api/prefs.ts): the
+  // arrangement this person last left, on whichever machine.
+  useEffect(() => {
+    const offLayout = subscribeRemote(LAYOUT_STORAGE_KEY, (raw) => setLayoutState(loadLayout(raw)));
+    const offMode = subscribeRemote(MODE_STORAGE_KEY, (raw) => setModeState(loadMode(raw)));
+    return () => {
+      offLayout();
+      offMode();
+    };
   }, []);
 
   const resetLayout = useCallback(() => setLayout(DEFAULT_LAYOUT), [setLayout]);

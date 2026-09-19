@@ -363,7 +363,7 @@ export function SettingsDialog({
           <button type="button" className="row-action" onClick={resetSettings} title="Back to the defaults for every setting">
             Reset to defaults
           </button>
-          <span className="order-hint">Changes apply at once and are remembered in this browser.</span>
+          <span className="order-hint">Changes apply at once and are kept for your login, on every browser you use.</span>
         </div>
       </div>
     </Modal>

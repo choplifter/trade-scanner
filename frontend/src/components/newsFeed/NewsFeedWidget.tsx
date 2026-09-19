@@ -4,6 +4,8 @@ import { useNewsFeed } from "../../hooks/useNewsFeed";
 import { newsAge } from "../../utils/format";
 import { symbolDragProps } from "../../utils/dragSymbol";
 
+import { getStored, setStored } from "../../api/prefs";
+
 interface NewsFeedWidgetProps {
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
@@ -15,7 +17,7 @@ const MAX_CHIPS = 3;
 
 function loadRankedOnly(): boolean {
   try {
-    return localStorage.getItem(FILTER_KEY) === "1";
+    return getStored(FILTER_KEY) === "1";
   } catch {
     return false;
   }
@@ -43,7 +45,7 @@ export function NewsFeedWidget({ selectedSymbol, onSelectSymbol }: NewsFeedWidge
   const setFilter = (value: boolean) => {
     setRankedOnly(value);
     try {
-      localStorage.setItem(FILTER_KEY, value ? "1" : "0");
+      setStored(FILTER_KEY, value ? "1" : "0");
     } catch {
       // Works for this session, just not remembered next time.
     }

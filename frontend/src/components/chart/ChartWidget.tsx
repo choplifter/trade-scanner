@@ -33,6 +33,8 @@ import { formatClock, formatDateTime } from "../../utils/time";
 import { useChartPalette, useSettings } from "../../hooks/useSettings";
 import type { ChartType, CursorMode, PositionLevels } from "./CandleChart";
 
+import { getStored, setStored } from "../../api/prefs";
+
 interface ChartWidgetProps {
   symbol: string | null;
   /** Set when a backtest pick or a journal trade is clicked: jump to this
@@ -81,7 +83,7 @@ function tradeLevelItems(): { key: TradeLevelKey; label: string; color: string }
 
 function loadVisibleIndicators(): Set<string> {
   try {
-    const raw = localStorage.getItem(VISIBLE_INDICATORS_KEY);
+    const raw = getStored(VISIBLE_INDICATORS_KEY);
     return new Set<string>(raw ? JSON.parse(raw) : []);
   } catch {
     // Private browsing, storage disabled, or a value from an older shape --
@@ -94,7 +96,7 @@ function loadVisibleIndicators(): Set<string> {
 // open position's entry/stop/target always drew unconditionally.
 function loadVisibleTradeLevels(): Set<TradeLevelKey> {
   try {
-    const raw = localStorage.getItem(VISIBLE_TRADE_LEVELS_KEY);
+    const raw = getStored(VISIBLE_TRADE_LEVELS_KEY);
     if (!raw) return new Set(ALL_TRADE_LEVEL_KEYS);
     const parsed = JSON.parse(raw) as unknown[];
     return new Set(parsed.filter((k): k is TradeLevelKey => ALL_TRADE_LEVEL_KEYS.includes(k as TradeLevelKey)));
@@ -104,12 +106,7 @@ function loadVisibleTradeLevels(): Set<TradeLevelKey> {
 }
 
 function persistLevelSet(key: string, values: Set<string>) {
-  try {
-    localStorage.setItem(key, JSON.stringify([...values]));
-  } catch {
-    // The toggle still works for this session; it just will not be
-    // remembered next time.
-  }
+  setStored(key, JSON.stringify([...values]));
 }
 
 const CURSOR_KEY = "chart:cursorMode";
@@ -135,7 +132,7 @@ const CURSOR_MODES: { key: CursorMode; label: string; title: string }[] = [
 
 function loadCursorMode(): CursorMode {
   try {
-    const saved = localStorage.getItem(CURSOR_KEY);
+    const saved = getStored(CURSOR_KEY);
     return CURSOR_MODES.some((m) => m.key === saved) ? (saved as CursorMode) : "magnet";
   } catch {
     return "magnet";
@@ -312,7 +309,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   function setCursorMode(mode: CursorMode) {
     setCursorModeState(mode);
     try {
-      localStorage.setItem(CURSOR_KEY, mode);
+      setStored(CURSOR_KEY, mode);
     } catch {
       // Works for this session, just not remembered next time.
     }
