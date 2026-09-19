@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { daysUntil, getChain, getExpiries } from "../api/options";
 import { subscribeReplaySession } from "../api/replayMode";
+import { useReplaySession } from "./useReplaySession";
 import type { ChainResponse, ExpiryInfo } from "../types/options";
 
 /** Matches the backend's chain TTL (app/options/chain_fetch.py): polling
@@ -32,6 +33,11 @@ export interface OptionChainState {
  * and refetched on every replay tick. Off entirely when `enabled` is false
  * (no symbol, or a calendar's second chain while no calendar is picked). */
 export function useOptionChain(underlying: string | null, enabled: boolean): OptionChainState {
+  // The strip belongs to a date: in a replay it is the replayed one, and a
+  // replay that starts (or runs past midnight) has to fetch it again.
+  // Without this the picker kept today's expiries under a chain priced
+  // weeks earlier -- the dates the ticket then traded were the wrong ones.
+  const replayDay = useReplaySession()?.as_of?.slice(0, 10) ?? null;
   const [expiries, setExpiries] = useState<ExpiryInfo[]>([]);
   const [expiry, setExpiry] = useState<string | null>(null);
   const [chain, setChain] = useState<ChainResponse | null>(null);
@@ -41,12 +47,21 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
   const [tick, setTick] = useState(0);
   const cancelledRef = useRef(false);
 
+  // What is selected right now, read inside the fetch below without making
+  // it a dependency (that would refetch the strip on every pick).
+  const expiryRef = useRef<string | null>(null);
+  expiryRef.current = expiry;
+  // The replay day the strip was last fetched for, to tell a step inside a
+  // replay from entering or leaving one.
+  const stripDayRef = useRef<string | null>(null);
+
   useEffect(() => {
     setExpiries([]);
-    setExpiry(null);
     setChain(null);
     setSpot(null);
     setError(null);
+    const previousStripDay = stripDayRef.current;
+    stripDayRef.current = replayDay;
     if (!underlying || !enabled) return;
     cancelledRef.current = false;
     setLoading(true);
@@ -55,8 +70,19 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
         if (cancelledRef.current) return;
         setExpiries(res.expiries);
         setSpot(res.spot);
-        const preferred = res.expiries.find((e) => e.dte >= 1) ?? res.expiries[0] ?? null;
-        setExpiry(preferred ? preferred.expiry : null);
+        // Stepping the replay clock within a replay keeps the expiry
+        // already picked, as long as it still trades then -- a day's step
+        // should not rip the strike board away mid-trade. Entering or
+        // leaving a replay does not: arriving in August with September
+        // still selected is the chain of a date the replay has not reached
+        // (it read "40d" on the picker). Then, and on a fresh symbol, the
+        // nearest expiry with a day left is taken, 0DTE only when there is
+        // nothing else.
+        const steppedWithinReplay = previousStripDay !== null && replayDay !== null;
+        const held = expiryRef.current;
+        const kept = steppedWithinReplay && held && res.expiries.some((e) => e.expiry === held) ? held : null;
+        const preferred = kept ?? (res.expiries.find((e) => e.dte >= 1) ?? res.expiries[0])?.expiry ?? null;
+        setExpiry(preferred);
         if (!preferred) setLoading(false);
       })
       .catch((err: unknown) => {
@@ -67,7 +93,13 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
     return () => {
       cancelledRef.current = true;
     };
-  }, [underlying, enabled]);
+  }, [underlying, enabled, replayDay]);
+
+  // A different symbol drops the pick; a replay date change keeps it (see
+  // the strip effect above).
+  useEffect(() => {
+    setExpiry(null);
+  }, [underlying]);
 
   useEffect(() => {
     if (!underlying || !enabled || !expiry) return;
@@ -109,7 +141,10 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
     async (wanted: string): Promise<boolean> => {
       if (!underlying) return false;
       if (expiries.some((e) => e.expiry === wanted)) return true;
-      const dte = daysUntil(wanted);
+      // Counted from the replayed day when there is one: the far strip is
+      // fetched by a distance in days, and today's distance is meaningless
+      // in a replay.
+      const dte = daysUntil(wanted, replayDay);
       const res = await getExpiries(underlying, { far: { from: dte, to: dte } });
       if (cancelledRef.current) return false;
       const merged = [...expiries];
@@ -120,7 +155,7 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
       setExpiries(merged);
       return merged.some((e) => e.expiry === wanted);
     },
-    [underlying, expiries],
+    [underlying, expiries, replayDay],
   );
 
   return { expiries, expiry, setExpiry, chain, spot, loading, error, refresh, ensureExpiry };

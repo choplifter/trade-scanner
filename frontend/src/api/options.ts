@@ -92,11 +92,20 @@ export function getExpiries(underlying: string, opts: { far?: { from: number; to
 }
 
 /** Days from today to an ISO date (calendar days, local midnight). */
-export function daysUntil(iso: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+/** Days from today to `iso` -- or from `from` (YYYY-MM-DD) when given,
+ * which is how a replay counts: the distance from the replayed day, not
+ * from the day the browser happens to be running on. */
+export function daysUntil(iso: string, from?: string | null): number {
+  let start: Date;
+  if (from) {
+    const [fy, fm, fd] = from.split("-").map(Number);
+    start = new Date(fy, fm - 1, fd);
+  } else {
+    start = new Date();
+    start.setHours(0, 0, 0, 0);
+  }
   const [y, m, d] = iso.split("-").map(Number);
-  return Math.round((new Date(y, m - 1, d).getTime() - today.getTime()) / 86_400_000);
+  return Math.round((new Date(y, m - 1, d).getTime() - start.getTime()) / 86_400_000);
 }
 
 export function getContractQuote(symbol: string): Promise<LegQuote> {
