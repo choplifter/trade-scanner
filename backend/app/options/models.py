@@ -18,6 +18,8 @@ legs, which is what pricing and the request builder read.
 """
 
 from datetime import date, datetime
+from functools import reduce
+from math import gcd
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -54,22 +56,23 @@ OrderType = Literal["limit", "market"]
 SINGLE_LEG_STRATEGIES: frozenset[str] = frozenset({"long_call", "long_put", "covered_call", "cash_secured_put"})
 # Sold against held shares / cash rather than against another contract.
 INCOME_STRATEGIES: frozenset[str] = frozenset({"covered_call", "cash_secured_put"})
-# What a roll may open: the income shapes, an outright long (a LEAPS
-# rolled out to a later expiry), and the four verticals -- one side of a
-# condor or iron fly is a vertical, and rolling a side is how a condor is
-# managed in practice; the package as a whole is never rolled.
-ROLL_OPEN_STRATEGIES: frozenset[str] = frozenset(
-    {
-        "covered_call",
-        "cash_secured_put",
-        "long_call",
-        "long_put",
-        "bull_put",
-        "bear_call",
-        "bull_call",
-        "bear_put",
-    }
-)
+# What a roll may open, by the number of legs it closes: a roll replaces a
+# position with the same shape one expiry or strike along, so a lone leg
+# cannot turn into a spread and a condor's side cannot turn into a lone
+# leg. One side of a condor or iron fly is a vertical, and rolling a side
+# is how a condor is managed in practice; the four-leg package as a whole
+# has no single replacement shape and is never rolled.
+ROLL_OPEN_BY_LEGS: dict[int, frozenset[str]] = {
+    1: frozenset({"covered_call", "cash_secured_put", "long_call", "long_put"}),
+    2: frozenset({"bull_put", "bear_call", "bull_call", "bear_put"}),
+    3: frozenset({"call_butterfly", "put_butterfly"}),
+}
+ROLL_OPEN_STRATEGIES: frozenset[str] = frozenset().union(*ROLL_OPEN_BY_LEGS.values())
+_ROLL_OPEN_LABELS: dict[int, str] = {
+    1: "a cash-secured put, a covered call, or a long call/put",
+    2: "a vertical",
+    3: "a butterfly",
+}
 # Two expiries: the short leg in the nearer one.
 TIME_STRATEGIES: frozenset[str] = frozenset({"calendar", "diagonal"})
 # Strategies described by an explicit `legs` list rather than strike fields.
@@ -515,8 +518,10 @@ class CloseSpreadRequest(BaseModel):
         symbols = [leg.symbol for leg in self.legs]
         if len(set(symbols)) != len(symbols):
             raise ValueError("each leg symbol may appear once")
-        if self.qty > min(abs(leg.qty) for leg in self.legs):
-            raise ValueError("qty exceeds what is held on at least one leg")
+        # Packages, not contracts: a butterfly held once is 1/2/1 contracts
+        # and can be closed once.
+        if self.qty > package_ratios(self.legs)[0]:
+            raise ValueError("qty exceeds the packages held")
         return self
 
 
@@ -548,10 +553,11 @@ class RollRequest(BaseModel):
         parsed = try_parse_occ(self.close.legs[0].symbol)
         if parsed is None or parsed.underlying != self.open.underlying.upper():
             raise ValueError("the closed and the opened legs must share the underlying")
-        if self.open.strategy not in ROLL_OPEN_STRATEGIES:
-            raise ValueError(
-                "a roll opens a cash-secured put, a covered call, a long call/put, or a vertical"
-            )
+        allowed = ROLL_OPEN_BY_LEGS.get(len(self.close.legs))
+        if allowed is None:
+            raise ValueError("a roll moves one leg, one vertical, or one butterfly")
+        if self.open.strategy not in allowed:
+            raise ValueError(f"closing {len(self.close.legs)} leg(s), a roll opens {_ROLL_OPEN_LABELS[len(self.close.legs)]}")
         if (self.limit_net is None) != (self.limit_direction is None):
             raise ValueError("limit_net and limit_direction go together")
         return self
@@ -601,8 +607,8 @@ class TriggerCreate(BaseModel):
             and not self.premium_below < self.premium_above
         ):
             raise ValueError("premium_below must be below premium_above")
-        if self.qty > min(abs(leg.qty) for leg in self.legs):
-            raise ValueError("qty exceeds what is held on at least one leg")
+        if self.qty > package_ratios(self.legs)[0]:
+            raise ValueError("qty exceeds the packages held")
         return self
 
 
@@ -651,11 +657,28 @@ def resolve_legs(ticket: SpreadTicket, chains: Chain | dict[date, Chain]) -> lis
     return legs
 
 
+def package_ratios(held: list[CloseLeg]) -> tuple[int, list[int]]:
+    """(packages held, the legs' ratios) from the signed quantities.
+
+    A package's legs are held in a fixed proportion -- 1:2:1 for a
+    butterfly, 1:1 for a vertical -- so the ratios are the quantities
+    divided by their greatest common divisor, and that divisor is how many
+    packages are held. Without this every leg closed at ratio 1 and a
+    butterfly's doubled body was closed by half: the rest stayed behind as
+    a naked short leg."""
+    counts = [abs(leg.qty) for leg in held]
+    packages = reduce(gcd, counts) if counts else 1
+    packages = max(1, packages)
+    return packages, [c // packages for c in counts]
+
+
 def closing_legs(held: list[CloseLeg]) -> list[SpreadLeg]:
     """The reverse of what is held: a long leg is sold to close, a short leg
-    bought to close. Quotes are filled in afterwards (see the service)."""
+    bought to close, each at its ratio within the package (see
+    package_ratios). Quotes are filled in afterwards (see the service)."""
     legs: list[SpreadLeg] = []
-    for leg in held:
+    _packages, ratios = package_ratios(held)
+    for leg, ratio in zip(held, ratios):
         parsed = try_parse_occ(leg.symbol)
         if parsed is None:
             raise OrderRejected(f"Not an option symbol: {leg.symbol}", field="legs")
@@ -671,6 +694,7 @@ def closing_legs(held: list[CloseLeg]) -> list[SpreadLeg]:
                 expiry=parsed.expiry,
                 side=side,
                 position_intent=intent,
+                ratio_qty=ratio,
             )
         )
     return legs

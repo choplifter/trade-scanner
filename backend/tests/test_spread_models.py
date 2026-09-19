@@ -301,3 +301,36 @@ def test_resolve_legs_across_two_chains():
         resolve_legs(ticket, _chain())  # only one expiry loaded
     fly = _leg_ticket("call_butterfly", _legs(("call", 745, "buy", 1, None), ("call", 750, "sell", 2, None), ("call", 755, "buy", 1, None)))
     assert [l.ratio_qty for l in resolve_legs(fly, _chain())] == [1, 2, 1]
+
+
+def test_a_butterflys_body_closes_at_its_ratio():
+    """The body is held twice per package. Closed at ratio 1 it left half a
+    body behind -- a naked short leg, which is what this guards."""
+    held = [
+        CloseLeg(symbol="SPY260918P00735000", qty=1),
+        CloseLeg(symbol="SPY260918P00740000", qty=-2),
+        CloseLeg(symbol="SPY260918P00745000", qty=1),
+    ]
+    legs = closing_legs(held)
+    assert [leg.ratio_qty for leg in legs] == [1, 2, 1]
+    assert [leg.position_intent for leg in legs] == ["sell_to_close", "buy_to_close", "sell_to_close"]
+    # One package held, so one is all that can be closed.
+    CloseSpreadRequest(legs=held, qty=1)
+    with pytest.raises(ValidationError):
+        CloseSpreadRequest(legs=held, qty=2)
+
+
+def test_ratios_are_the_package_not_the_contract_count():
+    """Three butterflies: the same 1/2/1 shape, three packages closable."""
+    held = [
+        CloseLeg(symbol="SPY260918P00735000", qty=3),
+        CloseLeg(symbol="SPY260918P00740000", qty=-6),
+        CloseLeg(symbol="SPY260918P00745000", qty=3),
+    ]
+    assert [leg.ratio_qty for leg in closing_legs(held)] == [1, 2, 1]
+    CloseSpreadRequest(legs=held, qty=3)
+    with pytest.raises(ValidationError):
+        CloseSpreadRequest(legs=held, qty=4)
+    # A vertical is unchanged by all this: 1:1, as many packages as contracts.
+    vertical = [CloseLeg(symbol="SPY260918P00740000", qty=2), CloseLeg(symbol="SPY260918P00745000", qty=-2)]
+    assert [leg.ratio_qty for leg in closing_legs(vertical)] == [1, 1]

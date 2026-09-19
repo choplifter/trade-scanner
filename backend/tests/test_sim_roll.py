@@ -275,3 +275,43 @@ def test_a_roll_may_open_a_vertical_side():
                 put_long_strike=85.0, put_short_strike=90.0, call_short_strike=110.0, call_long_strike=115.0,
             ),
         )
+
+
+def test_a_roll_opens_the_shape_it_closes():
+    """A roll moves a position along, it does not reshape it: one leg stays
+    one leg, a side stays a vertical, a butterfly stays a butterfly."""
+    fly = [
+        CloseLeg(symbol=format_occ("XYZ", NEAR, "call", 95.0), qty=1),
+        CloseLeg(symbol=format_occ("XYZ", NEAR, "call", 100.0), qty=-2),
+        CloseLeg(symbol=format_occ("XYZ", NEAR, "call", 105.0), qty=1),
+    ]
+    RollRequest(
+        close=CloseSpreadRequest(legs=fly, qty=1),
+        open=SpreadTicket(
+            underlying="XYZ", strategy="call_butterfly", expiry=FAR, qty=1,
+            legs=[
+                TicketLeg(kind="call", strike=96.0, side="buy"),
+                TicketLeg(kind="call", strike=101.0, side="sell", ratio=2),
+                TicketLeg(kind="call", strike=106.0, side="buy"),
+            ],
+        ),
+    )
+    # A butterfly closed, a vertical opened: refused.
+    with pytest.raises(ValueError):
+        RollRequest(
+            close=CloseSpreadRequest(legs=fly, qty=1),
+            open=SpreadTicket(underlying="XYZ", strategy="bull_call", expiry=FAR, qty=1, long_strike=95.0, short_strike=100.0),
+        )
+    # A side closed, a butterfly opened: refused too.
+    with pytest.raises(ValueError):
+        RollRequest(
+            close=CloseSpreadRequest(legs=[CloseLeg(symbol=PUT_95_NEAR, qty=-1), CloseLeg(symbol=PUT_90_NEAR, qty=1)], qty=1),
+            open=SpreadTicket(
+                underlying="XYZ", strategy="put_butterfly", expiry=FAR, qty=1,
+                legs=[
+                    TicketLeg(kind="put", strike=85.0, side="buy"),
+                    TicketLeg(kind="put", strike=90.0, side="sell", ratio=2),
+                    TicketLeg(kind="put", strike=95.0, side="buy"),
+                ],
+            ),
+        )

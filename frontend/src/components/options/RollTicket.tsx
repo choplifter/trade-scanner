@@ -41,14 +41,20 @@ export interface RollUnit {
   /** The risk-carrying leg's symbol; identifies the unit in a RollTarget. */
   key: string;
   label: string;
-  /** The leg a roll is reasoned from: the short leg of a vertical, or the
-   * lone leg itself (which may be long). */
+  shape: "leg" | "vertical" | "butterfly";
+  /** The leg a roll is reasoned from: the short leg of a vertical, the
+   * body of a butterfly, or the lone leg itself (which may be long). */
   lead: SpreadPositionLeg;
-  /** The other leg of a vertical, null for a single leg. */
-  wing: SpreadPositionLeg | null;
-  /** Strikes apart; 0 for a single leg. */
-  width: number;
-  /** A written vertical (collateral held) rather than one paid for. */
+  /** The legs around it: one for a vertical, two for a butterfly, none
+   * for a single leg. */
+  wings: SpreadPositionLeg[];
+  /** Strikes from the lead down to the lower wing, and up to the upper
+   * one. A vertical fills whichever side its wing sits on; both are 0 for
+   * a single leg. A butterfly with two different numbers is a broken
+   * wing, and it stays broken the same way when rolled. */
+  widthDown: number;
+  widthUp: number;
+  /** A written package (collateral held) rather than one paid for. */
   written: boolean;
 }
 
@@ -62,13 +68,42 @@ function verticalUnit(a: SpreadPositionLeg, b: SpreadPositionLeg): RollUnit | nu
   // was paid for, the long leg that carries the position.
   const lead = written ? short : long;
   const wing = written ? long : short;
+  const below = wing.strike < lead.strike;
   return {
     key: lead.symbol,
     label: `${short.kind} side ${Math.min(short.strike, long.strike)}/${Math.max(short.strike, long.strike)}${short.kind === "put" ? "P" : "C"}`,
+    shape: "vertical",
     lead,
-    wing,
-    width: Math.abs(short.strike - long.strike),
+    wings: [wing],
+    widthDown: below ? lead.strike - wing.strike : 0,
+    widthUp: below ? 0 : wing.strike - lead.strike,
     written,
+  };
+}
+
+/** A butterfly: a doubled body written against two long wings, all of one
+ * kind and one expiry. Rolled as a whole -- its two wings are what cap the
+ * risk, so moving one alone would leave something else entirely. */
+function butterflyUnit(legs: SpreadPositionLeg[]): RollUnit | null {
+  if (legs.length !== 3) return null;
+  const kind = legs[0].kind;
+  if (legs.some((l) => l.kind !== kind || l.expiry !== legs[0].expiry)) return null;
+  const body = legs.find((l) => l.qty < 0);
+  const wings = legs.filter((l) => l.qty > 0).sort((a, b) => a.strike - b.strike);
+  if (!body || wings.length !== 2) return null;
+  // The body carries as many contracts as the wings together, and sits
+  // between them.
+  if (Math.abs(body.qty) !== wings[0].qty + wings[1].qty) return null;
+  if (!(wings[0].strike < body.strike && body.strike < wings[1].strike)) return null;
+  return {
+    key: body.symbol,
+    label: `${wings[0].strike}/${body.strike}/${wings[1].strike}${kind === "put" ? "P" : "C"}`,
+    shape: "butterfly",
+    lead: body,
+    wings,
+    widthDown: body.strike - wings[0].strike,
+    widthUp: wings[1].strike - body.strike,
+    written: false,
   };
 }
 
@@ -77,9 +112,11 @@ export function rollUnits(group: SpreadGroup): RollUnit[] {
   const single = (leg: SpreadPositionLeg): RollUnit => ({
     key: leg.symbol,
     label: `${leg.strike}${leg.kind === "put" ? "P" : "C"}`,
+    shape: "leg",
     lead: leg,
-    wing: null,
-    width: 0,
+    wings: [],
+    widthDown: 0,
+    widthUp: 0,
     written: leg.qty < 0,
   });
   if (group.legs.length === 1) return [single(group.legs[0])];
@@ -91,8 +128,7 @@ export function rollUnits(group: SpreadGroup): RollUnit[] {
   const units: RollUnit[] = [];
   for (const kind of ["put", "call"] as const) {
     const legs = group.legs.filter((l) => l.kind === kind);
-    if (legs.length !== 2) continue;
-    const unit = verticalUnit(legs[0], legs[1]);
+    const unit = legs.length === 2 ? verticalUnit(legs[0], legs[1]) : legs.length === 3 ? butterflyUnit(legs) : null;
     if (unit) units.push(unit);
   }
   return units;
@@ -103,7 +139,7 @@ export function rollUnitFor(group: SpreadGroup, legSymbol?: string): RollUnit | 
   const units = rollUnits(group);
   if (units.length === 0) return null;
   if (!legSymbol) return units[0];
-  return units.find((u) => u.key === legSymbol || u.wing?.symbol === legSymbol) ?? units[0];
+  return units.find((u) => u.key === legSymbol || u.wings.some((w) => w.symbol === legSymbol)) ?? units[0];
 }
 
 /** Kept for the callers that only ask whether anything can be rolled. */
@@ -111,10 +147,25 @@ export function rollableLeg(group: SpreadGroup, legSymbol?: string): SpreadPosit
   return rollUnitFor(group, legSymbol)?.lead ?? null;
 }
 
-/** The ticket shape a rolled unit opens into. */
-function openStrategy(unit: RollUnit): "long_call" | "long_put" | "covered_call" | "cash_secured_put" | "bull_put" | "bear_call" | "bull_call" | "bear_put" {
+type RollOpenStrategy =
+  | "long_call"
+  | "long_put"
+  | "covered_call"
+  | "cash_secured_put"
+  | "bull_put"
+  | "bear_call"
+  | "bull_call"
+  | "bear_put"
+  | "call_butterfly"
+  | "put_butterfly";
+
+/** The ticket shape a rolled unit opens into. The backend holds the same
+ * rule by leg count (models.ROLL_OPEN_BY_LEGS): a roll replaces a shape
+ * with itself, one expiry or strike along. */
+function openStrategy(unit: RollUnit): RollOpenStrategy {
   const put = unit.lead.kind === "put";
-  if (!unit.wing) {
+  if (unit.shape === "butterfly") return put ? "put_butterfly" : "call_butterfly";
+  if (unit.shape === "leg") {
     if (unit.lead.qty > 0) return put ? "long_put" : "long_call";
     return put ? "cash_secured_put" : "covered_call";
   }
@@ -174,7 +225,10 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
   const unit = group ? (units.find((u) => u.key === unitKey) ?? rollUnitFor(group, target?.legSymbol)) : null;
   const leg = unit?.lead ?? null;
   const long = leg != null && leg.qty > 0;
-  const [width, setWidth] = useState<number>(0);
+  // The new package's wings, as distances from the lead strike: a vertical
+  // uses whichever side its wing sits on, a butterfly both.
+  const [widthDown, setWidthDown] = useState<number>(0);
+  const [widthUp, setWidthUp] = useState<number>(0);
   // Which side the ticket is currently showing, so a switch can be told
   // apart from the first render (see the effect below).
   const shownUnit = useRef<string | null>(null);
@@ -203,7 +257,8 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
     setLiveTyped("");
     setQty(String(group?.qty || 1));
     setUnitKey(null);
-    setWidth(unit?.width ?? 0);
+    setWidthDown(unit?.widthDown ?? 0);
+    setWidthUp(unit?.widthUp ?? 0);
     // A new target: whatever side it lands on counts as the first shown,
     // so the switch effect below leaves its preset strike alone.
     shownUnit.current = null;
@@ -243,7 +298,8 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
     const previous = shownUnit.current;
     shownUnit.current = unit.key;
     if (previous === null || previous === unit.key) return;
-    setWidth(unit.width);
+    setWidthDown(unit.widthDown);
+    setWidthUp(unit.widthUp);
     setStrike(null);
     setPreview(null);
     setLimit("");
@@ -274,25 +330,46 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
   }, [group?.id, unit?.key, expiry]);
 
   const count = Math.max(1, Math.min(Math.floor(Number(qty)) || 1, group?.qty || 1));
-  // The wing of the new vertical: the same distance from the new lead
-  // strike, on the same side as the one held.
-  const wingStrike = useMemo(() => {
-    if (!unit?.wing || strike == null || width <= 0) return null;
-    const below = unit.wing.strike < unit.lead.strike;
-    return below ? strike - width : strike + width;
-  }, [unit, strike, width]);
-  const wingListed = wingStrike != null && chain != null && chain.rows.some((r) => r.strike === wingStrike);
+  // The wings of the new package, as strikes: the same distances from the
+  // new lead strike, on the same sides as the ones held.
+  const wingStrikes = useMemo<number[]>(() => {
+    if (!unit || strike == null || unit.shape === "leg") return [];
+    const out: number[] = [];
+    if (unit.widthDown > 0) out.push(strike - widthDown);
+    if (unit.widthUp > 0) out.push(strike + widthUp);
+    return out;
+  }, [unit, strike, widthDown, widthUp]);
+  const wingsOk =
+    unit != null &&
+    (unit.shape === "leg" ||
+      (wingStrikes.length === unit.wings.length &&
+        wingStrikes.every((k) => k > 0 && chain != null && chain.rows.some((r) => r.strike === k))));
 
   const request = useMemo<RollRequest | null>(() => {
     if (!group || !unit || !leg || !expiry || strike == null) return null;
     const strategy = openStrategy(unit);
     let open: RollRequest["open"];
-    if (unit.wing) {
-      if (wingStrike == null || !wingListed) return null;
-      // A vertical: the written leg is `short_strike`, its wing `long_strike`,
+    if (unit.shape === "butterfly") {
+      if (!wingsOk || wingStrikes.length !== 2) return null;
+      const [low, high] = [Math.min(...wingStrikes), Math.max(...wingStrikes)];
+      open = {
+        underlying: group.underlying,
+        strategy,
+        expiry,
+        qty: count,
+        legs: [
+          { kind: leg.kind, strike: low, side: "buy" },
+          { kind: leg.kind, strike, side: "sell", ratio: 2 },
+          { kind: leg.kind, strike: high, side: "buy" },
+        ],
+      };
+    } else if (unit.shape === "vertical") {
+      if (!wingsOk || wingStrikes.length !== 1) return null;
+      // The written leg is `short_strike`, its wing `long_strike`,
       // whichever way round the strikes sit.
-      const short = unit.written ? strike : wingStrike;
-      const longStrike = unit.written ? wingStrike : strike;
+      const wing = wingStrikes[0];
+      const short = unit.written ? strike : wing;
+      const longStrike = unit.written ? wing : strike;
       open = { underlying: group.underlying, strategy, expiry, qty: count, short_strike: short, long_strike: longStrike };
     } else if (leg.qty > 0) {
       open = { underlying: group.underlying, strategy, expiry, qty: count, long_strike: strike };
@@ -305,11 +382,9 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
         legs: [{ kind: leg.kind, strike, side: "sell" }],
       };
     }
-    const closeLegs = unit.wing
-      ? [{ symbol: unit.lead.symbol, qty: unit.lead.qty }, { symbol: unit.wing.symbol, qty: unit.wing.qty }]
-      : [{ symbol: leg.symbol, qty: leg.qty }];
+    const closeLegs = [unit.lead, ...unit.wings].map((l) => ({ symbol: l.symbol, qty: l.qty }));
     return { close: { legs: closeLegs, qty: count }, open };
-  }, [group, unit, leg, expiry, strike, count, wingStrike, wingListed]);
+  }, [group, unit, leg, expiry, strike, count, wingStrikes, wingsOk]);
 
   // Price the roll whenever its shape changes (debounced a little: a strike
   // scrolled through with the keyboard should not fire a preview per step).
@@ -404,20 +479,27 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
             <div className="roll-column">
               <p className="order-confirm-line">
                 <strong>Close</strong> {formatLeg(leg.symbol)}
-                {unit.wing ? ` + ${formatLeg(unit.wing.symbol)}` : ""}
+                {unit.wings.map((w) => ` + ${formatLeg(w.symbol)}`).join("")}
               </p>
               <p className="order-hint">
                 {Math.abs(leg.qty)} {long ? "long" : "short"}
-                {unit.wing
-                  ? ` · ${unit.width} wide · ${unit.written ? "short" : "long"} leg ${leg.avg_entry_price.toFixed(2)} → ${leg.current_price.toFixed(2)}`
-                  : ` · entry ${leg.avg_entry_price.toFixed(2)} · now ${leg.current_price.toFixed(2)}`}
+                {unit.shape === "leg"
+                  ? ` · entry ${leg.avg_entry_price.toFixed(2)} · now ${leg.current_price.toFixed(2)}`
+                  : ` · ${unit.shape === "butterfly" ? `${unit.widthDown}/${unit.widthUp} wings` : `${unit.widthDown || unit.widthUp} wide`} · ${
+                      unit.shape === "butterfly" ? "body" : unit.written ? "short" : "long"
+                    } leg ${leg.avg_entry_price.toFixed(2)} → ${leg.current_price.toFixed(2)}`}
                 {preview ? ` · ${preview.close.direction === "debit" ? "pay" : "receive"} mid ${preview.close.net_mid.toFixed(2)}` : ""}
                 {group.dte <= 0 ? " · expires today" : ` · ${group.dte}d`}
               </p>
             </div>
             <div className="roll-column">
               <p className="order-confirm-line">
-                <strong>Open</strong> {unit.wing ? `${unit.written ? "sell" : "buy"} ${leg.kind} spread` : `${long ? "buy" : "sell"} ${leg.kind}`}
+                <strong>Open</strong>{" "}
+                {unit.shape === "butterfly"
+                  ? `buy ${leg.kind} butterfly`
+                  : unit.shape === "vertical"
+                    ? `${unit.written ? "sell" : "buy"} ${leg.kind} spread`
+                    : `${long ? "buy" : "sell"} ${leg.kind}`}
               </p>
               <label className="order-confirm-line">
                 Expiry{" "}
@@ -432,7 +514,7 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
                 </select>
               </label>
               <label className="order-confirm-line">
-                {unit.wing ? (unit.written ? "Short strike " : "Long strike ") : "Strike "}
+                {unit.shape === "butterfly" ? "Body " : unit.shape === "vertical" ? (unit.written ? "Short strike " : "Long strike ") : "Strike "}
                 <select value={strike ?? ""} onChange={(e) => setStrike(Number(e.target.value))} disabled={rows.length === 0}>
                   {rows.map((r) => {
                     const q = leg.kind === "put" ? r.put : r.call;
@@ -446,27 +528,40 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
                   })}
                 </select>
               </label>
-              {unit.wing && (
+              {unit.shape !== "leg" && (
                 <label className="order-confirm-line">
-                  Width{" "}
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={width}
-                    onChange={(e) => setWidth(Math.max(0, Number(e.target.value) || 0))}
-                  />
-                  {wingStrike != null && (
+                  {unit.shape === "butterfly" ? "Wings " : "Width "}
+                  {unit.widthDown > 0 && (
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={widthDown}
+                      title={unit.shape === "butterfly" ? "Strikes from the body down to the lower wing" : "Strikes between the legs"}
+                      onChange={(e) => setWidthDown(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  )}
+                  {unit.widthUp > 0 && (
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={widthUp}
+                      title={unit.shape === "butterfly" ? "Strikes from the body up to the upper wing" : "Strikes between the legs"}
+                      onChange={(e) => setWidthUp(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  )}
+                  {wingStrikes.length > 0 && (
                     <span className="order-hint">
                       {" "}
-                      wing {wingStrike}
+                      {wingStrikes.length > 1 ? "wings" : "wing"} {wingStrikes.join(" / ")}
                       {leg.kind === "put" ? "P" : "C"}
-                      {wingListed ? "" : " — not listed on this expiry"}
+                      {wingsOk ? "" : " — not listed on this expiry"}
                     </span>
                   )}
                 </label>
               )}
-              {!unit.wing && newMid != null && <p className="order-hint">new leg mid {newMid.toFixed(2)}</p>}
+              {unit.shape === "leg" && newMid != null && <p className="order-hint">new leg mid {newMid.toFixed(2)}</p>}
             </div>
           </div>
           {preview ? (
