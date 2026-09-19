@@ -327,6 +327,10 @@ export interface SpreadPositionLeg {
   market_value: number;
   unrealized_pl: number;
   cost_basis: number;
+  /** The leg's own expiry -- the group's, except on a calendar/diagonal. */
+  expiry?: string | null;
+  /** The OCC root (SPY1 after a corporate action). */
+  root?: string;
 }
 
 export type SpreadGroupStrategy = Strategy | "custom" | "broken";

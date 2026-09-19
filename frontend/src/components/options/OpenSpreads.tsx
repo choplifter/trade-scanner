@@ -362,7 +362,7 @@ export function OpenSpreads({
                     <button
                       type="button"
                       className="row-action"
-                      title="Close this short leg and open its replacement on another expiry or strike as one ticket"
+                      title="Close a leg, or one side of the package, and open its replacement on another expiry or strike as one ticket"
                       onClick={(e) => {
                         e.stopPropagation();
                         onRoll(group);

@@ -236,3 +236,42 @@ def test_a_roll_must_share_the_underlying_and_the_count():
         )
     with pytest.raises(ValueError):
         _roll(limit_net=1.0)  # a limit without its direction
+
+
+PUT_90_NEAR = format_occ("XYZ", NEAR, "put", 90.0)
+
+
+def test_released_collateral_covers_a_short_vertical_being_closed():
+    """One side of a condor: the width comes back, so the same side rolled
+    out at the same width needs no new buying power."""
+    side = closing_legs([CloseLeg(symbol=PUT_95_NEAR, qty=-2), CloseLeg(symbol=PUT_90_NEAR, qty=2)])
+    assert released_collateral(side, 2) == 5.0 * 100 * 2
+    # Leg order does not matter.
+    flipped = closing_legs([CloseLeg(symbol=PUT_90_NEAR, qty=2), CloseLeg(symbol=PUT_95_NEAR, qty=-2)])
+    assert released_collateral(flipped, 2) == 5.0 * 100 * 2
+    # A long vertical held (both legs the other way round) put up no
+    # collateral, so nothing comes back.
+    long_side = closing_legs([CloseLeg(symbol=PUT_95_NEAR, qty=2), CloseLeg(symbol=PUT_90_NEAR, qty=-2)])
+    assert released_collateral(long_side, 2) == 0.0
+    # Two different expiries are a calendar, not a vertical.
+    calendar = closing_legs([CloseLeg(symbol=PUT_95_NEAR, qty=-1), CloseLeg(symbol=PUT_95_FAR, qty=1)])
+    assert released_collateral(calendar, 1) == 0.0
+
+
+def test_a_roll_may_open_a_vertical_side():
+    """A condor's side rolled out: two legs closed, a vertical opened."""
+    req = RollRequest(
+        close=CloseSpreadRequest(legs=[CloseLeg(symbol=PUT_95_NEAR, qty=-1), CloseLeg(symbol=PUT_90_NEAR, qty=1)], qty=1),
+        open=SpreadTicket(underlying="XYZ", strategy="bull_put", expiry=FAR, qty=1, short_strike=95.0, long_strike=90.0),
+    )
+    assert req.open.strategy == "bull_put"
+    # An iron condor is still not a roll: the whole package has no single
+    # replacement shape.
+    with pytest.raises(ValueError):
+        RollRequest(
+            close=CloseSpreadRequest(legs=[CloseLeg(symbol=PUT_95_NEAR, qty=-1), CloseLeg(symbol=PUT_90_NEAR, qty=1)], qty=1),
+            open=SpreadTicket(
+                underlying="XYZ", strategy="iron_condor", expiry=FAR, qty=1,
+                put_long_strike=85.0, put_short_strike=90.0, call_short_strike=110.0, call_long_strike=115.0,
+            ),
+        )

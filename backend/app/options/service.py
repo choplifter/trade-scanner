@@ -139,15 +139,38 @@ def build_single_leg_request(
 def released_collateral(legs: list[SpreadLeg], qty: int) -> float:
     """What closing `legs` gives back to buying power: the strike for a lone
     short put (a cash-secured put's collateral -- SimOptionsService's
-    collateral_for and Alpaca agree on it), nothing otherwise. A roll's open
-    leg is judged against buying power plus this, so rolling a put to the
-    same strike needs no new cash. Deliberately narrow: the shapes a wheel
-    rolls are single short legs."""
-    if len(legs) != 1:
+    collateral_for and Alpaca agree on it), the width for a short vertical,
+    nothing otherwise. A roll's open leg is judged against buying power plus
+    this, so rolling a put to the same strike, or a condor's side to the
+    same width, needs no new cash.
+
+    The width, not width-less-credit: the credit was received when the
+    package was opened and is not in `legs`. That understates what comes
+    back by the credit, which errs toward refusing a roll rather than
+    placing one the broker then rejects."""
+    if len(legs) == 1:
+        leg = legs[0]
+        if leg.kind == "put" and leg.position_intent == "buy_to_close":
+            return round(leg.strike * 100 * qty * int(leg.ratio_qty or 1), 2)
         return 0.0
-    leg = legs[0]
-    if leg.kind == "put" and leg.position_intent == "buy_to_close":
-        return round(leg.strike * 100 * qty * int(leg.ratio_qty or 1), 2)
+    if len(legs) == 2:
+        short, long_ = legs
+        if short.position_intent != "buy_to_close":
+            short, long_ = long_, short
+        # A short vertical: the short leg is being bought back, both legs
+        # are the same kind and expiry, and the short strike is the one
+        # that can be exercised against -- above the long for puts, below
+        # it for calls. The other way round is a long vertical, which was
+        # paid for rather than collateralised, so nothing comes back.
+        if (
+            short.position_intent == "buy_to_close"
+            and long_.position_intent == "sell_to_close"
+            and short.kind == long_.kind
+            and short.expiry == long_.expiry
+        ):
+            written = short.strike > long_.strike if short.kind == "put" else short.strike < long_.strike
+            if written:
+                return round(abs(long_.strike - short.strike) * 100 * qty, 2)
     return 0.0
 
 
@@ -474,7 +497,16 @@ class OptionsService:
 
         dte = (ticket.expiry - self._source.now().date()).days
         if dte <= 0:
-            warnings.append("Expires today: Alpaca closes same-day-expiry option positions around 15:15 ET.")
+            # Two different times, and they were conflated here before: 15:15
+            # is the order cutoff, the liquidation starts a quarter of an
+            # hour later -- and both are 15 minutes later again for the
+            # broad-based ETFs (SPY, QQQ), which is exactly what most of
+            # this widget's 0DTE tickets are.
+            warnings.append(
+                "Expires today: Alpaca takes orders until 15:15 ET (15:30 for broad-based ETFs like SPY and QQQ) "
+                "and from 15:30 ET (15:45 for those) liquidates expiring positions the account cannot cover. "
+                "An in-the-money short leg it can cover is assigned after the close instead."
+            )
         if any(leg.delta is None for leg in legs):
             warnings.append("No greeks for at least one leg (Alpaca returns none close to expiry).")
         for leg in legs:

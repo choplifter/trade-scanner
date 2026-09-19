@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { OrderRejectedError } from "../../api/http";
 import { getChain, getExpiries, previewRoll, rollSpread } from "../../api/options";
@@ -29,18 +29,97 @@ interface RollTicketProps {
   onClose: () => void;
 }
 
-/** The one leg a roll moves: a lone leg (a short put, the short call of a
- * covered call, a long call held outright), or one leg of a calendar /
- * diagonal -- the short one unless `legSymbol` names the other (a poor
- * man's wheel rolling its LEAPS out). Null for anything else (a roll of a
- * vertical is a later feature). */
-export function rollableLeg(group: SpreadGroup, legSymbol?: string): SpreadPositionLeg | null {
-  if (group.legs.length === 1) return group.legs[0];
+/** What one roll moves. Either a single leg -- a short put, the short call
+ * of a covered call, a long call held outright, one leg of a calendar --
+ * or a vertical: two legs of the same kind and expiry, opposite signs.
+ *
+ * A vertical is what makes a condor rollable. The package as a whole never
+ * is: there is no single replacement shape for four legs, and it is not how
+ * a condor is managed anyway -- the tested side is rolled out or away, or
+ * the untested one is brought closer, each on its own. */
+export interface RollUnit {
+  /** The risk-carrying leg's symbol; identifies the unit in a RollTarget. */
+  key: string;
+  label: string;
+  /** The leg a roll is reasoned from: the short leg of a vertical, or the
+   * lone leg itself (which may be long). */
+  lead: SpreadPositionLeg;
+  /** The other leg of a vertical, null for a single leg. */
+  wing: SpreadPositionLeg | null;
+  /** Strikes apart; 0 for a single leg. */
+  width: number;
+  /** A written vertical (collateral held) rather than one paid for. */
+  written: boolean;
+}
+
+function verticalUnit(a: SpreadPositionLeg, b: SpreadPositionLeg): RollUnit | null {
+  if (a.kind !== b.kind || a.expiry !== b.expiry) return null;
+  const short = a.qty < 0 ? a : b;
+  const long = a.qty < 0 ? b : a;
+  if (short.qty >= 0 || long.qty <= 0 || Math.abs(short.qty) !== Math.abs(long.qty)) return null;
+  const written = short.kind === "put" ? short.strike > long.strike : short.strike < long.strike;
+  // The leg a roll is reasoned from: the written one, or on a vertical that
+  // was paid for, the long leg that carries the position.
+  const lead = written ? short : long;
+  const wing = written ? long : short;
+  return {
+    key: lead.symbol,
+    label: `${short.kind} side ${Math.min(short.strike, long.strike)}/${Math.max(short.strike, long.strike)}${short.kind === "put" ? "P" : "C"}`,
+    lead,
+    wing,
+    width: Math.abs(short.strike - long.strike),
+    written,
+  };
+}
+
+/** Every unit of `group` that can be rolled, in the order they are offered. */
+export function rollUnits(group: SpreadGroup): RollUnit[] {
+  const single = (leg: SpreadPositionLeg): RollUnit => ({
+    key: leg.symbol,
+    label: `${leg.strike}${leg.kind === "put" ? "P" : "C"}`,
+    lead: leg,
+    wing: null,
+    width: 0,
+    written: leg.qty < 0,
+  });
+  if (group.legs.length === 1) return [single(group.legs[0])];
   if (group.strategy === "calendar" || group.strategy === "diagonal") {
-    const named = legSymbol ? group.legs.find((l) => l.symbol === legSymbol) : undefined;
-    return named ?? group.legs.find((l) => l.qty < 0) ?? null;
+    // Each leg on its own: the short one first (the wheel's usual roll),
+    // the long one for a poor man's wheel rolling its LEAPS out.
+    return [...group.legs].sort((a, b) => a.qty - b.qty).map(single);
   }
-  return null;
+  const units: RollUnit[] = [];
+  for (const kind of ["put", "call"] as const) {
+    const legs = group.legs.filter((l) => l.kind === kind);
+    if (legs.length !== 2) continue;
+    const unit = verticalUnit(legs[0], legs[1]);
+    if (unit) units.push(unit);
+  }
+  return units;
+}
+
+/** The unit a target names, or the first one offered. */
+export function rollUnitFor(group: SpreadGroup, legSymbol?: string): RollUnit | null {
+  const units = rollUnits(group);
+  if (units.length === 0) return null;
+  if (!legSymbol) return units[0];
+  return units.find((u) => u.key === legSymbol || u.wing?.symbol === legSymbol) ?? units[0];
+}
+
+/** Kept for the callers that only ask whether anything can be rolled. */
+export function rollableLeg(group: SpreadGroup, legSymbol?: string): SpreadPositionLeg | null {
+  return rollUnitFor(group, legSymbol)?.lead ?? null;
+}
+
+/** The ticket shape a rolled unit opens into. */
+function openStrategy(unit: RollUnit): "long_call" | "long_put" | "covered_call" | "cash_secured_put" | "bull_put" | "bear_call" | "bull_call" | "bear_put" {
+  const put = unit.lead.kind === "put";
+  if (!unit.wing) {
+    if (unit.lead.qty > 0) return put ? "long_put" : "long_call";
+    return put ? "cash_secured_put" : "covered_call";
+  }
+  if (unit.written) return put ? "bull_put" : "bear_call";
+  return put ? "bear_put" : "bull_call";
 }
 
 const ROLL_DELTA = 0.3;
@@ -90,8 +169,15 @@ function errorText(err: unknown): string {
  */
 export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps) {
   const group = target?.group ?? null;
-  const leg = group ? rollableLeg(group, target?.legSymbol) : null;
+  const units = useMemo(() => (group ? rollUnits(group) : []), [group]);
+  const [unitKey, setUnitKey] = useState<string | null>(null);
+  const unit = group ? (units.find((u) => u.key === unitKey) ?? rollUnitFor(group, target?.legSymbol)) : null;
+  const leg = unit?.lead ?? null;
   const long = leg != null && leg.qty > 0;
+  const [width, setWidth] = useState<number>(0);
+  // Which side the ticket is currently showing, so a switch can be told
+  // apart from the first render (see the effect below).
+  const shownUnit = useRef<string | null>(null);
   const [expiries, setExpiries] = useState<ExpiryInfo[]>([]);
   const [expiry, setExpiry] = useState<string>("");
   const [chain, setChain] = useState<ChainResponse | null>(null);
@@ -116,6 +202,11 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
     setLimit("");
     setLiveTyped("");
     setQty(String(group?.qty || 1));
+    setUnitKey(null);
+    setWidth(unit?.width ?? 0);
+    // A new target: whatever side it lands on counts as the first shown,
+    // so the switch effect below leaves its preset strike alone.
+    shownUnit.current = null;
     if (!group || !leg) {
       setExpiries([]);
       setExpiry("");
@@ -141,7 +232,29 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group?.id, target?.legSymbol, target?.presetExpiry, target?.presetStrike]);
 
-  // The chain of the chosen expiry, and a default strike on it.
+  // A side switched inside the ticket starts from that side's own width.
+  // Only on a real switch: on the first render the reset effect above has
+  // just put a playbook's preset strike in, and this would drop it.
+  useEffect(() => {
+    if (!unit) {
+      shownUnit.current = null;
+      return;
+    }
+    const previous = shownUnit.current;
+    shownUnit.current = unit.key;
+    if (previous === null || previous === unit.key) return;
+    setWidth(unit.width);
+    setStrike(null);
+    setPreview(null);
+    setLimit("");
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unit?.key]);
+
+  // The chain of the chosen expiry, and a default strike on it. Keyed on
+  // the unit as well: switching sides inside the ticket clears the strike,
+  // and without this the select would sit on the chain's first row with no
+  // request to price.
   useEffect(() => {
     if (!group || !leg || !expiry) return;
     let cancelled = false;
@@ -158,25 +271,45 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group?.id, target?.legSymbol, expiry]);
+  }, [group?.id, unit?.key, expiry]);
 
   const count = Math.max(1, Math.min(Math.floor(Number(qty)) || 1, group?.qty || 1));
+  // The wing of the new vertical: the same distance from the new lead
+  // strike, on the same side as the one held.
+  const wingStrike = useMemo(() => {
+    if (!unit?.wing || strike == null || width <= 0) return null;
+    const below = unit.wing.strike < unit.lead.strike;
+    return below ? strike - width : strike + width;
+  }, [unit, strike, width]);
+  const wingListed = wingStrike != null && chain != null && chain.rows.some((r) => r.strike === wingStrike);
+
   const request = useMemo<RollRequest | null>(() => {
-    if (!group || !leg || !expiry || strike == null) return null;
-    // A held long leg is rolled into a long leg (an outright call/put, the
-    // strike-field shape); a short leg into its income shape.
-    const open: RollRequest["open"] =
-      leg.qty > 0
-        ? { underlying: group.underlying, strategy: leg.kind === "put" ? "long_put" : "long_call", expiry, qty: count, long_strike: strike }
-        : {
-            underlying: group.underlying,
-            strategy: leg.kind === "put" ? "cash_secured_put" : "covered_call",
-            expiry,
-            qty: count,
-            legs: [{ kind: leg.kind, strike, side: "sell" }],
-          };
-    return { close: { legs: [{ symbol: leg.symbol, qty: leg.qty }], qty: count }, open };
-  }, [group, leg, expiry, strike, count]);
+    if (!group || !unit || !leg || !expiry || strike == null) return null;
+    const strategy = openStrategy(unit);
+    let open: RollRequest["open"];
+    if (unit.wing) {
+      if (wingStrike == null || !wingListed) return null;
+      // A vertical: the written leg is `short_strike`, its wing `long_strike`,
+      // whichever way round the strikes sit.
+      const short = unit.written ? strike : wingStrike;
+      const longStrike = unit.written ? wingStrike : strike;
+      open = { underlying: group.underlying, strategy, expiry, qty: count, short_strike: short, long_strike: longStrike };
+    } else if (leg.qty > 0) {
+      open = { underlying: group.underlying, strategy, expiry, qty: count, long_strike: strike };
+    } else {
+      open = {
+        underlying: group.underlying,
+        strategy,
+        expiry,
+        qty: count,
+        legs: [{ kind: leg.kind, strike, side: "sell" }],
+      };
+    }
+    const closeLegs = unit.wing
+      ? [{ symbol: unit.lead.symbol, qty: unit.lead.qty }, { symbol: unit.wing.symbol, qty: unit.wing.qty }]
+      : [{ symbol: leg.symbol, qty: leg.qty }];
+    return { close: { legs: closeLegs, qty: count }, open };
+  }, [group, unit, leg, expiry, strike, count, wingStrike, wingListed]);
 
   // Price the roll whenever its shape changes (debounced a little: a strike
   // scrolled through with the keyboard should not fire a preview per step).
@@ -241,23 +374,50 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
 
   return (
     <Modal open={target !== null} title="Roll" onClose={onClose}>
-      {group && !leg && <p className="order-rejection">Only a single leg, or one leg of a calendar/diagonal, can be rolled here.</p>}
-      {group && leg && (
+      {group && !leg && (
+        <p className="order-rejection">
+          Nothing here can be rolled: a single leg, one leg of a calendar or diagonal, or one side of a vertical or
+          condor can, a whole package cannot.
+        </p>
+      )}
+      {group && leg && unit && (
         <div className="order-confirm roll-ticket">
+          {units.length > 1 && (
+            <div className="order-confirm-line">
+              <span className="order-hint">Roll </span>
+              <span className="timeframe-selector">
+                {units.map((u) => (
+                  <button
+                    key={u.key}
+                    type="button"
+                    className="timeframe-button"
+                    aria-pressed={u.key === unit.key}
+                    onClick={() => setUnitKey(u.key)}
+                  >
+                    {u.label}
+                  </button>
+                ))}
+              </span>
+            </div>
+          )}
           <div className="roll-columns">
             <div className="roll-column">
               <p className="order-confirm-line">
                 <strong>Close</strong> {formatLeg(leg.symbol)}
+                {unit.wing ? ` + ${formatLeg(unit.wing.symbol)}` : ""}
               </p>
               <p className="order-hint">
-                {Math.abs(leg.qty)} {long ? "long" : "short"} · entry {leg.avg_entry_price.toFixed(2)} · now {leg.current_price.toFixed(2)}
+                {Math.abs(leg.qty)} {long ? "long" : "short"}
+                {unit.wing
+                  ? ` · ${unit.width} wide · ${unit.written ? "short" : "long"} leg ${leg.avg_entry_price.toFixed(2)} → ${leg.current_price.toFixed(2)}`
+                  : ` · entry ${leg.avg_entry_price.toFixed(2)} · now ${leg.current_price.toFixed(2)}`}
                 {preview ? ` · ${preview.close.direction === "debit" ? "pay" : "receive"} mid ${preview.close.net_mid.toFixed(2)}` : ""}
                 {group.dte <= 0 ? " · expires today" : ` · ${group.dte}d`}
               </p>
             </div>
             <div className="roll-column">
               <p className="order-confirm-line">
-                <strong>Open</strong> {long ? "buy" : "sell"} {leg.kind === "put" ? "put" : "call"}
+                <strong>Open</strong> {unit.wing ? `${unit.written ? "sell" : "buy"} ${leg.kind} spread` : `${long ? "buy" : "sell"} ${leg.kind}`}
               </p>
               <label className="order-confirm-line">
                 Expiry{" "}
@@ -272,7 +432,7 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
                 </select>
               </label>
               <label className="order-confirm-line">
-                Strike{" "}
+                {unit.wing ? (unit.written ? "Short strike " : "Long strike ") : "Strike "}
                 <select value={strike ?? ""} onChange={(e) => setStrike(Number(e.target.value))} disabled={rows.length === 0}>
                   {rows.map((r) => {
                     const q = leg.kind === "put" ? r.put : r.call;
@@ -286,7 +446,27 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
                   })}
                 </select>
               </label>
-              {newMid != null && <p className="order-hint">new leg mid {newMid.toFixed(2)}</p>}
+              {unit.wing && (
+                <label className="order-confirm-line">
+                  Width{" "}
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={width}
+                    onChange={(e) => setWidth(Math.max(0, Number(e.target.value) || 0))}
+                  />
+                  {wingStrike != null && (
+                    <span className="order-hint">
+                      {" "}
+                      wing {wingStrike}
+                      {leg.kind === "put" ? "P" : "C"}
+                      {wingListed ? "" : " — not listed on this expiry"}
+                    </span>
+                  )}
+                </label>
+              )}
+              {!unit.wing && newMid != null && <p className="order-hint">new leg mid {newMid.toFixed(2)}</p>}
             </div>
           </div>
           {preview ? (
