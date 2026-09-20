@@ -2325,6 +2325,12 @@ a.symbol-news-headline {
   flex-wrap: wrap;
 }
 
+/* The contract a dragged leg would land on. */
+.chain-drop-target {
+  outline: 2px solid var(--accent, #5b8bd6);
+  outline-offset: -2px;
+}
+
 /* The builder's leg rows: one line per leg, the same controls the rest of
    the ticket uses, indented so the list reads as belonging to the row
    above it. */

@@ -696,7 +696,20 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               style={{ gridTemplateColumns: `minmax(0, 1fr) 8px ${ticketWidth}px` }}
             >
               {shownChain ? (
-                <ChainTable chain={shownChain} selection={selection} pickable={strategyKind(strategy, timeKind)} onPick={pick} />
+                <ChainTable
+                  chain={shownChain}
+                  selection={selection}
+                  pickable={strategyKind(strategy, timeKind)}
+                  onPick={pick}
+                  onMoveLeg={
+                    building
+                      ? (from, to) => {
+                          const leg = builder.find((l) => l.kind === from.kind && l.strike === from.strike);
+                          if (leg) setBuilder((current) => moveBuilderLeg(current, leg.id, to.kind, to.strike, leg.expiry));
+                        }
+                      : undefined
+                  }
+                />
               ) : (
                 <div className="widget-empty">
                   {chainState.loading || longChainState.loading ? "Loading chain…" : "No chain."}

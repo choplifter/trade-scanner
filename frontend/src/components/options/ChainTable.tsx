@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { DragEvent } from "react";
 
 import type { ChainResponse, LegQuote, OptionKind, StrikeRow } from "../../types/options";
 import { formatStrike } from "../../utils/occ";
@@ -32,6 +33,28 @@ export type LegRole = "long" | "short" | "body";
 /** `${kind}:${strike}` -> role, for the legs currently selected. */
 export type LegSelection = Map<string, LegRole>;
 
+/** Moving a leg from one contract to another inside the table.
+ *
+ * Every cell is already a drag source for its own contract symbol --
+ * dropping it on a chart opens that contract's premium chart -- and one
+ * gesture on one cell cannot mean two things. So the leg drag is offered
+ * only where it is unambiguous: on the cells that are part of the package
+ * being built. Those carry the leg; every other cell is unchanged. */
+const LEG_MIME = "application/x-option-leg";
+
+export interface LegRef {
+  kind: OptionKind;
+  strike: number;
+}
+
+function readDraggedLeg(e: DragEvent<HTMLTableCellElement>): LegRef | null {
+  const raw = e.dataTransfer.getData(LEG_MIME);
+  const [kind, strike] = raw.split(":");
+  const price = Number(strike);
+  if ((kind !== "call" && kind !== "put") || !Number.isFinite(price)) return null;
+  return { kind, strike: price };
+}
+
 export function legKey(kind: OptionKind, strike: number): string {
   return `${kind}:${strike}`;
 }
@@ -39,6 +62,9 @@ export function legKey(kind: OptionKind, strike: number): string {
 interface ChainTableProps {
   chain: ChainResponse;
   selection: LegSelection;
+  /** Given, a cell holding a leg drags it to the contract it is dropped
+   * on (the builder). Without it the table behaves as it always has. */
+  onMoveLeg?: (from: LegRef, to: LegRef) => void;
   /** The kind the current strategy trades; cells of the other kind are
    * shown but not pickable (an iron condor picks both). */
   pickable: OptionKind | "both";
@@ -67,6 +93,7 @@ function lastPrintLabel(lastAt: string): string {
 function Side({
   quote,
   kind,
+  strike,
   itm,
   role,
   pickable,
@@ -74,9 +101,11 @@ function Side({
   asOfMs,
   greek,
   onPick,
+  onMoveLeg,
 }: {
   quote: LegQuote | null;
   kind: OptionKind;
+  strike: number;
   itm: boolean;
   role: LegRole | undefined;
   pickable: boolean;
@@ -85,7 +114,12 @@ function Side({
   asOfMs: number;
   greek: { key: ChainGreek; digits: number };
   onPick: () => void;
+  onMoveLeg?: (from: LegRef, to: LegRef) => void;
 }) {
+  const [dropping, setDropping] = useState(false);
+  // A cell drags its leg only when it holds one and the builder is
+  // showing; otherwise it keeps dragging its symbol.
+  const dragsLeg = Boolean(onMoveLeg && role && quote);
   const lastAt = replay ? (quote?.last_at ?? null) : null;
   const stale = lastAt != null && asOfMs - Date.parse(lastAt) > STALE_MS;
   const cls = [
@@ -110,14 +144,43 @@ function Side({
       {cells.map((cell, i) => (
         <td
           key={i}
-          className={cls}
+          className={`${cls}${dropping ? " chain-drop-target" : ""}`}
           onClick={pickable && quote ? onPick : undefined}
           title={
             quote
-              ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""}${greeksNote(quote)}${printNote} -- drag onto a chart for its premium chart`
+              ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""}${greeksNote(quote)}${printNote}${
+                  dragsLeg ? " -- drag onto another strike to move this leg" : " -- drag onto a chart for its premium chart"
+                }`
               : "no contract"
           }
-          {...(quote ? symbolDragProps(quote.symbol) : {})}
+          {...(quote && !dragsLeg ? symbolDragProps(quote.symbol) : {})}
+          {...(dragsLeg
+            ? {
+                draggable: true,
+                onDragStart: (e: DragEvent<HTMLTableCellElement>) => {
+                  e.dataTransfer.setData(LEG_MIME, `${kind}:${strike}`);
+                  e.dataTransfer.effectAllowed = "move";
+                },
+              }
+            : {})}
+          {...(onMoveLeg && quote
+            ? {
+                onDragOver: (e: DragEvent<HTMLTableCellElement>) => {
+                  if (!e.dataTransfer.types.includes(LEG_MIME)) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  if (!dropping) setDropping(true);
+                },
+                onDragLeave: () => setDropping(false),
+                onDrop: (e: DragEvent<HTMLTableCellElement>) => {
+                  e.preventDefault();
+                  setDropping(false);
+                  const from = readDraggedLeg(e);
+                  if (!from || (from.kind === kind && from.strike === strike)) return;
+                  onMoveLeg(from, { kind, strike });
+                },
+              }
+            : {})}
         >
           {cell}
         </td>
@@ -130,7 +193,7 @@ function Side({
  * right, the way every broker lays it out. In-the-money cells are shaded;
  * a divider marks where spot sits; the selected legs are outlined by
  * role. Scrolls itself to spot when a new chain arrives. */
-export function ChainTable({ chain, selection, pickable, onPick }: ChainTableProps) {
+export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: ChainTableProps) {
   const replay = chain.feed === "replay";
   const asOfMs = Date.parse(chain.as_of);
   const [settings] = useSettings();
@@ -215,6 +278,8 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
                 <Side
                   quote={row.call}
                   kind="call"
+                  strike={row.strike}
+                  onMoveLeg={onMoveLeg}
                   itm={row.strike < chain.spot}
                   role={selection.get(legKey("call", row.strike))}
                   pickable={pickable !== "put"}
@@ -227,6 +292,8 @@ export function ChainTable({ chain, selection, pickable, onPick }: ChainTablePro
                 <Side
                   quote={row.put}
                   kind="put"
+                  strike={row.strike}
+                  onMoveLeg={onMoveLeg}
                   itm={row.strike > chain.spot}
                   role={selection.get(legKey("put", row.strike))}
                   pickable={pickable !== "call"}
