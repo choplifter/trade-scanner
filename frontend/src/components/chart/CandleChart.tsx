@@ -441,6 +441,8 @@ const DEFAULT_SERIES_STYLE = { width: 2, dash: LineStyle.Solid };
 // An oscillator pane's reference lines (RSI's 30/70): the chart's own
 // muted grey, so they read as scale rather than as another indicator.
 const GUIDE_COLOR = "#8a8f99";
+// Price pane to oscillator pane, by height.
+const OSCILLATOR_PANE_SPLIT = 4;
 
 function resolveStyle(style: IndicatorStyle | undefined, defaults: { width: number; dash: LineStyle }) {
   return {
@@ -1408,6 +1410,13 @@ export function CandleChart({
           if (oscillatorPaneRef.current == null) {
             oscillatorPaneRef.current = chart.panes().length;
             chart.addPane();
+            // A new pane arrives with the same weight as the price pane
+            // and takes a third of the chart with it, which squeezes the
+            // candles into a strip. An oscillator is a footnote to the
+            // price action, so it gets a fifth.
+            const panes = chart.panes();
+            panes[0]?.setStretchFactor(OSCILLATOR_PANE_SPLIT);
+            panes[oscillatorPaneRef.current]?.setStretchFactor(1);
           }
           const series = chart.addSeries(
             LineSeries,
