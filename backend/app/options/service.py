@@ -15,6 +15,8 @@ from app.core.config import Settings
 from app.options.chain import Chain
 from app.options.chain_fetch import ChainCache
 from app.options.guards import assert_options_level
+from app.options.custom import chance_of_touch, custom_risk, nearest_breakeven
+from app.options.iv_context import atm_iv
 from app.options.models import (
     STRATEGY_LABELS,
     TIME_STRATEGIES,
@@ -28,9 +30,12 @@ from app.options.models import (
     SpreadLeg,
     SpreadTicket,
     closing_legs,
+    level_for_legs,
+    naked_shorts,
     options_level_required,
     resolve_legs,
 )
+from app.options.optimizer import chance_of_profit
 from app.options.occ import try_parse_occ
 from app.options.payoff import PayoffLeg, payoff_curve
 from app.options.positions import SpreadGroup, group_spreads
@@ -423,9 +428,14 @@ class OptionsService:
         signed_mid = net_price(legs, "mid")
         if signed_mid is None:
             raise OrderRejected("No market on at least one leg right now", field="strikes")
-        expected = 1 if ticket.direction == "debit" else -1
+        built = ticket.strategy == "custom"
+        # A named shape declares its direction and is warned when the market
+        # disagrees; a built one has no declaration to disagree with -- what
+        # the legs come to is what it is.
+        direction = ("debit" if signed_mid > 0 else "credit") if built else ticket.direction
+        expected = 1 if direction == "debit" else -1
         warnings: list[str] = []
-        if signed_mid * expected <= 0:
+        if not built and signed_mid * expected <= 0:
             warnings.append(
                 f"The market quotes this {ticket.direction} spread the other way round "
                 f"({signed_mid:+.2f}) -- check the legs."
@@ -444,7 +454,30 @@ class OptionsService:
             price = round(net_natural if net_natural is not None else net_mid, 2)
         else:
             price = round(ticket.limit_price if ticket.limit_price is not None else net_mid, 2)
-        risk = spread_risk(ticket.strategy, ticket.strikes, price, ticket.qty, stock_price=chain.spot)
+        # A built position gets its ceilings from the payoff curve below;
+        # the closed forms have no name to key on. Priced first so the
+        # buying-power check has a collateral to work with.
+        bare = naked_shorts(ticket.leg_specs_full()) if built else []
+        built_payoff = (
+            self._payoff(legs, ticket.qty, price if direction == "debit" else -price, chain.spot, ticket.strategy)
+            if built
+            else None
+        )
+        if built:
+            if built_payoff is None:
+                raise OrderRejected("These legs cannot be priced together right now", field="legs")
+            bare_legs = [leg for leg in legs if any(b.kind == leg.kind and b.strike == leg.strike for b in bare)]
+            risk = custom_risk(
+                legs,
+                bare_legs,
+                ticket.qty,
+                chain.spot,
+                built_payoff.max_profit,
+                built_payoff.max_loss,
+                built_payoff.breakevens,
+            )
+        else:
+            risk = spread_risk(ticket.strategy, ticket.strikes, price, ticket.qty, stock_price=chain.spot)
 
         account = account if account is not None else await self.account()
         limits = limits_for(self._settings, self._account)
@@ -485,8 +518,8 @@ class OptionsService:
 
         # The risk chart, and for the two-expiry shapes the numbers the
         # closed-form arithmetic cannot give.
-        payoff = self._payoff(
-            legs, ticket.qty, price if ticket.direction == "debit" else -price, chain.spot, ticket.strategy
+        payoff = built_payoff or self._payoff(
+            legs, ticket.qty, price if direction == "debit" else -price, chain.spot, ticket.strategy
         )
         max_profit, max_loss, breakevens = risk.max_profit, risk.max_loss, risk.breakevens
         if ticket.strategy in TIME_STRATEGIES and payoff is not None:
@@ -517,21 +550,51 @@ class OptionsService:
                     warnings.append(f"{leg.symbol}: wide market ({leg.bid:.2f} / {leg.ask:.2f}); a mid limit may not fill.")
         if market:
             warnings.append(market_warning(len(legs), net_natural is None))
+        if built and bare:
+            naked_note = ", ".join(f"{leg.strike:g} {leg.kind}" for leg in bare)
+            warnings.append(
+                f"Uncovered short leg ({naked_note}): the loss has no ceiling, and the collateral shown is the "
+                "broker's standard margin as an estimate, not what Alpaca will hold. Needs options level 4."
+            )
+
+        # The two probabilities, under the distribution the chain itself
+        # implies (see app.options.custom): the chance of any profit at
+        # expiry, and the chance the market reaches the nearest breakeven
+        # at all before then -- the one a seller manages against.
+        chance = touch = None
+        sigma = atm_iv(chain)
+        years = max(0.0, (payoff.expiry - self._source.now().date()).days / 365.0) if payoff is not None else 0.0
+        if payoff is not None and sigma and years > 0:
+            payoff_legs = [
+                PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
+                for leg in legs
+            ]
+            horizon = self._source.now().replace(year=payoff.expiry.year, month=payoff.expiry.month, day=payoff.expiry.day)
+            chance = chance_of_profit(
+                payoff_legs, price if direction == "debit" else -price, horizon, chain.spot, sigma, years, ticket.qty
+            )
+            barrier = nearest_breakeven(breakevens, chain.spot)
+            if barrier is not None:
+                touch = chance_of_touch(chain.spot, barrier, sigma, years)
 
         return ResolvedSpread(
             underlying=ticket.underlying.upper(),
             strategy=ticket.strategy,
             expiry=ticket.expiry,
             qty=ticket.qty,
-            direction=ticket.direction,
+            direction=direction,
             legs=legs,
             spot=chain.spot,
             width=risk.width,
             net_mid=round(net_mid, 4),
             net_natural=round(net_natural, 4) if net_natural is not None else None,
             limit_price=price,
-            alpaca_limit_price=alpaca_limit(ticket.direction, price),
+            alpaca_limit_price=alpaca_limit(direction, price),
             order_type=ticket.order_type,
+            chance=chance,
+            touch=touch,
+            touch_at=nearest_breakeven(breakevens, chain.spot),
+            naked=bool(bare),
             max_profit=max_profit,
             max_loss=max_loss,
             breakevens=breakevens,
@@ -695,7 +758,9 @@ class OptionsService:
         assert_can_trade(self._settings, self._account, confirm, live_available=self._live_available)
         resolved = await self.preview(ticket)
         assert_options_level(
-            resolved.options_level, options_level_required(ticket.strategy), STRATEGY_LABELS[ticket.strategy]
+            resolved.options_level,
+            level_for_legs(ticket.strategy, ticket.leg_specs_full()),
+            STRATEGY_LABELS[ticket.strategy],
         )
         if resolved.coverage is not None and not resolved.coverage.ok:
             raise OrderRejected(

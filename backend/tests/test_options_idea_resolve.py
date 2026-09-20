@@ -561,4 +561,7 @@ def test_the_proposal_table_covers_every_strategy():
 
     from app.options.models import Strategy
 
-    assert set(_PROPOSALS) == set(get_args(Strategy))
+    # "custom" is the builder's own shape: the user assembles its legs, so
+    # there is nothing for the idea generator to propose and no canonical
+    # arrangement to snap. Every strategy it can name is covered here.
+    assert set(_PROPOSALS) == set(get_args(Strategy)) - {"custom"}

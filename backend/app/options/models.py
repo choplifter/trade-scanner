@@ -45,6 +45,11 @@ Strategy = Literal[
     "diagonal",
     "covered_call",
     "cash_secured_put",
+    # Whatever the builder puts together: one to four legs, any kinds,
+    # sides, ratios and expiries. Everything the named shapes get from
+    # their name -- direction, risk, the level it needs -- is worked out
+    # from the legs instead (see preview, custom_risk, level_for_legs).
+    "custom",
 ]
 Direction = Literal["debit", "credit"]
 Side = Literal["buy", "sell"]
@@ -78,6 +83,7 @@ TIME_STRATEGIES: frozenset[str] = frozenset({"calendar", "diagonal"})
 # Strategies described by an explicit `legs` list rather than strike fields.
 LEGS_STRATEGIES: frozenset[str] = frozenset(
     {
+        "custom",
         "long_straddle",
         "long_strangle",
         "call_butterfly",
@@ -124,6 +130,7 @@ STRATEGY_LABELS: dict[str, str] = {
     "diagonal": "Diagonal spread",
     "covered_call": "Covered call",
     "cash_secured_put": "Cash-secured put",
+    "custom": "Custom",
 }
 
 # The single kind a vertical is made of. Long leg below the short leg for
@@ -145,6 +152,62 @@ SINGLE_LEG_LEVEL_REQUIRED = 2
 INCOME_LEVEL_REQUIRED = 1
 
 
+# A short leg nothing covers: the broker's highest tier, because the loss
+# has no ceiling (a call) or a very high one (a put).
+NAKED_LEVEL_REQUIRED = 4
+
+
+def naked_shorts(legs: list["TicketLeg"]) -> list["TicketLeg"]:
+    """The short legs of `legs` that no long leg covers.
+
+    A long of the same kind caps a short of that kind, whichever side of
+    it the strike sits on: above a short call the long is already gaining
+    before the short's loss runs away, below it the loss is capped at the
+    distance instead. Either way there is a ceiling, and the payoff curve
+    works out what it is. What does matter is the count -- two shorts
+    against one long leave one bare -- and the expiry: a long that expires
+    first is not there when the short is exercised against.
+
+    Nothing here knows about held shares or cash; a covered call is
+    described as such and never arrives as a custom ticket.
+    """
+    bare: list[TicketLeg] = []
+    for kind in ("call", "put"):
+        shorts = sorted(
+            (leg for leg in legs if leg.kind == kind and leg.side == "sell"),
+            key=lambda leg: leg.expiry or date.min,
+        )
+        longs = [leg for leg in legs if leg.kind == kind and leg.side == "buy"]
+        cover = {id(leg): leg.ratio for leg in longs}
+        for short in shorts:
+            need = short.ratio
+            for long_ in longs:
+                if cover[id(long_)] <= 0:
+                    continue
+                if (long_.expiry or date.max) < (short.expiry or date.min):
+                    continue
+                taken = min(need, cover[id(long_)])
+                cover[id(long_)] -= taken
+                need -= taken
+                if need == 0:
+                    break
+            if need > 0:
+                bare.append(short)
+    return bare
+
+
+def level_for_legs(strategy: str, legs: list["TicketLeg"] | None) -> int:
+    """What a ticket needs, from its shape rather than its name -- the
+    custom builder can put together anything."""
+    if strategy != "custom" or not legs:
+        return options_level_required(strategy)
+    if naked_shorts(legs):
+        return NAKED_LEVEL_REQUIRED
+    if any(leg.side == "sell" for leg in legs):
+        return OPTIONS_LEVEL_REQUIRED
+    return SINGLE_LEG_LEVEL_REQUIRED
+
+
 def options_level_required(strategy: str) -> int:
     if strategy in INCOME_STRATEGIES:
         return INCOME_LEVEL_REQUIRED
@@ -162,7 +225,7 @@ class TicketLeg(BaseModel):
     strike: float = Field(gt=0)
     expiry: date | None = None
     side: Side
-    ratio: int = Field(default=1, ge=1, le=4)
+    ratio: int = Field(default=1, ge=1, le=10)
 
 
 def _strikes(legs: list[TicketLeg]) -> list[float]:
@@ -252,6 +315,16 @@ class SpreadTicket(BaseModel):
         def need(n: int) -> None:
             if len(legs) != n:
                 raise ValueError(f"{label}: exactly {n} legs are required")
+
+        if s == "custom":
+            seen = {(leg.kind, leg.strike, leg.expiry or self.expiry) for leg in legs}
+            if len(seen) != len(legs):
+                raise ValueError(f"{label}: each contract may appear once -- use the ratio instead")
+            if all(leg.side == "buy" for leg in legs) and len(legs) == 1:
+                # Allowed, and the same thing as a long call/put; no reason
+                # to refuse it, so nothing further to check.
+                pass
+            return
 
         if s in ("long_straddle", "long_strangle"):
             need(2)
@@ -353,6 +426,10 @@ class SpreadTicket(BaseModel):
         s = self.strategy
         if s in LEGS_STRATEGIES:
             legs = [leg.model_copy(update={"expiry": leg.expiry or self.expiry}) for leg in self.legs or []]
+            if s == "custom":
+                # A stable order to price and display in: puts then calls,
+                # each from the lowest strike, earlier expiries first.
+                return sorted(legs, key=lambda leg: (0 if leg.kind == "put" else 1, leg.expiry, leg.strike))
             if s in ("long_straddle", "long_strangle"):
                 return sorted(legs, key=lambda leg: 0 if leg.kind == "put" else 1)
             if s in ("call_butterfly", "put_butterfly"):
@@ -472,6 +549,15 @@ class ResolvedSpread(BaseModel):
     # "market": limit_price is the natural the order is expected to fill
     # near, and no limit is sent.
     order_type: OrderType = "limit"
+    # The implied distribution's own odds (see app.options.custom): any
+    # profit at expiry, and the market reaching `touch_at` -- the nearest
+    # breakeven -- before then. None when no IV is available.
+    chance: float | None = None
+    touch: float | None = None
+    touch_at: float | None = None
+    # A short leg nothing covers: `collateral` is then an estimate of the
+    # broker's margin rather than the most this can lose.
+    naked: bool = False
     # None means unlimited (a long call).
     max_profit: float | None
     # None means unbounded on the grid used (see payoff).
