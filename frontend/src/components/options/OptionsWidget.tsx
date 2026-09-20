@@ -28,7 +28,8 @@ import type { LoadableStructure } from "../../types/options";
 import { AiIdeaTab } from "./AiIdeaTab";
 import { ExpiryAxis } from "./ExpiryAxis";
 import { OptimizerTab } from "./OptimizerTab";
-import { earningsSentence, eventMarks, ivRankSentence, ivTone, macroInWindow, macroSentence } from "./eventMarks";
+import { earningsSentence, eventMarks, ivRankSentence, ivTone, macroInWindow, macroSentence, vixSentence } from "./eventMarks";
+import { useMarketConditions } from "../../hooks/useMarketConditions";
 import { subscribeOptimizerIntent, type OptimizerIntent } from "./optimizerIntent";
 import { ChainTable } from "./ChainTable";
 import {
@@ -157,6 +158,10 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const eventsState = useOptionEvents(symbol, atmIv(chain), expiries.find((e) => e.expiry === chain?.expiry)?.dte ?? null);
   const events = eventsState.events && eventsState.events.underlying === symbol ? eventsState.events : null;
   const marks = useMemo(() => eventMarks(expiries, events), [expiries, events]);
+  // The market's own weather beside this chain's: polled once for the
+  // widget, the same reading the header badge shows.
+  const conditions = useMarketConditions();
+  const vixLine = vixSentence(events?.iv.atm_iv, conditions.available ? (conditions.vix?.price ?? null) : null);
   const macroShown = useMemo(() => macroInWindow(events?.macro ?? [], expiries), [events, expiries]);
   // A scanner row's "Options" button: open the Optimizer on that symbol with
   // the view the move suggests. The tab receives it and runs once the
@@ -653,6 +658,14 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                 {macroShown.length > 0 && (
                   <span className="expiry-event" title="Scheduled US releases in the strip's window: FOMC decision, CPI, payrolls, PCE, GDP. Marked on the first expiry held through each.">
                     <span className="expiry-mark macro">M</span> {macroSentence(macroShown)}
+                  </span>
+                )}
+                {vixLine && (
+                  <span
+                    className="expiry-event vix"
+                    title="The CBOE Volatility Index: the S&P 500's expected volatility over the next 30 days, annualised -- the same scale as the chain's at-the-money IV beside it. Under 20 the market is calm, from 25 it is not. A broad-index reading: against a single stock's own IV the gap says little, against SPY or QQQ it says whether this chain is priced above or below the market's weather."
+                  >
+                    <span className="expiry-mark vix">V</span> {vixLine}
                   </span>
                 )}
                 {events.iv.atm_iv != null && (

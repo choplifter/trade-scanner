@@ -320,10 +320,29 @@ function AppShell({ user, onLogout }: AppShellProps) {
                 href="/analytics/market-conditions"
                 target="_blank"
                 rel="noopener noreferrer"
-                title={`${conditions.reasons?.join(" · ")} -- click for details`}
+                title={[
+                  conditions.reasons?.join(" · "),
+                  conditions.vix
+                    ? `VIX ${conditions.vix.price.toFixed(2)} (${conditions.vix.change_pct >= 0 ? "+" : ""}${conditions.vix.change_pct.toFixed(1)} %): the S&P 500's expected 30-day volatility. Calm below 20, elevated from 25.`
+                    : null,
+                  "click for details",
+                ]
+                  .filter(Boolean)
+                  .join(" -- ")}
               >
                 <span className="market-conditions-dot" />
                 {CONDITIONS_LABEL[conditions.level] ?? conditions.level}
+                {conditions.vix && (
+                  <span className="market-conditions-vix">
+                    {" · VIX "}
+                    {conditions.vix.price.toFixed(1)}
+                    <span className={conditions.vix.change_pct >= 0 ? "up" : "down"}>
+                      {" "}
+                      {conditions.vix.change_pct >= 0 ? "+" : ""}
+                      {conditions.vix.change_pct.toFixed(1)} %
+                    </span>
+                  </span>
+                )}
               </a>
             )}
             {balance && (

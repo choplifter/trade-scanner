@@ -80,6 +80,22 @@ export function ivTone(percent: number | null | undefined): IvTone | null {
   return percent >= 60 ? "rich" : percent <= 30 ? "cheap" : "mid";
 }
 
+/** The chain's at-the-money IV beside the VIX -- both are an annualised
+ * expectation of a 30-day move, so they are on one scale, and the gap is
+ * what says whether this symbol is priced above or below the market's own
+ * weather. Only worth showing for a broad index tracker: next to a single
+ * stock's IV the VIX is a different thing being compared (see the title
+ * the widget puts on it). */
+export function vixSentence(atmIv: number | null | undefined, vix: number | null | undefined): string | null {
+  if (vix == null) return null;
+  const level = `VIX ${vix.toFixed(1)}`;
+  if (atmIv == null) return level;
+  const chain = atmIv * 100;
+  const gap = chain - vix;
+  if (Math.abs(gap) < 0.5) return `${level} · this chain is level with it`;
+  return `${level} · this chain ${gap > 0 ? "above" : "below"} it by ${Math.abs(gap).toFixed(1)} points`;
+}
+
 export function ivRankSentence(iv: OptionEventsResponse["iv"]): string {
   if (iv.rank) {
     const tone = ivTone(iv.rank.percent);

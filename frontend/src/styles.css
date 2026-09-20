@@ -203,6 +203,16 @@ body {
   background: var(--row-hover);
 }
 
+/* The VIX beside the regime word: the number is the point, its change is
+   secondary, so the change takes the muted colour the tables use. */
+.market-conditions-vix .up {
+  color: var(--chart-up, #2e9e5b);
+}
+
+.market-conditions-vix .down {
+  color: var(--chart-down, #d03b3b);
+}
+
 .market-conditions-dot {
   width: 8px;
   height: 8px;
@@ -5124,6 +5134,7 @@ td.chain-side.chain-stale {
 .expiry-events {
   --event-earnings: #d03b3b;
   --event-macro: #8e5bd6;
+  --event-vix: #c08a2e;
 }
 
 .expiry-mark {
@@ -5144,6 +5155,10 @@ td.chain-side.chain-stale {
 
 .expiry-mark.macro {
   background: var(--event-macro);
+}
+
+.expiry-mark.vix {
+  background: var(--event-vix);
 }
 
 .expiry-events {
