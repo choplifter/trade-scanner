@@ -12,7 +12,7 @@
 import type { ChainResponse, OptionKind, SpreadTicketRequest } from "../../types/options";
 import type { LegSelection } from "./ChainTable";
 import { legKey } from "./ChainTable";
-import { quoted } from "./legPicker";
+import { quoted, type LegHandle } from "./legPicker";
 
 export const MAX_BUILDER_LEGS = 4;
 export const MAX_BUILDER_RATIO = 10;
@@ -188,4 +188,36 @@ export function nakedLegs(legs: BuilderLeg[], ticketExpiry: string): BuilderLeg[
     }
   }
   return bare;
+}
+
+/** The rail's handles for a built package: one per leg, dragged and
+ * nudged exactly like a named shape's, with the leg's own id so the move
+ * comes back addressed to it. */
+export function builderHandles(legs: BuilderLeg[]): LegHandle[] {
+  return legs.map((leg) => ({
+    id: leg.id,
+    kind: leg.kind,
+    strike: leg.strike,
+    role: leg.side === "buy" ? "long" : "short",
+    label: `${leg.side === "buy" ? "Long" : "Short"} ${leg.kind === "put" ? "put" : "call"}`,
+  }));
+}
+
+/** Every leg moved `deltaSteps` listed strikes of its own kind, the way
+ * shift-dragging the rail moves a named shape: offsets kept, and the
+ * whole thing stands still rather than deforming when one leg would run
+ * off the end of the board. */
+export function shiftBuilderLegs(legs: BuilderLeg[], chain: ChainResponse, deltaSteps: number): BuilderLeg[] {
+  if (deltaSteps === 0) return legs;
+  const moved: BuilderLeg[] = [];
+  for (const leg of legs) {
+    const strikes = quoted(chain.rows, leg.kind).map((row) => row.strike);
+    const at = strikes.indexOf(leg.strike);
+    const to = at + deltaSteps;
+    if (at === -1 || to < 0 || to >= strikes.length) return legs;
+    moved.push({ ...leg, strike: strikes[to] });
+  }
+  // Two legs landing on one contract is not a package the backend takes.
+  const seen = new Set(moved.map((leg) => `${leg.kind}:${leg.strike}:${leg.expiry ?? ""}`));
+  return seen.size === moved.length ? moved : legs;
 }

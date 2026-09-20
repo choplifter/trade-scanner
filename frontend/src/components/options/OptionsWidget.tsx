@@ -56,9 +56,12 @@ import { OptionsHelp } from "./OptionsHelp";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
 import {
+  builderHandles,
   builderSelection,
+  moveBuilderLeg,
   nextLeg,
   removeLeg,
+  shiftBuilderLegs,
   toggleLeg,
   updateLeg,
   type BuilderLeg,
@@ -373,14 +376,25 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
 
   // The strike rail's drags: one leg to a strike, or every leg by a step.
   // Manual like a chain click, so the auto-pick leaves the result alone.
-  const moveHandle = (id: LegHandleId, strike: number) => {
+  const moveHandle = (id: LegHandleId | string, strike: number) => {
     if (!shownChain) return;
     manualRef.current = true;
-    setLegs((current) => moveLeg(strategy, current, shownChain, id, strike, ctx));
+    if (building) {
+      // A builder handle carries its leg's own id; the kind comes from the
+      // leg, so a dragged handle stays a call or a put.
+      const leg = builder.find((l) => l.id === id);
+      if (leg) setBuilder((current) => moveBuilderLeg(current, leg.id, leg.kind, strike, leg.expiry));
+      return;
+    }
+    setLegs((current) => moveLeg(strategy, current, shownChain, id as LegHandleId, strike, ctx));
   };
   const shiftHandles = (deltaSteps: number) => {
     if (!shownChain) return;
     manualRef.current = true;
+    if (building) {
+      setBuilder((current) => shiftBuilderLegs(current, shownChain, deltaSteps));
+      return;
+    }
     setLegs((current) => (current ? shiftLegs(strategy, current, shownChain, deltaSteps, ctx) : current));
   };
   const resetLegs = () => {
@@ -669,6 +683,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                 strategy={strategy}
                 legs={legs}
                 ctx={ctx}
+                handles={building ? builderHandles(builder) : undefined}
                 onMove={moveHandle}
                 onShift={shiftHandles}
               />

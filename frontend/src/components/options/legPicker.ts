@@ -594,7 +594,9 @@ export type LegHandleId =
   | "long_strike";
 
 export interface LegHandle {
-  id: LegHandleId;
+  /** One of the names below for a named shape's legs, or a builder leg's
+   * own id -- the rail only hands it back, the widget knows which it is. */
+  id: LegHandleId | string;
   kind: OptionKind | "both";
   strike: number;
   role: "long" | "short" | "body";

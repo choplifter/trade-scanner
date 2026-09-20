@@ -12,8 +12,11 @@ interface StrikeRailProps {
   strategy: Strategy;
   legs: Legs | null;
   ctx: PickContext;
+  /** Handles to draw instead of deriving them from `legs` -- the builder
+   * has no named shape to derive from (builderLegs.builderHandles). */
+  handles?: LegHandle[];
   /** Move one leg to a listed strike (the widget applies moveLeg). */
-  onMove: (id: LegHandleId, strike: number) => void;
+  onMove: (id: LegHandleId | string, strike: number) => void;
   /** Move every leg by this many strikes (the widget applies shiftLegs). */
   onShift: (deltaSteps: number) => void;
 }
@@ -44,12 +47,15 @@ function railRows(chain: ChainResponse, longChain: ChainResponse | null | undefi
  * (OptionsWidget.onSplitterDown), which survives the cursor leaving the
  * rail mid-drag.
  */
-export function StrikeRail({ chain, longChain, strategy, legs, ctx, onMove, onShift }: StrikeRailProps) {
+export function StrikeRail({ chain, longChain, strategy, legs, ctx, handles: given, onMove, onShift }: StrikeRailProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const strikes = useMemo(() => chain.rows.map((r) => r.strike), [chain]);
   const lo = strikes[0];
   const hi = strikes[strikes.length - 1];
-  const handles = useMemo(() => (legs ? legHandles(strategy, legs, ctx) : []), [strategy, legs, ctx]);
+  const handles = useMemo(
+    () => given ?? (legs ? legHandles(strategy, legs, ctx) : []),
+    [given, strategy, legs, ctx],
+  );
 
   if (strikes.length < 2 || !(hi > lo)) return null;
 
