@@ -52,6 +52,16 @@ import {
   type PickContext,
 } from "./legPicker";
 import { PayoffChart } from "./PayoffChart";
+import {
+  MAX_BUILDER_LEGS,
+  MAX_BUILDER_RATIO,
+  builderLabel,
+  builderLevels,
+  builderTicket,
+  levelForBuilder,
+  nakedLegs,
+  type BuilderLeg,
+} from "./builderLegs";
 
 import { getStored, setStored } from "../../api/prefs";
 
@@ -93,6 +103,11 @@ interface SpreadTicketProps {
    * group; undefined for shapes without a short-distance setting. */
   shortTarget?: ShortTarget;
   onShortTarget?: (target: ShortTarget) => void;
+  /** The builder's legs (strategy "custom"); empty for every other shape. */
+  builder: BuilderLeg[];
+  onAddLeg: () => void;
+  onUpdateLeg: (id: string, patch: Partial<Omit<BuilderLeg, "id">>) => void;
+  onRemoveLeg: (id: string) => void;
 }
 
 function randomUUID(): string {
@@ -343,6 +358,10 @@ export function SpreadTicket({
   onTimeKind,
   onLongExpiry,
   onPicking,
+  builder,
+  onAddLeg,
+  onUpdateLeg,
+  onRemoveLeg,
 }: SpreadTicketProps) {
   const [qty, setQty] = useState("1");
   const [limit, setLimit] = useState("");
@@ -362,16 +381,22 @@ export function SpreadTicket({
   const clientOrderIdRef = useRef<string | null>(null);
   const { setLevels } = useSpreadLevelsContext();
 
-  const direction = DEBIT_STRATEGIES.has(strategy) ? "debit" : "credit";
+  const building = strategy === "custom";
+  // A built package has no declared direction: what the legs come to is
+  // what it is, and the preview says which way round that is.
+  const direction = building ? (preview?.spread.direction ?? "debit") : DEBIT_STRATEGIES.has(strategy) ? "debit" : "credit";
   const single = SINGLE_LEG_STRATEGIES.has(strategy);
   const income = INCOME_STRATEGIES.has(strategy);
   const time = TIME_STRATEGIES.has(strategy);
   const perContract = single || strategy === "long_straddle" || strategy === "long_strangle";
   const unit = perContract ? "contract" : "spread";
-  const showWidth = !single && !time && strategy !== "long_straddle" && strategy !== "long_strangle";
+  // Width, the short-distance target and Auto-pick all describe how a
+  // named shape is laid out; the builder is laid out by hand.
+  const showWidth = !building && !single && !time && strategy !== "long_straddle" && strategy !== "long_strangle";
   const qtyNum = Math.floor(Number(qty));
   const qtyOk = Number.isFinite(qtyNum) && qtyNum > 0;
   const legsKey = legs ? JSON.stringify(legs) : "";
+  const builderKey = JSON.stringify(builder.map((leg) => [leg.kind, leg.strike, leg.side, leg.ratio, leg.expiry]));
 
   // A new symbol/expiry/strategy/legs invalidates an edited limit: the mid
   // it was based on is gone.
@@ -387,12 +412,14 @@ export function SpreadTicket({
   const replayAsOf = useReplaySession()?.as_of ?? null;
   useEffect(() => {
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
-    if (!legs || !qtyOk) {
+    if ((building ? builder.length === 0 : !legs) || !qtyOk) {
       setPreview(null);
       setRejection(null);
       return;
     }
-    const ticket = ticketFor(symbol, strategy, expiry, qtyNum, legs, ctx);
+    const ticket = building
+      ? builderTicket(symbol, expiry, qtyNum, builder)
+      : ticketFor(symbol, strategy, expiry, qtyNum, legs!, ctx);
     const limitNum = Number(limit);
     if (market) ticket.order_type = "market";
     else if (limitEdited && Number.isFinite(limitNum) && limitNum > 0) ticket.limit_price = limitNum;
@@ -425,17 +452,21 @@ export function SpreadTicket({
     // legsKey stands in for `legs` (rebuilt objects with equal values);
     // ctx.timeKind for the kind a calendar trades.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, expiry, strategy, legsKey, qtyNum, qtyOk, limit, limitEdited, market, ctx.timeKind, replayAsOf]);
+  }, [symbol, expiry, strategy, legsKey, builderKey, qtyNum, qtyOk, limit, limitEdited, market, ctx.timeKind, replayAsOf]);
 
   // The strikes on the chart, for as long as this ticket is showing them.
   useEffect(() => {
+    if (building) {
+      setLevels(builder.length ? { symbol, strikes: builderLevels(builder), closeBelow: null, closeAbove: null } : null);
+      return;
+    }
     if (!legs) {
       setLevels(null);
       return;
     }
     setLevels({ symbol, strikes: legLevels(strategy, legs, ctx), closeBelow: null, closeAbove: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, strategy, legsKey, setLevels]);
+  }, [symbol, strategy, legsKey, builderKey, building, setLevels]);
   useEffect(() => () => setLevels(null), [setLevels]);
 
   // A preview still on its way back from the other order type prices the
@@ -460,11 +491,13 @@ export function SpreadTicket({
   };
 
   const doSubmit = async () => {
-    if (!spread || !legs) return;
+    if (!spread || (building ? builder.length === 0 : !legs)) return;
     if (!liveConfirmed(mode, liveTyped)) return;
     setSubmitting(true);
     try {
-      const ticket = ticketFor(symbol, strategy, expiry, spread.qty, legs, ctx);
+      const ticket = building
+        ? builderTicket(symbol, expiry, spread.qty, builder)
+        : ticketFor(symbol, strategy, expiry, spread.qty, legs!, ctx);
       if (spread.order_type === "market") ticket.order_type = "market";
       else ticket.limit_price = spread.limit_price;
       ticket.client_order_id = clientOrderIdRef.current ?? undefined;
@@ -484,13 +517,14 @@ export function SpreadTicket({
   };
 
   const level = account?.options_trading_level ?? account?.options_approved_level ?? null;
-  const levelNeeded = optionsLevelRequired(strategy);
+  const levelNeeded = building ? levelForBuilder(builder, expiry) : optionsLevelRequired(strategy);
   const levelWarning =
     level != null && level < levelNeeded
       ? `This account has options level ${level}; ${STRATEGY_LABELS[strategy].toLowerCase()} needs level ${levelNeeded}.`
       : null;
 
   const actionLabel = (() => {
+    if (building) return spread ? `${spread.direction === "debit" ? "Buy" : "Sell"} this package on ${symbol}` : "Place package";
     if (!spread) return income ? "Write option" : single ? "Buy option" : "Place spread";
     if (strategy === "covered_call") return `Write covered call on ${symbol}`;
     if (strategy === "cash_secured_put") return `Write cash-secured put on ${symbol}`;
@@ -530,8 +564,21 @@ export function SpreadTicket({
       <div className="order-ticket-row spread-legs-row">
         <span className="order-ticket-symbol">
           {symbol} {expiry}
-          {legs ? ` · ${legsLabel(strategy, legs, ctx)}` : single ? " · pick a strike in the chain" : " · pick strikes in the chain"}
+          {building
+            ? builder.length
+              ? ` · ${builderLabel(builder)}`
+              : " · click strikes in the chain, or add a leg"
+            : legs
+              ? ` · ${legsLabel(strategy, legs, ctx)}`
+              : single
+                ? " · pick a strike in the chain"
+                : " · pick strikes in the chain"}
         </span>
+        {building && (
+          <button type="button" className="row-action" onClick={onAddLeg} disabled={!chain || builder.length >= MAX_BUILDER_LEGS}>
+            Add leg
+          </button>
+        )}
         {showWidth && (
           <label>
             {BUTTERFLY_STRATEGIES.has(strategy) ? "Wings" : "Width"}{" "}
@@ -602,9 +649,11 @@ export function SpreadTicket({
             corridor {formatStrike(legs.call - legs.put)}
           </span>
         )}
-        <button type="button" className="row-action" onClick={onResetLegs} disabled={!chain}>
-          Auto-pick
-        </button>
+        {!building && (
+          <button type="button" className="row-action" onClick={onResetLegs} disabled={!chain}>
+            Auto-pick
+          </button>
+        )}
       </div>
       {time && (
         <div className="order-ticket-row spread-time-row">
@@ -649,6 +698,100 @@ export function SpreadTicket({
           </div>
         </div>
       )}
+      {building && builder.length > 0 && (
+        <div className="builder-legs">
+          {builder.map((leg) => {
+            const rows = chain ? chain.rows.filter((r) => (leg.kind === "put" ? r.put : r.call)) : [];
+            const quote = chain?.rows.find((r) => r.strike === leg.strike);
+            const mid = leg.kind === "put" ? quote?.put?.mid : quote?.call?.mid;
+            return (
+              <div key={leg.id} className="builder-leg">
+                <span className="timeframe-selector">
+                  <button
+                    type="button"
+                    className="timeframe-button"
+                    aria-pressed={leg.side === "buy"}
+                    onClick={() => onUpdateLeg(leg.id, { side: "buy" })}
+                    title="Buy this leg"
+                  >
+                    Buy
+                  </button>
+                  <button
+                    type="button"
+                    className="timeframe-button"
+                    aria-pressed={leg.side === "sell"}
+                    onClick={() => onUpdateLeg(leg.id, { side: "sell" })}
+                    title="Sell this leg"
+                  >
+                    Sell
+                  </button>
+                </span>
+                <span className="timeframe-selector">
+                  {(["call", "put"] as OptionKind[]).map((kind) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      className="timeframe-button"
+                      aria-pressed={leg.kind === kind}
+                      onClick={() => onUpdateLeg(leg.id, { kind })}
+                    >
+                      {kind === "call" ? "C" : "P"}
+                    </button>
+                  ))}
+                </span>
+                <select
+                  value={leg.strike}
+                  onChange={(e) => onUpdateLeg(leg.id, { strike: Number(e.target.value) })}
+                  title="Strike"
+                >
+                  {rows.map((row) => (
+                    <option key={row.strike} value={row.strike}>
+                      {formatStrike(row.strike)}
+                    </option>
+                  ))}
+                </select>
+                <label title="Contracts of this leg per package -- a butterfly's body is 2">
+                  ×{" "}
+                  <input
+                    type="number"
+                    min={1}
+                    max={MAX_BUILDER_RATIO}
+                    step={1}
+                    value={leg.ratio}
+                    onChange={(e) =>
+                      onUpdateLeg(leg.id, {
+                        ratio: Math.min(MAX_BUILDER_RATIO, Math.max(1, Math.floor(Number(e.target.value) || 1))),
+                      })
+                    }
+                  />
+                </label>
+                <select
+                  value={leg.expiry ?? expiry}
+                  onChange={(e) => onUpdateLeg(leg.id, { expiry: e.target.value === expiry ? undefined : e.target.value })}
+                  title="This leg's expiry -- a later one than the ticket's makes it a diagonal"
+                >
+                  {expiries.map((e) => (
+                    <option key={e.expiry} value={e.expiry}>
+                      {formatExpiry(e.expiry)}
+                    </option>
+                  ))}
+                </select>
+                <span className="order-hint">{mid != null ? mid.toFixed(2) : "—"}</span>
+                <button type="button" className="row-action" onClick={() => onRemoveLeg(leg.id)} title="Remove this leg">
+                  ×
+                </button>
+              </div>
+            );
+          })}
+          {nakedLegs(builder, expiry).length > 0 && (
+            <p className="order-warning">
+              Uncovered short leg: the loss has no ceiling, and what is shown as collateral is the broker's standard
+              margin as an estimate. Needs options level 4.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="order-ticket-row">
         <label>
           {perContract ? "Contracts" : "Spreads"}{" "}
@@ -731,6 +874,23 @@ export function SpreadTicket({
             {spread.max_loss == null ? "unbounded" : money(spread.max_loss)}
             {spread.breakevens.length > 0 ? ` · breakeven ${spread.breakevens.map((b) => b.toFixed(2)).join(" / ")}` : ""}
           </span>
+          {(spread.chance != null || spread.touch != null) && (
+            <span>
+              {spread.chance != null && (
+                <span title="The chance of any profit at expiry under the distribution the chain's own implied volatility describes -- a model number, not a forecast.">
+                  {(spread.chance * 100).toFixed(0)}% chance of profit
+                </span>
+              )}
+              {spread.touch != null && spread.touch_at != null && (
+                <span
+                  title={`The chance the underlying trades at ${spread.touch_at.toFixed(2)} -- the nearest breakeven -- at any point before expiry. Roughly twice the odds of finishing beyond it, and the number a position is actually managed against.`}
+                >
+                  {spread.chance != null ? " · " : ""}
+                  {(spread.touch * 100).toFixed(0)}% touch {spread.touch_at.toFixed(2)}
+                </span>
+              )}
+            </span>
+          )}
           <span>
             {income ? "Cover" : single ? "Premium" : "Collateral"}{" "}
             {spread.coverage

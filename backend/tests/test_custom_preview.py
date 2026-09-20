@@ -176,3 +176,21 @@ def test_a_ratio_leaves_a_bare_short_and_the_named_shapes_still_work(service):
     )
     assert named.direction == "credit" and named.naked is False
     assert named.chance is not None
+
+
+def test_an_uncovered_put_reports_the_floor_the_grid_cannot_reach(service):
+    """The payoff grid stops a few standard deviations out, so its own
+    minimum beside a naked put is an artefact of where it stopped. The
+    real floor is the position with the underlying at nothing."""
+    spread = asyncio.run(service.preview(_built(TicketLeg(kind="put", strike=95, side="sell"))))
+    assert spread.naked is True
+    assert spread.max_loss is not None
+    # A 95 put sold for a few dollars: the floor is the strike less the
+    # premium, times the multiplier -- thousands, not hundreds.
+    assert spread.max_loss < -9_000
+    assert spread.max_loss == pytest.approx(-(95 - spread.net_mid) * 100, abs=25)
+
+
+def test_an_uncovered_call_has_no_floor_at_all(service):
+    spread = asyncio.run(service.preview(_built(TicketLeg(kind="call", strike=105, side="sell"))))
+    assert spread.naked is True and spread.max_loss is None

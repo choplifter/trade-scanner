@@ -2325,6 +2325,33 @@ a.symbol-news-headline {
   flex-wrap: wrap;
 }
 
+/* The builder's leg rows: one line per leg, the same controls the rest of
+   the ticket uses, indented so the list reads as belonging to the row
+   above it. */
+.builder-legs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+
+.builder-leg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.builder-leg select {
+  max-width: 140px;
+}
+
+.builder-leg input[type="number"] {
+  width: 52px;
+}
+
 .order-ticket-symbol {
   font-weight: 600;
   font-size: 13px;

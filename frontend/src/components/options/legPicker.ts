@@ -109,6 +109,8 @@ export interface PickContext {
 }
 
 export function strategyKind(strategy: Strategy, timeKind: OptionKind = "call"): OptionKind | "both" {
+  // The builder takes any contract; nothing about its shape says which.
+  if (strategy === "custom") return "both";
   if (
     strategy === "iron_condor" ||
     strategy === "long_straddle" ||

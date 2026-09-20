@@ -23,7 +23,11 @@ export type Strategy =
   | "calendar"
   | "diagonal"
   | "covered_call"
-  | "cash_secured_put";
+  | "cash_secured_put"
+  /** Whatever the builder assembles: one to four legs, any kind, side,
+   * ratio and expiry. The backend reads direction, ceilings and the level
+   * it needs off the legs (app/options/custom.py). */
+  | "custom";
 export type OptionKind = "call" | "put";
 export type SpreadDirection = "debit" | "credit";
 
@@ -44,6 +48,7 @@ export const STRATEGY_LABELS: Record<Strategy, string> = {
   diagonal: "Diagonal",
   covered_call: "Covered call",
   cash_secured_put: "Cash-sec. put",
+  custom: "Builder",
 };
 
 /** The ticket's strategy buttons, grouped. */
@@ -53,10 +58,12 @@ export const STRATEGY_GROUPS: { label: string; strategies: Strategy[] }[] = [
   { label: "Neutral", strategies: ["iron_condor", "iron_butterfly", "call_butterfly", "put_butterfly"] },
   { label: "Time", strategies: ["calendar", "diagonal"] },
   { label: "Income", strategies: ["covered_call", "cash_secured_put"] },
+  { label: "Free", strategies: ["custom"] },
 ];
 
 /** Strategies described to the backend as an explicit legs list. */
 export const LEGS_STRATEGIES: ReadonlySet<Strategy> = new Set<Strategy>([
+  "custom",
   "long_straddle",
   "long_strangle",
   "call_butterfly",
@@ -295,6 +302,14 @@ export interface ResolvedSpread {
   alpaca_limit_price: number;
   /** For a market ticket, limit_price is the natural it should fill near. */
   order_type: OptionOrderType;
+  /** The implied distribution's own odds: any profit at expiry, and the
+   * market reaching `touch_at` (the nearest breakeven) before then. */
+  chance?: number | null;
+  touch?: number | null;
+  touch_at?: number | null;
+  /** A short leg nothing covers: `collateral` is then the broker's
+   * estimated margin rather than the most this can lose. */
+  naked?: boolean;
   /** null = unlimited (a long call). */
   max_profit: number | null;
   max_loss: number | null;

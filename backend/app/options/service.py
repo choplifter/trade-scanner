@@ -8,7 +8,7 @@ builder is a pure function with its own tests.
 
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime, time
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
@@ -35,7 +35,8 @@ from app.options.models import (
     options_level_required,
     resolve_legs,
 )
-from app.options.optimizer import chance_of_profit
+from app.options.optimizer import chance_of_profit, position_pnl
+from app.services.market_clock import ET
 from app.options.occ import try_parse_occ
 from app.options.payoff import PayoffLeg, payoff_curve
 from app.options.positions import SpreadGroup, group_spreads
@@ -56,6 +57,31 @@ logger = logging.getLogger(__name__)
 # A market wider than this fraction of its own mid gets a warning on the
 # preview: a mid-priced limit on a 1.00/1.60 contract is not a fill.
 _WIDE_MARKET_FRACTION = 0.25
+
+
+def worst_case(
+    legs: list[SpreadLeg], bare: list[SpreadLeg], net_price: float, payoff: Payoff, qty: int
+) -> float | None:
+    """The most a built package can lose.
+
+    The payoff curve's own minimum is the honest answer for defined risk,
+    but it is only the edge of a grid that reaches a few standard
+    deviations: with an uncovered short it reports whatever the grid
+    happened to stop at, which read "max loss -940" beside a naked put
+    whose real floor was seventy-five thousand. So: an uncovered call has
+    no floor at all (None, shown as unbounded), and an uncovered put's is
+    the position valued with the underlying at nothing."""
+    if not bare:
+        return payoff.max_loss
+    if any(leg.kind == "call" for leg in bare):
+        return None
+    payoff_legs = [
+        PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
+        for leg in legs
+    ]
+    expiry_moment = datetime.combine(payoff.expiry, time(16, 0), tzinfo=ET)
+    floor = position_pnl(payoff_legs, net_price, 0.01, expiry_moment, qty)
+    return floor if floor is not None else payoff.max_loss
 
 
 def market_warning(leg_count: int, no_natural: bool) -> str:
@@ -473,7 +499,7 @@ class OptionsService:
                 ticket.qty,
                 chain.spot,
                 built_payoff.max_profit,
-                built_payoff.max_loss,
+                worst_case(legs, bare_legs, price if direction == "debit" else -price, built_payoff, ticket.qty),
                 built_payoff.breakevens,
             )
         else:

@@ -55,6 +55,14 @@ import { useCampaigns } from "../../hooks/useCampaigns";
 import { OptionsHelp } from "./OptionsHelp";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
+import {
+  builderSelection,
+  nextLeg,
+  removeLeg,
+  toggleLeg,
+  updateLeg,
+  type BuilderLeg,
+} from "./builderLegs";
 
 type Tab = "chain" | "spreads" | "idea" | "optimizer" | "playbooks";
 
@@ -121,6 +129,10 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const [strategy, setStrategy] = useState<Strategy>("bull_put");
   const [width, setWidth] = useState(2);
   const [legs, setLegs] = useState<Legs | null>(null);
+  // The builder keeps its own list: legPicker's shapes all know their own
+  // arrangement, and a free package has none (see builderLegs.ts).
+  const [builder, setBuilder] = useState<BuilderLeg[]>([]);
+  const building = strategy === "custom";
   // Calendar/diagonal: the kind traded and which expiry a chain click sets.
   const [timeKind, setTimeKind] = useState<OptionKind>("call");
   const [picking, setPicking] = useState<"short" | "long">("short");
@@ -217,11 +229,19 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
       setLegs(null);
       return;
     }
+    // The builder is never auto-picked: its legs are the ones put there.
+    if (building) return;
     if (manualRef.current) return;
     setLegs(defaultLegs(strategy, chain, width, ctx));
     // Only the inputs of the default pick, not `legs` itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, strategy, width, ctx.timeKind, ctx.longExpiry, ctx.longChain, ctx.shortTarget]);
+  }, [chain, strategy, width, building, ctx.timeKind, ctx.longExpiry, ctx.longChain, ctx.shortTarget]);
+
+  // A different underlying is a different set of contracts; the expiry is
+  // not, since a leg carries its own and the ticket's is only the default.
+  useEffect(() => {
+    setBuilder([]);
+  }, [symbol]);
 
   // Following the chart's contract happens in three steps as the data
   // arrives: strategy at once, the expiry once the list holds it, the
@@ -325,7 +345,10 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     pendingIdeaRef.current = null;
   }, [chain, symbol, longChainState.chain]);
 
-  const selection = useMemo(() => selectionOf(strategy, legs, ctx), [strategy, legs, ctx]);
+  const selection = useMemo(
+    () => (building ? builderSelection(builder) : selectionOf(strategy, legs, ctx)),
+    [building, builder, strategy, legs, ctx],
+  );
 
   // The chain on screen: the long expiry's while picking the long leg of
   // a calendar/diagonal, the ticket's expiry otherwise.
@@ -335,7 +358,17 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     const target = shownChain;
     if (!target) return;
     manualRef.current = true;
+    if (building) {
+      // Buy, then sell, then gone -- see toggleLeg.
+      setBuilder((current) => toggleLeg(current, kind, strike));
+      return;
+    }
     setLegs((current) => applyPick(strategy, current, target, kind, strike, ctx));
+  };
+
+  const addBuilderLeg = () => {
+    const leg = nextLeg(builder, chain);
+    if (leg) setBuilder((current) => [...current, leg]);
   };
 
   // The strike rail's drags: one leg to a strike, or every leg by a step.
@@ -676,6 +709,10 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   onWidth={setWidth}
                   legs={legs}
                   onResetLegs={resetLegs}
+                  builder={builder}
+                  onAddLeg={addBuilderLeg}
+                  onUpdateLeg={(id, patch) => setBuilder((current) => updateLeg(current, id, patch))}
+                  onRemoveLeg={(id) => setBuilder((current) => removeLeg(current, id))}
                   account={spreads.account}
                   mode={mode}
                   onSubmitted={spreads.afterAction}
