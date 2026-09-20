@@ -203,7 +203,10 @@ export interface IndicatorStyle {
 
 export interface IndicatorResult {
   name: string;
-  kind: "level" | "series" | "marker" | "error";
+  /** "oscillator" is a series that cannot share the price scale -- an RSI
+   * between 0 and 100 drawn against a 760-dollar chart is a flat line at
+   * the bottom -- so it gets a pane of its own below the candles. */
+  kind: "level" | "series" | "marker" | "oscillator" | "error";
   /** What each sub-series carries depends on `kind`: a price for "level", a
    * point list for "series", a marker list for "marker". The union is
    * narrowed at the render site by checking `kind` first. */
@@ -213,6 +216,10 @@ export interface IndicatorResult {
   >;
   colors: Record<string, string>;
   style?: IndicatorStyle;
+  /** "oscillator" only: the pane's fixed scale, and the reference lines
+   * drawn across it (RSI's 30/70). */
+  range?: { min: number; max: number };
+  guides?: { value: number; label?: string }[];
   /** Set when the file could not be loaded or computed. Carried instead of
    * dropping the entry: an indicator that vanishes draws nothing, which on a
    * chart looks exactly like one that found nothing. */

@@ -11,7 +11,7 @@ this codebase. No sandboxing.
 
 Each indicator file exposes:
     NAME: str -- display group name, e.g. "Premarket Range"
-    KIND: "level" | "series"
+    KIND: "level" | "series" | "oscillator"
     COLORS: dict[str, str] (optional) -- sub-series name -> hex color
     STYLE: dict (optional) -- how this indicator's lines are drawn:
         {"width": int, "dash": "solid"|"dotted"|"dashed"|"large-dashed"|
@@ -20,6 +20,11 @@ Each indicator file exposes:
         is what every indicator got before this existed.
     MAX_TIMEFRAME: str (optional) -- the coarsest chart timeframe this still
         says something at; omitted means every timeframe
+    RANGE: {"min": float, "max": float} (optional, "oscillator" only) -- the
+        fixed scale of its pane. An oscillator autoscaled to whatever it did
+        today makes a quiet session look like a wild one.
+    GUIDES: [{"value": float, "label": str}] (optional, "oscillator" only) --
+        the reference lines drawn across that pane (RSI's 30/70).
     def compute(ctx: IndicatorContext) -> dict[str, ...] -- sub-series name
         -> value (float|None for "level") or point list (for "series")
 
@@ -100,6 +105,12 @@ def run_indicators(ctx: IndicatorContext) -> list[dict]:
                 "colors": getattr(module, "COLORS", {}),
                 "style": getattr(module, "STYLE", {}),
             }
+            # An oscillator carries its pane's scale with it: 0-100 for an
+            # RSI, and the guides a reading of it refers to.
+            if getattr(module, "RANGE", None) is not None:
+                result["range"] = module.RANGE
+            if getattr(module, "GUIDES", None):
+                result["guides"] = module.GUIDES
         except Exception as exc:
             logger.exception("Indicator %s failed to load/compute", path.name)
             # Reported, not dropped. A skipped indicator draws nothing, which

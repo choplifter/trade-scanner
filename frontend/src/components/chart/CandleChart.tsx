@@ -438,6 +438,9 @@ const DASH_PATTERNS: Record<string, LineStyle> = {
  * nothing renders unchanged. */
 const DEFAULT_LEVEL_STYLE = { width: 1, dash: LineStyle.Dashed };
 const DEFAULT_SERIES_STYLE = { width: 2, dash: LineStyle.Solid };
+// An oscillator pane's reference lines (RSI's 30/70): the chart's own
+// muted grey, so they read as scale rather than as another indicator.
+const GUIDE_COLOR = "#8a8f99";
 
 function resolveStyle(style: IndicatorStyle | undefined, defaults: { width: number; dash: LineStyle }) {
   return {
@@ -502,6 +505,8 @@ export function CandleChart({
   const orderLinesRef = useRef<IPriceLine[]>([]);
   const indicativeLinesRef = useRef<IPriceLine[]>([]);
   const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
+  // Which pane the oscillators (RSI) live in, while any are showing.
+  const oscillatorPaneRef = useRef<number | null>(null);
   // The markers primitive, kept so the pick pin is updated in place rather
   // than layered again on every focus change.
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
@@ -919,6 +924,7 @@ export function CandleChart({
       positionLinesRef.current = [];
       indicativeLinesRef.current = [];
       indicatorSeriesRef.current = [];
+      oscillatorPaneRef.current = null;
       draggableLinesRef.current = [];
       draggingRef.current = null;
     };
@@ -1363,6 +1369,14 @@ export function CandleChart({
     priceLinesRef.current = [];
     indicatorSeriesRef.current.forEach((series) => chart.removeSeries(series));
     indicatorSeriesRef.current = [];
+    // The oscillator pane goes with them: left behind empty it is a blank
+    // strip under the chart with nothing in it.
+    if (oscillatorPaneRef.current != null) {
+      const panes = chart.panes();
+      const pane = panes[oscillatorPaneRef.current];
+      if (pane && pane.getSeries().length === 0) chart.removePane(oscillatorPaneRef.current);
+      oscillatorPaneRef.current = null;
+    }
 
     // indicators is already filtered down to whatever the Levels dropdown
     // has checked, so no separate on/off gate is needed here.
@@ -1386,6 +1400,48 @@ export function CandleChart({
             title,
           });
           priceLinesRef.current.push(line);
+        } else if (indicator.kind === "oscillator" && isPointSeries(value)) {
+          // Its own pane below the candles, created on first use and torn
+          // down with the series. The guides go on the first series of the
+          // pane, which is what carries its scale.
+          const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
+          if (oscillatorPaneRef.current == null) {
+            oscillatorPaneRef.current = chart.panes().length;
+            chart.addPane();
+          }
+          const series = chart.addSeries(
+            LineSeries,
+            {
+              color,
+              lineWidth: style.width as 1 | 2 | 3 | 4,
+              lineStyle: style.dash,
+              crosshairMarkerVisible: false,
+              lastValueVisible: true,
+              title,
+              autoscaleInfoProvider: indicator.range
+                ? () => ({ priceRange: { minValue: indicator.range!.min, maxValue: indicator.range!.max } })
+                : undefined,
+            },
+            oscillatorPaneRef.current,
+          );
+          series.setData(
+            toLinePoints(
+              value,
+              (p) => toUnixSeconds(p.t),
+              (p) => p.value,
+            ),
+          );
+          (indicator.guides ?? []).forEach((guide) => {
+            series.createPriceLine({
+              price: guide.value,
+              color: GUIDE_COLOR,
+              lineWidth: 1,
+              lineStyle: LineStyle.Dotted,
+              axisLabelVisible: true,
+              title: guide.label ?? "",
+            });
+          });
+          indicatorSeriesRef.current.push(series);
         } else if (indicator.kind === "series" && isPointSeries(value)) {
           const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
           const series = chart.addSeries(LineSeries, {

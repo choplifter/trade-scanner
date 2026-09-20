@@ -51,6 +51,8 @@ def test_every_indicator_is_offered_on_the_minute_chart():
     assert _names_at("1Min") == {
         "VWAP",
         "EMA",
+        "Bollinger",
+        "RSI",
         "Opening Range",
         "Premarket Range",
         "Daily Range",
@@ -74,6 +76,15 @@ def test_the_overlays_are_deliberately_not_gated():
         names = _names_at(timeframe)
         assert "VWAP" in names, f"VWAP disappeared at {timeframe}"
         assert "EMA" in names, f"EMA disappeared at {timeframe}"
+
+
+def test_the_minute_only_overlays_stop_at_the_minute_chart():
+    """Bollinger and RSI describe the last twenty or fourteen bars, and the
+    chart draws series indicators on the minute feed alone -- so they are
+    not offered above it rather than computed and discarded."""
+    assert {"Bollinger", "RSI"} <= _names_at("1Min")
+    assert not ({"Bollinger", "RSI"} & _names_at("1Hour"))
+    assert not ({"Bollinger", "RSI"} & _names_at("1Day"))
 
 
 def test_the_hourly_chart_still_offers_the_daily_range():
