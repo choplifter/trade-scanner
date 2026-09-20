@@ -26,6 +26,11 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _FMP_BASE = "https://financialmodelingprep.com/stable"
+# Cboe publishes its own index, delayed, without a key or an account --
+# the shortest path between the number and this app, and one provider
+# less to depend on for it. FMP stays as the fallback: it is fetched for
+# the events and the breadth in the same pass anyway.
+_CBOE_VIX = "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json"
 
 # "Global" here means the economies whose scheduled releases are actually
 # likely to move a US small/mid-cap scanner universe -- not literally every
@@ -72,7 +77,24 @@ class MarketConditions:
     breadth_pct: float | None = None
 
 
-async def fetch_vix(client: httpx.AsyncClient, api_key: str) -> VixReading | None:
+async def fetch_vix_cboe(client: httpx.AsyncClient) -> VixReading | None:
+    """The VIX from the exchange that computes it. Delayed by a quarter of
+    an hour, which a regime reading does not care about."""
+    try:
+        resp = await client.get(_CBOE_VIX, headers={"User-Agent": "trading-dashboard"})
+        resp.raise_for_status()
+        data = (resp.json() or {}).get("data") or {}
+    except Exception:
+        logger.warning("Cboe VIX quote fetch failed", exc_info=True)
+        return None
+    price = data.get("current_price") or data.get("close")
+    change_pct = data.get("price_change_percent")
+    if price is None or change_pct is None:
+        return None
+    return VixReading(price=float(price), change_pct=float(change_pct))
+
+
+async def fetch_vix_fmp(client: httpx.AsyncClient, api_key: str) -> VixReading | None:
     try:
         resp = await client.get(f"{_FMP_BASE}/quote", params={"symbol": "^VIX", "apikey": api_key})
         resp.raise_for_status()
@@ -88,6 +110,18 @@ async def fetch_vix(client: httpx.AsyncClient, api_key: str) -> VixReading | Non
     if price is None or change_pct is None:
         return None
     return VixReading(price=price, change_pct=change_pct)
+
+
+async def fetch_vix(client: httpx.AsyncClient, api_key: str) -> VixReading | None:
+    """Cboe first, FMP if that is unreachable. Either way it is the same
+    index; the fallback exists so one provider going quiet does not take
+    the market-conditions readout with it."""
+    reading = await fetch_vix_cboe(client)
+    if reading is not None:
+        return reading
+    if not api_key:
+        return None
+    return await fetch_vix_fmp(client, api_key)
 
 
 async def fetch_high_impact_events_today(
