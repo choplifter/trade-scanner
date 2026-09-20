@@ -59,7 +59,6 @@ import {
   builderLevels,
   builderTicket,
   levelForBuilder,
-  nakedLegs,
   type BuilderLeg,
 } from "./builderLegs";
 
@@ -783,12 +782,6 @@ export function SpreadTicket({
               </div>
             );
           })}
-          {nakedLegs(builder, expiry).length > 0 && (
-            <p className="order-warning">
-              Uncovered short leg: the loss has no ceiling, and what is shown as collateral is the broker's standard
-              margin as an estimate. Needs options level 4.
-            </p>
-          )}
         </div>
       )}
 
