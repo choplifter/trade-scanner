@@ -53,6 +53,11 @@ async def market_conditions(request: Request) -> dict:
             if conditions.vix
             else None
         ),
+        "ten_year": (
+            {"yield_pct": conditions.ten_year.yield_pct, "change_bp": conditions.ten_year.change_bp}
+            if conditions.ten_year
+            else None
+        ),
         "high_impact_events_today": [
             {
                 "date": e.date.isoformat(),

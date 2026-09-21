@@ -31,6 +31,11 @@ _FMP_BASE = "https://financialmodelingprep.com/stable"
 # less to depend on for it. FMP stays as the fallback: it is fetched for
 # the events and the breadth in the same pass anyway.
 _CBOE_VIX = "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json"
+# ^TNX, Cboe's 10-year Treasury yield index: the yield times ten (49.98 is
+# 4.998 %). Shown beside the VIX, not scored -- rates are the biggest single
+# input to index valuations, but there is no agreed "too high" the way VIX
+# 25 is agreed, so it informs the reader rather than the colour.
+_CBOE_TNX = "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_TNX.json"
 
 # "Global" here means the economies whose scheduled releases are actually
 # likely to move a US small/mid-cap scanner universe -- not literally every
@@ -61,6 +66,12 @@ class VixReading:
 
 
 @dataclass
+class TenYearReading:
+    yield_pct: float
+    change_bp: float
+
+
+@dataclass
 class EconomicEvent:
     date: datetime
     country: str
@@ -73,6 +84,7 @@ class MarketConditions:
     level: str  # "green" | "yellow" | "red"
     reasons: list[str] = field(default_factory=list)
     vix: VixReading | None = None
+    ten_year: TenYearReading | None = None
     high_impact_events_today: list[EconomicEvent] = field(default_factory=list)
     breadth_pct: float | None = None
 
@@ -124,6 +136,50 @@ async def fetch_vix(client: httpx.AsyncClient, api_key: str) -> VixReading | Non
     return await fetch_vix_fmp(client, api_key)
 
 
+async def fetch_ten_year_cboe(client: httpx.AsyncClient) -> TenYearReading | None:
+    try:
+        resp = await client.get(_CBOE_TNX, headers={"User-Agent": "trading-dashboard"})
+        resp.raise_for_status()
+        data = (resp.json() or {}).get("data") or {}
+    except Exception:
+        logger.warning("Cboe 10-year yield fetch failed", exc_info=True)
+        return None
+    price = data.get("current_price") or data.get("close")
+    change = data.get("price_change")
+    if price is None or change is None:
+        return None
+    # TNX points are tenths of a percent, so one point is ten basis points.
+    return TenYearReading(yield_pct=float(price) / 10, change_bp=float(change) * 10)
+
+
+async def fetch_ten_year_fmp(client: httpx.AsyncClient, api_key: str) -> TenYearReading | None:
+    """End-of-day only, newest first -- the change is against the day
+    before, which is what Cboe's change means too."""
+    try:
+        resp = await client.get(f"{_FMP_BASE}/treasury-rates", params={"apikey": api_key})
+        resp.raise_for_status()
+        rows = resp.json()
+    except Exception:
+        logger.exception("FMP treasury rates fetch failed")
+        return None
+    if not rows or rows[0].get("year10") is None:
+        return None
+    latest = float(rows[0]["year10"])
+    previous = rows[1].get("year10") if len(rows) > 1 else None
+    change_bp = (latest - float(previous)) * 100 if previous is not None else 0.0
+    return TenYearReading(yield_pct=latest, change_bp=change_bp)
+
+
+async def fetch_ten_year(client: httpx.AsyncClient, api_key: str) -> TenYearReading | None:
+    """Same arrangement as fetch_vix: Cboe first, FMP behind it."""
+    reading = await fetch_ten_year_cboe(client)
+    if reading is not None:
+        return reading
+    if not api_key:
+        return None
+    return await fetch_ten_year_fmp(client, api_key)
+
+
 async def fetch_high_impact_events_today(
     client: httpx.AsyncClient, api_key: str, today: date, countries: set[str] = _TRACKED_COUNTRIES
 ) -> list[EconomicEvent]:
@@ -162,7 +218,10 @@ async def fetch_high_impact_events_today(
 
 
 def compute_market_conditions(
-    vix: VixReading | None, events: list[EconomicEvent], breadth_pct: float | None
+    vix: VixReading | None,
+    events: list[EconomicEvent],
+    breadth_pct: float | None,
+    ten_year: TenYearReading | None = None,
 ) -> MarketConditions:
     level = "green"
     reasons: list[str] = []
@@ -201,6 +260,7 @@ def compute_market_conditions(
         level=level,
         reasons=reasons,
         vix=vix,
+        ten_year=ten_year,
         high_impact_events_today=events,
         breadth_pct=breadth_pct,
     )

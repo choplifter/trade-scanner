@@ -24,6 +24,7 @@ from app.market_data.market_conditions import (
     MarketConditions,
     compute_market_conditions,
     fetch_high_impact_events_today,
+    fetch_ten_year,
     fetch_vix,
 )
 from app.market_data.news import fetch_headlines, is_roundup_headline
@@ -695,8 +696,9 @@ class ScannerEngine:
         self._last_market_conditions_refresh = now
 
         try:
-            vix, events = await asyncio.gather(
+            vix, ten_year, events = await asyncio.gather(
                 fetch_vix(self.http_client, self.settings.fmp_api_key),
+                fetch_ten_year(self.http_client, self.settings.fmp_api_key),
                 fetch_high_impact_events_today(
                     self.http_client, self.settings.fmp_api_key, datetime.now(ET).date()
                 ),
@@ -710,7 +712,7 @@ class ScannerEngine:
             up = sum(1 for r in self.rows.values() if r.pct_change > 0)
             breadth_pct = up / len(self.rows) * 100
 
-        self.market_conditions = compute_market_conditions(vix, events, breadth_pct)
+        self.market_conditions = compute_market_conditions(vix, events, breadth_pct, ten_year)
 
     @property
     def gex(self):

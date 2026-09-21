@@ -325,6 +325,9 @@ function AppShell({ user, onLogout }: AppShellProps) {
                   conditions.vix
                     ? `VIX ${conditions.vix.price.toFixed(2)} (${conditions.vix.change_pct >= 0 ? "+" : ""}${conditions.vix.change_pct.toFixed(1)} %): the S&P 500's expected 30-day volatility. Calm below 20, elevated from 25.`
                     : null,
+                  conditions.ten_year
+                    ? `10-year Treasury ${conditions.ten_year.yield_pct.toFixed(3)} % (${conditions.ten_year.change_bp >= 0 ? "+" : ""}${conditions.ten_year.change_bp.toFixed(1)} bp): the discount rate under every valuation, felt hardest by QQQ's long-duration growth names.`
+                    : null,
                   "click for details",
                 ]
                   .filter(Boolean)
@@ -340,6 +343,17 @@ function AppShell({ user, onLogout }: AppShellProps) {
                       {" "}
                       {conditions.vix.change_pct >= 0 ? "+" : ""}
                       {conditions.vix.change_pct.toFixed(1)} %
+                    </span>
+                  </span>
+                )}
+                {conditions.ten_year && (
+                  <span className="market-conditions-vix">
+                    {" · 10Y "}
+                    {conditions.ten_year.yield_pct.toFixed(2)} %
+                    <span className={conditions.ten_year.change_bp >= 0 ? "up" : "down"}>
+                      {" "}
+                      {conditions.ten_year.change_bp >= 0 ? "+" : ""}
+                      {conditions.ten_year.change_bp.toFixed(0)} bp
                     </span>
                   </span>
                 )}
