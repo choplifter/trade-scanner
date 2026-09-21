@@ -39,7 +39,9 @@ class BrokerCredentials:
 def _default_client_factory(key_id: str, secret: str, paper: bool):
     from alpaca.trading.client import TradingClient
 
-    return TradingClient(api_key=key_id, secret_key=secret, paper=paper)
+    from app.alpaca.client import with_timeout
+
+    return with_timeout(TradingClient(api_key=key_id, secret_key=secret, paper=paper))
 
 
 class BrokerResolver:

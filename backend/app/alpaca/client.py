@@ -9,11 +9,44 @@ from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.live.option import OptionDataStream
 from alpaca.data.live.stock import StockDataStream
 from alpaca.trading.client import TradingClient
+from requests.adapters import HTTPAdapter
 
 from app.core.config import Settings
 from app.trading.errors import LiveTradingRefused
 
 logger = logging.getLogger(__name__)
+
+# (connect, read) seconds for every Alpaca REST call. alpaca-py sends them
+# through a bare requests.Session with no timeout at all, so a connection
+# that dies mid-response -- a network drop, a laptop waking up -- leaves the
+# thread blocked in recv() forever, and whatever awaits that thread with it.
+# On 2026-09-21 that was three option-chain fetches, which froze the scanner
+# engine's loop (and with it the market-conditions readout) for two hours.
+# The read timeout bounds the silence between two reads, not the whole
+# response, so a large paginated chain still arrives; only a dead one stops.
+REST_TIMEOUT = (10.0, 30.0)
+
+
+class _TimeoutAdapter(HTTPAdapter):
+    """Fills in a timeout for any request that did not set its own --
+    alpaca-py never does."""
+
+    def __init__(self, timeout: tuple[float, float]) -> None:
+        self._timeout = timeout
+        super().__init__()
+
+    def send(self, request, timeout=None, **kwargs):
+        return super().send(request, timeout=timeout if timeout is not None else self._timeout, **kwargs)
+
+
+def with_timeout(client, timeout: tuple[float, float] = REST_TIMEOUT):
+    """Mount the timeout on an alpaca-py REST client. Reaches into its
+    private _session because the SDK offers no timeout of its own;
+    tests/test_alpaca_timeout.py fails loudly if an upgrade renames it."""
+    adapter = _TimeoutAdapter(timeout)
+    client._session.mount("https://", adapter)
+    client._session.mount("http://", adapter)
+    return client
 
 
 class AlpacaClients:
@@ -28,40 +61,40 @@ class AlpacaClients:
         self.feed = DataFeed(settings.alpaca_data_feed)
         self.options_feed = OptionsFeed(settings.alpaca_options_feed)
 
-        self.trading = TradingClient(
+        self.trading = with_timeout(TradingClient(
             api_key=settings.alpaca_api_key_id,
             secret_key=settings.alpaca_api_secret_key,
             paper=settings.alpaca_paper,
-        )
+        ))
         # The real-money account, only when its own key pair is configured.
         # Nothing else here splits by account: market data, news, the
         # screener, options chains and the stream all stay on the primary
         # (paper) keys, which is also where the data subscription lives.
         self.trading_live: TradingClient | None = (
-            TradingClient(
+            with_timeout(TradingClient(
                 api_key=settings.alpaca_live_api_key_id,
                 secret_key=settings.alpaca_live_api_secret_key,
                 paper=False,
-            )
+            ))
             if settings.has_live_credentials
             else None
         )
-        self.data = StockHistoricalDataClient(
+        self.data = with_timeout(StockHistoricalDataClient(
             api_key=settings.alpaca_api_key_id,
             secret_key=settings.alpaca_api_secret_key,
-        )
-        self.news = NewsClient(
+        ))
+        self.news = with_timeout(NewsClient(
             api_key=settings.alpaca_api_key_id,
             secret_key=settings.alpaca_api_secret_key,
-        )
-        self.screener = ScreenerClient(
+        ))
+        self.screener = with_timeout(ScreenerClient(
             api_key=settings.alpaca_api_key_id,
             secret_key=settings.alpaca_api_secret_key,
-        )
-        self.options = OptionHistoricalDataClient(
+        ))
+        self.options = with_timeout(OptionHistoricalDataClient(
             api_key=settings.alpaca_api_key_id,
             secret_key=settings.alpaca_api_secret_key,
-        )
+        ))
         self.stream = StockDataStream(
             api_key=settings.alpaca_api_key_id,
             secret_key=settings.alpaca_api_secret_key,

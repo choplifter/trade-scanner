@@ -268,3 +268,46 @@ def test_a_blank_symbol_is_still_handled_rather_than_crashing(symbol):
         await cache.reading(symbol)
 
     asyncio.run(run())
+
+
+class _Hanging:
+    """A fetch that never comes back -- a dead connection under
+    fetch_gex -- until `hang` is cleared."""
+
+    def __init__(self) -> None:
+        self.hang = True
+        self.calls = 0
+
+    async def __call__(self, clients, symbol) -> GexReading | None:
+        self.calls += 1
+        if self.hang:
+            await asyncio.Event().wait()
+        return _reading(symbol)
+
+
+def test_a_fetch_that_never_returns_times_out_and_frees_the_symbol():
+    async def run():
+        fetcher = _Hanging()
+        cache = _cache(fetcher, _Clock(), fetch_timeout=0.05)
+
+        assert await asyncio.wait_for(cache.refresh("SPY"), 2) is None
+
+        # The lock was released: the next caller is not stuck behind it.
+        fetcher.hang = False
+        assert await asyncio.wait_for(cache.refresh("SPY"), 2) is not None
+        assert fetcher.calls == 2
+
+    asyncio.run(run())
+
+
+def test_a_timed_out_refresh_keeps_the_previous_reading():
+    async def run():
+        fetcher = _Hanging()
+        fetcher.hang = False
+        cache = _cache(fetcher, _Clock(), fetch_timeout=0.05)
+        good = await cache.refresh("QQQ")
+
+        fetcher.hang = True
+        assert await asyncio.wait_for(cache.refresh("QQQ"), 2) is good
+
+    asyncio.run(run())

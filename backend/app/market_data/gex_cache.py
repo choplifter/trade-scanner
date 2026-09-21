@@ -49,6 +49,13 @@ logger = logging.getLogger(__name__)
 # ticker with no chain at all would re-fetch on every request -- an easy
 # way to spend the API budget on an answer that will not change.
 FAILURE_BACKOFF_SECONDS = 60.0
+# The longest one symbol's fetch may take before it counts as failed. A
+# fetch holds that symbol's lock, and the engine's warm loop awaits every
+# warm symbol, so a fetch that never returns used to stall both the API
+# for that symbol and the whole engine loop. The Alpaca clients carry their
+# own socket timeouts (app.alpaca.client.REST_TIMEOUT); this is the bound
+# on the whole paginated fetch, and the backstop if anything else hangs.
+FETCH_TIMEOUT_SECONDS = 120.0
 # Enough for a long session of clicking through the scanner without the
 # cache growing without bound. Evicted least-recently-used.
 MAX_SYMBOLS = 200
@@ -73,6 +80,7 @@ class GexCache:
         ttl: float,
         max_symbols: int = MAX_SYMBOLS,
         failure_backoff: float = FAILURE_BACKOFF_SECONDS,
+        fetch_timeout: float = FETCH_TIMEOUT_SECONDS,
         fetcher: Fetcher = fetch_gex,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -80,6 +88,7 @@ class GexCache:
         self._ttl = ttl
         self._max_symbols = max_symbols
         self._failure_backoff = failure_backoff
+        self._fetch_timeout = fetch_timeout
         self._fetch = fetcher
         self._now = now
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
@@ -139,8 +148,13 @@ class GexCache:
             return entry.reading if entry is not None else None
 
         # fetch_gex is best-effort by contract: it logs and returns None
-        # rather than raising, so there is nothing to catch here.
-        reading = await self._fetch(self._clients, symbol)
+        # rather than raising. Running out of time is the one failure it
+        # cannot report itself, and it is treated like any other.
+        try:
+            reading = await asyncio.wait_for(self._fetch(self._clients, symbol), self._fetch_timeout)
+        except TimeoutError:
+            logger.warning("GEX fetch for %s gave no answer within %.0fs", symbol, self._fetch_timeout)
+            reading = None
         if reading is None:
             self._failed_at[symbol] = self._now()
             entry = self._entries.get(symbol)
