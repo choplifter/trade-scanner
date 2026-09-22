@@ -17,7 +17,7 @@ from app.ai.options_suggest import suggest_options_ideas
 from app.options.optimize import OptimizeRequest, optimize_structures
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, RollRequest, SpreadTicket, TriggerCreate
-from app.options.service import OptionsService
+from app.options.service import OptionsService, market_order_refusal
 from app.routers.trading import _account, _confirm
 from app.trading.errors import BrokerNotConnected, TradingError
 from app.trading.guards import can_submit, limits_for
@@ -166,7 +166,10 @@ async def preview_spread(ticket: SpreadTicket, request: Request, service: Option
         raise HTTPException(status_code=502, detail="Failed to price the spread")
     return {
         "spread": resolved.model_dump(mode="json"),
-        "can_submit": can_submit(settings, _account(request), live_available=getattr(service, "_live_available", None)),
+        # A market order outside the regular session would only come back
+        # from Alpaca refused; the reason is the first preview warning.
+        "can_submit": can_submit(settings, _account(request), live_available=getattr(service, "_live_available", None))
+        and market_order_refusal(ticket.order_type, _account(request)) is None,
         "limits": _limits(request),
     }
 

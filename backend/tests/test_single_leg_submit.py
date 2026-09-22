@@ -47,6 +47,9 @@ def _service(monkeypatch, resolved) -> tuple[OptionsService, _Trading]:
         return resolved
 
     monkeypatch.setattr(OptionsService, "preview", preview)
+    # Market orders are refused outside the regular session (see
+    # market_order_refusal); these tests are about the request, not the clock.
+    monkeypatch.setattr("app.options.service.current_session", lambda now=None: "regular")
     return service, trading
 
 

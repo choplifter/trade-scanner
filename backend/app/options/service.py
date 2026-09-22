@@ -36,7 +36,7 @@ from app.options.models import (
     resolve_legs,
 )
 from app.options.optimizer import chance_of_profit, position_pnl
-from app.services.market_clock import ET
+from app.services.market_clock import ET, current_session
 from app.options.occ import try_parse_occ
 from app.options.payoff import PayoffLeg, payoff_curve
 from app.options.positions import SpreadGroup, group_spreads
@@ -94,6 +94,25 @@ def market_warning(leg_count: int, no_natural: bool) -> str:
         parts.append("No natural right now (a leg without a two-sided quote), so the estimate is the mid.")
     parts.append("Alpaca takes option market orders in the regular session only.")
     return " ".join(parts)
+
+
+MARKET_ORDER_OUTSIDE_SESSION = (
+    "Alpaca takes option market orders only in the regular session (09:30-16:00 New York). "
+    "Use a limit order, or wait for the open."
+)
+
+
+def market_order_refusal(order_type: str, account: str, now: datetime | None = None) -> str | None:
+    """Why a market order cannot go to Alpaca right now, or None when it
+    can. The broker refuses option market orders outside the regular
+    session with a message that says little ("market orders not allowed");
+    asking first lets the ticket say why and grey out the button instead.
+    The simulated book is our own and keeps taking them."""
+    if order_type != "market" or account == "sim":
+        return None
+    if current_session(now) == "regular":
+        return None
+    return MARKET_ORDER_OUTSIDE_SESSION
 
 
 def build_mleg_request(
@@ -575,6 +594,9 @@ class OptionsService:
                 else:
                     warnings.append(f"{leg.symbol}: wide market ({leg.bid:.2f} / {leg.ask:.2f}); a mid limit may not fill.")
         if market:
+            refusal = market_order_refusal("market", self._account)
+            if refusal:
+                warnings.insert(0, refusal)
             warnings.append(market_warning(len(legs), net_natural is None))
         if built and bare:
             naked_note = ", ".join(f"{leg.strike:g} {leg.kind}" for leg in bare)
@@ -794,6 +816,9 @@ class OptionsService:
                 f"{resolved.coverage.kind} needed, {resolved.coverage.have:,.0f} available",
                 field="qty",
             )
+        refusal = market_order_refusal(resolved.order_type, self._account)
+        if refusal:
+            raise OrderRejected(refusal, field="order_type")
         if len(resolved.legs) == 1:
             request = build_single_leg_request(
                 resolved.legs[0], resolved.qty, resolved.limit_price, resolved.client_order_id, resolved.order_type
@@ -843,6 +868,9 @@ class OptionsService:
             price = round(net_mid, 2)
         if order_type == "limit" and price <= 0:
             raise OrderRejected("The closing price must be positive", field="limit_price")
+        refusal = market_order_refusal(order_type, self._account)
+        if refusal:
+            raise OrderRejected(refusal, field="order_type")
         if len(legs) == 1:
             request = build_single_leg_request(legs[0], req.qty, price, req.client_order_id, order_type)
         else:
