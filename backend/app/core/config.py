@@ -433,6 +433,13 @@ class Settings(BaseSettings):
     # universe can be thousands of symbols.
     fmp_api_key: str = ""
     fundamentals_refresh_interval: float = 21_600.0
+    # Optional -- the St. Louis Fed's FRED API (free key at
+    # https://fred.stlouisfed.org/docs/api/api_key.html). Only the Move
+    # Attribution analytics page uses it, for the dates of past CPI,
+    # payrolls, GDP, PCE and FOMC releases: FMP's calendar on the current
+    # plan reaches back less than a year. Without it that page still runs
+    # and says the older releases are unknown.
+    fred_api_key: str = ""
 
     @property
     def has_credentials(self) -> bool:
@@ -449,6 +456,10 @@ class Settings(BaseSettings):
     @property
     def has_fmp_credentials(self) -> bool:
         return bool(self.fmp_api_key)
+
+    @property
+    def has_fred_credentials(self) -> bool:
+        return bool(self.fred_api_key)
 
 
 @lru_cache
