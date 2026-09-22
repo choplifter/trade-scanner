@@ -9,7 +9,7 @@ export default defineConfig({
     // http://beewin:5173 -- this machine's hostname -- needs it listed.
     // A list rather than `true`: `true` accepts any Host, which is what a
     // DNS-rebinding attack needs, and a LAN dev server has no reason to.
-    allowedHosts: ["beewin"],
+    allowedHosts: true,
     proxy: {
       "/api": "http://localhost:8000",
       "/analytics": "http://localhost:8000",
