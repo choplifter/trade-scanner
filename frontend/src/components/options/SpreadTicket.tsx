@@ -59,6 +59,7 @@ import {
   builderLevels,
   builderTicket,
   levelForBuilder,
+  nakedLegs,
   type BuilderLeg,
 } from "./builderLegs";
 
@@ -470,9 +471,14 @@ export function SpreadTicket({
 
   // A preview still on its way back from the other order type prices the
   // wrong order; don't submit off it.
+  // Alpaca supports no uncovered short option at any level, and takes a
+  // multi-leg order only if every leg is covered inside it. The simulated
+  // book is our own and still takes one.
+  const bareLegs = building ? nakedLegs(builder, expiry) : [];
+  const nakedRefused = bareLegs.length > 0 && mode !== "simulation";
   const spread = preview && (preview.spread.order_type ?? "limit") === orderType ? preview.spread : null;
   const covered = !spread?.coverage || spread.coverage.ok;
-  const canSubmit = Boolean(spread && preview?.can_submit) && covered && !submitting && !pricing;
+  const canSubmit = Boolean(spread && preview?.can_submit) && covered && !nakedRefused && !submitting && !pricing;
   const badge = modeBadge(mode);
 
   const toggleRisk = () => {
@@ -516,7 +522,7 @@ export function SpreadTicket({
   };
 
   const level = account?.options_trading_level ?? account?.options_approved_level ?? null;
-  const levelNeeded = building ? levelForBuilder(builder, expiry) : optionsLevelRequired(strategy);
+  const levelNeeded = building ? levelForBuilder(builder) : optionsLevelRequired(strategy);
   const levelWarning =
     level != null && level < levelNeeded
       ? `This account has options level ${level}; ${STRATEGY_LABELS[strategy].toLowerCase()} needs level ${levelNeeded}.`
@@ -837,6 +843,13 @@ export function SpreadTicket({
         )}
       </div>
 
+      {nakedRefused && (
+        <p className="order-rejection">
+          {bareLegs.map((leg) => `${leg.strike}${leg.kind === "put" ? "P" : "C"}`).join(", ")} {bareLegs.length > 1 ? "are" : "is"} an
+          uncovered short: Alpaca supports no uncovered short option at any level, and takes a multi-leg order only if
+          every leg is covered inside it. Cover it with a long of the same kind, or switch to Simulation.
+        </p>
+      )}
       {levelWarning && <p className="order-rejection">{levelWarning}</p>}
       {rejection && (
         <p className="order-rejection">

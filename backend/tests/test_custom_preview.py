@@ -143,7 +143,7 @@ def test_an_uncovered_short_says_so_and_uses_the_brokers_margin(service):
     # Reg-T: a fifth of the underlying less what it is out of the money,
     # plus the premium -- far more than a spread's width.
     assert spread.collateral > 1_500
-    assert any("Uncovered short leg" in w and "level 4" in w for w in spread.warnings)
+    assert any("Uncovered short leg" in w and "no uncovered short option" in w for w in spread.warnings)
 
 
 def test_the_probabilities_come_back_and_bracket_sensibly(service):

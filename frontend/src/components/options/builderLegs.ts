@@ -155,13 +155,12 @@ export function builderTicket(
   };
 }
 
-/** What the level badge and the submit guard ask, mirroring the backend's
- * level_for_legs: a long of the same kind that does not expire first caps
- * a short, whichever side of it the strike sits on. */
-export function levelForBuilder(legs: BuilderLeg[], ticketExpiry: string): number {
+/** What the level badge asks, mirroring the backend's level_for_legs.
+ * Three is the ceiling -- Alpaca has no fourth level, and a package with
+ * an uncovered short is not a level question at all: it takes no such
+ * position at any level (see nakedLegs and the ticket's own guard). */
+export function levelForBuilder(legs: BuilderLeg[]): number {
   if (legs.length === 0) return 2;
-  const bare = nakedLegs(legs, ticketExpiry);
-  if (bare.length > 0) return 4;
   return legs.some((leg) => leg.side === "sell") ? 3 : 2;
 }
 

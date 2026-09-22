@@ -152,9 +152,12 @@ SINGLE_LEG_LEVEL_REQUIRED = 2
 INCOME_LEVEL_REQUIRED = 1
 
 
-# A short leg nothing covers: the broker's highest tier, because the loss
-# has no ceiling (a call) or a very high one (a put).
-NAKED_LEVEL_REQUIRED = 4
+# Alpaca has three levels and no fourth, and supports no uncovered short
+# option at any of them -- an MLEG order is taken "only if all its legs
+# are covered within the same MLeg order". A built package with a bare
+# short is therefore not a level question at all: the broker refuses it,
+# so the ticket does, and only the simulated book still takes it (see
+# OptionsService.submit).
 
 
 def naked_shorts(legs: list["TicketLeg"]) -> list["TicketLeg"]:
@@ -198,11 +201,11 @@ def naked_shorts(legs: list["TicketLeg"]) -> list["TicketLeg"]:
 
 def level_for_legs(strategy: str, legs: list["TicketLeg"] | None) -> int:
     """What a ticket needs, from its shape rather than its name -- the
-    custom builder can put together anything."""
+    custom builder can put together anything. Three is the ceiling: a
+    package Alpaca will not take at all (see naked_shorts) is refused for
+    what it is, not for a level that does not exist."""
     if strategy != "custom" or not legs:
         return options_level_required(strategy)
-    if naked_shorts(legs):
-        return NAKED_LEVEL_REQUIRED
     if any(leg.side == "sell" for leg in legs):
         return OPTIONS_LEVEL_REQUIRED
     return SINGLE_LEG_LEVEL_REQUIRED

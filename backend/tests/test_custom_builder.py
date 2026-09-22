@@ -33,10 +33,13 @@ def test_a_long_above_a_short_call_covers_it():
     assert level_for_legs("custom", legs) == 3
 
 
-def test_a_lone_short_is_naked_and_needs_level_four():
+def test_a_lone_short_is_naked_and_is_not_a_level_question():
+    """Alpaca has three levels and no fourth, and takes no uncovered short
+    at any of them -- so the level stays 3 and the package is refused for
+    what it is (see OptionsService.submit)."""
     legs = _ticket(TicketLeg(kind="call", strike=770, side="sell")).leg_specs_full()
     assert [leg.strike for leg in naked_shorts(legs)] == [770]
-    assert level_for_legs("custom", legs) == 4
+    assert level_for_legs("custom", legs) == 3
 
 
 def test_a_long_of_the_same_kind_covers_whichever_side_it_sits_on():
@@ -79,7 +82,7 @@ def test_ratios_leave_the_extra_short_bare():
         TicketLeg(kind="call", strike=780, side="buy"),
     ).leg_specs_full()
     assert [leg.strike for leg in naked_shorts(legs)] == [770]
-    assert level_for_legs("custom", legs) == 4
+    assert level_for_legs("custom", legs) == 3
 
 
 def test_a_long_that_expires_first_does_not_cover():

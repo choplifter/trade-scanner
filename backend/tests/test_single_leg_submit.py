@@ -5,6 +5,8 @@ needed -- the request builder branch is what is under test."""
 import asyncio
 from datetime import date
 
+import pytest
+
 from app.core.config import Settings
 from app.options.models import ResolvedSpread, SpreadLeg, SpreadTicket
 from app.options.service import OptionsService
@@ -159,3 +161,42 @@ def test_a_market_close_ignores_the_limit_and_the_trigger_keeps_its_limit(monkey
 
     asyncio.run(service.close_spread(CloseSpreadRequest(legs=held, qty=1, order_type="market"), marketable=True))
     assert trading.requests[-1].type == OrderType.LIMIT
+
+
+def test_an_uncovered_short_never_reaches_alpaca(monkeypatch):
+    """Alpaca has no level for this: it supports no uncovered short option
+    at all, and takes a multi-leg order only if every leg is covered
+    inside it. Refusing here says that; a broker rejection would not."""
+    from app.options.models import TicketLeg
+    from app.trading.errors import OrderRejected
+
+    resolved = _resolved("custom", [_leg("SPY260918C00760000", "call", 760, "sell")], -1.5)
+    resolved.naked = True
+    resolved.options_level = 3
+    service, trading = _service(monkeypatch, resolved)
+    ticket = SpreadTicket(
+        underlying="SPY", strategy="custom", expiry=EXPIRY, qty=2,
+        legs=[TicketLeg(kind="call", strike=760, side="sell")],
+    )
+    with pytest.raises(OrderRejected) as exc:
+        asyncio.run(service.submit(ticket))
+    assert "no uncovered short option" in exc.value.message
+    assert trading.requests == []
+
+    # Covered by a long of the same kind: it goes out.
+    covered = _resolved(
+        "custom",
+        [_leg("SPY260918C00760000", "call", 760, "sell"), _leg("SPY260918C00770000", "call", 770, "buy")],
+        -1.5,
+    )
+    covered.options_level = 3
+    service, trading = _service(monkeypatch, covered)
+    asyncio.run(
+        service.submit(
+            SpreadTicket(
+                underlying="SPY", strategy="custom", expiry=EXPIRY, qty=2,
+                legs=[TicketLeg(kind="call", strike=760, side="sell"), TicketLeg(kind="call", strike=770, side="buy")],
+            )
+        )
+    )
+    assert len(trading.requests) == 1

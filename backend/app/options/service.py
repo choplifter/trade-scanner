@@ -600,9 +600,15 @@ class OptionsService:
             warnings.append(market_warning(len(legs), net_natural is None))
         if built and bare:
             naked_note = ", ".join(f"{leg.strike:g} {leg.kind}" for leg in bare)
+            where = (
+                "the simulated book takes it; Alpaca would not"
+                if self._account == "sim"
+                else "Alpaca will refuse this order"
+            )
             warnings.append(
-                f"Uncovered short leg ({naked_note}): the loss has no ceiling, and the collateral shown is the "
-                "broker's standard margin as an estimate, not what Alpaca will hold. Needs options level 4."
+                f"Uncovered short leg ({naked_note}): Alpaca supports no uncovered short option at any level -- "
+                f"{where}. The loss has no ceiling, and the collateral shown is the standard margin as an "
+                "estimate of what such a position ties up."
             )
 
         # The two probabilities, under the distribution the chain itself
@@ -810,6 +816,18 @@ class OptionsService:
             level_for_legs(ticket.strategy, ticket.leg_specs_full()),
             STRATEGY_LABELS[ticket.strategy],
         )
+        if resolved.naked:
+            # Not a level: Alpaca takes an MLEG order "only if all its legs
+            # are covered within the same MLeg order", and no uncovered
+            # short at all. Refusing here beats a broker rejection whose
+            # message says none of that.
+            bare = naked_shorts(ticket.leg_specs_full())
+            note = ", ".join(f"{leg.strike:g} {leg.kind}" for leg in bare)
+            raise OrderRejected(
+                f"Uncovered short leg ({note}): Alpaca supports no uncovered short option at any level. "
+                "Add a long of the same kind to cover it, or place it in Simulation.",
+                field="legs",
+            )
         if resolved.coverage is not None and not resolved.coverage.ok:
             raise OrderRejected(
                 f"{STRATEGY_LABELS[ticket.strategy]} is not covered: {resolved.coverage.need:,.0f} "
