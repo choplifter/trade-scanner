@@ -1,4 +1,4 @@
-"""Wilder's RSI over 14 periods of intraday minute closes.
+"""Wilder's RSI over 14 periods of the chart's own closes (ctx.chart_bars).
 
 An oscillator, not a price: it lives between 0 and 100, so it cannot share
 the chart's price scale the way an EMA or a Bollinger band can -- drawn
@@ -10,20 +10,19 @@ Those guides are convention, not signals: in a strong trend RSI sits above
 70 for hours and every "overbought" reading is a bad short. What it is good
 for is the comparison -- price making a new high while this does not.
 
-Intraday only, for the same reason the Bollinger bands are: fourteen weekly
-bars are a quarter of a year, and an oscillator over that period says
-nothing about the session being traded. The chart draws series indicators
-on the minute feed alone, so "1Min" is the honest ceiling.
+Offered at every timeframe: fourteen bars of whatever the chart shows, so
+a daily RSI is the fourteen-day one everyone quotes.
 """
 
 import pandas_ta as ta
 
 NAME = "RSI"
 KIND = "oscillator"
-MAX_TIMEFRAME = "1Min"
 LENGTH = 14
 COLORS = {"RSI 14": "#c08a2e"}
 STYLE = {"width": 1, "dash": "solid"}
+# See STUDY in app.indicators.loader.
+STUDY = {"RSI 14": {"type": "rsi", "length": LENGTH}}
 # The pane's fixed scale: an oscillator autoscaled to its own range would
 # make a quiet 45-55 session look like a wild one.
 RANGE = {"min": 0.0, "max": 100.0}
@@ -37,7 +36,7 @@ GUIDES = [
 
 
 def compute(ctx) -> dict:
-    df = ctx.minute_bars
+    df = ctx.chart_bars
     if df.empty or len(df) <= LENGTH:
         # RSI needs one more bar than its window to have a first value.
         return {"RSI 14": []}

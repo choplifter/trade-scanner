@@ -52,6 +52,14 @@ class IndicatorContext:
     # draws it reads this regardless of what the chart is showing. See
     # app.indicators.market_structure.
     hourly_bars: pd.DataFrame
+    # The bars the chart is actually drawing: the minute bars on an intraday
+    # chart (1m/5m/15m are bucketed from them client-side), the requested
+    # timeframe's own bars above that. What a moving average or an
+    # oscillator reads -- an EMA or an RSI belongs to the candles on screen,
+    # so it has to be computed from them to line up with them. Levels keep
+    # reading their own source resolution above, which is what makes a level
+    # mean the same thing at every zoom. Left out, it is the minute bars.
+    chart_bars: pd.DataFrame | None = None
     # Which chart resolution the caller asked for. Indicators do not read
     # this themselves -- the loader uses it to decide which of them run at
     # all, so an indicator's compute() never has to think about zoom.
@@ -63,6 +71,18 @@ class IndicatorContext:
     # replayed" rather than leaking the real current week/month into a
     # past session's chart.
     as_of: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # Outside the symbol's own bars: the 10-year yield (percent, UTC-stamped
+    # app.market_data.cboe_history.Point -- minute points under an intraday
+    # or hourly chart, daily closes above) and the tracked macro releases
+    # over the chart's window (app.market_data.macro_calendar.MacroEvent).
+    # Fetched by the caller like every other input here; empty when the
+    # source had nothing, which the indicators read as "not known".
+    ten_year: list = field(default_factory=list)
+    macro_events: list = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.chart_bars is None:
+            self.chart_bars = self.minute_bars
 
 
 _COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "vwap"]
@@ -98,11 +118,19 @@ def build_context(
     timeframe: str = "1Min",
     hourly_bars: list | None = None,
     as_of: datetime | None = None,
+    chart_bars: list | None = None,
+    ten_year: list | None = None,
+    macro_events: list | None = None,
 ) -> IndicatorContext:
+    """`chart_bars` defaults to the minute bars: on an intraday chart those
+    are what is drawn."""
     kwargs = {"as_of": as_of} if as_of is not None else {}
     return IndicatorContext(
         symbol=symbol,
         minute_bars=_bars_to_df(minute_bars),
+        chart_bars=None if chart_bars is None else _bars_to_df(chart_bars),
+        ten_year=list(ten_year or []),
+        macro_events=list(macro_events or []),
         weekly_bars=_bars_to_df(weekly_bars),
         monthly_bars=_bars_to_df(monthly_bars),
         timeframe=timeframe,

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from app.auth.dependency import get_current_user
 from app.indicators.context import build_context
 from app.indicators.loader import run_indicators
+from app.routers.symbols import market_context
 from app.market_data.bars import get_historical_bars
 from app.market_data.vwap import SessionVwapState
 from app.options.occ import try_parse_occ
@@ -365,7 +366,20 @@ async def get_replay_indicators(symbol: str, request: Request, user: dict = Depe
     monthly_bars = _clip_to_as_of(monthly_bars, as_of)
     hourly_bars = _clip_to_as_of(hourly_bars, as_of)
 
-    ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars, "1Min", hourly_bars, as_of=as_of)
+    # Both indicators reading these drop whatever lies after as_of, so a
+    # replayed session never shows a yield move or release it had not seen.
+    ten_year, macro_events = await market_context(request.app.state, "1Min", minute_bars)
+    ctx = build_context(
+        symbol,
+        minute_bars,
+        weekly_bars,
+        monthly_bars,
+        "1Min",
+        hourly_bars,
+        as_of=as_of,
+        ten_year=ten_year,
+        macro_events=macro_events,
+    )
     indicators = await asyncio.to_thread(run_indicators, ctx)
 
     # Same accumulator/loop symbols.py's live /bars endpoint runs -- no

@@ -1,5 +1,5 @@
-"""Bollinger Bands on intraday minute closes: a 20-period simple moving
-average with a band two standard deviations either side of it.
+"""Bollinger Bands on the chart's own closes (ctx.chart_bars): a 20-period
+simple moving average with a band two standard deviations either side of it.
 
 The middle line is the same mean a 20-EMA approximates, so the value here
 is the envelope: it widens when the last twenty bars disagreed and pinches
@@ -8,19 +8,15 @@ say. A touch of a band is not a signal -- in a trend price walks the upper
 band for hours -- so this draws the envelope and leaves the reading to the
 reader.
 
-Intraday only (MAX_TIMEFRAME): the bands describe the last twenty bars,
-and on a weekly chart those twenty bars are five months, by which point the
-envelope says nothing about today. "1Min" rather than "1Hour" because the
-chart draws series indicators on the minute feed alone (ChartWidget keeps
-only "level" kinds above it) -- computing them for a request that discards
-them would be work nobody sees.
+Offered at every timeframe: the bands describe the last twenty bars of
+whatever the chart shows, so on a daily chart they are twenty days -- the
+standard reading of them there, not a stretched intraday one.
 """
 
 import pandas_ta as ta
 
 NAME = "Bollinger"
 KIND = "series"
-MAX_TIMEFRAME = "1Min"
 LENGTH = 20
 STDEV = 2.0
 # The bands muted, the mean plainer still: this is background, drawn
@@ -31,6 +27,12 @@ COLORS = {
     "Bollinger lower": "#7c93b8",
 }
 STYLE = {"width": 1, "dash": "dotted"}
+# See STUDY in app.indicators.loader.
+STUDY = {
+    "Bollinger upper": {"type": "bb_upper", "length": LENGTH, "stdev": STDEV},
+    "Bollinger middle": {"type": "sma", "length": LENGTH},
+    "Bollinger lower": {"type": "bb_lower", "length": LENGTH, "stdev": STDEV},
+}
 
 
 def _to_points(df, series) -> list[dict]:
@@ -41,7 +43,7 @@ def _to_points(df, series) -> list[dict]:
 
 
 def compute(ctx) -> dict:
-    df = ctx.minute_bars
+    df = ctx.chart_bars
     empty = {"Bollinger upper": [], "Bollinger middle": [], "Bollinger lower": []}
     if df.empty or len(df) < LENGTH:
         # Fewer bars than the window means every value would be NaN; an

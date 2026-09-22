@@ -25,6 +25,24 @@ Each indicator file exposes:
         today makes a quiet session look like a wild one.
     GUIDES: [{"value": float, "label": str}] (optional, "oscillator" only) --
         the reference lines drawn across that pane (RSI's 30/70).
+    STUDY: dict[str, dict] (optional) -- sub-series name -> the formula it
+        is, e.g. {"type": "rsi", "length": 14}, for an indicator that is a
+        pure function of the chart's closes. The intraday chart builds its
+        5m/15m candles client-side from the minute feed and keeps them live,
+        so it recomputes these from the candles it actually draws (see
+        utils/chartStudies.ts) instead of showing a minute-bar value that is
+        both the wrong resolution and frozen at load time. Types:
+        "ema" {length}, "sma" {length}, "bb_upper"/"bb_lower" {length,
+        stdev}, "rsi" {length} -- pandas_ta's formulas, pinned by
+        tests/test_indicator_study.py.
+    DERIVE: dict (optional, "marker" only) -- the markers are not in the
+        payload but derived by the chart from a point series that is: which
+        candle a move belongs to depends on the candles on screen, and the
+        intraday chart builds those itself. See app.indicators.ten_year_moves
+        and utils/moveMarkers.ts.
+    BAND: str (optional, "marker" only) -- a translucent colour the chart
+        also fills each marked candle with, top to bottom, so a moment reads
+        as a vertical line across the chart and not just a glyph on a bar.
     def compute(ctx: IndicatorContext) -> dict[str, ...] -- sub-series name
         -> value (float|None for "level") or point list (for "series")
 
@@ -111,6 +129,12 @@ def run_indicators(ctx: IndicatorContext) -> list[dict]:
                 result["range"] = module.RANGE
             if getattr(module, "GUIDES", None):
                 result["guides"] = module.GUIDES
+            if getattr(module, "STUDY", None):
+                result["study"] = module.STUDY
+            if getattr(module, "DERIVE", None):
+                result["derive"] = module.DERIVE
+            if getattr(module, "BAND", None):
+                result["band"] = module.BAND
         except Exception as exc:
             logger.exception("Indicator %s failed to load/compute", path.name)
             # Reported, not dropped. A skipped indicator draws nothing, which

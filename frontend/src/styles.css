@@ -1382,6 +1382,37 @@ body {
   cursor: help;
 }
 
+/* ToolbarSelect (the timeframe and cursor dropdowns) reuses .levels-menu;
+   its rows are buttons rather than the Levels menu's checkbox labels, so
+   they need the button chrome taken off to read as the same rows. */
+.toolbar-select-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.toolbar-select-item[aria-checked="true"] {
+  color: var(--accent);
+}
+
+.toolbar-select-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.toolbar-select-check {
+  width: 10px;
+  flex: none;
+}
+
+.toolbar-select-menu {
+  min-width: 110px;
+}
+
 .levels-menu-divider {
   height: 1px;
   margin: 4px 2px;
@@ -1491,6 +1522,30 @@ a.symbol-news-headline {
 .chart-container {
   width: 100%;
   height: 100%;
+}
+
+/* Positioning context for overlays drawn over the chart (the oscillator
+   readout), sized exactly as .chart-container was on its own. */
+.chart-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* The oscillator's value, at the top-left of its strip in the bottom fifth
+   of the price pane (OSCILLATOR_MARGINS in CandleChart.tsx). Its overlay
+   scale draws no axis, so this is where the number is read instead. The
+   top is measured from the frame including the ~28px time axis, which is
+   why it is not a plain 80%. Clicks pass through to the chart. */
+.chart-oscillator-readout {
+  position: absolute;
+  left: 6px;
+  top: calc((100% - 28px) * 0.8 + 2px);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: pre;
 }
 
 /* Hiding the crosshair does not change the pointer the charting library

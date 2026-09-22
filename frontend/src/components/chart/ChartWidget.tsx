@@ -7,6 +7,8 @@ import { netGexRankSentence } from "../gex/netGexRank";
 import { TICKER_RE, isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import { formatLeg, parseOcc } from "../../utils/occ";
 import { ContractTicket } from "./ContractTicket";
+import { ToolbarSelect } from "./ToolbarSelect";
+import { deriveMarkers } from "../../utils/moveMarkers";
 import { useTradingContext } from "../../context/TradingContext";
 import { useSpreadLevels } from "../../hooks/useSpreadLevels";
 import { useTradingMode } from "../../hooks/useTradingMode";
@@ -108,6 +110,17 @@ function loadVisibleTradeLevels(): Set<TradeLevelKey> {
 function persistLevelSet(key: string, values: Set<string>) {
   setStored(key, JSON.stringify([...values]));
 }
+
+// How long one candle of each fetched timeframe covers, in session minutes
+// (a day is the 390 of a regular session) -- the scale the 10Y move
+// threshold is set against. The intraday ones carry their own `minutes`.
+const CANDLE_MINUTES: Record<string, number> = {
+  "1Hour": 60,
+  "4Hour": 240,
+  "1Day": 390,
+  "1Week": 5 * 390,
+  "1Month": 21 * 390,
+};
 
 const CURSOR_KEY = "chart:cursorMode";
 
@@ -615,7 +628,7 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
     [symbolInfo.info, symbol],
   );
 
-  const displayed = useMemo(() => {
+  const aggregated = useMemo(() => {
     if (option.kind === "intraday") {
       if (usingReplayBars) {
         // VWAP/indicators come from a separate fetch (useReplayIndicators)
@@ -647,16 +660,19 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
     // range, because those lines came from the 1Min request rather than
     // from the weekly one that had already dropped them.
     //
-    // The "level" filter stays, and is a separate concern: "series"-kind
-    // indicators (e.g. an EMA) are minute-resolution -- on an
-    // hourly/daily/weekly/monthly chart that's both semantically odd to
-    // overlay and, left unaggregated, would trip the same
-    // resolution-mismatch zoom bug aggregateBars exists to avoid. "level"
-    // lines are flat values, unaffected either way, so only those show here.
+    // Lines and oscillators come through too: the backend computes them from
+    // this timeframe's own bars (ctx.chart_bars), one point per candle, so
+    // they line up with what is drawn -- no resolution mismatch for
+    // aggregateBars to paper over. The minute-only ones (VWAP) are gated off
+    // server-side by their MAX_TIMEFRAME. Markers come through too: the chart
+    // pins each to the candle containing its moment (see CandleChart), so a
+    // release or an entry lands on the right hour or day.
     return {
       bars: historical.bars,
       vwap: historical.vwap,
-      indicators: historical.indicators.filter((i) => i.kind === "level"),
+      indicators: historical.indicators.filter(
+        (i) => i.kind === "level" || i.kind === "series" || i.kind === "oscillator" || i.kind === "marker",
+      ),
     };
   }, [
     option,
@@ -676,6 +692,15 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
     historical.vwap,
     historical.indicators,
   ]);
+
+  // Markers that are a rule over an outside series (the 10-year's sharp
+  // moves) are worked out here, against whatever candles ended up on
+  // screen: a 2 bp move is news on a 15m candle and noise on a daily one.
+  const candleMinutes = option.minutes ?? CANDLE_MINUTES[option.alpacaTimeframe ?? ""] ?? 1;
+  const displayed = useMemo(
+    () => ({ ...aggregated, indicators: deriveMarkers(aggregated.indicators, aggregated.bars, candleMinutes) }),
+    [aggregated, candleMinutes],
+  );
 
   // gexLevels folded in here, not just at the CandleChart prop, so the
   // Levels-checklist below (which also maps over this same list) can offer
@@ -793,28 +818,24 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
           )}
         </div>
         <div className="chart-toolbar">
-          <div className="timeframe-selector" role="group" aria-label="Chart timeframe">
-            {TIMEFRAME_OPTIONS.map((opt) => (
-              <button
-                key={opt.key}
-                type="button"
-                className="timeframe-button"
-                aria-pressed={timeframeKey === opt.key}
-                onClick={() => {
-                  setTimeframeKey(opt.key);
-                  // A focused pick/trade otherwise keeps re-scrolling back to
-                  // itself on every live tick once the new timeframe's bars
-                  // start arriving (see CandleChart's focus-scroll effect) --
-                  // picking a timeframe here is manual control the same way
-                  // selectSymbol's own comment already treats picking a
-                  // symbol another way, so it lets go of the focus too.
-                  onClearFocus?.();
-                }}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          <ToolbarSelect
+            ariaLabel="Chart timeframe"
+            title="Chart timeframe"
+            value={timeframeKey}
+            // Grouped by kind: the intraday ones are built live from the
+            // minute feed and carry VWAP, the rest are fetched history.
+            options={TIMEFRAME_OPTIONS.map((opt) => ({ key: opt.key, label: opt.label, group: opt.kind }))}
+            onChange={(key) => {
+              setTimeframeKey(key);
+              // A focused pick/trade otherwise keeps re-scrolling back to
+              // itself on every live tick once the new timeframe's bars
+              // start arriving (see CandleChart's focus-scroll effect) --
+              // picking a timeframe here is manual control the same way
+              // selectSymbol's own comment already treats picking a
+              // symbol another way, so it lets go of the focus too.
+              onClearFocus?.();
+            }}
+          />
           <div className="timeframe-selector" role="group" aria-label="Chart type">
             {CHART_TYPES.map((type) => (
               <button
@@ -829,20 +850,12 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
               </button>
             ))}
           </div>
-          <div className="chart-type-toggle">
-            {CURSOR_MODES.map((mode) => (
-              <button
-                key={mode.key}
-                type="button"
-                className="timeframe-button"
-                aria-pressed={cursorMode === mode.key}
-                onClick={() => setCursorMode(mode.key)}
-                title={mode.title}
-              >
-                {mode.label}
-              </button>
-            ))}
-          </div>
+          <ToolbarSelect
+            ariaLabel="Cursor"
+            value={cursorMode}
+            options={CURSOR_MODES}
+            onChange={setCursorMode}
+          />
           <div className="chart-type-toggle">
             <button
               type="button"

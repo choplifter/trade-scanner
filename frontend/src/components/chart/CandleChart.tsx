@@ -15,6 +15,7 @@ import {
   type ISeriesMarkersPluginApi,
   type SeriesMarker,
   type LineData,
+  type MouseEventParams,
   type IRange,
   type Time,
   type WhitespaceData,
@@ -200,6 +201,33 @@ function nearestBarTime(bars: Bar[], time: number): UTCTimestamp | null {
   return nearest;
 }
 
+/** The start time of the bar whose span contains `time` -- the last bar
+ * starting at or before it -- or null when `time` falls outside the loaded
+ * bars. For a marker that stands for a moment (a release, a yield move):
+ * nearestBarTime would put a 14:00 FOMC on the *next* day's daily candle,
+ * which starts closer to it than its own does. Past the last bar counts as
+ * outside unless it is within that bar's own span (taken as the gap to the
+ * bar before it), so a release scheduled for later today does not pin
+ * itself to the forming candle early. */
+function containingBarTime(bars: Bar[], time: number): UTCTimestamp | null {
+  if (bars.length === 0) return null;
+  const first = toUnixSeconds(bars[0].t);
+  if (time < first) return null;
+  let lo = 0;
+  let hi = bars.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (toUnixSeconds(bars[mid].t) <= time) lo = mid;
+    else hi = mid - 1;
+  }
+  if (lo === bars.length - 1 && bars.length > 1) {
+    const last = toUnixSeconds(bars[lo].t);
+    const span = last - toUnixSeconds(bars[lo - 1].t);
+    if (time >= last + span) return null;
+  }
+  return toUnixSeconds(bars[lo].t);
+}
+
 /** The index of the bar closest to `time` -- for setVisibleLogicalRange,
  * which (unlike setVisibleRange) is the mechanism this file's default view
  * and resize handling already rely on. A time-based setVisibleRange call
@@ -339,7 +367,12 @@ function hasAnyVisibleLevel(
   positionLevels: PositionLevels | null,
   indicativeLevels: PositionLevels | null,
 ): boolean {
-  return indicators.length > 0 || hasAnyLevel(positionLevels) || hasAnyLevel(indicativeLevels);
+  // Oscillators draw no labels at the right edge (their overlay scale has
+  // no axis), so they need no clearance -- counting them meant switching
+  // RSI on slid every candle sideways.
+  return (
+    indicators.some((i) => i.kind !== "oscillator") || hasAnyLevel(positionLevels) || hasAnyLevel(indicativeLevels)
+  );
 }
 
 // Show as many bars as fit at a readable spacing: fit everything when there's
@@ -438,11 +471,21 @@ const DASH_PATTERNS: Record<string, LineStyle> = {
  * nothing renders unchanged. */
 const DEFAULT_LEVEL_STYLE = { width: 1, dash: LineStyle.Dashed };
 const DEFAULT_SERIES_STYLE = { width: 2, dash: LineStyle.Solid };
-// An oscillator pane's reference lines (RSI's 30/70): the chart's own
-// muted grey, so they read as scale rather than as another indicator.
+// An oscillator's reference lines (RSI's 30/70): the chart's own muted
+// grey, so they read as scale rather than as another indicator.
 const GUIDE_COLOR = "#8a8f99";
-// Price pane to oscillator pane, by height.
-const OSCILLATOR_PANE_SPLIT = 4;
+// Oscillators (RSI) overlay the bottom fifth of the price pane on a scale
+// of their own, rather than getting a pane: a new pane takes its height out
+// of the candles', so switching RSI on used to squeeze the whole chart.
+// Here the candles' scale is never touched -- its margins already leave
+// that fifth free -- and volume, which normally sits there, moves up into
+// a half-height band just above it while an oscillator is showing. Half,
+// because up there it overlaps the lowest candles, and a full fifth of
+// volume bars buried them.
+const OSCILLATOR_SCALE_ID = "oscillator";
+const OSCILLATOR_MARGINS = { top: 0.82, bottom: 0.02 };
+const VOLUME_MARGINS = { top: 0.8, bottom: 0 };
+const VOLUME_MARGINS_ABOVE_OSCILLATOR = { top: 0.7, bottom: 0.2 };
 
 function resolveStyle(style: IndicatorStyle | undefined, defaults: { width: number; dash: LineStyle }) {
   return {
@@ -491,6 +534,10 @@ export function CandleChart({
   const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   // The premarket/after-hours background washes -- see sessionBands.ts.
   const sessionBandsRef = useRef<{ pre: ISeriesApi<"Histogram">; post: ISeriesApi<"Histogram"> } | null>(null);
+  // Full-height columns on the candles a "band" marker indicator marks (the
+  // macro releases): same overlay scale as the session washes, drawn over
+  // them, under everything that carries a price.
+  const eventBandsRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   // The palette/style/locale as of the last render, for effects that
   // create series without depending on them (the mount and chart-type
@@ -507,8 +554,33 @@ export function CandleChart({
   const orderLinesRef = useRef<IPriceLine[]>([]);
   const indicativeLinesRef = useRef<IPriceLine[]>([]);
   const indicatorSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
-  // Which pane the oscillators (RSI) live in, while any are showing.
-  const oscillatorPaneRef = useRef<number | null>(null);
+  // The oscillator on show, for its readout: an overlay scale has no axis,
+  // so the value is printed at the top of its strip instead (see the
+  // crosshair effect below).
+  const oscillatorRef = useRef<{
+    title: string;
+    color: string;
+    series: ISeriesApi<"Line">;
+    last: number | null;
+  } | null>(null);
+  const oscillatorReadoutRef = useRef<HTMLDivElement | null>(null);
+  // Written straight to the DOM rather than through state: it follows the
+  // crosshair, and a re-render per mouse move would rebuild the chart's
+  // effects for a line of text. `hovered` is the crosshair's value; null
+  // means the latest one.
+  function showOscillatorReadout(hovered: number | null) {
+    const el = oscillatorReadoutRef.current;
+    if (!el) return;
+    const osc = oscillatorRef.current;
+    if (!osc) {
+      el.hidden = true;
+      return;
+    }
+    const v = hovered ?? osc.last;
+    el.hidden = false;
+    el.style.color = osc.color;
+    el.textContent = v == null ? osc.title : `${osc.title}  ${v.toFixed(1)}`;
+  }
   // The markers primitive, kept so the pick pin is updated in place rather
   // than layered again on every focus change.
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
@@ -725,6 +797,8 @@ export function CandleChart({
     // range from their options, value 1 is the pane's top edge and the fill
     // reaches the bottom -- a full-height wash rather than a half-pane one.
     sessionBands.pre.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
+    // Per-bar colour, so one series serves every band indicator.
+    const eventBands = chart.addSeries(HistogramSeries, sessionBandOptions("transparent"));
 
     // The price series itself is created by its own effect below, so
     // switching between candles and a line swaps one series instead of
@@ -738,7 +812,7 @@ export function CandleChart({
     // TradingView proportion. It was a quarter, with the candles stopping
     // at 70% of the height; together with the 3px bar spacing that made
     // intraday candles read as far flatter than the same bars elsewhere.
-    chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+    chart.priceScale("volume").applyOptions({ scaleMargins: VOLUME_MARGINS });
 
     // VWAP overlays the same right-hand price scale as the candles -- it
     // is the day-trading reference line, not a secondary measure.
@@ -753,6 +827,7 @@ export function CandleChart({
     volumeSeriesRef.current = volumeSeries;
     vwapSeriesRef.current = vwapSeries;
     sessionBandsRef.current = sessionBands;
+    eventBandsRef.current = eventBands;
 
     // autoSize above already has lightweight-charts observing the container,
     // so hook its own size event rather than adding a second ResizeObserver
@@ -915,6 +990,7 @@ export function CandleChart({
       vwapSeriesRef.current = null;
       // Disposed by chart.remove() along with every other series.
       sessionBandsRef.current = null;
+      eventBandsRef.current = null;
       // chart.remove() above already disposed every series/price-line that
       // was attached to it, including whatever the indicators effect added
       // -- without this, those refs would still point at now-disposed
@@ -926,7 +1002,7 @@ export function CandleChart({
       positionLinesRef.current = [];
       indicativeLinesRef.current = [];
       indicatorSeriesRef.current = [];
-      oscillatorPaneRef.current = null;
+      oscillatorRef.current = null;
       draggableLinesRef.current = [];
       draggingRef.current = null;
     };
@@ -1196,22 +1272,39 @@ export function CandleChart({
 
     // indicators is already filtered down to whatever the Levels dropdown
     // has checked, so no separate on/off gate is needed here.
+    //
+    // Each lands on the candle containing its moment: an indicator's time is
+    // when something happened, and on a 15m or daily chart that is rarely a
+    // candle's own start -- unsnapped, the library has no bar to hang it on.
+    const bandColors = new Map<number, string>();
     indicators.forEach((indicator) => {
       if (indicator.kind !== "marker") return;
       Object.entries(indicator.series).forEach(([subName, value]) => {
         if (!isMarkerSeries(value)) return;
         const color = indicator.colors[subName] ?? "#898781";
         value.forEach((marker) => {
+          const time = containingBarTime(bars, marker.time);
+          if (time == null) return;
           markers.push({
-            time: marker.time as Time,
+            time,
             position: marker.position,
             shape: marker.shape,
             color,
             text: marker.text,
           });
+          if (indicator.band) bandColors.set(time, indicator.band);
         });
       });
     });
+    eventBandsRef.current?.setData(
+      bandColors.size === 0
+        ? []
+        : bars.map((bar) => {
+            const time = toUnixSeconds(bar.t);
+            const color = bandColors.get(time);
+            return color ? { time, value: 1, color } : { time };
+          }),
+    );
 
     // News pins: one 📰 per bar, at the bar nearest each headline's publish
     // time. size 0 keeps the emoji as the whole glyph rather than stacking
@@ -1371,14 +1464,7 @@ export function CandleChart({
     priceLinesRef.current = [];
     indicatorSeriesRef.current.forEach((series) => chart.removeSeries(series));
     indicatorSeriesRef.current = [];
-    // The oscillator pane goes with them: left behind empty it is a blank
-    // strip under the chart with nothing in it.
-    if (oscillatorPaneRef.current != null) {
-      const panes = chart.panes();
-      const pane = panes[oscillatorPaneRef.current];
-      if (pane && pane.getSeries().length === 0) chart.removePane(oscillatorPaneRef.current);
-      oscillatorPaneRef.current = null;
-    }
+    oscillatorRef.current = null;
 
     // indicators is already filtered down to whatever the Levels dropdown
     // has checked, so no separate on/off gate is needed here.
@@ -1403,54 +1489,49 @@ export function CandleChart({
           });
           priceLinesRef.current.push(line);
         } else if (indicator.kind === "oscillator" && isPointSeries(value)) {
-          // Its own pane below the candles, created on first use and torn
-          // down with the series. The guides go on the first series of the
-          // pane, which is what carries its scale.
+          // The bottom strip of the price pane, on its own scale (see
+          // OSCILLATOR_SCALE_ID). An overlay scale draws no axis, so no
+          // axis labels either -- the value goes in the readout instead.
           const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
-          if (oscillatorPaneRef.current == null) {
-            oscillatorPaneRef.current = chart.panes().length;
-            chart.addPane();
-            // A new pane arrives with the same weight as the price pane
-            // and takes a third of the chart with it, which squeezes the
-            // candles into a strip. An oscillator is a footnote to the
-            // price action, so it gets a fifth.
-            const panes = chart.panes();
-            panes[0]?.setStretchFactor(OSCILLATOR_PANE_SPLIT);
-            panes[oscillatorPaneRef.current]?.setStretchFactor(1);
-          }
-          const series = chart.addSeries(
-            LineSeries,
-            {
-              color,
-              lineWidth: style.width as 1 | 2 | 3 | 4,
-              lineStyle: style.dash,
-              crosshairMarkerVisible: false,
-              lastValueVisible: true,
-              title,
-              autoscaleInfoProvider: indicator.range
-                ? () => ({ priceRange: { minValue: indicator.range!.min, maxValue: indicator.range!.max } })
-                : undefined,
-            },
-            oscillatorPaneRef.current,
+          const series = chart.addSeries(LineSeries, {
+            color,
+            lineWidth: style.width as 1 | 2 | 3 | 4,
+            lineStyle: style.dash,
+            crosshairMarkerVisible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            priceScaleId: OSCILLATOR_SCALE_ID,
+            autoscaleInfoProvider: indicator.range
+              ? () => ({ priceRange: { minValue: indicator.range!.min, maxValue: indicator.range!.max } })
+              : undefined,
+          });
+          series.priceScale().applyOptions({ scaleMargins: OSCILLATOR_MARGINS });
+          const points = toLinePoints(
+            value,
+            (p) => toUnixSeconds(p.t),
+            (p) => p.value,
           );
-          series.setData(
-            toLinePoints(
-              value,
-              (p) => toUnixSeconds(p.t),
-              (p) => p.value,
-            ),
-          );
+          series.setData(points);
           (indicator.guides ?? []).forEach((guide) => {
             series.createPriceLine({
               price: guide.value,
               color: GUIDE_COLOR,
               lineWidth: 1,
               lineStyle: LineStyle.Dotted,
-              axisLabelVisible: true,
-              title: guide.label ?? "",
+              axisLabelVisible: false,
+              title: "",
             });
           });
           indicatorSeriesRef.current.push(series);
+          let last: number | null = null;
+          for (let i = points.length - 1; i >= 0; i--) {
+            const pt = points[i];
+            if ("value" in pt) {
+              last = pt.value;
+              break;
+            }
+          }
+          oscillatorRef.current = { title, color, series, last };
         } else if (indicator.kind === "series" && isPointSeries(value)) {
           const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
           const series = chart.addSeries(LineSeries, {
@@ -1472,6 +1553,13 @@ export function CandleChart({
         }
       });
     });
+
+    // Volume steps up out of the bottom strip while an oscillator has it,
+    // and back down after -- the candles' own scale is not involved.
+    chart
+      .priceScale("volume")
+      .applyOptions({ scaleMargins: oscillatorRef.current ? VOLUME_MARGINS_ABOVE_OSCILLATOR : VOLUME_MARGINS });
+    showOscillatorReadout(null);
 
     // Skipped while a focus (backtest pick or journal trade) is driving the
     // viewport: capturing right after the focus effect's own setVisibleRange
@@ -1776,8 +1864,32 @@ export function CandleChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoScroll]);
 
+  // The oscillator readout follows the crosshair, and falls back to the
+  // latest value when the mouse leaves. Subscribed once: the chart itself is
+  // created once, at mount, above.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const handler = (param: MouseEventParams<Time>) => {
+      const osc = oscillatorRef.current;
+      if (!osc) return;
+      const point = param.time != null ? param.seriesData.get(osc.series) : undefined;
+      showOscillatorReadout(point && "value" in point ? (point as LineData).value : null);
+    };
+    chart.subscribeCrosshairMove(handler);
+    return () => chart.unsubscribeCrosshairMove(handler);
+    // showOscillatorReadout reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // The class drives the CSS cursor. Hiding the crosshair does not change the
   // pointer the library draws, so the two have to be set together or
   // "pointer" would hide the lines and still show a crosshair cursor.
-  return <div ref={containerRef} className={`chart-container cursor-${cursorMode}`} />;
+  return (
+    <div className="chart-frame">
+      <div ref={containerRef} className={`chart-container cursor-${cursorMode}`} />
+      {/* Top of the oscillator strip -- see OSCILLATOR_MARGINS. */}
+      <div ref={oscillatorReadoutRef} className="chart-oscillator-readout" hidden />
+    </div>
+  );
 }

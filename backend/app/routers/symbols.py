@@ -1,11 +1,13 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.alpaca.client import AlpacaClients
 from app.alpaca.universe import _looks_like_etf
-from app.indicators.context import build_context
+from app.indicators import macro_releases, ten_year_moves
+from app.indicators.context import build_context, timeframe_rank
 from app.indicators.loader import run_indicators
 from app.market_data.bars import (
     get_option_historical_bars,
@@ -20,6 +22,7 @@ from app.options.occ import try_parse_occ
 from app.symbols.info import get_symbol_info
 
 router = APIRouter(prefix="/api/symbols", tags=["symbols"])
+logger = logging.getLogger(__name__)
 
 # How far back an `around` request (see get_symbol_bars) will widen the
 # 1-minute fetch to reach a specific historical moment -- beyond this,
@@ -60,6 +63,8 @@ async def _compute_indicators(
     minute_bars: list,
     timeframe: str,
     hourly_bars: list | None = None,
+    chart_bars: list | None = None,
+    state=None,
 ) -> list[dict]:
     """Reference lines and overlays for the chart.
 
@@ -76,7 +81,8 @@ async def _compute_indicators(
     single chart load (this endpoint fires on every symbol click,
     including rapid ones from the heatmap).
     """
-    weekly_bars, monthly_bars, anchor_bars = await asyncio.gather(
+    window_bars = chart_bars if chart_bars else minute_bars
+    weekly_bars, monthly_bars, anchor_bars, (ten_year, macro_events) = await asyncio.gather(
         get_historical_bars(clients, symbol, "1Week"),
         get_historical_bars(clients, symbol, "1Month"),
         # Hourly bars are the structural anchor (see the market-structure
@@ -85,14 +91,58 @@ async def _compute_indicators(
         _already_fetched(hourly_bars)
         if hourly_bars is not None
         else get_historical_bars(clients, symbol, "1Hour"),
+        market_context(state, timeframe, window_bars),
     )
-    ctx = build_context(symbol, minute_bars, weekly_bars, monthly_bars, timeframe, anchor_bars)
+    ctx = build_context(
+        symbol,
+        minute_bars,
+        weekly_bars,
+        monthly_bars,
+        timeframe,
+        anchor_bars,
+        chart_bars=chart_bars,
+        ten_year=ten_year,
+        macro_events=macro_events,
+    )
     # Off the event loop: run_indicators is over a second of pure CPU (the
     # strategy walk, the level scan, pandas resampling), and this endpoint
     # shares its loop with the scanner engine's poll tick -- run inline it
     # both stalls every concurrent request and queues behind none of its
     # own awaits.
     return await asyncio.to_thread(run_indicators, ctx)
+
+
+async def market_context(state, timeframe: str, window_bars: list) -> tuple[list, list]:
+    """The 10-year yield and the macro releases over the chart's window --
+    inputs the 10Y Moves and Macro Releases indicators read, fetched from
+    app-wide caches so a chart load costs no extra round trip once they are
+    warm. Empty for both when there is no state (tests) or no window."""
+    if state is None or not window_bars:
+        return [], []
+    ten_year_history = getattr(state, "ten_year_history", None)
+    macro_history = getattr(state, "macro_history", None)
+
+    async def ten_year() -> list:
+        if ten_year_history is None:
+            return []
+        if ten_year_moves.wants_intraday(timeframe):
+            return await ten_year_history.intraday()
+        return await ten_year_history.daily()
+
+    async def releases() -> list:
+        if macro_history is None or timeframe_rank(timeframe) > timeframe_rank(macro_releases.MAX_TIMEFRAME):
+            return []
+        start = window_bars[0].timestamp.date()
+        end = datetime.now(timezone.utc).date()
+        return await macro_history.between(start, end)
+
+    try:
+        return await asyncio.gather(ten_year(), releases())
+    except Exception:
+        # Markers are an extra; a failure here must not cost the chart its
+        # candles and levels.
+        logger.exception("Market context for the chart failed")
+        return [], []
 
 
 @router.get("/search")
@@ -220,7 +270,13 @@ async def get_symbol_bars(
             get_intraday_minute_bars(clients, symbol),
         )
         indicators = await _compute_indicators(
-            clients, symbol, minute_bars, timeframe, bars if timeframe == "1Hour" else None
+            clients,
+            symbol,
+            minute_bars,
+            timeframe,
+            bars if timeframe == "1Hour" else None,
+            chart_bars=bars,
+            state=request.app.state,
         )
         return {
             "symbol": symbol,
@@ -274,7 +330,7 @@ async def get_symbol_bars(
     live_state.cum_vol_premarket = vwap_state.cum_vol_premarket
     live_state.session_date = vwap_state.session_date
 
-    indicators = await _compute_indicators(clients, symbol, bars, timeframe)
+    indicators = await _compute_indicators(clients, symbol, bars, timeframe, state=request.app.state)
 
     return {
         "symbol": symbol,

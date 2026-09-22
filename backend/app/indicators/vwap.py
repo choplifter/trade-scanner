@@ -33,6 +33,11 @@ from app.services.market_clock import ET
 
 NAME = "VWAP"
 KIND = "series"
+# Anchored to one session's open, so it has no meaning on a chart whose
+# candles each span an hour or more -- and it is computed from minute bars,
+# which would not line up with them. The historical charts draw their own
+# VWAP from the /bars response where one applies.
+MAX_TIMEFRAME = "1Min"
 COLORS = {
     "VWAP": "#e0a33e",
     "+1 SD": "#8a6d3b",

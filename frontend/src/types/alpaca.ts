@@ -201,6 +201,9 @@ export interface IndicatorStyle {
   dash?: "solid" | "dotted" | "dashed" | "large-dashed" | "sparse-dotted";
 }
 
+import type { Study } from "../utils/chartStudies";
+import type { MoveRule } from "../utils/moveMarkers";
+
 export interface IndicatorResult {
   name: string;
   /** "oscillator" is a series that cannot share the price scale -- an RSI
@@ -220,6 +223,16 @@ export interface IndicatorResult {
    * drawn across it (RSI's 30/70). */
   range?: { min: number; max: number };
   guides?: { value: number; label?: string }[];
+  /** Sub-series name -> the formula it is, for indicators that are a pure
+   * function of the chart's closes (EMA, Bollinger, RSI). The intraday
+   * chart recomputes these from its own candles -- see utils/chartStudies. */
+  study?: Record<string, Study>;
+  /** "marker" only: the markers are derived by the chart from this
+   * indicator's point series, per displayed candle -- see utils/moveMarkers. */
+  derive?: MoveRule;
+  /** "marker" only: a translucent colour each marked candle is also filled
+   * with top to bottom, so a moment reads as a line across the chart. */
+  band?: string;
   /** Set when the file could not be loaded or computed. Carried instead of
    * dropping the entry: an indicator that vanishes draws nothing, which on a
    * chart looks exactly like one that found nothing. */

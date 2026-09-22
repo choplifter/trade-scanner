@@ -1,5 +1,6 @@
 import { isPointSeries } from "../types/alpaca";
 import type { Bar, IndicatorResult } from "../types/alpaca";
+import { computeStudy } from "./chartStudies";
 
 export interface TimeframeOption {
   /** Stable id used as React key and selector state. */
@@ -53,62 +54,86 @@ export function aggregateBars(
   minutes: number,
   indicators: IndicatorResult[] = [],
 ): { bars: Bar[]; vwap: (number | null)[]; indicators: IndicatorResult[] } {
-  if (minutes === 1) return { bars, vwap, indicators };
+  // Indicators that declare their formula (EMA, Bollinger, RSI -- see
+  // utils/chartStudies) are recomputed from the candles below rather than
+  // rebucketed: a 15m chart's RSI is fourteen 15m candles, not the last
+  // minute value of a fourteen-*minute* RSI, and the backend's copy was
+  // computed once at load while the candles keep arriving. That holds at 1m
+  // too, so this can't return early there when one of them is on.
+  const hasStudy = indicators.some((i) => i.study && Object.keys(i.study).length > 0);
+  if (minutes === 1 && !hasStudy) return { bars, vwap, indicators };
 
   const bucketMs = minutes * 60_000;
-  const outBars: Bar[] = [];
-  const outVwap: (number | null)[] = [];
+  const outBars: Bar[] = minutes === 1 ? bars : [];
+  const outVwap: (number | null)[] = minutes === 1 ? vwap : [];
 
+  // Everything else point-valued is rebucketed, last known value per
+  // bucket. Oscillators included: left at minute resolution they put a
+  // minute's worth of timestamps between every candle, and the chart,
+  // which lays its time axis over every series at once, spreads the candles
+  // apart to make room for them.
   interface SeriesSlot {
     key: string;
     points: { t: string; value: number | null }[];
     out: (number | null)[];
   }
   const slots: SeriesSlot[] = [];
-  indicators.forEach((indicator, i) => {
-    if (indicator.kind !== "series") return;
-    Object.entries(indicator.series).forEach(([subName, points]) => {
-      if (isPointSeries(points)) {
-        slots.push({ key: `${i}:${subName}`, points, out: [] });
-      }
+  const rebucketed = (indicator: IndicatorResult, subName: string) =>
+    (indicator.kind === "series" || indicator.kind === "oscillator") && !indicator.study?.[subName];
+  if (minutes > 1) {
+    indicators.forEach((indicator, i) => {
+      Object.entries(indicator.series).forEach(([subName, points]) => {
+        if (rebucketed(indicator, subName) && isPointSeries(points)) {
+          slots.push({ key: `${i}:${subName}`, points, out: [] });
+        }
+      });
     });
-  });
 
-  for (let i = 0; i < bars.length; i++) {
-    const bar = bars[i];
-    const bucketStart = Math.floor(new Date(bar.t).getTime() / bucketMs) * bucketMs;
-    const current = outBars[outBars.length - 1];
+    for (let i = 0; i < bars.length; i++) {
+      const bar = bars[i];
+      const bucketStart = Math.floor(new Date(bar.t).getTime() / bucketMs) * bucketMs;
+      const current = outBars[outBars.length - 1];
 
-    if (current && new Date(current.t).getTime() === bucketStart) {
-      current.h = Math.max(current.h, bar.h);
-      current.l = Math.min(current.l, bar.l);
-      current.c = bar.c;
-      current.v += bar.v;
-      outVwap[outVwap.length - 1] = vwap[i] ?? outVwap[outVwap.length - 1];
-      slots.forEach((slot) => {
-        const v = slot.points[i]?.value;
-        slot.out[slot.out.length - 1] = v ?? slot.out[slot.out.length - 1];
-      });
-    } else {
-      outBars.push({ t: new Date(bucketStart).toISOString(), o: bar.o, h: bar.h, l: bar.l, c: bar.c, v: bar.v });
-      outVwap.push(vwap[i] ?? null);
-      slots.forEach((slot) => {
-        slot.out.push(slot.points[i]?.value ?? null);
-      });
+      if (current && new Date(current.t).getTime() === bucketStart) {
+        current.h = Math.max(current.h, bar.h);
+        current.l = Math.min(current.l, bar.l);
+        current.c = bar.c;
+        current.v += bar.v;
+        outVwap[outVwap.length - 1] = vwap[i] ?? outVwap[outVwap.length - 1];
+        slots.forEach((slot) => {
+          const v = slot.points[i]?.value;
+          slot.out[slot.out.length - 1] = v ?? slot.out[slot.out.length - 1];
+        });
+      } else {
+        outBars.push({ t: new Date(bucketStart).toISOString(), o: bar.o, h: bar.h, l: bar.l, c: bar.c, v: bar.v });
+        outVwap.push(vwap[i] ?? null);
+        slots.forEach((slot) => {
+          slot.out.push(slot.points[i]?.value ?? null);
+        });
+      }
     }
   }
 
-  // With no "series"-kind indicator there is nothing to rebucket, and the
-  // caller's own array can go back out unchanged. Identity matters here:
-  // CandleChart's indicators effect tears down and rebuilds every price
-  // line whenever this reference changes, and with trade ticks reshaping
-  // the forming candle several times a second, a fresh array per call
-  // would have it doing that several times a second too.
+  // With nothing to rebucket or recompute, the caller's own array can go
+  // back out unchanged. Identity matters here: CandleChart's indicators
+  // effect tears down and rebuilds every price line whenever this reference
+  // changes, and with trade ticks reshaping the forming candle several
+  // times a second, a fresh array per call would have it doing that several
+  // times a second too.
+  if (slots.length === 0 && !hasStudy) return { bars: outBars, vwap: outVwap, indicators };
+
+  const closes = outBars.map((b) => b.c);
   const slotsByKey = new Map(slots.map((s) => [s.key, s]));
-  const outIndicators: IndicatorResult[] = slots.length === 0 ? indicators : indicators.map((indicator, i) => {
-    if (indicator.kind !== "series") return indicator;
+  const outIndicators: IndicatorResult[] = indicators.map((indicator, i) => {
+    if (indicator.kind !== "series" && indicator.kind !== "oscillator") return indicator;
     const newSeries: IndicatorResult["series"] = {};
     Object.keys(indicator.series).forEach((subName) => {
+      const study = indicator.study?.[subName];
+      if (study) {
+        const values = computeStudy(study, closes);
+        newSeries[subName] = outBars.map((b, idx) => ({ t: b.t, value: values[idx] }));
+        return;
+      }
       const slot = slotsByKey.get(`${i}:${subName}`);
       newSeries[subName] = slot
         ? outBars.map((b, idx) => ({ t: b.t, value: slot.out[idx] }))

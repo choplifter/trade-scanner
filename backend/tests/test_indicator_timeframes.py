@@ -61,30 +61,57 @@ def test_every_indicator_is_offered_on_the_minute_chart():
         "Market Structure",
         "Strategy Signal",
         "Strategy Entry",
+        "10Y Moves",
+        "Macro Releases",
     }
 
 
-def test_the_overlays_are_deliberately_not_gated():
-    """VWAP and the EMAs declare no ceiling and so are offered everywhere.
-
-    Not an oversight: the gating was added for the range levels only, and
-    these two were explicitly left as they were. Pinned so that a later
-    tidy-up pass giving every indicator a ceiling "for consistency" has to
-    argue with a test first.
-    """
+def test_the_chart_bar_overlays_are_offered_at_every_timeframe():
+    """EMA, Bollinger and RSI read ctx.chart_bars -- the candles actually on
+    screen -- so at every resolution they describe those candles, and a
+    daily RSI is the fourteen-day one. Pinned so that a later tidy-up pass
+    giving every indicator a ceiling "for consistency" has to argue with a
+    test first."""
     for timeframe in TIMEFRAME_ORDER:
         names = _names_at(timeframe)
-        assert "VWAP" in names, f"VWAP disappeared at {timeframe}"
-        assert "EMA" in names, f"EMA disappeared at {timeframe}"
+        for name in ("EMA", "Bollinger", "RSI"):
+            assert name in names, f"{name} disappeared at {timeframe}"
 
 
-def test_the_minute_only_overlays_stop_at_the_minute_chart():
-    """Bollinger and RSI describe the last twenty or fourteen bars, and the
-    chart draws series indicators on the minute feed alone -- so they are
-    not offered above it rather than computed and discarded."""
-    assert {"Bollinger", "RSI"} <= _names_at("1Min")
-    assert not ({"Bollinger", "RSI"} & _names_at("1Hour"))
-    assert not ({"Bollinger", "RSI"} & _names_at("1Day"))
+def test_vwap_stops_at_the_minute_chart():
+    """Anchored to one session's open and computed from minute bars: on an
+    hourly or daily chart it would be a minute line over candles it does
+    not belong to. Those charts draw their own VWAP from the /bars response
+    where it applies."""
+    assert "VWAP" in _names_at("1Min")
+    assert "VWAP" not in _names_at("1Hour")
+    assert "VWAP" not in _names_at("1Day")
+
+
+def test_the_overlays_are_computed_from_the_charts_own_bars():
+    """On a daily chart the lines carry the daily bars' timestamps, one
+    point per candle -- not the minute feed's, which would not line up."""
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    def bars(start, step, n):
+        return [
+            SimpleNamespace(
+                timestamp=start + step * i, open=100.0 + i, high=101.0 + i, low=99.0 + i,
+                close=100.5 + (i % 5), volume=1_000, vwap=100.0 + i,
+            )
+            for i in range(n)
+        ]
+
+    daily = bars(datetime(2026, 5, 1, 4, tzinfo=timezone.utc), timedelta(days=1), 40)
+    minute = bars(datetime(2026, 9, 18, 13, 30, tzinfo=timezone.utc), timedelta(minutes=1), 60)
+    ctx = build_context("TEST", minute, [], [], "1Day", chart_bars=daily)
+    by_name = {ind["name"]: ind for ind in run_indicators(ctx)}
+    daily_times = [b.timestamp.isoformat() for b in daily]
+
+    for name in ("EMA", "Bollinger", "RSI"):
+        for sub, points in by_name[name]["series"].items():
+            assert [p["t"] for p in points] == daily_times, f"{name} / {sub}"
 
 
 def test_the_hourly_chart_still_offers_the_daily_range():
@@ -146,8 +173,14 @@ def test_the_premarket_range_drops_above_the_daily_chart():
 
 
 def test_the_monthly_chart_keeps_only_the_monthly_range():
-    """Of the range levels, that is -- the ungated indicators stay throughout."""
-    assert _names_at("1Month") == {"Monthly Range", "VWAP", "EMA"}
+    """Of the range levels, that is -- the chart-bar overlays stay throughout."""
+    assert _names_at("1Month") == {"Monthly Range", "EMA", "Bollinger", "RSI", "10Y Moves"}
+
+
+def test_macro_releases_stop_at_the_daily_chart():
+    """Every weekly candle holds a release, so a column on each says nothing."""
+    assert "Macro Releases" in _names_at("1Day")
+    assert "Macro Releases" not in _names_at("1Week")
 
 
 @pytest.mark.parametrize("timeframe", TIMEFRAME_ORDER)

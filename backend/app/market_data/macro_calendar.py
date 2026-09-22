@@ -18,8 +18,8 @@ import asyncio
 import logging
 import re
 import time
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
@@ -52,6 +52,12 @@ class MacroEvent:
     date: date
     label: str
     event: str
+    # The release moment in UTC, as FMP lists it (08:30 New York CPI is
+    # 12:30 or 13:30 UTC). None only when FMP gave a bare date. Not part of
+    # to_dict: the expiry strip is by day and its payload stays as it was;
+    # the chart's release markers (app.indicators.macro_releases) read it.
+    # Left out of equality: a release is its day and name.
+    at: datetime | None = field(default=None, compare=False)
 
     def to_dict(self) -> dict:
         return {"date": self.date.isoformat(), "label": self.label, "event": self.event}
@@ -80,16 +86,19 @@ def macro_events_from_rows(rows, start: date, end: date, country: str = "US") ->
             continue
         raw = row.get("date")
         try:
-            day = datetime.fromisoformat(str(raw)[:19]).date() if raw else None
+            stamp = datetime.fromisoformat(str(raw)[:19]) if raw else None
         except ValueError:
-            day = None
+            stamp = None
+        day = stamp.date() if stamp else None
         if day is None or day < start or day > end:
             continue
         key = (day, label)
         if key in seen:
             continue
         seen.add(key)
-        events.append(MacroEvent(date=day, label=label, event=str(row.get("event", ""))))
+        # A bare date parses to midnight; only a real clock time is a moment.
+        at = stamp.replace(tzinfo=timezone.utc) if stamp and len(str(raw)) > 10 else None
+        events.append(MacroEvent(date=day, label=label, event=str(row.get("event", "")), at=at))
     events.sort(key=lambda e: (e.date, e.label))
     return events
 
@@ -162,3 +171,109 @@ class MacroCalendar:
             self._fetched_at = self._now()
             self._on_date = today
             return list(events)
+
+
+# The chart looks back rather than ahead: the minute feed spans a week or
+# so, a daily chart two years. Asked in quarters, because FMP caps the span
+# of one calendar request and a chunk is also the unit that caches: a past
+# quarter's releases never change, so it is fetched once per process.
+HISTORY_CHUNK_DAYS = 90
+# The quarter still in progress can gain a release time FMP fills in late.
+CURRENT_CHUNK_TTL_SECONDS = 60 * 60
+# A quarter that failed for any other reason (FMP's per-minute limit, a
+# network drop) waits this long before it is asked again. Without it every
+# daily chart load re-asked every failed quarter, and the key those calls
+# spend is the one fundamentals, news and earnings run on too.
+FAILED_CHUNK_RETRY_SECONDS = 15 * 60
+
+
+class MacroHistory:
+    """Tracked releases over any past window, for the chart's release
+    markers. Same source, filter and best-effort posture as MacroCalendar;
+    a chunk whose call failed is simply missing from the answer (and asked
+    again next time), never cached as empty."""
+
+    def __init__(
+        self,
+        api_key: str,
+        client: httpx.AsyncClient,
+        *,
+        now=time.monotonic,
+        today=date.today,
+    ) -> None:
+        self._api_key = api_key
+        self._client = client
+        self._now = now
+        self._today = today
+        self._chunks: dict[date, tuple[float, list[MacroEvent]]] = {}
+        # Quarters FMP will not serve on this plan (HTTP 402 -- the free
+        # tiers reach back about ten months), never asked again; and quarters
+        # that failed otherwise, with when.
+        self._unavailable: set[date] = set()
+        self._failed_at: dict[date, float] = {}
+        self._lock = asyncio.Lock()
+
+    def _chunk_starts(self, start: date, end: date) -> list[date]:
+        # Chunks are aligned to a fixed epoch so every window reuses them.
+        epoch = date(2000, 1, 1)
+        first = epoch + timedelta(days=((start - epoch).days // HISTORY_CHUNK_DAYS) * HISTORY_CHUNK_DAYS)
+        starts = []
+        while first <= end:
+            starts.append(first)
+            first += timedelta(days=HISTORY_CHUNK_DAYS)
+        return starts
+
+    async def between(self, start: date, end: date) -> list[MacroEvent]:
+        if not self._api_key or start > end:
+            return []
+        today = self._today()
+        events: list[MacroEvent] = []
+        async with self._lock:
+            for chunk in self._chunk_starts(start, end):
+                chunk_end = chunk + timedelta(days=HISTORY_CHUNK_DAYS - 1)
+                cached = self._chunks.get(chunk)
+                settled = chunk_end < today
+                if cached is not None and (settled or self._now() - cached[0] < CURRENT_CHUNK_TTL_SECONDS):
+                    events.extend(cached[1])
+                    continue
+                if chunk in self._unavailable:
+                    continue
+                failed_at = self._failed_at.get(chunk)
+                if failed_at is not None and self._now() - failed_at < FAILED_CHUNK_RETRY_SECONDS:
+                    if cached is not None:
+                        events.extend(cached[1])
+                    continue
+                fetched = await self._fetch(chunk, chunk_end)
+                if fetched is None:
+                    if cached is not None:
+                        events.extend(cached[1])
+                    continue
+                self._failed_at.pop(chunk, None)
+                self._chunks[chunk] = (self._now(), fetched)
+                events.extend(fetched)
+        return [e for e in events if start <= e.date <= end]
+
+    async def _fetch(self, start: date, end: date) -> list[MacroEvent] | None:
+        """fetch_macro_events, but telling "not on this plan" apart from a
+        failure worth retrying -- the one answer that will never change."""
+        try:
+            resp = await self._client.get(
+                f"{_FMP_BASE}/economic-calendar",
+                params={"from": start.isoformat(), "to": end.isoformat(), "apikey": self._api_key},
+            )
+        except Exception:
+            logger.warning("FMP economic calendar fetch failed for %s..%s", start, end, exc_info=True)
+            self._failed_at[start] = self._now()
+            return None
+        if resp.status_code == 402:
+            logger.info("FMP economic calendar %s..%s is outside this plan's history; not asking again", start, end)
+            self._unavailable.add(start)
+            return None
+        try:
+            resp.raise_for_status()
+            rows = resp.json()
+        except Exception:
+            logger.warning("FMP economic calendar fetch failed for %s..%s (HTTP %s)", start, end, resp.status_code)
+            self._failed_at[start] = self._now()
+            return None
+        return macro_events_from_rows(rows, start, end)

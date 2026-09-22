@@ -12,7 +12,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.ai.trade_idea_tracker import TradeIdeaTracker
 from app.market_data.earnings import EarningsCalendar
 from app.market_data.earnings_screen import EarningsDayCalendar
-from app.market_data.macro_calendar import MacroCalendar
+from app.market_data.cboe_history import CboeHistory
+from app.market_data.macro_calendar import MacroCalendar, MacroHistory
 from app.playbooks.paper_loop import run_playbook_paper_loop
 from app.playbooks.runner import PlaybookRunner
 from app.playbooks.store import PlaybookStore
@@ -225,6 +226,10 @@ async def lifespan(app: FastAPI):
     app.state.journal_store = journal_store
 
     fundamentals_client = httpx.AsyncClient(timeout=10.0)
+    # The chart's 10-year and macro-release markers (app.indicators.
+    # ten_year_moves / macro_releases): cached, on the same client.
+    app.state.ten_year_history = CboeHistory(fundamentals_client, "_TNX")
+    app.state.macro_history = MacroHistory(settings.fmp_api_key, fundamentals_client)
     fundamentals = FundamentalsCache(settings, fundamentals_client)
     app.state.fundamentals = fundamentals
 
