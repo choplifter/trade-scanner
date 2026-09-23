@@ -994,7 +994,9 @@ calendar's or diagonal's long leg is marked in purple and the head shows
 both DTEs; a click moves the leg being picked, ⇧-click the other. Hover a
 chip for weekday, year and contract count. The first expiry with at least
 a day left is preselected, so a 0DTE is a deliberate click. The near strip
-(60 days, ±10 % of spot) is fetched once per underlying and cached for five
+(60 days, ±10 % of spot but at least $5 a side, so a cheap name is more
+than the few strikes around the money) is fetched once per underlying and
+cached for five
 minutes; the board beyond it comes from one more contracts call over a
 sliver of strikes around the spot (`ChainCache.board_expiries`,
 `?board=true`), cached the same, and a far expiry's chain is fetched when
@@ -1031,7 +1033,7 @@ ticket.
 ### Reading the chain
 
 One row per strike, calls on the left, puts on the right, strikes ±10%
-around the spot. Columns, from the outside in:
+around the spot (at least $5 either side -- see `strike_band`). Columns, from the outside in:
 
 | Column | Meaning |
 |---|---|
@@ -1469,7 +1471,8 @@ Four steps, three of them pure and tested without I/O
 1. **Chains.** The horizon's expiry and two later ones, condensed to the
    strikes that are listed, tradable, quoted on both sides, not absurdly
    wide and actually held -- the same `condense_chain` the Idea tab feeds
-   the model. The chain cache holds ±10 % of spot and 60 days, so a target
+   the model. The chain cache holds ±10 % of spot (min. $5 a side) and 60
+days, so a target
    further away than that has nothing to build on, and the response says
    so rather than staying quiet.
 2. **Enumerate.** Long calls and puts; verticals up to three strikes wide in

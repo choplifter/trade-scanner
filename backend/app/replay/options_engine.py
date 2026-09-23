@@ -40,7 +40,7 @@ from app.options.chain_fetch import (
     _CONTRACTS_PAGE_LIMIT,
     _MAX_CONTRACT_PAGES,
     CHAIN_DAYS_AHEAD,
-    STRIKE_PCT_RANGE,
+    strike_band,
     _contract_meta,
 )
 from app.options.occ import Kind, try_parse_occ
@@ -268,8 +268,11 @@ class ReplayOptionsEngine:
             if rng is None:
                 raise LookupError(f"No price history for {underlying} on {day.isoformat()}")
             low, high = rng
-            strike_lo = round(low * (1 - STRIKE_PCT_RANGE), 2)
-            strike_hi = round(high * (1 + STRIKE_PCT_RANGE), 2)
+            # The band the live chain uses, spread over the session's range:
+            # its dollar floor matters here too (a $12 name otherwise comes
+            # back as the few strikes around the money).
+            strike_lo = strike_band(low)[0]
+            strike_hi = strike_band(high)[1]
             today = self._today()
             exp_hi = day + timedelta(days=CHAIN_DAYS_AHEAD)
             metas: dict[str, ContractMeta] = {}

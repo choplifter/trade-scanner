@@ -42,6 +42,12 @@ logger = logging.getLogger(__name__)
 # full screen; single names with $1 strikes are bounded the same way.
 CHAIN_DAYS_AHEAD = 60
 STRIKE_PCT_RANGE = 0.10
+# ...but a percentage alone collapses on a cheap name: 10 % of a $12 stock
+# is $1.20 either side, which on $0.50 strikes is the five rows around the
+# money and nothing to build a spread from. A floor in dollars, applied per
+# side alongside the percentage, restores a usable chain there and changes
+# nothing above $50 (10 % of which is already $5).
+STRIKE_MIN_RANGE = 5.0
 # The far strip, fetched only when asked for and only for the window asked
 # for (a playbook's LEAPS window, the one expiry a ticket loads): the
 # expiries beyond the picker's, with a strike band that reaches the deep
@@ -84,6 +90,16 @@ def _contract_meta(contract) -> ContractMeta | None:
         tradable=bool(getattr(contract, "tradable", True)),
         close_price=float(close_price) if close_price not in (None, "") else None,
     )
+
+
+def strike_band(spot: float, below: float = STRIKE_PCT_RANGE, above: float = STRIKE_PCT_RANGE) -> tuple[float, float]:
+    """The (low, high) strikes to fetch around `spot`: the given fractions
+    either side, each widened to at least STRIKE_MIN_RANGE. The low end is
+    kept positive -- a band wider than the spot itself would ask Alpaca for
+    strikes at or below zero."""
+    low = spot - max(spot * below, STRIKE_MIN_RANGE)
+    high = spot + max(spot * above, STRIKE_MIN_RANGE)
+    return round(max(low, 0.01), 2), round(high, 2)
 
 
 async def fetch_contracts(
@@ -222,8 +238,7 @@ class ChainCache:
                 underlying,
                 today,
                 today + timedelta(days=CHAIN_DAYS_AHEAD),
-                round(spot * (1 - STRIKE_PCT_RANGE), 2),
-                round(spot * (1 + STRIKE_PCT_RANGE), 2),
+                *strike_band(spot),
             )
             expiries = expiries_from_contracts(contracts.values(), today)
             value = (spot, contracts, expiries)
@@ -249,8 +264,7 @@ class ChainCache:
                 underlying,
                 max(gte, today),
                 min(lte, today + timedelta(days=FAR_DAYS_AHEAD)),
-                round(spot * (1 - FAR_STRIKE_BELOW), 2),
-                round(spot * (1 + FAR_STRIKE_ABOVE), 2),
+                *strike_band(spot, FAR_STRIKE_BELOW, FAR_STRIKE_ABOVE),
             )
             expiries = expiries_from_contracts(contracts.values(), today)
             value = (spot, contracts, expiries)
@@ -310,8 +324,7 @@ class ChainCache:
                 self._clients,
                 underlying,
                 expiry,
-                round(spot * (1 - below), 2),
-                round(spot * (1 + above), 2),
+                *strike_band(spot, below, above),
             )
             chain = Chain(
                 underlying=underlying,
