@@ -290,7 +290,14 @@ def test_a_second_close_while_the_first_rests_is_refused(env):
 
     with pytest.raises(OrderRejected) as exc:
         asyncio.run(service.close_spread(req))
-    assert "already resting" in str(exc.value)
+    assert "already working" in str(exc.value)
+    # The refusal names the package in the way, so the dialog can offer to
+    # cancel it; the preview names it before anyone clicks.
+    detail = exc.value.to_detail()
+    assert detail["code"] == "close_already_working"
+    assert [w["id"] for w in detail["working_orders"]] == [first["id"]]
+    preview = asyncio.run(service.preview_close(CloseSpreadRequest(legs=req.legs, qty=1)))
+    assert [w["id"] for w in preview["working_orders"]] == [first["id"]]
 
     # Cancelling the resting package frees the position for a real close.
     asyncio.run(service.cancel(first["id"]))

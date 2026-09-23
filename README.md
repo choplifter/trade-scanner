@@ -1249,7 +1249,13 @@ and the controls:
 
 - **Close** reverses every leg in one MLEG order at the current mid
   (editable; a single remaining leg closes with a plain order). The
-  preview shows mid and natural for the closing package.
+  preview shows mid and natural for the closing package. A close that,
+  with the closing orders already resting, would close more than is held
+  is refused in every account (`_assert_not_over_closing`) -- at Alpaca
+  the resting order holds the contracts and the broker would answer only
+  "insufficient qty available". The dialog names the order in the way as
+  soon as it opens, and **Cancel it & close** cancels it, waits until the
+  broker confirms, then places the new close.
 - **Triggers**: exits the dashboard keeps itself, because Alpaca accepts
   no stop orders on options. Two kinds of bound, combinable in one
   trigger:

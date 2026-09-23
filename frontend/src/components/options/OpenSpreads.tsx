@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { OrderRejectedError } from "../../api/http";
-import { getSpreadPayoff, previewCloseSpread } from "../../api/options";
+import { cancelOptionOrder, getOptionOrders, getSpreadPayoff, previewCloseSpread } from "../../api/options";
 import { liveConfirmed, modeBadge, type TradingMode } from "../../api/tradingMode";
 import { useSpreadLevelsContext } from "../../context/SpreadLevelsContext";
 import { useReplaySession } from "../../hooks/useReplaySession";
@@ -17,6 +17,7 @@ import {
   type TriggerCreateRequest,
   type UnderlyingTrigger,
 } from "../../types/options";
+import type { WorkingClose } from "../../types/trading";
 import { formatExpiry, formatLeg, formatStrike } from "../../utils/occ";
 import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
@@ -50,6 +51,30 @@ interface PendingClose {
   orderType: OptionOrderType;
   error: string | null;
   busy: boolean;
+  /** Resting closes on these legs; a new close is refused until they go. */
+  working: WorkingClose[];
+}
+
+function rejectionMessage(err: unknown): string {
+  return err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err);
+}
+
+/** Alpaca answers a cancel with pending_cancel and frees the contracts only
+ * once it is canceled, so the replacing close has to wait for the orders to
+ * leave the open list -- placed at once, it meets the same refusal. */
+async function waitUntilGone(ids: string[], timeoutMs = 10_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { orders } = await getOptionOrders("open");
+    if (!orders.some((o) => ids.includes(o.id))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
+function workingLabel(work: WorkingClose): string {
+  const price = work.limit_price != null ? `limit ${work.limit_price.toFixed(2)}` : "market";
+  return `${work.contracts} × ${work.symbols.map(formatLeg).join(" / ")} · ${price}`;
 }
 
 const money = formatMoney;
@@ -185,21 +210,23 @@ export function OpenSpreads({
 
   const openClose = (group: SpreadGroup) => {
     setLiveTyped("");
-    setPending({ group, preview: null, qty: String(group.qty || 1), limit: "", orderType: "limit", error: null, busy: false });
+    setPending({
+      group, preview: null, qty: String(group.qty || 1), limit: "", orderType: "limit", error: null, busy: false, working: [],
+    });
     previewCloseSpread({ legs: closeLegs(group), qty: group.qty || 1 })
       .then((preview) =>
-        setPending((p) => (p && p.group.id === group.id ? { ...p, preview, limit: preview.suggested_limit.toFixed(2) } : p)),
-      )
-      .catch((err: unknown) =>
         setPending((p) =>
           p && p.group.id === group.id
-            ? { ...p, error: err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err) }
+            ? { ...p, preview, limit: preview.suggested_limit.toFixed(2), working: preview.working_orders ?? [] }
             : p,
         ),
+      )
+      .catch((err: unknown) =>
+        setPending((p) => (p && p.group.id === group.id ? { ...p, error: rejectionMessage(err) } : p)),
       );
   };
 
-  const runClose = async () => {
+  const runClose = async (replace = false) => {
     if (!pending) return;
     const qty = Math.floor(Number(pending.qty));
     const limit = Number(pending.limit);
@@ -214,15 +241,32 @@ export function OpenSpreads({
     }
     if (!liveConfirmed(mode, liveTyped)) return;
     setPending({ ...pending, busy: true, error: null });
+    const confirm = mode === "live" ? liveTyped.trim() : undefined;
     try {
+      if (replace && pending.working.length > 0) {
+        const ids = pending.working.map((w) => w.id);
+        for (const id of ids) await cancelOptionOrder(id, confirm);
+        if (!(await waitUntilGone(ids))) {
+          setPending((p) =>
+            p ? { ...p, busy: false, error: "The broker has not confirmed the cancel yet; try again in a moment." } : p,
+          );
+          return;
+        }
+      }
       await onClose(
         { legs: closeLegs(pending.group), qty, ...(market ? { order_type: "market" as const } : { limit_price: limit }) },
-        mode === "live" ? liveTyped.trim() : undefined,
+        confirm,
       );
       setPending(null);
     } catch (err: unknown) {
+      const working =
+        err instanceof OrderRejectedError && err.detail.code === "close_already_working"
+          ? (err.detail.working_orders ?? [])
+          : null;
       setPending((p) =>
-        p ? { ...p, busy: false, error: err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err) } : p,
+        p
+          ? { ...p, busy: false, working: working ?? p.working, error: working ? null : rejectionMessage(err) }
+          : p,
       );
     }
   };
@@ -582,6 +626,18 @@ export function OpenSpreads({
             )}
             <p className="order-confirm-mode">{badge.confirmLine}</p>
             <LiveConfirmField mode={mode} value={liveTyped} onChange={setLiveTyped} />
+            {pending.working.length > 0 && (
+              <div className="order-warning">
+                A closing order is already working on {pending.working.length === 1 ? "this position" : "these legs"}:
+                <ul className="spread-legs">
+                  {pending.working.map((work) => (
+                    <li key={work.id}>{workingLabel(work)}</li>
+                  ))}
+                </ul>
+                It holds the contracts, so a second close is refused. Replace cancels it, waits for the broker to
+                confirm, then places this close.
+              </div>
+            )}
             {pending.error && <p className="order-rejection">{pending.error}</p>}
             <div className="order-confirm-actions">
               <button type="button" className="timeframe-button" onClick={() => setPending(null)}>
@@ -591,9 +647,15 @@ export function OpenSpreads({
                 type="button"
                 className={`generate-button${mode === "live" ? " live-action" : ""}`}
                 disabled={pending.busy || !pending.preview || !liveConfirmed(mode, liveTyped)}
-                onClick={() => void runClose()}
+                onClick={() => void runClose(pending.working.length > 0)}
               >
-                {pending.busy ? "Working" : pending.orderType === "market" ? "Close at market" : "Close spread"}
+                {pending.busy
+                  ? "Working"
+                  : pending.working.length > 0
+                    ? "Cancel it & close"
+                    : pending.orderType === "market"
+                      ? "Close at market"
+                      : "Close spread"}
               </button>
             </div>
           </div>

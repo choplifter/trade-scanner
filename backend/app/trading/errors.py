@@ -95,6 +95,21 @@ class OrderRejected(TradingError):
     code = "order_rejected"
 
 
+class CloseAlreadyWorking(OrderRejected):
+    """A close refused because resting closing orders already commit the
+    contracts it would close. Carries those orders so the UI can offer to
+    cancel them and place this one instead."""
+
+    code = "close_already_working"
+
+    def __init__(self, message: str, working: list[dict], *, field: str | None = "qty") -> None:
+        super().__init__(message, field=field)
+        self.working = working
+
+    def to_detail(self) -> dict:
+        return {**super().to_detail(), "working_orders": self.working}
+
+
 class TradingDisabled(TradingError):
     """The feature is switched off in settings (the default)."""
 
@@ -135,9 +150,9 @@ def rejection_from_api_error(exc: Exception) -> OrderRejected | None:
     # raw message reads like the opposite.
     if "insufficient qty" in detail.lower():
         detail += (
-            " -- those shares are held by a working order on the same symbol. "
-            "Cancel it first, or use Close position, which cancels resting "
-            "orders before flattening."
+            " -- those shares or contracts are held by a working order on the "
+            "same symbol. Cancel it first, or use Close position, which "
+            "cancels resting orders before flattening."
         )
 
     return OrderRejected(f"The broker rejected this order: {detail}")

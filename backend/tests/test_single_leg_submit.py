@@ -22,6 +22,14 @@ class _Trading:
         self.requests.append(request)
         return {"id": "o-1", "status": "accepted"}
 
+    # A close first checks for resting closes in its way (see
+    # test_close_over_closing); none rest here, and one of each leg is held.
+    def get_orders(self, request):
+        return []
+
+    def get_open_position(self, symbol):
+        return {"qty": "1"}
+
 
 def _leg(symbol, kind, strike, side) -> SpreadLeg:
     return SpreadLeg(

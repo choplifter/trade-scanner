@@ -2,7 +2,7 @@
  * our own floats, not Alpaca's decimal strings -- the backend has already
  * parsed them -- except inside the raw `order` dumps, which stay Alpaca's. */
 
-import type { Order, TradingAccount } from "./trading";
+import type { Order, TradingAccount, WorkingClose } from "./trading";
 
 /** Where a spread lives: an Alpaca account, or the simulated book. */
 export type OptionsAccount = TradingAccount | "sim";
@@ -434,6 +434,9 @@ export interface ClosePreview {
   net_natural: number | null;
   suggested_limit: number;
   alpaca_limit_price: number;
+  /** Resting closes already committing these legs: a close on top of them
+   * is refused until they are cancelled. */
+  working_orders: WorkingClose[];
 }
 
 /** Close a held leg and open its replacement as one decision -- backend

@@ -223,6 +223,17 @@ export interface TradingRejection {
   code: string;
   message: string;
   field: string | null;
+  /** code "close_already_working": the resting closes in the way. */
+  working_orders?: WorkingClose[];
+}
+
+/** A resting order already closing some of a position's legs -- backend
+ * OptionsService._closes_in_the_way. */
+export interface WorkingClose {
+  id: string;
+  contracts: number;
+  limit_price: number | null;
+  symbols: string[];
 }
 
 /** Alpaca's decimal strings -> number, with null/empty handled once.

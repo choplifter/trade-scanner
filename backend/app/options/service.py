@@ -48,7 +48,7 @@ from app.options.pricing import (
     net_price,
     spread_risk,
 )
-from app.trading.errors import OrderRejected, TradingError, rejection_from_api_error
+from app.trading.errors import CloseAlreadyWorking, OrderRejected, TradingError, rejection_from_api_error
 from app.trading.guards import Account, assert_can_trade, limits_for
 from app.trading.service import OrderService, _number, _plain
 
@@ -184,6 +184,34 @@ def build_single_leg_request(
         **kwargs,
     )
 
+
+
+def working_closes(orders: list[dict]) -> dict[str, list[dict]]:
+    """The contracts resting orders already commit to closing, per OCC
+    symbol: {symbol: [{id, contracts, limit_price}, ...]}. Takes both
+    Alpaca's shape (a simple order is its own leg; an MLEG parent nests
+    legs with a ratio) and the simulated book's rows (legs always
+    nested), so one reading of "what is already on its way out" serves
+    both accounts."""
+    committed: dict[str, list[dict]] = {}
+    for order in orders:
+        remaining = int(float(order.get("qty") or 0)) - int(float(order.get("filled_qty") or 0))
+        if remaining <= 0:
+            continue
+        legs = order.get("legs") or [order]
+        limit = _number(order.get("limit_price"))
+        for leg in legs:
+            if not str(leg.get("position_intent") or "").endswith("_to_close"):
+                continue
+            symbol = str(leg.get("symbol") or "").upper()
+            committed.setdefault(symbol, []).append(
+                {
+                    "id": str(order.get("id")),
+                    "contracts": remaining * int(float(leg.get("ratio_qty") or 1)),
+                    "limit_price": abs(limit) if limit is not None else None,
+                }
+            )
+    return committed
 
 
 def released_collateral(legs: list[SpreadLeg], qty: int) -> float:
@@ -736,10 +764,68 @@ class OptionsService:
         )
         return legs, direction, net_mid, net_natural
 
+    async def _working_order_rows(self) -> list[dict]:
+        """Resting orders, in a shape working_closes reads."""
+        return await self.orders("open")
+
+    async def _held_contracts(self, symbol: str) -> int | None:
+        """Contracts held of `symbol`, or None when the broker cannot say
+        (it then judges the close itself)."""
+        try:
+            position = await asyncio.to_thread(self._trading.get_open_position, symbol)
+        except Exception:
+            return None
+        qty = _number(getattr(position, "qty", None))
+        return int(round(abs(qty))) if qty is not None else None
+
+    async def _closes_in_the_way(self, legs: list[SpreadLeg]) -> list[dict]:
+        """Resting orders already closing any of `legs`, one entry per order."""
+        committed = working_closes(await self._working_order_rows())
+        seen: dict[str, dict] = {}
+        for leg in legs:
+            for work in committed.get(leg.symbol.upper(), []):
+                seen.setdefault(work["id"], {**work, "symbols": []})["symbols"].append(leg.symbol.upper())
+        return list(seen.values())
+
+    async def _assert_not_over_closing(self, legs: list[SpreadLeg], qty: int) -> None:
+        """Refuse a close that, together with the closing orders already
+        resting, would close more of a leg than is held. At Alpaca the
+        resting order holds the contracts, so the second close comes back
+        "insufficient qty available" -- which reads as if the position were
+        missing. In the simulation, without this, both would fill and the
+        position would be reopened the other way round. Either way the
+        answer the user needs is which order is in the way."""
+        committed = working_closes(await self._working_order_rows())
+        for leg in legs:
+            if not leg.position_intent.endswith("_to_close"):
+                continue
+            symbol = leg.symbol.upper()
+            working = committed.get(symbol, [])
+            already = sum(w["contracts"] for w in working)
+            held = await self._held_contracts(symbol)
+            if held is None:
+                continue
+            wanted = qty * int(leg.ratio_qty or 1)
+            if wanted > held - already:
+                if already == 0:
+                    raise OrderRejected(
+                        f"{symbol}: only {held} contract{'s' if held != 1 else ''} held, cannot close {wanted}.",
+                        field="qty",
+                    )
+                prices = ", ".join(
+                    f"{w['limit_price']:.2f}" if w["limit_price"] is not None else "market" for w in working
+                )
+                raise CloseAlreadyWorking(
+                    f"{symbol}: a closing order for {already} of the {held} contract{'s' if held != 1 else ''} "
+                    f"held is already working ({prices}). Cancel it and place this close instead, or wait for its fill.",
+                    await self._closes_in_the_way(legs),
+                )
+
     async def preview_close(self, req: CloseSpreadRequest) -> dict:
         legs, direction, net_mid, net_natural = await self._priced_close(req)
         suggested = round(net_mid, 2)
         return {
+            "working_orders": await self._closes_in_the_way(legs),
             "legs": [leg.model_dump(mode="json") for leg in legs],
             "qty": req.qty,
             "direction": direction,
@@ -875,6 +961,7 @@ class OptionsService:
         order (the trigger loop keeps its marketable limit)."""
         assert_can_trade(self._settings, self._account, confirm, live_available=self._live_available)
         legs, direction, net_mid, net_natural = await self._priced_close(req)
+        await self._assert_not_over_closing(legs, req.qty)
         order_type: OrderType = "market" if req.order_type == "market" and not marketable else "limit"
         if order_type == "market":
             price = round(net_natural if net_natural is not None else net_mid, 2)
