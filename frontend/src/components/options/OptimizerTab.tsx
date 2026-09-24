@@ -94,6 +94,7 @@ function skippedLine(skipped: { total: number; scored: number; reasons: Record<s
   const names: Record<string, string> = {
     over_budget: "over budget",
     under_min_risk: "under $5 of risk",
+    under_min_width: "too narrow to be worth the quotes",
     over_max_loss: "over max loss",
     non_positive_return: "lose at the target",
     no_market: "no market",

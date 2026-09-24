@@ -1443,7 +1443,12 @@ costs the package once, per contract and quantity, is subtracted from the
 profit before ranking, and a package quoted wider than
 `DEFAULT_MAX_CROSS_FRACTION` (25 % of its own price), or whose cross eats
 more than it makes at the target, is rejected with that number in the
-reason. `max_cross_fraction` overrides it; 1.0 switches both rules off. "More options" adds a max loss and the family
+reason. `max_cross_fraction` overrides it; 1.0 switches both rules off.
+A multi-strike structure narrower than `MIN_WIDTH_PCT` of spot (0.5 %, so
+~$4 on SPY and under a strike increment on a cheap name) is not offered at
+all, counted as `under_min_width`; legs across expiries are exempt, since a
+calendar's strikes are the same by construction. `min_width` overrides it
+in dollars, 0 offers every width the chain lists. "More options" adds a max loss and the family
 checkboxes.
 
 **Events.** The expiry chips carry the strip's marks, and a line beneath

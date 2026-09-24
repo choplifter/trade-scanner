@@ -52,6 +52,14 @@ PER_STRATEGY_CAP = 3
 # risk; that is a quote artefact, not a trade, and it would top every
 # list.
 MIN_RISK = 5.0
+# The narrowest a multi-strike structure may be, as a share of spot: a
+# one-dollar-wide vertical on a 768-dollar index is a rounding error whose
+# whole edge is the width of its own quotes, and it only ever ranks because
+# the denominator is tiny. 0.5 % is ~4 dollars on SPY (so the 1-wide goes,
+# the 5-wide stays) and under a strike increment on a cheap name, where
+# nothing is dropped. Legs of different expiries are exempt -- a calendar's
+# strikes are the same by construction.
+MIN_WIDTH_PCT = 0.005
 VERTICAL_MAX_WIDTH = 3  # strikes between long and short
 CONDOR_WING_WIDTHS = (1, 2, 3)
 CONDOR_SHORT_DELTA = (0.10, 0.40)  # |delta| band for the short strikes
@@ -676,6 +684,16 @@ def represent_each_family(items, strategy_of, *, top_k: int, per_strategy_cap: i
     return chosen, dropped
 
 
+def candidate_width(cand: Candidate) -> float | None:
+    """The distance between the outermost strikes, or None where the
+    measure does not apply: a single strike, or legs across expiries (a
+    calendar is built on one strike, and its edge is time, not width)."""
+    strikes = {leg.strike for leg in cand.legs}
+    if len(strikes) < 2 or len({leg.expiry for leg in cand.legs}) > 1:
+        return None
+    return max(strikes) - min(strikes)
+
+
 def filter_and_rank(
     candidates: list[Candidate],
     *,
@@ -685,11 +703,14 @@ def filter_and_rank(
     per_strategy_cap: int = PER_STRATEGY_CAP,
     preference: float = 0.0,
     min_risk: float = MIN_RISK,
+    min_width: float = 0.0,
 ) -> tuple[list[Candidate], dict[str, int]]:
     """The best `top_k`, with the drop reasons counted.
 
     `budget` caps what the account puts up per position, `min_risk` floors
-    it (see MIN_RISK); `max_loss` caps
+    it (see MIN_RISK); `min_width` floors the distance between a
+    multi-strike structure's outermost strikes (see MIN_WIDTH_PCT);
+    `max_loss` caps
     the defined maximum loss (an unbounded one never passes it). A shape
     that loses money at the worst point of the target is out: the reader
     asked what pays off there. The order blends return on risk and chance
@@ -706,6 +727,9 @@ def filter_and_rank(
     for cand in candidates:
         if cand.risk < min_risk:
             drop("under_min_risk")
+            continue
+        if min_width > 0 and candidate_width(cand) is not None and candidate_width(cand) < min_width:
+            drop("under_min_width")
             continue
         if budget is not None and cand.risk > budget:
             drop("over_budget")
@@ -739,6 +763,7 @@ __all__ = [
     "Candidate",
     "OUTLOOK_STRATEGIES",
     "chance_of_profit",
+    "candidate_width",
     "rank_score",
     "represent_each_family",
     "DEFAULT_STRATEGIES",

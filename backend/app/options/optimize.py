@@ -34,6 +34,7 @@ from app.options.chain import ExpiryInfo
 from app.options.models import STRATEGY_LABELS, Strategy
 from app.options.optimizer import (
     CONDOR_SHORT_DELTA,
+    MIN_WIDTH_PCT,
     PER_STRATEGY_CAP,
     DEFAULT_STRATEGIES,
     FINALISTS,
@@ -133,6 +134,9 @@ class OptimizeRequest(BaseModel):
     # Left out, DEFAULT_MAX_CROSS_FRACTION applies; 1.0 switches both cross
     # rules off (show everything the market quotes).
     max_cross_fraction: float | None = Field(default=None, gt=0.0, le=1.0)
+    # The narrowest multi-strike structure to offer, in dollars. Left out,
+    # MIN_WIDTH_PCT of spot; 0 offers every width the chain lists.
+    min_width: float | None = Field(default=None, ge=0.0)
 
     @model_validator(mode="after")
     def _check(self) -> "OptimizeRequest":
@@ -307,7 +311,12 @@ async def optimize_structures(
             candidates.append(priced)
     skipped.scored = len(candidates)
     finalists, drop_reasons = filter_and_rank(
-        candidates, budget=req.budget, max_loss=req.max_loss, top_k=FINALISTS, preference=req.preference
+        candidates,
+        budget=req.budget,
+        max_loss=req.max_loss,
+        top_k=FINALISTS,
+        preference=req.preference,
+        min_width=spot * MIN_WIDTH_PCT if req.min_width is None else req.min_width,
     )
     for reason, n in drop_reasons.items():
         skipped.add(reason, n)

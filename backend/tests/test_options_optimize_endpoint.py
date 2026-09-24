@@ -436,3 +436,46 @@ def test_the_cross_is_charged_per_package_not_per_position():
     assert many["cross_total"] == pytest.approx(one["cross_total"] * many["qty"])
     # The return on risk is a ratio, so sizing up must not move it.
     assert many["return_on_risk_after_cross"] == pytest.approx(one["return_on_risk_after_cross"], rel=1e-6)
+
+
+def test_a_vertical_narrower_than_the_floor_is_not_offered():
+    """A one-dollar-wide spread on a 768-dollar index only ever ranks
+    because its denominator is small; its whole edge is the width of its
+    own quotes."""
+    from app.options.optimizer import MIN_WIDTH_PCT, Candidate, candidate_width, filter_and_rank
+    from app.options.models import TicketLeg
+
+    def vertical(low: float, high: float, expiries=(NEAR, NEAR)) -> Candidate:
+        legs = (
+            TicketLeg(kind="call", strike=low, side="buy", ratio=1, expiry=expiries[0]),
+            TicketLeg(kind="call", strike=high, side="sell", ratio=1, expiry=expiries[1]),
+        )
+        return Candidate(
+            strategy="bull_call", expiry=NEAR, legs=legs, net_price=1.0, direction="debit",
+            risk=100.0, max_profit=100.0, max_loss=100.0, breakevens=[], pnl_points=[50.0], chance=0.5,
+        )
+
+    narrow, wide = vertical(778, 779), vertical(775, 780)
+    assert candidate_width(narrow) == 1 and candidate_width(wide) == 5
+    kept, reasons = filter_and_rank([narrow, wide], min_width=768 * MIN_WIDTH_PCT)
+    assert [candidate_width(c) for c in kept] == [5]
+    assert reasons["under_min_width"] == 1
+    # Off by default, and a cheap name's floor is under one strike.
+    assert len(filter_and_rank([narrow, wide])[0]) == 2
+    assert len(filter_and_rank([narrow, wide], min_width=13 * MIN_WIDTH_PCT)[0]) == 2
+
+
+def test_a_calendar_is_exempt_from_the_width_floor():
+    """Its strikes are the same by construction; its edge is time."""
+    from app.options.optimizer import Candidate, candidate_width
+    from app.options.models import TicketLeg
+
+    legs = (
+        TicketLeg(kind="call", strike=100.0, side="sell", ratio=1, expiry=NEAR),
+        TicketLeg(kind="call", strike=100.0, side="buy", ratio=1, expiry=FAR),
+    )
+    cand = Candidate(
+        strategy="calendar", expiry=NEAR, legs=legs, net_price=1.0, direction="debit",
+        risk=100.0, max_profit=None, max_loss=100.0, breakevens=[], pnl_points=[10.0], chance=0.4,
+    )
+    assert candidate_width(cand) is None
