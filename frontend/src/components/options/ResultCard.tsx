@@ -147,7 +147,9 @@ export function ResultCard({
   onLoad: (s: LoadableStructure) => boolean;
 }) {
   const [failed, setFailed] = useState(false);
-  const rorPct = r.return_on_risk * 100;
+  // The card shows what the ranking used: the return with the cross paid.
+  // The gross number is a mid nobody trades at.
+  const rorPct = r.return_on_risk_after_cross * 100;
   // A structure has both an underlying and contracts, so it drags like an
   // option package: plain onto the chart for the stock, shift-drag for the
   // first leg's premium. Same gesture as a resting or held package.
@@ -160,12 +162,13 @@ export function ResultCard({
     >
       <div className="opt-card-title">{r.strategy_label}</div>
       <div className="opt-card-legs">
+        {r.qty > 1 ? <strong>{r.qty}× </strong> : null}
         <Legs label={r.legs_label} legs={r.spread.legs} /> · {weekdayOf(r.expiry)} {formatExpiry(r.expiry)}
       </div>
       <div className="opt-card-stats">
         <span
-          className={`opt-stat ror ${tier(r.return_on_risk, bestRor)}`}
-          title="P/L at the worst point of the target divided by what the account puts up -- the debit paid, or a credit structure's collateral. Not a probability."
+          className={`opt-stat ror ${tier(r.return_on_risk_after_cross, bestRor)}`}
+          title="P/L at the worst point of the target, less what it costs to cross the market once, divided by what the account puts up -- the debit paid, or a credit structure's collateral. Not a probability."
         >
           <strong>{rorPct.toFixed(0)}%</strong> Return on risk
         </span>
@@ -175,8 +178,14 @@ export function ResultCard({
         >
           <strong>{r.chance == null ? "—" : `${(r.chance * 100).toFixed(0)}%`}</strong> Chance
         </span>
-        <span className="opt-stat plain" title="P/L if the underlying is at the target on the horizon date, each leg's IV unchanged (with a range: its worst point).">
-          <strong className={r.pnl_min >= 0 ? "delta-up" : "delta-down"}>{formatMoney(r.pnl_min)}</strong> Profit
+        <span
+          className="opt-stat plain"
+          title="P/L if the underlying is at the target on the horizon date, each leg's IV unchanged (with a range: its worst point), less the cost of crossing the market once."
+        >
+          <strong className={r.pnl_min - r.cross_total >= 0 ? "delta-up" : "delta-down"}>
+            {formatMoney(r.pnl_min - r.cross_total)}
+          </strong>{" "}
+          Profit
         </span>
         <span className="opt-stat plain" title="What the account puts up: the debit paid, or the collateral of a credit structure.">
           <strong>{formatMoney(r.risk)}</strong> Risk

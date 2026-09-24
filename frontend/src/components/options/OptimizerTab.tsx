@@ -474,7 +474,7 @@ export function OptimizerTab({ symbol, chain, expiries, events, optimizer, inten
   // puts up shares or cash rather than a spread's width.
   const shownBudget = remembered?.budget ?? null;
   const shownHasIncome = (remembered?.strategies ?? []).some((s) => s === "covered_call" || s === "cash_secured_put");
-  const bestRor = shown ? Math.max(0, ...shown.results.map((r) => r.return_on_risk)) : 0;
+  const bestRor = shown ? Math.max(0, ...shown.results.map((r) => r.return_on_risk_after_cross)) : 0;
   const bestChance = shown ? Math.max(0, ...shown.results.map((r) => r.chance ?? 0)) : 0;
   const shownTargets = shown ? shown.target.points : [];
 

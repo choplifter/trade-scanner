@@ -72,6 +72,13 @@ DISCLAIMER = (
 )
 
 
+# What a package may cost to cross, as a share of its own price, before it
+# is dropped: a card whose numbers exist only at a mid nobody trades at is
+# worse than no card. A request may raise or lower it; the event path sets
+# its own.
+DEFAULT_MAX_CROSS_FRACTION = 0.25
+
+
 class OptimizeRequest(BaseModel):
     underlying: str = Field(min_length=1, max_length=12)
     # The target: one price (target_low), a range (low..high), or explicit
@@ -123,6 +130,8 @@ class OptimizeRequest(BaseModel):
     # eats half the credit is not one a limit order fills at anything
     # like the number on the card, and the card should not carry it.
     # None leaves every priced finalist in, as before.
+    # Left out, DEFAULT_MAX_CROSS_FRACTION applies; 1.0 switches both cross
+    # rules off (show everything the market quotes).
     max_cross_fraction: float | None = Field(default=None, gt=0.0, le=1.0)
 
     @model_validator(mode="after")
@@ -307,8 +316,11 @@ async def optimize_structures(
     rejected: list[dict] = []
     if finalists:
         account = await service.account()
-        previews = await asyncio.gather(*(_preview_one(service, underlying, cand, account) for cand in finalists))
-        for cand, (ticket, spread, reason) in zip(finalists, previews):
+        quantities = [qty_for_budget(cand.risk, req.budget) for cand in finalists]
+        previews = await asyncio.gather(
+            *(_preview_one(service, underlying, cand, account, qty) for cand, qty in zip(finalists, quantities))
+        )
+        for cand, qty, (ticket, spread, reason) in zip(finalists, quantities, previews):
             if spread is None:
                 rejected.append(
                     {
@@ -340,7 +352,10 @@ async def optimize_structures(
             cross = None
             if spread.net_natural is not None and spread.net_mid:
                 cross = abs(spread.net_natural - spread.net_mid) / abs(spread.net_mid)
-            if req.max_cross_fraction is not None and cross is not None and cross > req.max_cross_fraction:
+            max_cross = DEFAULT_MAX_CROSS_FRACTION if req.max_cross_fraction is None else req.max_cross_fraction
+            # 1.0 is the off switch, not a 100 % threshold: a caller asking
+            # for everything the market quotes gets it, wide or not.
+            if cross is not None and max_cross < 1.0 and cross > max_cross:
                 rejected.append(
                     {
                         "strategy": cand.strategy,
@@ -349,6 +364,22 @@ async def optimize_structures(
                         "legs_label": cand.legs_label(),
                         "rejected_because": (
                             f"costs {cross:.0%} of its own price to cross -- quoted too wide to fill near these numbers"
+                        ),
+                    }
+                )
+                continue
+            cross_total = 0.0 if spread.net_natural is None else abs(spread.net_natural - spread.net_mid) * 100 * qty
+            # Both cross rules answer to the same knob: at 1.0 the caller
+            # has asked to see everything the market quotes, wide or not.
+            if max_cross < 1.0 and risk > 0 and pnl_min > 0 and pnl_min - cross_total <= 0:
+                rejected.append(
+                    {
+                        "strategy": cand.strategy,
+                        "strategy_label": cand.label,
+                        "expiry": cand.expiry.isoformat(),
+                        "legs_label": cand.legs_label(),
+                        "rejected_because": (
+                            f"crossing the market costs {cross_total:,.0f}, more than the {pnl_min:,.0f} it makes at the target"
                         ),
                     }
                 )
@@ -369,6 +400,7 @@ async def optimize_structures(
                     "strategy": cand.strategy,
                     "strategy_label": cand.label,
                     "expiry": cand.expiry.isoformat(),
+                    "qty": qty,
                     "legs_label": legs_label([leg for leg in _ticket_legs(spread)], cand.expiry),
                     "direction": spread.direction,
                     "net_price": round(_signed_limit(spread), 2),
@@ -379,12 +411,19 @@ async def optimize_structures(
                     if spread.net_natural is None
                     else round(abs(spread.net_natural - spread.net_mid), 4),
                     "cross_fraction": None if cross is None else round(cross, 4),
+                    # What crossing costs this package once, in dollars, and
+                    # the numbers with it paid: entry only (an exit may be a
+                    # fill at the mid, an expiry, or nothing at all), which
+                    # is the conservative half to charge for.
+                    "cross_total": round(cross_total, 2),
                     "risk": round(risk, 2),
                     "pnl_at_target": round(sum(points) / len(points), 2),
                     "pnl_min": round(pnl_min, 2),
                     "pnl_mean": round(sum(points) / len(points), 2),
                     "pnl_max": round(max(points), 2),
                     "return_on_risk": round(pnl_min / risk, 4),
+                    "pnl_at_target_after_cross": round(sum(points) / len(points) - cross_total, 2),
+                    "return_on_risk_after_cross": round((pnl_min - cross_total) / risk, 4),
                     "chance": chance,
                     "max_profit": spread.max_profit,
                     "max_loss": spread.max_loss,
@@ -399,12 +438,20 @@ async def optimize_structures(
         Candidate(
             strategy=r["strategy"], expiry=date.fromisoformat(r["expiry"]), legs=(), net_price=r["net_price"],
             direction=r["direction"], risk=r["risk"], max_profit=r["max_profit"], max_loss=r["max_loss"],
-            breakevens=r["breakevens"], pnl_points=[r["pnl_min"], r["pnl_mean"], r["pnl_max"]], chance=r["chance"],
+            breakevens=r["breakevens"],
+            # Ranked net of the cross: the shapes that win on return alone
+            # are the razor-thin ones, whose edge is exactly what crossing
+            # eats (a one-wide vertical quoted 0.05 either side).
+            pnl_points=[p - r["cross_total"] for p in (r["pnl_min"], r["pnl_mean"], r["pnl_max"])],
+            chance=r["chance"],
         )
         for r in results
     ]
     scores = rank_score(scored, req.preference)
-    order = sorted(range(len(results)), key=lambda i: (-scores[id(scored[i])], -results[i]["return_on_risk"], results[i]["risk"]))
+    order = sorted(
+        range(len(results)),
+        key=lambda i: (-scores[id(scored[i])], -results[i]["return_on_risk_after_cross"], results[i]["risk"]),
+    )
     ranked = [results[i] for i in order]
     # Same rule as the cheap pass: every family that priced gets a seat
     # before any family takes a second one, or a shape whose collateral is
@@ -487,12 +534,28 @@ def _ticket_legs(spread):
     ]
 
 
-async def _preview_one(service, underlying: str, cand: Candidate, account: dict):
+def qty_for_budget(risk: float, budget: float | None) -> int:
+    """How many packages a budget buys. One when no budget was named --
+    the old behaviour, and the only honest answer when nothing says how
+    much to deploy.
+
+    Without this the list is decided by the size of its denominator: a
+    one-strike-wide call spread risking 46 dollars shows a fine return on
+    risk and makes 54 dollars, and it outranks the spread that would have
+    made a thousand. Sizing every candidate to the same money is what
+    makes their profits comparable at all.
+    """
+    if budget is None or risk <= 0:
+        return 1
+    return max(1, int(budget // risk))
+
+
+async def _preview_one(service, underlying: str, cand: Candidate, account: dict, qty: int = 1):
     """(ticket, spread, reason) -- spread None with the reason when the
     finalist cannot be built or priced, same convention as the Idea tab's
     _price_one."""
     try:
-        ticket = candidate_ticket(underlying, cand)
+        ticket = candidate_ticket(underlying, cand, qty)
     except ValueError as exc:
         logger.warning("Optimizer candidate %s rejected by SpreadTicket: %s", cand.strategy, exc)
         return None, None, f"could not be built into a valid {STRATEGY_LABELS.get(cand.strategy, cand.strategy)} ticket"

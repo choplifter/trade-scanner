@@ -1426,12 +1426,24 @@ The Options widget's fourth tab is OptionStrat's optimizer on this app's
 own pipeline. Pick an **outlook** (Very bearish … Very bullish, Neutral,
 Directional) or type a **target** (one price, a range, or with a directional
 view one point either side), pick an **expiry** from the month-grouped
-chips, a **budget** (the most the account puts up per position: a debit, or
+chips, a **budget** (what the account puts up per position: a debit, or
 a credit structure's collateral), set the **Max Return ↔ Max Chance**
 slider, and the account answers with the structures that pay best -- each
 card with its return on risk, chance of profit, profit and risk in dollars,
 a small payoff chart, the ticket the widget loads and the preview that
-ticket would show. "More options" adds a max loss and the family
+ticket would show.
+
+The budget also **sizes** every card: the quantity is the budget divided by
+one package's risk (`qty_for_budget`, 1 without a budget), so the profits
+on the list are comparable. Without it the list is decided by the size of
+its denominator -- a one-strike-wide vertical risking $46 shows a fine
+return and makes $54, outranking the spread that would have made a
+thousand. Every number is **net of the cross**: what taking the market
+costs the package once, per contract and quantity, is subtracted from the
+profit before ranking, and a package quoted wider than
+`DEFAULT_MAX_CROSS_FRACTION` (25 % of its own price), or whose cross eats
+more than it makes at the target, is rejected with that number in the
+reason. `max_cross_fraction` overrides it; 1.0 switches both rules off. "More options" adds a max loss and the family
 checkboxes.
 
 **Events.** The expiry chips carry the strip's marks, and a line beneath

@@ -592,6 +592,11 @@ export interface OptimizerResult {
    * the market costs. Null when a leg has no two-sided quote. */
   cross_cost: number | null;
   cross_fraction: number | null;
+  /** What crossing costs this whole package once, in dollars (entry only).
+   * The ranking is net of it. */
+  cross_total: number;
+  /** Packages, sized so every card deploys the same budget. 1 without one. */
+  qty: number;
   /** What the account puts up per position -- the denominator. */
   risk: number;
   pnl_at_target: number;
@@ -599,6 +604,9 @@ export interface OptimizerResult {
   pnl_mean: number;
   pnl_max: number;
   return_on_risk: number;
+  pnl_at_target_after_cross: number;
+  /** What the ranking sorts on: the return with the cross paid. */
+  return_on_risk_after_cross: number;
   /** Probability of any profit on the horizon date under a lognormal at
    * the chain's ATM IV with no drift -- the market's own distribution, not
    * a forecast. Null when no IV was available. */

@@ -368,13 +368,15 @@ def test_a_package_too_wide_to_cross_is_rejected_with_the_number():
             spread.net_natural = round(abs(spread.net_mid) + 1.0, 2)
             return spread
 
-    loose = _run(_Wide(), _req(strategies=["bull_call"]))
-    assert loose["results"], "without the filter a wide market is still a result"
-
-    tight = _run(_Wide(), _req(strategies=["bull_call"], max_cross_fraction=0.25))
+    # The filter is on by default (DEFAULT_MAX_CROSS_FRACTION); a request
+    # can still ask to see everything.
+    tight = _run(_Wide(), _req(strategies=["bull_call"]))
     assert tight["results"] == []
     assert tight["rejected"], "the reason has to be reported, not swallowed"
     assert "to cross" in tight["rejected"][0]["rejected_because"]
+
+    loose = _run(_Wide(), _req(strategies=["bull_call"], max_cross_fraction=1.0))
+    assert loose["results"], "asked for everything, a wide market is still a result"
 
 
 def test_a_result_carries_what_it_costs_to_cross():
@@ -384,3 +386,53 @@ def test_a_result_carries_what_it_costs_to_cross():
     # two-legged package costs about two cents.
     assert first["cross_cost"] == pytest.approx(0.02, abs=0.005)
     assert 0 < first["cross_fraction"] < 1
+
+
+# --- budget sizing and the cross ---------------------------------------------------
+
+
+def test_a_budget_sizes_every_card_to_the_same_money():
+    """Without this the list is decided by the size of its denominator: the
+    one-strike-wide spread risking 46 dollars wins on return on risk and
+    makes 54, while the spread that would have made a thousand ranks below
+    it. Sized to one budget, the profits are comparable."""
+    from app.options.optimize import qty_for_budget
+
+    assert qty_for_budget(46.0, 1000.0) == 21
+    assert qty_for_budget(724.0, 1000.0) == 1
+    # No budget named: one package, the old behaviour.
+    assert qty_for_budget(46.0, None) == 1
+    # Risk above the budget is a filter's business, not a zero quantity.
+    assert qty_for_budget(2000.0, 1000.0) == 1
+    assert qty_for_budget(0.0, 1000.0) == 1
+
+
+def test_the_budget_reaches_the_ticket_and_the_card():
+    body = _run(_Service(), _req(strategies=["bull_call"], budget=1000.0))
+    best = body["results"][0]
+    assert best["qty"] > 1, "a cheap spread should be sized up to the budget"
+    assert best["ticket"]["qty"] == best["qty"], "the ticket carries what the card priced"
+    assert best["risk"] <= 1000.0 + best["risk"] / best["qty"], "sized to the budget, not past it"
+
+
+def test_the_ranking_is_net_of_the_cross():
+    body = _run(_Service(), _req(strategies=["bull_call"]))
+    for r in body["results"]:
+        assert r["return_on_risk_after_cross"] <= r["return_on_risk"] + 1e-9
+        assert r["pnl_at_target_after_cross"] == pytest.approx(r["pnl_at_target"] - r["cross_total"])
+    # Ordered by the net number, which is what the card shows.
+    nets = [r["return_on_risk_after_cross"] for r in body["results"]]
+    assert nets == sorted(nets, reverse=True)
+
+
+def test_the_cross_is_charged_per_package_not_per_position():
+    """Sized to a budget, twenty packages cross the market twenty times.
+    A cross counted once would make a sized-up card look better than it
+    fills. (The refusal when the cross exceeds the profit shares its knob
+    with the ratio rule above; see DEFAULT_MAX_CROSS_FRACTION.)"""
+    one = _run(_Service(), _req(strategies=["bull_call"]))["results"][0]
+    many = _run(_Service(), _req(strategies=["bull_call"], budget=1000.0))["results"][0]
+    assert many["qty"] > one["qty"] == 1
+    assert many["cross_total"] == pytest.approx(one["cross_total"] * many["qty"])
+    # The return on risk is a ratio, so sizing up must not move it.
+    assert many["return_on_risk_after_cross"] == pytest.approx(one["return_on_risk_after_cross"], rel=1e-6)
