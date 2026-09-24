@@ -479,3 +479,26 @@ def test_a_calendar_is_exempt_from_the_width_floor():
         risk=100.0, max_profit=None, max_loss=100.0, breakevens=[], pnl_points=[10.0], chance=0.4,
     )
     assert candidate_width(cand) is None
+
+
+def test_a_cross_large_against_the_risk_is_rejected_even_when_small_against_the_price():
+    """The deep-in-the-money put spread this rule exists for: 20 points
+    wide, quoted around 19, so crossing costs 15 % of its own price -- and
+    5,740 dollars against 1,000 of risk."""
+
+    class _Expensive(_Service):
+        async def preview(self, ticket, *, account=None):
+            spread = await super().preview(ticket, account=account)
+            # 15 % of the package's price: inside the fraction rule.
+            spread.net_natural = round(abs(spread.net_mid) * 1.15, 2)
+            return spread
+
+    body = _run(_Expensive(), _req(strategies=["bull_call"], budget=1000.0))
+    reasons = " ".join(r["rejected_because"] for r in body["rejected"])
+    for r in body["results"]:
+        assert r["cross_total"] <= r["risk"] * 0.20 + 1e-9
+    if body["rejected"]:
+        assert "of the" in reasons and "puts up" in reasons
+    # Raising the knob lets the same package through.
+    loose = _run(_Expensive(), _req(strategies=["bull_call"], budget=1000.0, max_cross_of_risk=5.0))
+    assert len(loose["results"]) >= len(body["results"])

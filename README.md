@@ -1443,7 +1443,12 @@ costs the package once, per contract and quantity, is subtracted from the
 profit before ranking, and a package quoted wider than
 `DEFAULT_MAX_CROSS_FRACTION` (25 % of its own price), or whose cross eats
 more than it makes at the target, is rejected with that number in the
-reason. `max_cross_fraction` overrides it; 1.0 switches both rules off.
+reason, as is one whose cross runs past `DEFAULT_MAX_CROSS_OF_RISK` (20 %)
+of what the position puts up -- the fraction alone is blind to a package
+that is simply expensive, and a deep-in-the-money 20-point put spread
+quoted around 19 crosses at 15 % of its own price for 5,700 dollars against
+1,000 of risk. `max_cross_fraction` and `max_cross_of_risk` override them;
+a `max_cross_fraction` of 1.0 switches every cross rule off.
 A multi-strike structure narrower than `MIN_WIDTH_PCT` of spot (0.5 %, so
 ~$4 on SPY and under a strike increment on a cheap name) is not offered at
 all, counted as `under_min_width`; legs across expiries are exempt, since a

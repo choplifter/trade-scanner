@@ -78,6 +78,12 @@ DISCLAIMER = (
 # worse than no card. A request may raise or lower it; the event path sets
 # its own.
 DEFAULT_MAX_CROSS_FRACTION = 0.25
+# ...and what it may cost against the money put up. The fraction above is
+# blind to a package that is simply expensive: a deep-in-the-money 20-point
+# put spread quoted 19 wide either way crosses at 15 % of its own price and
+# still costs 5,740 dollars against 1,000 of risk. Measured against the
+# risk, that is the same trade told honestly.
+DEFAULT_MAX_CROSS_OF_RISK = 0.20
 
 
 class OptimizeRequest(BaseModel):
@@ -131,9 +137,12 @@ class OptimizeRequest(BaseModel):
     # eats half the credit is not one a limit order fills at anything
     # like the number on the card, and the card should not carry it.
     # None leaves every priced finalist in, as before.
-    # Left out, DEFAULT_MAX_CROSS_FRACTION applies; 1.0 switches both cross
-    # rules off (show everything the market quotes).
+    # Left out, DEFAULT_MAX_CROSS_FRACTION applies; 1.0 switches every cross
+    # rule off (show everything the market quotes).
     max_cross_fraction: float | None = Field(default=None, gt=0.0, le=1.0)
+    # What crossing may cost against what the position puts up. Left out,
+    # DEFAULT_MAX_CROSS_OF_RISK; ignored once the rules are switched off.
+    max_cross_of_risk: float | None = Field(default=None, gt=0.0)
     # The narrowest multi-strike structure to offer, in dollars. Left out,
     # MIN_WIDTH_PCT of spot; 0 offers every width the chain lists.
     min_width: float | None = Field(default=None, ge=0.0)
@@ -380,6 +389,21 @@ async def optimize_structures(
             cross_total = 0.0 if spread.net_natural is None else abs(spread.net_natural - spread.net_mid) * 100 * qty
             # Both cross rules answer to the same knob: at 1.0 the caller
             # has asked to see everything the market quotes, wide or not.
+            max_of_risk = DEFAULT_MAX_CROSS_OF_RISK if req.max_cross_of_risk is None else req.max_cross_of_risk
+            if max_cross < 1.0 and risk > 0 and cross_total > risk * max_of_risk:
+                rejected.append(
+                    {
+                        "strategy": cand.strategy,
+                        "strategy_label": cand.label,
+                        "expiry": cand.expiry.isoformat(),
+                        "legs_label": cand.legs_label(),
+                        "rejected_because": (
+                            f"crossing the market costs {cross_total:,.0f}, {cross_total / risk:.0%} of the "
+                            f"{risk:,.0f} it puts up -- priced at a mid this package will not fill near"
+                        ),
+                    }
+                )
+                continue
             if max_cross < 1.0 and risk > 0 and pnl_min > 0 and pnl_min - cross_total <= 0:
                 rejected.append(
                     {

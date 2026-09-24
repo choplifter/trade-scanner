@@ -566,6 +566,9 @@ export interface OptimizeRequest {
   /** Narrowest multi-strike structure to offer, in dollars (0.5 % of spot
    * by default; 0 offers every width). */
   min_width?: number | null;
+  /** What crossing may cost against the money the position puts up (20 %
+   * by default). */
+  max_cross_of_risk?: number | null;
   strike_pct_range?: number | null;
   /** The top of the delta band a condor may sell (0.40 by default), for
    * the same reason -- a print pushes the whole chain's deltas toward the
