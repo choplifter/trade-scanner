@@ -532,6 +532,75 @@ def chance_of_profit(
     return round(min(1.0, max(0.0, total)), 4)
 
 
+# The scenario grid on a result card: where the underlying might sit, in
+# multiples of the implied move to the horizon, against what the implied
+# volatility might do by then. The middle row is the card's own assumption
+# (IV unchanged), so the card's number is the middle of the grid -- and the
+# rows above and below are exactly what that assumption hides. The shifts
+# are deliberately symmetric and round rather than fitted: this says "here
+# is the sensitivity", not "here is my forecast for IV".
+SCENARIO_MOVES: tuple[float, ...] = (-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0)
+SCENARIO_IV_SHIFTS: tuple[float, ...] = (-0.25, 0.0, 0.25)
+
+
+def scenario_matrix(
+    legs: list[PayoffLeg],
+    net_price: float,
+    spot: float,
+    horizon: datetime,
+    implied_move: float,
+    qty: int = 1,
+    *,
+    moves: tuple[float, ...] = SCENARIO_MOVES,
+    iv_shifts: tuple[float, ...] = SCENARIO_IV_SHIFTS,
+) -> dict | None:
+    """P/L at the horizon across underlying price and implied volatility.
+
+    Prices are `spot` plus multiples of the implied move (so the grid is as
+    wide as the option market itself says the horizon is); volatilities are
+    every leg's own IV scaled by 1 + shift, which keeps the skew between
+    legs intact and only moves the level. None when the grid cannot be
+    built (no implied move, or a leg with time left and no IV).
+
+    A leg that has expired by the horizon is intrinsic and ignores the IV
+    row entirely -- which is the point: on those cards every row is equal,
+    and the reader can see the number does not depend on the assumption.
+    """
+    if implied_move <= 0 or spot <= 0:
+        return None
+    prices = [round(spot + m * implied_move, 2) for m in moves]
+    rows = []
+    for shift in iv_shifts:
+        shifted = [
+            PayoffLeg(
+                kind=leg.kind,
+                strike=leg.strike,
+                side=leg.side,
+                ratio=leg.ratio,
+                expiry=leg.expiry,
+                iv=None if leg.iv is None else max(0.0001, leg.iv * (1 + shift)),
+            )
+            for leg in legs
+        ]
+        cells = []
+        for price in prices:
+            pnl = position_pnl(shifted, net_price, price, horizon, qty)
+            if pnl is None:
+                return None
+            cells.append(round(pnl, 2))
+        rows.append({"iv_shift": shift, "pnl": cells})
+    # How much the assumption is worth: the widest spread between the IV
+    # rows at any one price, as a share of what the position puts up.
+    spans = [max(r["pnl"][i] for r in rows) - min(r["pnl"][i] for r in rows) for i in range(len(prices))]
+    return {
+        "moves": list(moves),
+        "prices": prices,
+        "implied_move": round(implied_move, 2),
+        "rows": rows,
+        "iv_span": round(max(spans), 2),
+    }
+
+
 def position_pnl(legs: list[PayoffLeg], net_price: float, price: float, at: datetime, qty: int = 1) -> float | None:
     """P/L per position at `price` on `at`, the risk chart's own arithmetic
     (payoff_curve): every leg valued by Black-Scholes at its IV, intrinsic

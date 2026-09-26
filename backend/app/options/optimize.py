@@ -44,6 +44,7 @@ from app.options.optimizer import (
     Target,
     candidate_ticket,
     chance_of_profit,
+    scenario_matrix,
     enumerate_candidates,
     filter_and_rank,
     legs_label,
@@ -222,10 +223,12 @@ def atm_sigma(rows: list[dict], spot: float) -> float | None:
 
 def _repriced(
     cand: Candidate, spread, target: Target, horizon: datetime, *, sigma: float | None = None, years: float | None = None
-) -> tuple[list[float], float, float | None] | None:
+) -> tuple[list[float], float, float | None, list[PayoffLeg], float] | None:
     """The card's P/L points, risk and chance from the previewed legs and
     limit -- the same arithmetic as the cheap pass, on the numbers the
-    ticket will actually carry. None when a previewed leg lacks an IV."""
+    ticket will actually carry. Returns the valued legs and the signed net
+    with them, so the scenario grid runs on exactly these. None when a
+    previewed leg lacks an IV."""
     legs = [
         PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
         for leg in spread.legs
@@ -243,7 +246,7 @@ def _repriced(
     chance = None
     if sigma is not None and years is not None and years > 0:
         chance = chance_of_profit(legs, net, horizon, spread.spot, sigma, years, spread.qty)
-    return points, risk, chance
+    return points, risk, chance, legs, net
 
 
 async def optimize_structures(
@@ -362,7 +365,7 @@ async def optimize_structures(
                     }
                 )
                 continue
-            points, risk, chance = repriced
+            points, risk, chance, payoff_legs, net_signed = repriced
             pnl_min = min(points)
             # What the market charges to take this package, against its
             # own price. A card whose numbers only exist at a mid nobody
@@ -458,6 +461,13 @@ async def optimize_structures(
                     "pnl_at_target_after_cross": round(sum(points) / len(points) - cross_total, 2),
                     "return_on_risk_after_cross": round((pnl_min - cross_total) / risk, 4),
                     "chance": chance,
+                    # Price x volatility at the horizon -- see
+                    # optimizer.scenario_matrix. The middle IV row is the
+                    # card's own number; the rows around it are what the
+                    # "implied volatility unchanged" assumption is worth.
+                    "scenario": scenario_matrix(
+                        payoff_legs, net_signed, spread.spot, horizon_moment, implied_move or 0.0, spread.qty
+                    ),
                     "max_profit": spread.max_profit,
                     "max_loss": spread.max_loss,
                     "breakevens": spread.breakevens,

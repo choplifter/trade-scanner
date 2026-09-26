@@ -7,7 +7,7 @@
 
 import { useState } from "react";
 
-import type { LoadableStructure, OptimizerResult, Payoff } from "../../types/options";
+import type { LoadableStructure, OptimizerResult, Payoff, ScenarioGrid } from "../../types/options";
 import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 import { formatMoney, formatNum, formatPrice } from "../../utils/format";
 import { formatExpiry, weekdayOf } from "../../utils/occ";
@@ -133,6 +133,65 @@ export function MiniPayoff({ payoff, targets }: { payoff: Payoff; targets: numbe
   );
 }
 
+/** The price x volatility grid, folded away until asked for. The middle
+ * row is the card's own number, so reading down a column says what the
+ * "IV unchanged" assumption is worth -- and on a structure that expires at
+ * the horizon the three rows are identical, which is the honest answer. */
+function Scenarios({ scenario, risk }: { scenario: ScenarioGrid; risk: number }) {
+  const [open, setOpen] = useState(false);
+  const free = scenario.iv_span === 0;
+  return (
+    <div className="opt-scenario">
+      <button type="button" className="opt-scenario-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {open ? "▾" : "▸"} Scenarios
+        <span
+          className="opt-scenario-span"
+          title={
+            free
+              ? "Every leg expires at the horizon, so the P/L there is intrinsic: the same at any implied volatility. This card does not rest on the IV assumption at all."
+              : `Between IV -25 % and +25 % the P/L at one price differs by up to ${formatMoney(scenario.iv_span)} -- ${((scenario.iv_span / Math.max(risk, 1)) * 100).toFixed(0)} % of what the position puts up. That is what the card's single number hides.`
+          }
+        >
+          {free ? "IV-independent" : `IV swing ${formatMoney(scenario.iv_span)}`}
+        </span>
+      </button>
+      {open && (
+        <table className="opt-scenario-grid">
+          <thead>
+            <tr>
+              <th scope="col" title={`Columns are the underlying at the horizon: spot plus multiples of the implied move (±${scenario.implied_move.toFixed(2)}).`}>
+                IV
+              </th>
+              {scenario.prices.map((price, i) => (
+                <th key={price} scope="col">
+                  <span className="opt-scenario-move">{scenario.moves[i] > 0 ? `+${scenario.moves[i]}` : scenario.moves[i]}σ</span>
+                  {formatPrice(price)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {scenario.rows.map((row) => (
+              <tr key={row.iv_shift} className={row.iv_shift === 0 ? "base" : ""}>
+                <th scope="row">{row.iv_shift === 0 ? "as is" : `${row.iv_shift > 0 ? "+" : ""}${Math.round(row.iv_shift * 100)}%`}</th>
+                {row.pnl.map((pnl, i) => (
+                  <td
+                    key={scenario.prices[i]}
+                    className={pnl >= 0 ? "delta-up" : "delta-down"}
+                    title={`${formatPrice(scenario.prices[i])} at IV ${row.iv_shift === 0 ? "unchanged" : `${row.iv_shift > 0 ? "+" : ""}${Math.round(row.iv_shift * 100)} %`}: ${formatMoney(pnl)}, ${((pnl / Math.max(risk, 1)) * 100).toFixed(0)} % of risk`}
+                  >
+                    {formatMoney(pnl)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 export function ResultCard({
   r,
   bestRor,
@@ -192,6 +251,7 @@ export function ResultCard({
         </span>
       </div>
       {r.spread.payoff ? <MiniPayoff payoff={r.spread.payoff} targets={targets} /> : null}
+      {r.scenario ? <Scenarios scenario={r.scenario} risk={r.risk} /> : null}
       <div className="opt-card-foot">
         <span className="order-hint">
           {r.direction === "debit" ? "Pay" : "Receive"} {formatMoney(Math.abs(r.net_price) * 100 * r.spread.qty)} · max{" "}

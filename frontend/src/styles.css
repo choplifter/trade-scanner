@@ -4764,6 +4764,80 @@ td.chain-side.chain-stale {
 .opt-stat.mid strong { color: var(--opt-mid); }
 .opt-stat.low strong { color: var(--text-secondary); }
 
+/* The scenario grid on an optimizer card: price across, implied
+   volatility down. Folded away by default -- twelve cards each opening a
+   table would bury the ranking it belongs to. */
+.opt-scenario {
+  margin-top: 6px;
+}
+
+.opt-scenario-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.opt-scenario-toggle:hover {
+  color: var(--text-primary);
+}
+
+.opt-scenario-span {
+  margin-left: auto;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.opt-scenario-grid {
+  width: 100%;
+  margin-top: 4px;
+  border-collapse: collapse;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.opt-scenario-grid th,
+.opt-scenario-grid td {
+  padding: 2px 3px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.opt-scenario-grid thead th {
+  color: var(--text-muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The move multiple above the price it stands for. */
+.opt-scenario-move {
+  display: block;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.opt-scenario-grid tbody th {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* The row the card's own number comes from. */
+.opt-scenario-grid tr.base {
+  background: var(--row-hover);
+}
+
+.opt-scenario-grid tr.base th {
+  color: var(--text-primary);
+}
+
 .opt-mini {
   width: 100%;
   height: 110px;

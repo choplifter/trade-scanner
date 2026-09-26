@@ -617,11 +617,29 @@ export interface OptimizerResult {
    * the chain's ATM IV with no drift -- the market's own distribution, not
    * a forecast. Null when no IV was available. */
   chance: number | null;
+  /** P/L at the horizon across price and implied volatility -- the card's
+   * own number is the middle IV row. Null when there is no implied move or
+   * a leg has no IV. */
+  scenario: ScenarioGrid | null;
   max_profit: number | null;
   max_loss: number | null;
   breakevens: number[];
   ticket: SpreadTicketRequest;
   spread: ResolvedSpread;
+}
+
+/** The scenario grid: prices across (spot plus multiples of the implied
+ * move), implied volatility down (each leg's own IV scaled). */
+export interface ScenarioGrid {
+  /** Multiples of the implied move, one per price column. */
+  moves: number[];
+  prices: number[];
+  implied_move: number;
+  rows: { iv_shift: number; pnl: number[] }[];
+  /** The widest gap between the IV rows at any one price, in dollars --
+   * what the "IV unchanged" assumption is worth on this card. Zero when
+   * every leg expires at the horizon. */
+  iv_span: number;
 }
 
 export interface OptimizerRejected {
