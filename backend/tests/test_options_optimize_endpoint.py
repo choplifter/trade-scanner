@@ -9,7 +9,7 @@ replayed chain is instead of refusing.
 """
 
 import asyncio
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,11 +24,16 @@ from app.options.pricing import net_price, spread_risk
 from app.trading.errors import OrderRejected
 
 ET = ZoneInfo("America/New_York")
-TODAY = date(2026, 9, 4)
-NOW = datetime(2026, 9, 4, 14, 0, tzinfo=timezone.utc)
-NEAR = date(2026, 9, 25)
-MID = date(2026, 10, 9)
-FAR = date(2026, 10, 30)
+# Anchored to the real today: the endpoint tests below go through the
+# router, which checks the horizon against the actual date, so fixed dates
+# here quietly rot into "the horizon must be after today" the moment the
+# calendar passes them (which is what happened on 2026-09-26).
+TODAY = date.today()
+NOW = datetime.combine(TODAY, time(14, 0), tzinfo=timezone.utc)
+EARLY = TODAY + timedelta(days=7)
+NEAR = TODAY + timedelta(days=21)
+MID = TODAY + timedelta(days=35)
+FAR = TODAY + timedelta(days=56)
 SPOT = 100.0
 IV = 0.30
 
@@ -140,14 +145,14 @@ def test_the_request_needs_exactly_one_horizon_and_an_ordered_range():
 
 
 def test_choose_expiries_keeps_the_horizon_first_and_nothing_before_it():
-    infos = [ExpiryInfo(expiry=e, dte=(e - TODAY).days, contract_count=40) for e in (date(2026, 9, 11), NEAR, MID, FAR)]
+    infos = [ExpiryInfo(expiry=e, dte=(e - TODAY).days, contract_count=40) for e in (EARLY, NEAR, MID, FAR)]
     chosen = choose_expiries(infos, NEAR, TODAY)
     assert chosen[0] == NEAR
     assert all(e >= NEAR for e in chosen)
     assert len(chosen) <= 3
     # A horizon date between expiries drops the ones before it.
-    assert choose_expiries(infos, date(2026, 10, 1), TODAY) == [MID, FAR]
-    assert choose_expiries(infos, date(2026, 12, 1), TODAY) == []
+    assert choose_expiries(infos, NEAR + timedelta(days=1), TODAY) == [MID, FAR]
+    assert choose_expiries(infos, FAR + timedelta(days=30), TODAY) == []
 
 
 # --- the run -------------------------------------------------------------------------
@@ -187,7 +192,7 @@ def test_a_horizon_today_or_unlisted_or_beyond_the_board_is_refused():
     with pytest.raises(OrderRejected):
         _run(service, _req(horizon_expiry=None, horizon_date=TODAY))
     with pytest.raises(OrderRejected):
-        _run(service, _req(horizon_expiry=date(2026, 9, 18)))
+        _run(service, _req(horizon_expiry=TODAY + timedelta(days=14)))
     with pytest.raises(OrderRejected):
         _run(service, _req(horizon_expiry=None, horizon_date=date(2027, 1, 15)))
 

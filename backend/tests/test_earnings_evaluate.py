@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -16,7 +16,11 @@ from app.options.chain import ExpiryInfo
 from app.services.market_clock import ET
 from tests.test_options_optimize_endpoint import FAR, NEAR, NOW, TODAY, _Service
 
-REPORT = date(2026, 9, 4)
+# Relative to the real today, like the optimize-endpoint fixtures this
+# borrows TODAY from: a fixed report date becomes "no upcoming report" the
+# moment the calendar passes it, and the screen then answers with nothing.
+REPORT = TODAY
+PAST_REPORTS = (TODAY - timedelta(days=180), TODAY - timedelta(days=90))
 
 
 @dataclass
@@ -46,18 +50,20 @@ def _bars(days: dict[str, float]) -> list[_Bar]:
 
 # Two past reports, each a 4 % move -- against a ~7 % implied move that is
 # a market charging well over what the stock has delivered.
-PAST_CLOSES = {
-    "2026-03-03": 100.0,
-    "2026-03-05": 104.0,
-    "2026-06-02": 100.0,
-    "2026-06-04": 96.0,
-}
+def _around(report: date, before: float, after: float) -> dict[str, float]:
+    return {
+        (report - timedelta(days=1)).isoformat(): before,
+        (report + timedelta(days=1)).isoformat(): after,
+    }
+
+
+PAST_CLOSES = {**_around(PAST_REPORTS[0], 100.0, 104.0), **_around(PAST_REPORTS[1], 100.0, 96.0)}
 
 
 class _Calendar:
     configured = True
 
-    def __init__(self, dates=(date(2026, 3, 4), date(2026, 6, 3), REPORT)):
+    def __init__(self, dates=(*PAST_REPORTS, REPORT)):
         self.dates = list(dates)
 
     async def report_dates(self, symbol):
@@ -130,17 +136,18 @@ def _evaluate(monkeypatch, service=None, **kw):
 
 
 def test_the_horizon_is_the_first_expiry_that_survives_the_report():
+    past, soon, later = TODAY - timedelta(days=3), TODAY + timedelta(days=7), TODAY + timedelta(days=21)
     infos = [
-        ExpiryInfo(expiry=date(2026, 9, 1), dte=-3, contract_count=10),
-        ExpiryInfo(expiry=date(2026, 9, 11), dte=7, contract_count=10),
-        ExpiryInfo(expiry=date(2026, 9, 25), dte=21, contract_count=10),
+        ExpiryInfo(expiry=past, dte=-3, contract_count=10),
+        ExpiryInfo(expiry=soon, dte=7, contract_count=10),
+        ExpiryInfo(expiry=later, dte=21, contract_count=10),
     ]
-    assert choose_horizon(infos, date(2026, 9, 9), TODAY) == date(2026, 9, 11)
-    assert choose_horizon(infos, date(2026, 9, 20), TODAY) == date(2026, 9, 25)
+    assert choose_horizon(infos, TODAY + timedelta(days=5), TODAY) == soon
+    assert choose_horizon(infos, TODAY + timedelta(days=16), TODAY) == later
     # Nothing listed past the report: the last expiry, rather than nothing.
-    assert choose_horizon(infos, date(2026, 12, 1), TODAY) == date(2026, 9, 25)
-    assert choose_horizon(infos, None, TODAY) == date(2026, 9, 11)
-    assert choose_horizon([], date(2026, 9, 9), TODAY) is None
+    assert choose_horizon(infos, TODAY + timedelta(days=90), TODAY) == later
+    assert choose_horizon(infos, None, TODAY) == soon
+    assert choose_horizon([], TODAY + timedelta(days=5), TODAY) is None
 
 
 def test_wing_counts_only_count_strikes_beyond_the_move_that_are_quoted():
