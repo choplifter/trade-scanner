@@ -613,9 +613,10 @@ export interface OptimizerResult {
   pnl_at_target_after_cross: number;
   /** What the ranking sorts on: the return with the cross paid. */
   return_on_risk_after_cross: number;
-  /** Probability of any profit on the horizon date under a lognormal at
-   * the chain's ATM IV with no drift -- the market's own distribution, not
-   * a forecast. Null when no IV was available. */
+  /** Probability that the position is ahead on the horizon date under a
+   * lognormal at the chain's ATM IV with no drift -- the market's own
+   * distribution, not a forecast. The bar it has to clear is the cost of
+   * crossing the market, not zero. Null when no IV was available. */
   chance: number | null;
   /** P/L at the horizon across price and implied volatility -- the card's
    * own number is the middle IV row. Null when there is no implied move or

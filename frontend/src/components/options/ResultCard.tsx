@@ -233,7 +233,7 @@ export function ResultCard({
         </span>
         <span
           className={`opt-stat chance ${r.chance != null && bestChance > 0 ? tier(r.chance, bestChance) : "low"}`}
-          title="Share of the option market's own implied distribution (at-the-money IV, lognormal, no drift) under which the position is profitable on the horizon date. A model number, not a forecast."
+          title="Share of the option market's own implied distribution (at-the-money IV, lognormal, no drift) under which the position is ahead on the horizon date, counting what it costs to cross the market to get in. A model number, not a forecast."
         >
           <strong>{r.chance == null ? "—" : `${(r.chance * 100).toFixed(0)}%`}</strong> Chance
         </span>

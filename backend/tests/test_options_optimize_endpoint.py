@@ -507,3 +507,22 @@ def test_a_cross_large_against_the_risk_is_rejected_even_when_small_against_the_
     # Raising the knob lets the same package through.
     loose = _run(_Expensive(), _req(strategies=["bull_call"], budget=1000.0, max_cross_of_risk=5.0))
     assert len(loose["results"]) >= len(body["results"])
+
+
+def test_the_chance_has_to_clear_the_cross_too():
+    """A position that must first make back what it paid to get in is not
+    ahead at zero, so the threshold moves with the cross."""
+    from app.options.optimizer import chance_of_profit
+    from app.options.payoff import PayoffLeg
+
+    legs = [
+        PayoffLeg(kind="call", strike=100.0, side="buy", ratio=1, expiry=NEAR, iv=0.3),
+        PayoffLeg(kind="call", strike=105.0, side="sell", ratio=1, expiry=NEAR, iv=0.3),
+    ]
+    horizon = datetime.combine(NEAR, time(16, 0), tzinfo=ET)
+    args = (legs, 1.5, horizon, 100.0, 0.3, 30 / 365)
+    free = chance_of_profit(*args)
+    charged = chance_of_profit(*args, threshold=60.0)
+    assert free is not None and charged is not None
+    assert charged < free, "clearing a 60-dollar cross is less likely than clearing zero"
+    assert chance_of_profit(*args, threshold=0.0) == free

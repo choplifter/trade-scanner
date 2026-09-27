@@ -1448,7 +1448,10 @@ of what the position puts up -- the fraction alone is blind to a package
 that is simply expensive, and a deep-in-the-money 20-point put spread
 quoted around 19 crosses at 15 % of its own price for 5,700 dollars against
 1,000 of risk. `max_cross_fraction` and `max_cross_of_risk` override them;
-a `max_cross_fraction` of 1.0 switches every cross rule off.
+a `max_cross_fraction` of 1.0 switches every cross rule off. The **chance**
+clears the same bar: `chance_of_profit` sums the implied distribution's mass
+where the P/L is above the cross, not above zero, so a card's chance and its
+profit answer the same question.
 A multi-strike structure narrower than `MIN_WIDTH_PCT` of spot (0.5 %, so
 ~$4 on SPY and under a strike increment on a cheap name) is not offered at
 all, counted as `under_min_width`; legs across expiries are exempt, since a

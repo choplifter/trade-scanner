@@ -495,6 +495,7 @@ def chance_of_profit(
     sigma: float,
     years: float,
     qty: int = 1,
+    threshold: float = 0.0,
 ) -> float | None:
     """The probability that the position shows a profit on the horizon
     date, under the distribution the option market itself implies: the
@@ -503,9 +504,10 @@ def chance_of_profit(
     and no drift beyond the lognormal correction -- the same assumption
     every "chance of profit" figure rests on, OptionStrat's included.
     Integrates the P/L over a price grid +/- 4 sigma and adds up the
-    probability mass where it is positive. A model number: it says how
-    likely the implied distribution makes a profit, not how likely a
-    profit is."""
+    probability mass where it is above `threshold` -- dollars the position
+    has to clear before it is ahead, which is where the cost of crossing
+    the market goes. A model number: it says how likely the implied
+    distribution makes a profit, not how likely a profit is."""
     if sigma <= 0 or years <= 0 or spot <= 0:
         return None
     width = sigma * math.sqrt(years)
@@ -527,7 +529,7 @@ def chance_of_profit(
         pnl = position_pnl(legs, net_price, price, horizon, qty)
         if pnl is None:
             return None
-        if pnl > 0:
+        if pnl > threshold:
             total += mass
     return round(min(1.0, max(0.0, total)), 4)
 

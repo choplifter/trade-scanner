@@ -222,7 +222,14 @@ def atm_sigma(rows: list[dict], spot: float) -> float | None:
 
 
 def _repriced(
-    cand: Candidate, spread, target: Target, horizon: datetime, *, sigma: float | None = None, years: float | None = None
+    cand: Candidate,
+    spread,
+    target: Target,
+    horizon: datetime,
+    *,
+    sigma: float | None = None,
+    years: float | None = None,
+    cross_total: float = 0.0,
 ) -> tuple[list[float], float, float | None, list[PayoffLeg], float] | None:
     """The card's P/L points, risk and chance from the previewed legs and
     limit -- the same arithmetic as the cheap pass, on the numbers the
@@ -245,7 +252,11 @@ def _repriced(
     risk = spread.collateral if spread.collateral > 0 else (spread.max_loss or 0.0)
     chance = None
     if sigma is not None and years is not None and years > 0:
-        chance = chance_of_profit(legs, net, horizon, spread.spot, sigma, years, spread.qty)
+        # Net of the cross, like the rest of the card: a position that has
+        # to make back what it paid to get in is not ahead at zero.
+        chance = chance_of_profit(
+            legs, net, horizon, spread.spot, sigma, years, spread.qty, threshold=cross_total
+        )
     return points, risk, chance, legs, net
 
 
@@ -353,7 +364,11 @@ async def optimize_structures(
                     }
                 )
                 continue
-            repriced = _repriced(cand, spread, target, horizon_moment, sigma=sigma, years=years)
+            # Priced before the P/L, because the chance has to clear it too.
+            cross_total = 0.0 if spread.net_natural is None else abs(spread.net_natural - spread.net_mid) * 100 * qty
+            repriced = _repriced(
+                cand, spread, target, horizon_moment, sigma=sigma, years=years, cross_total=cross_total
+            )
             if repriced is None:
                 rejected.append(
                     {
@@ -389,7 +404,6 @@ async def optimize_structures(
                     }
                 )
                 continue
-            cross_total = 0.0 if spread.net_natural is None else abs(spread.net_natural - spread.net_mid) * 100 * qty
             # Both cross rules answer to the same knob: at 1.0 the caller
             # has asked to see everything the market quotes, wide or not.
             max_of_risk = DEFAULT_MAX_CROSS_OF_RISK if req.max_cross_of_risk is None else req.max_cross_of_risk
