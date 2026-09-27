@@ -1473,12 +1473,23 @@ the stock usually moved more than is priced, Neutral when less, with a
 button that applies the view. Without a pre-report expiry or its chain the
 note states the past moves only.
 
-**Positioning (COT).** On the commodity ETFs -- USO, UNG, GLD, IAU, SLV --
-a line above the events strip carries the CFTC's weekly Commitments of
-Traders for the futures the ETF tracks (`app/market_data/cot.py`, the
-keyless Socrata feed, cached six hours, no key and no cost): managed
-money's net position, as a share of open interest, and its mid-rank over
-three years, with the report date. The report is published Friday 15:30 ET
+**Positioning (COT).** A line above the events strip carries the CFTC's
+weekly Commitments of Traders for the futures an ETF tracks
+(`app/market_data/cot.py`, the keyless Socrata feed, cached six hours, no
+key and no cost): the speculative side's net position, as a share of open
+interest, and its mid-rank over three years, with the report date. Two
+reports, one ReportSpec each, because the CFTC splits its world in two:
+the **disaggregated** report for physical commodities -- USO, UNG, GLD,
+IAU, SLV -- where the speculators are *managed money* against the
+producers and merchants; and **Traders in Financial Futures** for
+SPY, QQQ, IWM (the E-minis), TLT and IEF (Treasuries), where they are
+*leveraged funds* against the asset managers. The line names whichever
+pair its report uses.
+
+On the index futures the leveraged funds are usually net **short** -- the
+hedge leg of a basis trade against cash equities, not a bearish bet -- so
+those contracts carry a caveat in the tooltip and the note speaks of the
+top or bottom of the three-year range rather than of long or short. The report is published Friday 15:30 ET
 for positions held the *Tuesday* before, so it is days old by design; it is
 context on whether a move is crowded, never an entry, and the note it adds
 past the 10th or 90th percentile says "a crowded side", not a direction.

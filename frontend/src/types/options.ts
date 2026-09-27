@@ -762,14 +762,20 @@ export interface OptionsIdeaResponse {
 export interface CotReading {
   symbol: string;
   contract: string;
+  /** What the speculative side is called in this report: "managed money"
+   * in a commodity, "leveraged funds" in a financial future. */
+  spec_label: string;
+  hedge_label: string;
   report_date: string;
   open_interest: number;
-  money_net: number;
-  money_net_pct_oi: number | null;
+  spec_net: number;
+  spec_net_pct_oi: number | null;
   /** Mid-rank of the net (as a share of open interest) over three years. */
-  money_net_percentile: number | null;
-  commercial_net: number;
+  spec_net_percentile: number | null;
+  hedge_net: number;
   weeks: number;
   /** Set only at the extremes, and worded as "crowded", not as a call. */
   note: string | null;
+  /** Why the raw sign would mislead on this contract (index futures). */
+  caveat: string | null;
 }

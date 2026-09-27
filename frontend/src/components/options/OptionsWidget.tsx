@@ -664,13 +664,13 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               <div className="expiry-events order-hint">
                 <span
                   className={`expiry-event${cot.note ? " wide" : ""}`}
-                  title="Commitments of Traders (CFTC, weekly): the net position of managed money in the futures this ETF tracks, as a share of open interest, and where that sits over three years. Published Friday for the Tuesday before, so it is days old by design -- context on whether a move is crowded, not an entry."
+                  title={`Commitments of Traders (CFTC, weekly): the net position of ${cot.spec_label} in the futures this ETF tracks, as a share of open interest, and where that sits over three years (${cot.hedge_label} are the other side). Published Friday for the Tuesday before, so it is days old by design -- context on whether a move is crowded, not an entry.${cot.caveat ? ` ${cot.caveat}` : ""}`}
                 >
-                  <span className="expiry-mark macro">C</span> {cot.contract}: speculators net{" "}
-                  {cot.money_net >= 0 ? "long" : "short"} {Math.abs(cot.money_net).toLocaleString()} (
-                  {cot.money_net_pct_oi == null ? "—" : `${(cot.money_net_pct_oi * 100).toFixed(0)} % of OI`}
-                  {cot.money_net_percentile != null
-                    ? `, ${ordinal(Math.round(cot.money_net_percentile * 100))} pct of 3y`
+                  <span className="expiry-mark macro">C</span> {cot.contract}: {cot.spec_label} net{" "}
+                  {cot.spec_net >= 0 ? "long" : "short"} {Math.abs(cot.spec_net).toLocaleString()} (
+                  {cot.spec_net_pct_oi == null ? "—" : `${Math.abs(cot.spec_net_pct_oi * 100).toFixed(0)} % of OI`}
+                  {cot.spec_net_percentile != null
+                    ? `, ${ordinal(Math.round(cot.spec_net_percentile * 100))} pct of 3y`
                     : ", too little history to rank"}
                   ) · {cot.report_date}
                   {cot.note ? ` · ${cot.note}` : ""}
