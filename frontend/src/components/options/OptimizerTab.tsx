@@ -18,6 +18,7 @@ import { formatExpiry, weekdayOf } from "../../utils/occ";
 import { earningsSentence, eventMarks, heldThroughEarnings, ivRankSentence, ivTone, macroInWindow, macroSentence } from "./eventMarks";
 import type { OptimizerIntent } from "./optimizerIntent";
 import { ResultCard } from "./ResultCard";
+import { optimizerBlockedReason } from "./optimizerBlocked";
 
 interface OptimizerTabProps {
   symbol: string | null;
@@ -25,6 +26,8 @@ interface OptimizerTabProps {
    * sizes the implied move the outlook buttons work in. */
   chain: ChainResponse | null;
   expiries: ExpiryInfo[];
+  /** The chain fetch is still out: "no listed options" would be a lie. */
+  chainLoading: boolean;
   /** Earnings, macro releases and IV rank for the symbol (useOptionEvents). */
   events: OptionEventsResponse | null;
   optimizer: OptimizerState;
@@ -259,7 +262,17 @@ interface RunParams {
  * light says whether premium is rich or cheap against its own history.
  * Nothing here is a recommendation.
  */
-export function OptimizerTab({ symbol, chain, expiries, events, optimizer, intent, onIntentHandled, onLoad }: OptimizerTabProps) {
+export function OptimizerTab({
+  symbol,
+  chain,
+  expiries,
+  chainLoading,
+  events,
+  optimizer,
+  intent,
+  onIntentHandled,
+  onLoad,
+}: OptimizerTabProps) {
   const { result, request, loading, error } = optimizer;
   const remembered = request && request.underlying === symbol ? request : null;
   const spot = chain?.spot ?? null;
@@ -377,6 +390,20 @@ export function OptimizerTab({ symbol, chain, expiries, events, optimizer, inten
     setReason(null);
   };
 
+  // An outlook picked before the chain arrived (a symbol just clicked, a
+  // slow fetch) had nowhere to put its target: viewParams needs the spot,
+  // and the click was silently dropped. The view is remembered instead and
+  // priced the moment the spot is known -- never over a target the reader
+  // typed themselves.
+  useEffect(() => {
+    if (!outlook || spot == null || target.trim() !== "") return;
+    const p = viewParams(outlook);
+    if (p.target != null) setTarget(p.target.toFixed(2));
+    // viewParams reads the current families/impliedMove; only the arrival
+    // of a spot should trigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outlook, spot, impliedMove, target]);
+
   const numeric = (v: string): number | null => {
     const n = Number(v.replace(",", "."));
     return v.trim() !== "" && Number.isFinite(n) && n > 0 ? n : null;
@@ -384,6 +411,21 @@ export function OptimizerTab({ symbol, chain, expiries, events, optimizer, inten
   const targetValue = numeric(target);
   const targetPct = targetValue != null && spot ? ((targetValue / spot - 1) * 100).toFixed(1) : null;
   const canRun = !!symbol && targetValue != null && horizonExpiry !== "" && families.size > 0;
+  // A disabled button with no reason reads as a broken panel -- and the
+  // commonest reason is not the reader's doing at all: a symbol with no
+  // listed options can never be optimized.
+  const blockedReason = canRun
+    ? null
+    : optimizerBlockedReason({
+        symbol,
+        expiryCount: expiries.length,
+        chainLoading,
+        horizonExpiry,
+        familyCount: families.size,
+        target: targetValue,
+        spot,
+        running: loading,
+      });
 
   const bodyFor = (p: RunParams): OptimizeRequest | null => {
     if (!symbol || p.target == null || !p.horizonExpiry || p.families.size === 0) return null;
@@ -658,6 +700,8 @@ export function OptimizerTab({ symbol, chain, expiries, events, optimizer, inten
           {more ? "Fewer options" : "More options"}
         </button>
       </div>
+
+      {blockedReason && <p className="order-hint opt-blocked">{blockedReason}</p>}
 
       {more && (
         <div className="opt-more">

@@ -4584,6 +4584,12 @@ td.chain-side.chain-stale {
   --opt-mid: #d6a11c;
 }
 
+/* Why "Find structures" is disabled -- under the button, not as a
+   warning: it is usually the symbol, not a mistake the reader made. */
+.opt-blocked {
+  margin: 4px 0 0;
+}
+
 .opt-outlooks {
   display: flex;
   flex-wrap: wrap;

@@ -162,7 +162,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const spreads = useSpreads(enabled);
   const badge = modeBadge(mode);
   const replayFeed = spreads.account?.feed === "replay";
-  const { chain, expiries, expiry, setExpiry } = chainState;
+  const { chain, expiries, expiry, setExpiry, loading: chainLoading } = chainState;
   // What the expiries are held through (earnings, FOMC, CPI) and where the
   // chain's ATM IV sits in its history; the strip and the Optimizer show it.
   const eventsState = useOptionEvents(symbol, atmIv(chain), expiries.find((e) => e.expiry === chain?.expiry)?.dte ?? null);
@@ -623,6 +623,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             symbol={symbol}
             chain={chain}
             expiries={expiries}
+            chainLoading={chainLoading}
             events={events}
             optimizer={optimizer}
             intent={intent}
