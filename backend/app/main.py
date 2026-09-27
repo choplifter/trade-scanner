@@ -13,6 +13,7 @@ from app.ai.trade_idea_tracker import TradeIdeaTracker
 from app.market_data.earnings import EarningsCalendar
 from app.market_data.earnings_screen import EarningsDayCalendar
 from app.market_data.cboe_history import CboeHistory
+from app.market_data.cot import CotCache
 from app.market_data.macro_calendar import MacroCalendar, MacroHistory
 from app.playbooks.paper_loop import run_playbook_paper_loop
 from app.playbooks.runner import PlaybookRunner
@@ -230,6 +231,9 @@ async def lifespan(app: FastAPI):
     # ten_year_moves / macro_releases): cached, on the same client.
     app.state.ten_year_history = CboeHistory(fundamentals_client, "_TNX")
     app.state.macro_history = MacroHistory(settings.fmp_api_key, fundamentals_client)
+    # Positioning behind the commodity ETFs (app.market_data.cot): keyless,
+    # weekly, and on the same client for the same reason as the two above.
+    app.state.cot = CotCache(fundamentals_client)
     fundamentals = FundamentalsCache(settings, fundamentals_client)
     app.state.fundamentals = fundamentals
 

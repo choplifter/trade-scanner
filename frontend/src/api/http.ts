@@ -1,5 +1,6 @@
 import type { ScannerRow, SymbolBarsResponse } from "../types/alpaca";
 import type { GexPlanResponse, GexResponse } from "../types/gex";
+import type { CotReading } from "../types/options";
 import type { JournalEntry, JournalResponse } from "../types/journal";
 import type { MarketConditionsResponse } from "../types/marketConditions";
 import type { NewsFeedItem } from "../types/newsFeed";
@@ -148,6 +149,12 @@ export function getSymbolBars(symbol: string, timeframe = "1Min", since?: number
 
 export function getSymbolInfo(symbol: string): Promise<SymbolInfoResponse> {
   return getJson<SymbolInfoResponse>(`/symbols/${symbol}/info`);
+}
+
+/** Positioning in the futures behind a commodity ETF, or null when the CFTC
+ * does not cover the symbol (every share, and most ETFs). */
+export function getSymbolCot(symbol: string): Promise<{ symbol: string; cot: CotReading | null }> {
+  return getJson<{ symbol: string; cot: CotReading | null }>(`/symbols/${encodeURIComponent(symbol)}/cot`);
 }
 
 /** Prefix matches against the full active-equity list (ETFs and anything

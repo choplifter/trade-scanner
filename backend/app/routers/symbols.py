@@ -209,6 +209,18 @@ async def get_symbol_info_endpoint(symbol: str, request: Request) -> dict:
     return info.model_dump(mode="json")
 
 
+@router.get("/{symbol}/cot")
+async def get_symbol_cot(symbol: str, request: Request) -> dict:
+    """Commitments of Traders for the futures behind a commodity ETF, or
+    `{"cot": null}` for every other symbol -- the CFTC covers futures, not
+    shares, and a missing line is the ordinary answer here rather than an
+    error (app.market_data.cot)."""
+    cache = getattr(request.app.state, "cot", None)
+    if cache is None:
+        return {"symbol": symbol.upper(), "cot": None}
+    return {"symbol": symbol.upper(), "cot": await cache.reading(symbol)}
+
+
 @router.get("/{symbol}/bars")
 async def get_symbol_bars(
     symbol: str,

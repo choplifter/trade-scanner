@@ -755,3 +755,21 @@ export interface OptionsIdeaResponse {
   disclaimer: string;
   context_used: OptionsIdeaContextUsed;
 }
+
+/** Commitments of Traders for the futures behind a commodity ETF -- backend
+ * app/market_data/cot.py. Weekly, three days stale on arrival, and context
+ * rather than a signal. Null for every symbol the CFTC does not cover. */
+export interface CotReading {
+  symbol: string;
+  contract: string;
+  report_date: string;
+  open_interest: number;
+  money_net: number;
+  money_net_pct_oi: number | null;
+  /** Mid-rank of the net (as a share of open interest) over three years. */
+  money_net_percentile: number | null;
+  commercial_net: number;
+  weeks: number;
+  /** Set only at the extremes, and worded as "crowded", not as a call. */
+  note: string | null;
+}

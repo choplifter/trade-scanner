@@ -5,6 +5,7 @@ import { TICKET_MAX_WIDTH, TICKET_MIN_WIDTH, clampShortTarget, getSettings, upda
 import { modeBadge, setTradingMode, type TradingMode } from "../../api/tradingMode";
 import { useOptionChain } from "../../hooks/useOptionChain";
 import { useOptionEvents } from "../../hooks/useOptionEvents";
+import { useCot } from "../../hooks/useCot";
 import { useOptionsIdeas } from "../../hooks/useOptionsIdeas";
 import { useOptionsOptimizer } from "../../hooks/useOptionsOptimizer";
 import { useReplaySession } from "../../hooks/useReplaySession";
@@ -89,6 +90,15 @@ const LONG_EXPIRY_MIN_GAP_DAYS = 7;
  * mode the same widget trades the local options book (live prices, or the
  * replayed moment during a history replay); in Live mode every action
  * asks for the typed confirmation. */
+/** 1st, 2nd, 3rd, 4th... 11th-13th are the exceptions that make a naive
+ * "th" read as a typo, which is exactly what a percentile does not need. */
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+}
+
+
 export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: OptionsWidgetProps) {
   const enabled = true;
   const [tab, setTab] = useState<Tab>("chain");
@@ -157,6 +167,8 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // chain's ATM IV sits in its history; the strip and the Optimizer show it.
   const eventsState = useOptionEvents(symbol, atmIv(chain), expiries.find((e) => e.expiry === chain?.expiry)?.dte ?? null);
   const events = eventsState.events && eventsState.events.underlying === symbol ? eventsState.events : null;
+  // Positioning behind a commodity ETF; null for everything else.
+  const cot = useCot(symbol);
   const marks = useMemo(() => eventMarks(expiries, events), [expiries, events]);
   // The market's own weather beside this chain's: polled once for the
   // widget, the same reading the header badge shows.
@@ -648,6 +660,23 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               }}
               hint={mode !== "live" ? "[ ] expiry · 5–9 strategy · + − width · drag a leg on the rail, ⇧ moves all" : null}
             />
+            {cot && (
+              <div className="expiry-events order-hint">
+                <span
+                  className={`expiry-event${cot.note ? " wide" : ""}`}
+                  title="Commitments of Traders (CFTC, weekly): the net position of managed money in the futures this ETF tracks, as a share of open interest, and where that sits over three years. Published Friday for the Tuesday before, so it is days old by design -- context on whether a move is crowded, not an entry."
+                >
+                  <span className="expiry-mark macro">C</span> {cot.contract}: speculators net{" "}
+                  {cot.money_net >= 0 ? "long" : "short"} {Math.abs(cot.money_net).toLocaleString()} (
+                  {cot.money_net_pct_oi == null ? "—" : `${(cot.money_net_pct_oi * 100).toFixed(0)} % of OI`}
+                  {cot.money_net_percentile != null
+                    ? `, ${ordinal(Math.round(cot.money_net_percentile * 100))} pct of 3y`
+                    : ", too little history to rank"}
+                  ) · {cot.report_date}
+                  {cot.note ? ` · ${cot.note}` : ""}
+                </span>
+              </div>
+            )}
             {events && (events.earnings || events.macro.length > 0 || events.iv.atm_iv != null) && (
               <div className="expiry-events order-hint">
                 {events.earnings && (

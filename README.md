@@ -1471,7 +1471,23 @@ percentage of spot -- and compares it with the stock's median move over
 its past reports, naming the side that has been cheaper: Directional when
 the stock usually moved more than is priced, Neutral when less, with a
 button that applies the view. Without a pre-report expiry or its chain the
-note states the past moves only. The **IV rank light** beside the implied
+note states the past moves only.
+
+**Positioning (COT).** On the commodity ETFs -- USO, UNG, GLD, IAU, SLV --
+a line above the events strip carries the CFTC's weekly Commitments of
+Traders for the futures the ETF tracks (`app/market_data/cot.py`, the
+keyless Socrata feed, cached six hours, no key and no cost): managed
+money's net position, as a share of open interest, and its mid-rank over
+three years, with the report date. The report is published Friday 15:30 ET
+for positions held the *Tuesday* before, so it is days old by design; it is
+context on whether a move is crowded, never an entry, and the note it adds
+past the 10th or 90th percentile says "a crowded side", not a direction.
+Ties count half, so a flat stretch does not read as an extreme, and under a
+year of weeks there is no percentile at all. Every other symbol answers
+`null` and shows no line -- the CFTC reports futures, not shares. Financial
+futures (the E-mini behind SPY) are in a different report and are not read.
+
+The **IV rank light** beside the implied
 move offers credit families when premium is rich (rank above 60 %) and
 debit families when cheap (below 30 %). Every scanner row has an **Opt**
 button that selects the symbol, opens the tab and runs the view the day's
