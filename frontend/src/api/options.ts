@@ -10,25 +10,26 @@ import { API_BASE, OrderRejectedError, checkUnauthorized, extractErrorMessage, g
 import { tradingPath } from "./tradingMode";
 import type {
   ChainResponse,
-  Payoff,
-  PayoffRequest,
-  LegQuote,
   ClosePreview,
   CloseSpreadRequest,
   ExpiriesResponse,
+  HorizonsResponse,
+  LegQuote,
+  OptimizeRequest,
+  OptimizeResponse,
+  OptionEventsResponse,
   OptionsAccountResponse,
+  OptionsIdeaResponse,
   OrderResponse,
+  Payoff,
+  PayoffRequest,
+  RollPreview,
+  RollRequest,
+  RollResponse,
   SpreadPreview,
   SpreadTicketRequest,
   SpreadsResponse,
   TriggerCreateRequest,
-  OptionsIdeaResponse,
-  OptimizeRequest,
-  OptimizeResponse,
-  OptionEventsResponse,
-  RollPreview,
-  RollRequest,
-  RollResponse,
   UnderlyingTrigger,
 } from "../types/options";
 import type { Order, TradingRejection } from "../types/trading";
@@ -191,6 +192,13 @@ export function suggestOptionsIdeas(underlying: string): Promise<OptionsIdeaResp
  * thousand candidates priced, a dozen previewed. Read-only. */
 export function optimizeStructures(body: OptimizeRequest): Promise<OptimizeResponse> {
   return send<OptimizeResponse>("POST", "/trading/options/optimize", body);
+}
+
+/** The same optimizer run across several horizons (7/14/30/45 days), so a
+ * view can be compared by holding period. Tens of seconds: each horizon is
+ * its own chain fetch and its own previews. Read-only. */
+export function compareHorizons(body: OptimizeRequest): Promise<HorizonsResponse> {
+  return send<HorizonsResponse>("POST", "/trading/options/optimize/horizons", body);
 }
 
 /** Earnings (with the stock's past moves), macro releases and IV rank for

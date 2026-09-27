@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.ai.options_suggest import suggest_options_ideas
-from app.options.optimize import OptimizeRequest, optimize_structures
+from app.options.optimize import OptimizeRequest, compare_horizons, optimize_structures
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, RollRequest, SpreadTicket, TriggerCreate
 from app.options.service import OptionsService, market_order_refusal
@@ -384,6 +384,28 @@ async def optimize(body: OptimizeRequest, request: Request, service: OptionsServ
     except Exception:
         logger.exception("Options optimizer failed for %s", body.underlying)
         raise HTTPException(status_code=502, detail="Failed to optimize structures")
+
+
+@router.post("/optimize/horizons")
+async def optimize_horizons(body: OptimizeRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
+    """The same optimizer run across several horizons, so a view can be
+    compared by holding period rather than re-run by hand -- see
+    app.options.optimize.compare_horizons. The target should travel as
+    implied moves (`target_moves`); a fixed price would hand the longest
+    horizon the win for having the most time to reach it.
+
+    Several runs, each fetching chains and previewing its finalists: this
+    answers in tens of seconds, not the couple a single run takes.
+    """
+    try:
+        return await compare_horizons(
+            service, body.underlying, body, earnings_calendar=getattr(request.app.state, "earnings_calendar", None)
+        )
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except Exception:
+        logger.exception("Options horizon comparison failed for %s", body.underlying)
+        raise HTTPException(status_code=502, detail="Failed to compare horizons")
 
 
 @router.get("/events/{underlying}")

@@ -7,7 +7,9 @@ import {
   type ChainResponse,
   type ExpiryInfo,
   type LoadableStructure,
+  type HorizonRun,
   type OptimizeRequest,
+  type OptimizeResponse,
   type OptimizerOutlook,
   type OptionEventsResponse,
   type Strategy,
@@ -52,6 +54,62 @@ const OUTLOOKS: { key: Outlook; label: string; move: number; tone: "bear" | "fla
   { key: "bullish", label: "Bullish", move: 1, tone: "bull" },
   { key: "very_bullish", label: "Very bullish", move: 2, tone: "bull" },
 ];
+
+/** One row per horizon: the same view, priced on that holding period. The
+ * target is a different price in each row and the same claim -- one
+ * implied move grows with the root of time -- which is the only way the
+ * returns below can be read side by side. */
+function HorizonTable({
+  runs,
+  picked,
+  onPick,
+}: {
+  runs: HorizonRun[];
+  picked: string | null;
+  onPick: (expiry: string | null) => void;
+}) {
+  return (
+    <table className="opt-horizons">
+      <thead>
+        <tr>
+          <th scope="col">Expiry</th>
+          <th scope="col">DTE</th>
+          <th scope="col">Target</th>
+          <th scope="col">Best structure</th>
+          <th scope="col">Return</th>
+          <th scope="col">Chance</th>
+          <th scope="col">Risk</th>
+        </tr>
+      </thead>
+      <tbody>
+        {runs.map((run) => {
+          const best = run.best ?? null;
+          const isPicked = picked === run.expiry;
+          return (
+            <tr
+              key={run.expiry}
+              className={isPicked ? "picked" : undefined}
+              onClick={() => onPick(isPicked ? null : run.expiry)}
+              title={run.unavailable ?? "Show this horizon's structures below"}
+            >
+              <th scope="row">
+                {weekdayOf(run.expiry)} {formatExpiry(run.expiry)}
+              </th>
+              <td>{run.dte}d</td>
+              <td>{run.target ? formatPrice(run.target.points[0]) : "—"}</td>
+              <td className="opt-horizons-best">
+                {run.unavailable ?? (best ? `${best.strategy_label} ${best.legs_label}` : "nothing reaches it")}
+              </td>
+              <td>{best ? `${(best.return_on_risk_after_cross * 100).toFixed(0)}%` : "—"}</td>
+              <td>{best?.chance != null ? `${(best.chance * 100).toFixed(0)}%` : "—"}</td>
+              <td>{best ? formatPrice(best.risk) : "—"}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
 
 /** Mirrors backend optimizer.OUTLOOK_STRATEGIES, so the family checkboxes
  * show what the view will search before the request goes out. */
@@ -290,6 +348,9 @@ export function OptimizerTab({
   const [preference, setPreference] = useState<number>(remembered?.preference ?? 0.5);
   const [holdThroughEarnings, setHoldThroughEarnings] = useState<boolean>(!(remembered?.avoid_earnings ?? false));
   const [more, setMore] = useState(false);
+  // Which horizon of a comparison the cards below belong to; null shows the
+  // single run's own results, as before.
+  const [shownRun, setShownRun] = useState<string | null>(null);
   const [maxLoss, setMaxLoss] = useState<string>(remembered?.max_loss != null ? String(remembered.max_loss) : "");
   const [families, setFamilies] = useState<Set<Strategy>>(
     () =>
@@ -463,6 +524,36 @@ export function OptimizerTab({
     if (body) optimizer.run(body);
   };
 
+  /** The target as a count of implied moves, which is what makes horizons
+   * comparable: the view's own number where one was picked, else what the
+   * typed target works out to at this horizon's move. */
+  const targetMoves = (): { moves: number; both: boolean } | null => {
+    const view = outlook ? OUTLOOKS.find((o) => o.key === outlook) : null;
+    if (view) return { moves: view.move, both: view.tone === "both" };
+    if (targetValue == null || spot == null || !impliedMove) return null;
+    return { moves: (targetValue - spot) / impliedMove, both: false };
+  };
+
+  const compare = () => {
+    const moves = targetMoves();
+    const body = bodyFor({
+      outlook,
+      target: targetValue,
+      directionalMove,
+      families,
+      horizonExpiry,
+      budget: numeric(budget),
+      maxLoss: numeric(maxLoss),
+      preference,
+      avoidEarnings: !holdThroughEarnings,
+    });
+    if (!body) return;
+    setShownRun(null);
+    optimizer.compare(
+      moves ? { ...body, target_moves: Number(moves.moves.toFixed(3)), target_moves_both: moves.both } : body,
+    );
+  };
+
   // A scanner row's request: once this symbol's chain (and so its implied
   // move) is on screen, take the view, show it in the form and run it.
   const handledRef = useRef<number>(0);
@@ -511,7 +602,32 @@ export function OptimizerTab({
   if (!symbol) {
     return <div className="widget-empty">Select a symbol to optimize a structure for a price target.</div>;
   }
-  const shown = result && result.underlying === symbol ? result : null;
+  const comparison = optimizer.comparison && optimizer.comparison.underlying === symbol ? optimizer.comparison : null;
+  const pickedRun = comparison?.runs.find((r) => r.expiry === shownRun) ?? null;
+  const singleShown = result && result.underlying === symbol ? result : null;
+  // A horizon clicked in the comparison shows its own cards, as a result in
+  // its own right: its expiry, its target, its implied move. Otherwise the
+  // single run's, as before.
+  const shown: OptimizeResponse | null =
+    comparison && pickedRun?.results && pickedRun.target
+      ? {
+          underlying: comparison.underlying,
+          spot: comparison.spot,
+          as_of: singleShown?.as_of ?? "",
+          target: pickedRun.target,
+          outlook: singleShown?.outlook ?? null,
+          preference,
+          implied_move: pickedRun.implied_move ?? null,
+          atm_iv: pickedRun.atm_iv ?? null,
+          horizon: { date: pickedRun.expiry, expiries_considered: [pickedRun.expiry] },
+          earnings: null,
+          results: pickedRun.results,
+          rejected: [],
+          skipped: pickedRun.skipped ?? { total: 0, scored: 0, reasons: {} },
+          warnings: pickedRun.warnings ?? [],
+          disclaimer: comparison.disclaimer,
+        }
+      : singleShown;
   // What produced the answer on screen, for the empty state's explanation:
   // the budget it ran under, and whether it was asked for a structure that
   // puts up shares or cash rather than a spread's width.
@@ -696,12 +812,34 @@ export function OptimizerTab({
         <button type="button" className="generate-button opt-run" disabled={!canRun || loading} onClick={run}>
           {loading ? "Pricing structures…" : "Find structures"}
         </button>
+        <button
+          type="button"
+          className="row-action"
+          disabled={!canRun || optimizer.comparing}
+          onClick={compare}
+          title="Run the same view on four holding periods (about a week, two, a month, six weeks). The target travels as implied moves, so the rows compare."
+        >
+          {optimizer.comparing ? "Comparing…" : "Compare expiries"}
+        </button>
         <button type="button" className="row-action" onClick={() => setMore((m) => !m)} aria-expanded={more}>
           {more ? "Fewer options" : "More options"}
         </button>
       </div>
 
       {blockedReason && <p className="order-hint opt-blocked">{blockedReason}</p>}
+
+      {comparison && comparison.runs.length > 0 && (
+        <div className="opt-horizons-block">
+          <p className="order-hint">
+            The same view on four holding periods. The target is{" "}
+            {comparison.target_moves != null
+              ? `${comparison.target_moves > 0 ? "+" : ""}${comparison.target_moves.toFixed(1)} implied move${Math.abs(comparison.target_moves) === 1 ? "" : "s"}`
+              : "the price you named"}
+            , so each row prices it at its own expiry's move. Click a row for its structures.
+          </p>
+          <HorizonTable runs={comparison.runs} picked={shownRun} onPick={setShownRun} />
+        </div>
+      )}
 
       {more && (
         <div className="opt-more">

@@ -4584,6 +4584,60 @@ td.chain-side.chain-stale {
   --opt-mid: #d6a11c;
 }
 
+/* Comparing holding periods: one row per horizon, the picked one marked.
+   A table rather than cards -- the point is reading the rows against each
+   other, and four sets of cards would bury that. */
+.opt-horizons-block {
+  margin: 8px 0 4px;
+}
+
+.opt-horizons {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.opt-horizons th,
+.opt-horizons td {
+  padding: 3px 6px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.opt-horizons thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.opt-horizons tbody th,
+.opt-horizons-best {
+  text-align: left;
+  font-weight: 500;
+}
+
+.opt-horizons-best {
+  color: var(--text-secondary);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.opt-horizons tbody tr {
+  cursor: pointer;
+}
+
+.opt-horizons tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.opt-horizons tbody tr.picked {
+  background: var(--row-selected);
+}
+
 /* Why "Find structures" is disabled -- under the button, not as a
    warning: it is usually the symbol, not a mistake the reader made. */
 .opt-blocked {

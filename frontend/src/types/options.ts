@@ -545,6 +545,11 @@ export interface OptimizeRequest {
   target_high?: number | null;
   /** Explicit target prices (a directional view: one below, one above). */
   target_points?: number[] | null;
+  /** Or the target in implied moves, signed (+1 = one implied move above
+   * the spot). The price it means is each horizon's own, which is what
+   * makes a comparison across expiries fair -- see compareHorizons. */
+  target_moves?: number | null;
+  target_moves_both?: boolean;
   /** Which of OptionStrat's six views set the target; informational. */
   outlook?: OptimizerOutlook | null;
   /** 0 ranks by return on risk, 1 by chance of profit, between blends. */
@@ -641,6 +646,34 @@ export interface ScenarioGrid {
    * what the "IV unchanged" assumption is worth on this card. Zero when
    * every leg expires at the horizon. */
   iv_span: number;
+}
+
+/** One horizon of a comparison: the same view priced on that holding
+ * period, with its own implied move and so its own target price. */
+export interface HorizonRun {
+  expiry: string;
+  dte: number;
+  /** Set instead of the rest when that horizon could not be built at all
+   * (earnings avoided it, no two-sided strikes). */
+  unavailable?: string;
+  implied_move?: number | null;
+  atm_iv?: number | null;
+  target?: OptimizeResponse["target"];
+  best?: OptimizerResult | null;
+  results?: OptimizerResult[];
+  skipped?: OptimizeSkipped;
+  warnings?: string[];
+}
+
+export interface HorizonsResponse {
+  underlying: string;
+  spot: number;
+  /** The target the runs share, in implied moves -- what makes them
+   * comparable. Null when a price target was used instead. */
+  target_moves: number | null;
+  target_moves_both: boolean;
+  runs: HorizonRun[];
+  disclaimer: string;
 }
 
 export interface OptimizerRejected {

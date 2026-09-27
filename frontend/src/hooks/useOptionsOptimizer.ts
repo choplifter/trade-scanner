@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
-import { optimizeStructures } from "../api/options";
-import type { OptimizeRequest, OptimizeResponse } from "../types/options";
+import { compareHorizons, optimizeStructures } from "../api/options";
+import type { HorizonsResponse, OptimizeRequest, OptimizeResponse } from "../types/options";
 
 export interface OptimizerState {
   /** The last answer received; the tab shows it only while it is for the
@@ -13,6 +13,12 @@ export interface OptimizerState {
   loading: boolean;
   error: string | null;
   run: (body: OptimizeRequest) => void;
+  /** The same view across several horizons -- see compareHorizons. Kept
+   * beside `result` rather than replacing it: the comparison says which
+   * holding period to look at, the single run is what is looked at. */
+  comparison: HorizonsResponse | null;
+  comparing: boolean;
+  compare: (body: OptimizeRequest) => void;
 }
 
 /**
@@ -28,7 +34,10 @@ export function useOptionsOptimizer(): OptimizerState {
   const [request, setRequest] = useState<OptimizeRequest | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [comparison, setComparison] = useState<HorizonsResponse | null>(null);
+  const [comparing, setComparing] = useState(false);
   const seqRef = useRef(0);
+  const compareSeqRef = useRef(0);
 
   const run = useCallback((body: OptimizeRequest) => {
     const seq = ++seqRef.current;
@@ -49,5 +58,23 @@ export function useOptionsOptimizer(): OptimizerState {
       });
   }, []);
 
-  return { result, request, loading, error, run };
+  const compare = useCallback((body: OptimizeRequest) => {
+    const seq = ++compareSeqRef.current;
+    setComparing(true);
+    setError(null);
+    compareHorizons(body)
+      .then((res) => {
+        if (seq !== compareSeqRef.current) return;
+        setComparison(res);
+      })
+      .catch((err) => {
+        if (seq !== compareSeqRef.current) return;
+        setError(String(err instanceof Error ? err.message : err));
+      })
+      .finally(() => {
+        if (seq === compareSeqRef.current) setComparing(false);
+      });
+  }, []);
+
+  return { result, request, loading, error, run, comparison, comparing, compare };
 }

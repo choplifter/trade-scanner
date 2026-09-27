@@ -94,6 +94,15 @@ class OptimizeRequest(BaseModel):
     target_low: float | None = Field(default=None, gt=0)
     target_high: float | None = Field(default=None, gt=0)
     target_points: list[float] | None = Field(default=None, min_length=1, max_length=8)
+    # Or the target in implied moves, signed: +1 is one implied move above
+    # the spot, -2 two below, 0 the spot itself. The price it means is the
+    # horizon's own (spot x ATM IV x sqrt(T)), which is what makes a
+    # comparison across expiries fair: an implied move grows with the root
+    # of time, so "+1 sigma" is a different price at every horizon and the
+    # same claim at each. `target_moves_both` names both sides, the
+    # directional view. See sweep_horizons.
+    target_moves: float | None = Field(default=None, ge=-4.0, le=4.0)
+    target_moves_both: bool = False
     # Which view produced the target; sets the default strategy families
     # when `strategies` is not given. Informational otherwise.
     outlook: Literal["very_bearish", "bearish", "neutral", "directional", "bullish", "very_bullish"] | None = None
@@ -152,13 +161,26 @@ class OptimizeRequest(BaseModel):
     def _check(self) -> "OptimizeRequest":
         if (self.horizon_expiry is None) == (self.horizon_date is None):
             raise ValueError("give either horizon_expiry or horizon_date")
-        if self.target_points is None and self.target_low is None:
-            raise ValueError("give target_low (and optionally target_high) or target_points")
+        if self.target_points is None and self.target_low is None and self.target_moves is None:
+            raise ValueError("give target_low (and optionally target_high), target_points, or target_moves")
         if self.target_points is not None and any(p <= 0 for p in self.target_points):
             raise ValueError("target_points must be positive prices")
         if self.target_high is not None and self.target_low is not None and self.target_high < self.target_low:
             raise ValueError("target_high must be at or above target_low")
         return self
+
+    def target_for(self, spot: float, implied_move: float | None) -> Target:
+        """The target as a price, once the horizon's own implied move is
+        known. Falls back to the price fields when no move was asked for
+        (or none could be computed -- no IV in the chain)."""
+        if self.target_moves is None or implied_move is None or implied_move <= 0:
+            return self.target
+        reach = self.target_moves * implied_move
+        if self.target_moves_both:
+            span = abs(reach) or implied_move
+            return Target(low=spot - span, high=spot + span, explicit=(spot - span, spot + span))
+        price = spot + reach
+        return Target(low=price, high=price)
 
     @property
     def target(self) -> Target:
@@ -313,7 +335,6 @@ async def optimize_structures(
     )
     rows_by_expiry = {expiry: block["strikes"] for expiry, block in rows_by_expiry_payload.items()}
     horizon_moment = datetime.combine(horizon, time(16, 0), tzinfo=ET)
-    target = req.target
     strategies = req.strategy_set
 
     # The volatility the chance of profit is measured against: the
@@ -322,6 +343,23 @@ async def optimize_structures(
     years = years_between(now, horizon)
     sigma = atm_sigma(rows_by_expiry.get(expiries[0], []), spot)
     implied_move = round(spot * sigma * math.sqrt(years), 2) if sigma and years > 0 else None
+    # After the implied move, because a target named in implied moves is
+    # only a price once this horizon's own move is known.
+    target = req.target_for(spot, implied_move)
+    if req.target_moves is not None and implied_move is None:
+        if req.target_low is None and not req.target_points:
+            # Nothing to fall back on: running against a zero target would
+            # answer "no structure reaches it", which is true of a price
+            # that was never meant.
+            raise OrderRejected(
+                f"No at-the-money implied volatility in {underlying}'s {expiries[0].isoformat()} chain, so a target "
+                "in implied moves cannot be sized for this horizon.",
+                field="target_moves",
+            )
+        warnings.append(
+            "The target was asked for in implied moves, but this chain carries no at-the-money IV to size one; "
+            "the target price given with the request was used instead."
+        )
 
     short_delta = CONDOR_SHORT_DELTA if req.condor_short_delta_max is None else (CONDOR_SHORT_DELTA[0], req.condor_short_delta_max)
     raws, skipped = enumerate_candidates(rows_by_expiry, spot, target, strategies, short_delta=short_delta)
@@ -624,3 +662,102 @@ async def _preview_one(service, underlying: str, cand: Candidate, account: dict,
         logger.exception("Optimizer preview failed for %s %s", cand.strategy, underlying)
         return ticket, None, "could not be priced right now"
     return ticket, spread, None
+
+
+# --- comparing expiries ---------------------------------------------------
+
+# The horizons a sweep walks, in days to expiry: the listed expiry nearest
+# each. A week, a fortnight, a month, six weeks -- the span most structures
+# are opened over, and few enough that a sweep is four runs, not forty.
+SWEEP_DTES: tuple[int, ...] = (7, 14, 30, 45)
+# Per horizon, so a sweep costs a handful of previews rather than a dozen
+# per run: the reader is comparing horizons here, not picking a structure.
+SWEEP_TOP_N = 3
+
+
+def sweep_horizons(infos: list[ExpiryInfo], today: date, dtes: tuple[int, ...] = SWEEP_DTES) -> list[date]:
+    """The expiries a sweep runs, one per requested distance. Pure, and
+    deduplicated: a board listing only monthlies answers with the monthlies
+    it has rather than the same expiry four times."""
+    usable = [e for e in infos if e.dte >= 1 and e.contract_count > 0]
+    return pick_expiries(usable, targets=dtes, limit=len(dtes))
+
+
+async def compare_horizons(
+    service,
+    underlying: str,
+    req: OptimizeRequest,
+    *,
+    dtes: tuple[int, ...] = SWEEP_DTES,
+    today: date | None = None,
+    now: datetime | None = None,
+    earnings_calendar=None,
+) -> dict:
+    """One optimizer run per horizon, so the reader can see where a view
+    pays best rather than re-running the panel by hand.
+
+    The target travels as implied moves (req.target_moves), which is what
+    makes the rows comparable: a fixed price would hand the longest horizon
+    the win every time, for having the most time to reach it. Each run
+    prices its own horizon's implied move into its own target.
+
+    Runs are sequential on purpose. Each one fetches chains and previews
+    its finalists through the broker; four of them at once is a burst of
+    option-chain requests for a comparison nobody is watching by the
+    millisecond.
+    """
+    underlying = underlying.upper()
+    now = now or datetime.now(timezone.utc)
+    today = today or now.astimezone(ET).date()
+
+    spot = await service.spot(underlying)
+    if not spot:
+        raise OrderRejected(f"No price for {underlying}", field="underlying")
+    infos = _expiry_infos((await service.expiries(underlying)).get("expiries", []))
+    horizons = sweep_horizons(infos, today, dtes)
+    if not horizons:
+        raise OrderRejected(f"{underlying} has no listed expiry to compare", field="horizon")
+
+    runs: list[dict] = []
+    for horizon in horizons:
+        update = {"horizon_expiry": horizon, "horizon_date": None, "top_n": min(req.top_n, SWEEP_TOP_N)}
+        if req.target_moves is not None:
+            # In moves mode the price fields are dropped on purpose: a
+            # horizon whose chain cannot size an implied move must say so,
+            # not quietly fall back to a price that means something else
+            # here and leave one row incomparable with the rest.
+            update |= {"target_low": None, "target_high": None, "target_points": None}
+        one = req.model_copy(update=update)
+        try:
+            result = await optimize_structures(
+                service, underlying, one, today=today, now=now, earnings_calendar=earnings_calendar
+            )
+        except TradingError as exc:
+            # One horizon that cannot be built (earnings avoided it, no
+            # two-sided strikes) is a row with a reason, not the end of the
+            # comparison.
+            runs.append({"expiry": horizon.isoformat(), "dte": (horizon - today).days, "unavailable": exc.to_detail()["message"]})
+            continue
+        best = (result.get("results") or [None])[0]
+        runs.append(
+            {
+                "expiry": horizon.isoformat(),
+                "dte": (horizon - today).days,
+                "implied_move": result.get("implied_move"),
+                "atm_iv": result.get("atm_iv"),
+                "target": result.get("target"),
+                "best": best,
+                "results": result.get("results") or [],
+                "skipped": result.get("skipped"),
+                "warnings": result.get("warnings") or [],
+                "earnings": result.get("earnings"),
+            }
+        )
+    return {
+        "underlying": underlying,
+        "spot": spot,
+        "target_moves": req.target_moves,
+        "target_moves_both": req.target_moves_both,
+        "runs": runs,
+        "disclaimer": DISCLAIMER,
+    }
