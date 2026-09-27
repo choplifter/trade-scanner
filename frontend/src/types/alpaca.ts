@@ -219,6 +219,11 @@ export interface IndicatorResult {
   >;
   colors: Record<string, string>;
   style?: IndicatorStyle;
+  /** Per sub-series, where the lines of one indicator are drawn
+   * differently from each other -- the chart's three moving averages, each
+   * with its own weight and dash (see utils/movingAverages). Falls back to
+   * `style` for a sub-series that names none. */
+  styles?: Record<string, IndicatorStyle>;
   /** "oscillator" only: the pane's fixed scale, and the reference lines
    * drawn across it (RSI's 30/70). */
   range?: { min: number; max: number };

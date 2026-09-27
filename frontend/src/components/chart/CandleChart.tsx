@@ -474,6 +474,9 @@ const DEFAULT_SERIES_STYLE = { width: 2, dash: LineStyle.Solid };
 // An oscillator's reference lines (RSI's 30/70): the chart's own muted
 // grey, so they read as scale rather than as another indicator.
 const GUIDE_COLOR = "#8a8f99";
+/** A sub-series whose own name already says what it is, so the indicator
+ * it belongs to adds nothing to the chart label. */
+const SELF_NAMED_SERIES = /^(EMA|SMA|WMA|VWMA|HMA|RSI)\b/;
 // Oscillators (RSI) overlay the bottom fifth of the price pane on a scale
 // of their own, rather than getting a pane: a new pane takes its height out
 // of the candles', so switching RSI on used to squeeze the whole chart.
@@ -1472,9 +1475,13 @@ export function CandleChart({
       Object.entries(indicator.series).forEach(([subName, value]) => {
         const color = indicator.colors[subName] ?? "#898781";
         // "EMA" + "EMA 9" reads as "EMA EMA 9" and pushes the label that
-        // much further over the candles. Where the sub-series already names
-        // its group, the group name adds nothing.
-        const title = subName.startsWith(indicator.name) ? subName : `${indicator.name} ${subName}`;
+        // much further over the candles. The group name is dropped where the
+        // sub-series already carries it, and where the sub-series names the
+        // study it is ("MA" + "EMA 100" -- the line says what it is without
+        // the set it belongs to).
+        const title = subName.startsWith(indicator.name) || SELF_NAMED_SERIES.test(subName)
+          ? subName
+          : `${indicator.name} ${subName}`;
 
         if (indicator.kind === "level") {
           if (typeof value !== "number") return;
@@ -1492,7 +1499,7 @@ export function CandleChart({
           // The bottom strip of the price pane, on its own scale (see
           // OSCILLATOR_SCALE_ID). An overlay scale draws no axis, so no
           // axis labels either -- the value goes in the readout instead.
-          const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
+          const style = resolveStyle(indicator.styles?.[subName] ?? indicator.style, DEFAULT_SERIES_STYLE);
           const series = chart.addSeries(LineSeries, {
             color,
             lineWidth: style.width as 1 | 2 | 3 | 4,
@@ -1533,7 +1540,7 @@ export function CandleChart({
           }
           oscillatorRef.current = { title, color, series, last };
         } else if (indicator.kind === "series" && isPointSeries(value)) {
-          const style = resolveStyle(indicator.style, DEFAULT_SERIES_STYLE);
+          const style = resolveStyle(indicator.styles?.[subName] ?? indicator.style, DEFAULT_SERIES_STYLE);
           const series = chart.addSeries(LineSeries, {
             color,
             lineWidth: style.width as 1 | 2 | 3 | 4,

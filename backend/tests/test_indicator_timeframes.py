@@ -50,7 +50,7 @@ def test_every_indicator_is_offered_on_the_minute_chart():
     vanish."""
     assert _names_at("1Min") == {
         "VWAP",
-        "EMA",
+        "MA",
         "Bollinger",
         "RSI",
         "Opening Range",
@@ -67,14 +67,14 @@ def test_every_indicator_is_offered_on_the_minute_chart():
 
 
 def test_the_chart_bar_overlays_are_offered_at_every_timeframe():
-    """EMA, Bollinger and RSI read ctx.chart_bars -- the candles actually on
+    """The moving averages, Bollinger and RSI read ctx.chart_bars -- the candles actually on
     screen -- so at every resolution they describe those candles, and a
     daily RSI is the fourteen-day one. Pinned so that a later tidy-up pass
     giving every indicator a ceiling "for consistency" has to argue with a
     test first."""
     for timeframe in TIMEFRAME_ORDER:
         names = _names_at(timeframe)
-        for name in ("EMA", "Bollinger", "RSI"):
+        for name in ("MA", "Bollinger", "RSI"):
             assert name in names, f"{name} disappeared at {timeframe}"
 
 
@@ -109,7 +109,7 @@ def test_the_overlays_are_computed_from_the_charts_own_bars():
     by_name = {ind["name"]: ind for ind in run_indicators(ctx)}
     daily_times = [b.timestamp.isoformat() for b in daily]
 
-    for name in ("EMA", "Bollinger", "RSI"):
+    for name in ("MA", "Bollinger", "RSI"):
         for sub, points in by_name[name]["series"].items():
             assert [p["t"] for p in points] == daily_times, f"{name} / {sub}"
 
@@ -174,7 +174,7 @@ def test_the_premarket_range_drops_above_the_daily_chart():
 
 def test_the_monthly_chart_keeps_only_the_monthly_range():
     """Of the range levels, that is -- the chart-bar overlays stay throughout."""
-    assert _names_at("1Month") == {"Monthly Range", "EMA", "Bollinger", "RSI", "10Y Moves"}
+    assert _names_at("1Month") == {"Monthly Range", "MA", "Bollinger", "RSI", "10Y Moves"}
 
 
 def test_macro_releases_stop_at_the_daily_chart():
@@ -235,7 +235,7 @@ def test_an_indicator_without_a_style_gets_an_empty_one():
     styles = {r["name"]: r["style"] for r in _results_at()}
 
     assert styles["VWAP"] == {}
-    assert styles["EMA"] == {}
+    assert styles["MA"] == {}
 
 
 def test_declared_dash_patterns_are_spelled_correctly():

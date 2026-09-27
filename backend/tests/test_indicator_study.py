@@ -13,7 +13,7 @@ import pandas as pd
 import pandas_ta as ta
 import pytest
 
-from app.indicators import bollinger, ema, rsi
+from app.indicators import bollinger, ma, rsi
 from app.indicators.context import build_context
 from app.indicators.loader import run_indicators
 
@@ -32,13 +32,15 @@ def _expected(study, closes):
     kind, n = study["type"], study["length"]
     if kind == "ema":
         return ta.ema(closes, length=n)
+    if kind == "sma" and "stdev" not in study:
+        return ta.sma(closes, length=n)
     if kind == "rsi":
         return ta.rsi(closes, length=n)
     bands = ta.bbands(closes, length=n, std=study.get("stdev", 2.0))
     return {"bb_lower": bands.iloc[:, 0], "sma": bands.iloc[:, 1], "bb_upper": bands.iloc[:, 2]}[kind]
 
 
-@pytest.mark.parametrize("module", [ema, bollinger, rsi])
+@pytest.mark.parametrize("module", [ma, bollinger, rsi])
 def test_the_declared_study_is_what_compute_draws(module):
     bars, closes = _bars()
     series = module.compute(build_context("TEST", bars, [], []))

@@ -9,6 +9,7 @@ import { formatLeg, parseOcc } from "../../utils/occ";
 import { ContractTicket } from "./ContractTicket";
 import { ToolbarSelect } from "./ToolbarSelect";
 import { deriveMarkers } from "../../utils/moveMarkers";
+import { applyMovingAverages } from "../../utils/movingAverages";
 import { useTradingContext } from "../../context/TradingContext";
 import { useSpreadLevels } from "../../hooks/useSpreadLevels";
 import { useTradingMode } from "../../hooks/useTradingMode";
@@ -697,9 +698,20 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // moves) are worked out here, against whatever candles ended up on
   // screen: a 2 bp move is news on a 15m candle and noise on a daily one.
   const candleMinutes = option.minutes ?? CANDLE_MINUTES[option.alpacaTimeframe ?? ""] ?? 1;
+  // The three moving averages are the reader's, not the server's: lengths,
+  // kind and colours from Settings, computed over the candles on screen so
+  // a 20 is twenty of *these* candles at any timeframe.
+  const maLines = appSettings.movingAverages;
   const displayed = useMemo(
-    () => ({ ...aggregated, indicators: deriveMarkers(aggregated.indicators, aggregated.bars, candleMinutes) }),
-    [aggregated, candleMinutes],
+    () => ({
+      ...aggregated,
+      indicators: applyMovingAverages(
+        deriveMarkers(aggregated.indicators, aggregated.bars, candleMinutes),
+        aggregated.bars,
+        maLines,
+      ),
+    }),
+    [aggregated, candleMinutes, maLines],
   );
 
   // gexLevels folded in here, not just at the CandleChart prop, so the

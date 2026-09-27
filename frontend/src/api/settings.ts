@@ -37,6 +37,38 @@ export type TimeZoneMode = "local" | "market";
 export type ChainGreek = "delta" | "gamma" | "theta";
 export const MARKET_TIME_ZONE = "America/New_York";
 export type DefaultChartType = "candles" | "line";
+export type MovingAverageType = "ema" | "sma";
+export type MovingAverageDash = "solid" | "dashed" | "dotted";
+export const MA_WIDTHS = [1, 2, 3] as const;
+export const MA_DASHES: MovingAverageDash[] = ["solid", "dashed", "dotted"];
+
+/** One of the chart's three moving averages. The chart computes it from
+ * the candles on screen (see utils/movingAverages), so a change here
+ * applies at every timeframe, live, without asking the server. */
+export interface MovingAverageLine {
+  enabled: boolean;
+  length: number;
+  type: MovingAverageType;
+  color: string;
+  /** Weight and dash, so two lines stay apart where colour alone is not
+   * enough (a printout, a colour-blind reader, two lines that cross). */
+  width: number;
+  dash: MovingAverageDash;
+}
+
+export const MA_COUNT = 3;
+export const MA_LENGTH_MIN = 2;
+export const MA_LENGTH_MAX = 400;
+/** The set the chart drew before it was configurable (9/20 EMA), with the
+ * 50 SMA they were usually read against. Matches app/indicators/ma.py's
+ * own defaults, so an untouched setting draws what the server computes. */
+export const DEFAULT_MOVING_AVERAGES: MovingAverageLine[] = [
+  // Fast to slow: thin and solid, then heavier, then the trend line dashed
+  // -- the weight says which one is the slower without reading the label.
+  { enabled: true, length: 9, type: "ema", color: "#2eb872", width: 1, dash: "solid" },
+  { enabled: true, length: 20, type: "ema", color: "#d6455a", width: 2, dash: "solid" },
+  { enabled: false, length: 50, type: "sma", color: "#7c93b8", width: 2, dash: "dashed" },
+];
 
 export interface AppSettings {
   chartTheme: ChartThemeId;
@@ -63,6 +95,8 @@ export interface AppSettings {
   optionsLimitMode: "mid" | "natural";
   timeZone: TimeZoneMode;
   chainGreek: ChainGreek;
+  /** The chart's three moving averages: length, kind and colour each. */
+  movingAverages: MovingAverageLine[];
   /** The ticket's risk view: the payoff chart, or the date x price table. */
   riskView: "chart" | "table";
   /** A short chime when a position or an option package changes size --
@@ -93,7 +127,30 @@ export const DEFAULT_SETTINGS: AppSettings = {
   chainGreek: "delta",
   riskView: "chart",
   fillSound: true,
+  movingAverages: DEFAULT_MOVING_AVERAGES.map((line) => ({ ...line })),
 };
+
+/** Three lines from storage, each clamped to what the pickers allow. A
+ * stored value that is short, long or malformed falls back per field
+ * rather than dropping the line: a bad colour should not cost the length. */
+export function parseMovingAverages(value: unknown): MovingAverageLine[] {
+  const stored = Array.isArray(value) ? value : [];
+  return DEFAULT_MOVING_AVERAGES.map((fallback, i) => {
+    // An object or nothing: a stored string would otherwise hand its own
+    // character count to `length` ("nonsense" -> 8).
+    const entry = stored[i];
+    const raw = (entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {}) as Partial<MovingAverageLine>;
+    const length = typeof raw.length === "number" && Number.isFinite(raw.length) ? Math.round(raw.length) : fallback.length;
+    return {
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+      length: Math.min(MA_LENGTH_MAX, Math.max(MA_LENGTH_MIN, length)),
+      type: raw.type === "sma" || raw.type === "ema" ? raw.type : fallback.type,
+      color: typeof raw.color === "string" && isHexColor(raw.color) ? raw.color : fallback.color,
+      width: MA_WIDTHS.includes(raw.width as (typeof MA_WIDTHS)[number]) ? (raw.width as number) : fallback.width,
+      dash: MA_DASHES.includes(raw.dash as MovingAverageDash) ? (raw.dash as MovingAverageDash) : fallback.dash,
+    };
+  });
+}
 
 /** One short target from storage, clamped to the picker's range. */
 export function clampShortTarget(target: ShortTarget): ShortTarget {
@@ -162,6 +219,7 @@ function load(raw = getStored(STORAGE_KEY)): AppSettings {
       autoScroll: typeof parsed.autoScroll === "boolean" ? parsed.autoScroll : DEFAULT_SETTINGS.autoScroll,
       vwapAnchor: oneOf(parsed.vwapAnchor, ["session", "premarket"] as const, DEFAULT_SETTINGS.vwapAnchor),
       numberFormat: oneOf(parsed.numberFormat, ["auto", "point", "comma"] as const, DEFAULT_SETTINGS.numberFormat),
+      movingAverages: parseMovingAverages(parsed.movingAverages),
       riskChartHeight:
         typeof parsed.riskChartHeight === "number" && Number.isFinite(parsed.riskChartHeight)
           ? Math.min(RISK_CHART_MAX_HEIGHT, Math.max(RISK_CHART_MIN_HEIGHT, Math.round(parsed.riskChartHeight)))

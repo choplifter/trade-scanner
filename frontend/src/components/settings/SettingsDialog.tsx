@@ -11,7 +11,16 @@ import {
   type CustomColors,
 } from "../../api/chartTheme";
 import { playFillChime } from "../../api/fillSound";
-import { getCustomPalette, isDark, resetSettings, type AppSettings } from "../../api/settings";
+import {
+  getCustomPalette,
+  isDark,
+  MA_LENGTH_MAX,
+  MA_LENGTH_MIN,
+  MA_WIDTHS,
+  resetSettings,
+  type AppSettings,
+  type MovingAverageLine,
+} from "../../api/settings";
 import type { SettingsTab } from "../../api/settingsDialog";
 import { useSettings } from "../../hooks/useSettings";
 import { TIMEFRAME_OPTIONS } from "../../utils/aggregateBars";
@@ -138,6 +147,82 @@ function Segmented<T extends string>({
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** The three moving averages: one row each, switched on or off, with its
+ * period, its kind and its colour. The chart computes them from the
+ * candles it is showing (see utils/movingAverages), so a change here is
+ * visible at every timeframe as soon as it is made. */
+function MovingAverages({
+  lines,
+  onChange,
+}: {
+  lines: MovingAverageLine[];
+  onChange: (lines: MovingAverageLine[]) => void;
+}) {
+  const update = (i: number, patch: Partial<MovingAverageLine>) =>
+    onChange(lines.map((line, j) => (i === j ? { ...line, ...patch } : line)));
+  return (
+    <div className="settings-ma">
+      {lines.map((line, i) => (
+        <div className="settings-ma-line" key={i}>
+          <label className="settings-ma-on">
+            <input type="checkbox" checked={line.enabled} onChange={(e) => update(i, { enabled: e.target.checked })} />
+            <span>Line {i + 1}</span>
+          </label>
+          <input
+            type="number"
+            className="settings-ma-length"
+            min={MA_LENGTH_MIN}
+            max={MA_LENGTH_MAX}
+            step={1}
+            value={line.length}
+            aria-label={`Line ${i + 1} period`}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n)) update(i, { length: Math.min(MA_LENGTH_MAX, Math.max(MA_LENGTH_MIN, Math.round(n))) });
+            }}
+          />
+          <Segmented
+            value={line.type}
+            options={[
+              { key: "ema", label: "EMA" },
+              { key: "sma", label: "SMA" },
+            ]}
+            onChange={(v) => update(i, { type: v as MovingAverageLine["type"] })}
+          />
+          <input
+            type="color"
+            className="settings-ma-color"
+            value={line.color}
+            aria-label={`Line ${i + 1} colour`}
+            onChange={(e) => update(i, { color: e.target.value })}
+          />
+          <Segmented
+            value={String(line.width)}
+            // The weight as a number rather than a drawn line: three dashes
+            // of different length read as empty boxes at this size.
+            options={MA_WIDTHS.map((w) => ({ key: String(w), label: `${w}px` }))}
+            onChange={(v) => update(i, { width: Number(v) })}
+          />
+          <Segmented
+            value={line.dash}
+            options={[
+              { key: "solid", label: "Solid" },
+              { key: "dashed", label: "Dash" },
+              { key: "dotted", label: "Dot" },
+            ]}
+            onChange={(v) => update(i, { dash: v as MovingAverageLine["dash"] })}
+          />
+        </div>
+      ))}
+      <p className="order-hint">
+        Switch the whole set on in the chart's Levels menu ("MA"). A period counts the candles on screen: 20 on a 15m
+        chart is twenty 15m candles. Weight and dash tell two lines apart where colour alone does not -- on a printout,
+        or where they cross.
+      </p>
     </div>
   );
 }
@@ -289,6 +374,9 @@ export function SettingsDialog({
                 ]}
                 onChange={(v) => set("autoScroll", v === "on")}
               />
+            </Row>
+            <Row label="Moving averages" hint="Three lines: period, kind and colour each.">
+              <MovingAverages lines={settings.movingAverages} onChange={(next) => set("movingAverages", next)} />
             </Row>
             <Row label="VWAP anchor" hint="Session = 09:30 open; premarket = every print since the premarket open (TradingView's).">
               <Segmented
