@@ -550,6 +550,9 @@ export interface OptimizeRequest {
    * makes a comparison across expiries fair -- see compareHorizons. */
   target_moves?: number | null;
   target_moves_both?: boolean;
+  /** Which holding periods a comparison walks, in days to expiry. Left
+   * out, the backend's own set (a week to a quarter). */
+  sweep_dtes?: number[] | null;
   /** Which of OptionStrat's six views set the target; informational. */
   outlook?: OptimizerOutlook | null;
   /** 0 ranks by return on risk, 1 by chance of profit, between blends. */
@@ -673,6 +676,9 @@ export interface HorizonsResponse {
   target_moves: number | null;
   target_moves_both: boolean;
   runs: HorizonRun[];
+  /** The distances asked for, in days -- what a row could not find a
+   * listed expiry for simply does not appear. */
+  dtes: number[];
   disclaimer: string;
 }
 

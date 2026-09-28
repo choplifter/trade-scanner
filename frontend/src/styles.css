@@ -4584,6 +4584,17 @@ td.chain-side.chain-stale {
   --opt-mid: #d6a11c;
 }
 
+/* How far "Compare expiries" reaches: a small picker beside the button,
+   sized like the row actions next to it rather than a form control. */
+.opt-reach {
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input, transparent);
+  color: var(--text-secondary);
+}
+
 /* Comparing holding periods: one row per horizon, the picked one marked.
    A table rather than cards -- the point is reading the rows against each
    other, and four sets of cards would bury that. */

@@ -141,6 +141,9 @@ class OptimizeRequest(BaseModel):
     strike_pct_range: float | None = Field(default=None, ge=0.05, le=0.5)
     condor_short_delta_max: float | None = Field(default=None, gt=0.1, le=0.5)
     horizon_only: bool = False
+    # Which holding periods a comparison walks, in days to expiry -- see
+    # compare_horizons. Left out, SWEEP_DTES.
+    sweep_dtes: list[int] | None = Field(default=None, min_length=1, max_length=8)
     # Drop a finalist whose market costs more than this share of its own
     # price to cross -- the distance from the package's mid to its
     # natural, over the mid. A structure quoted so wide that taking it
@@ -308,7 +311,10 @@ async def optimize_structures(
     if not spot:
         raise OrderRejected(f"No price for {underlying}", field="underlying")
 
-    infos = _expiry_infos((await service.expiries(underlying)).get("expiries", []))
+    # The board, not the picker's strip: the strip stops a couple of months
+    # out, while the expiry axis the reader picks from runs years. A horizon
+    # they can click has to be one this can price.
+    infos = _expiry_infos((await service.expiries(underlying, board=True)).get("expiries", []))
     horizon = req.horizon
     if horizon <= today:
         raise OrderRejected(
@@ -667,9 +673,11 @@ async def _preview_one(service, underlying: str, cand: Candidate, account: dict,
 # --- comparing expiries ---------------------------------------------------
 
 # The horizons a sweep walks, in days to expiry: the listed expiry nearest
-# each. A week, a fortnight, a month, six weeks -- the span most structures
-# are opened over, and few enough that a sweep is four runs, not forty.
-SWEEP_DTES: tuple[int, ...] = (7, 14, 30, 45)
+# each. A week, a fortnight, a month, six weeks, a quarter -- the span most
+# structures are opened over, and few enough that a sweep is five runs, not
+# forty. A caller wanting further out (LEAPS, a year) names its own; the
+# ceiling is the board's, since every horizon is a listed expiry.
+SWEEP_DTES: tuple[int, ...] = (7, 14, 30, 45, 90)
 # Per horizon, so a sweep costs a handful of previews rather than a dozen
 # per run: the reader is comparing horizons here, not picking a structure.
 SWEEP_TOP_N = 3
@@ -688,7 +696,7 @@ async def compare_horizons(
     underlying: str,
     req: OptimizeRequest,
     *,
-    dtes: tuple[int, ...] = SWEEP_DTES,
+    dtes: tuple[int, ...] | None = None,
     today: date | None = None,
     now: datetime | None = None,
     earnings_calendar=None,
@@ -709,12 +717,15 @@ async def compare_horizons(
     underlying = underlying.upper()
     now = now or datetime.now(timezone.utc)
     today = today or now.astimezone(ET).date()
+    wanted = tuple(dtes or req.sweep_dtes or SWEEP_DTES)
 
     spot = await service.spot(underlying)
     if not spot:
         raise OrderRejected(f"No price for {underlying}", field="underlying")
-    infos = _expiry_infos((await service.expiries(underlying)).get("expiries", []))
-    horizons = sweep_horizons(infos, today, dtes)
+    # The board: a comparison out to a year has to see the expiries a year
+    # out, which the picker's strip (a couple of months) does not carry.
+    infos = _expiry_infos((await service.expiries(underlying, board=True)).get("expiries", []))
+    horizons = sweep_horizons(infos, today, wanted)
     if not horizons:
         raise OrderRejected(f"{underlying} has no listed expiry to compare", field="horizon")
 
@@ -759,5 +770,6 @@ async def compare_horizons(
         "target_moves": req.target_moves,
         "target_moves_both": req.target_moves_both,
         "runs": runs,
+        "dtes": list(wanted),
         "disclaimer": DISCLAIMER,
     }

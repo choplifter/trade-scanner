@@ -76,7 +76,9 @@ class _Service:
     async def spot(self, underlying):
         return self._spot
 
-    async def expiries(self, underlying):
+    async def expiries(self, underlying, *, far=None, board=False):
+        # `board` is what the optimizer asks for: the strip plus every
+        # listed expiry beyond it. The fake lists one set either way.
         return {
             "underlying": underlying, "spot": self._spot,
             "expiries": [ExpiryInfo(expiry=e, dte=(e - TODAY).days, contract_count=40).to_dict() for e in self._expiries],

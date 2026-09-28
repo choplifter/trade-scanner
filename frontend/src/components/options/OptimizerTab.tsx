@@ -55,6 +55,17 @@ const OUTLOOKS: { key: Outlook; label: string; move: number; tone: "bear" | "fla
   { key: "very_bullish", label: "Very bullish", move: 2, tone: "bull" },
 ];
 
+/** How far a comparison reaches. The default stops at a quarter, which is
+ * where most listed boards thin out; the longer sets are for boards that
+ * carry LEAPS. Each entry is a distance in days -- the run takes the
+ * listed expiry nearest it. */
+const SWEEP_REACHES: { key: string; label: string; dtes: number[]; title: string }[] = [
+  { key: "weeks", label: "6w", dtes: [7, 14, 30, 45], title: "A week to six weeks: four runs" },
+  { key: "quarter", label: "3m", dtes: [7, 14, 30, 45, 90], title: "A week to a quarter: five runs" },
+  { key: "half", label: "6m", dtes: [14, 30, 60, 120, 180], title: "A fortnight to six months: five runs" },
+  { key: "year", label: "1y", dtes: [30, 90, 180, 270, 365], title: "A month to a year, for a board that lists LEAPS: five runs" },
+];
+
 /** One row per horizon: the same view, priced on that holding period. The
  * target is a different price in each row and the same claim -- one
  * implied move grows with the root of time -- which is the only way the
@@ -351,6 +362,7 @@ export function OptimizerTab({
   // Which horizon of a comparison the cards below belong to; null shows the
   // single run's own results, as before.
   const [shownRun, setShownRun] = useState<string | null>(null);
+  const [reach, setReach] = useState<string>("quarter");
   const [maxLoss, setMaxLoss] = useState<string>(remembered?.max_loss != null ? String(remembered.max_loss) : "");
   const [families, setFamilies] = useState<Set<Strategy>>(
     () =>
@@ -549,9 +561,12 @@ export function OptimizerTab({
     });
     if (!body) return;
     setShownRun(null);
-    optimizer.compare(
-      moves ? { ...body, target_moves: Number(moves.moves.toFixed(3)), target_moves_both: moves.both } : body,
-    );
+    const dtes = (SWEEP_REACHES.find((r) => r.key === reach) ?? SWEEP_REACHES[1]).dtes;
+    optimizer.compare({
+      ...body,
+      sweep_dtes: dtes,
+      ...(moves ? { target_moves: Number(moves.moves.toFixed(3)), target_moves_both: moves.both } : {}),
+    });
   };
 
   // A scanner row's request: once this symbol's chain (and so its implied
@@ -812,6 +827,19 @@ export function OptimizerTab({
         <button type="button" className="generate-button opt-run" disabled={!canRun || loading} onClick={run}>
           {loading ? "Pricing structures…" : "Find structures"}
         </button>
+        <select
+          className="opt-reach"
+          value={reach}
+          onChange={(e) => setReach(e.target.value)}
+          title="How far the comparison reaches. Every horizon is a listed expiry, so a board without LEAPS answers with what it has."
+          aria-label="Compare expiries out to"
+        >
+          {SWEEP_REACHES.map((r) => (
+            <option key={r.key} value={r.key} title={r.title}>
+              to {r.label}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           className="row-action"

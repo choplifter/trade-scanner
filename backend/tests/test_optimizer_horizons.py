@@ -9,7 +9,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.options.chain import ExpiryInfo
-from app.options.optimize import OptimizeRequest, compare_horizons, sweep_horizons
+from app.options.optimize import SWEEP_DTES, OptimizeRequest, compare_horizons, sweep_horizons
 from app.trading.errors import OrderRejected
 from tests.test_options_optimize_endpoint import FAR, MID, NEAR, NOW, SPOT, TODAY, _Service
 
@@ -43,9 +43,9 @@ def test_one_horizon_per_distance_and_never_the_same_one_twice():
     board = _infos(*[TODAY + timedelta(days=d) for d in (2, 8, 16, 33, 47, 90)])
     picked = sweep_horizons(board, TODAY)
     assert picked == sorted(set(picked))
-    assert len(picked) == 4
-    # Nearest 7, 14, 30 and 45 days of what is listed.
-    assert [(e - TODAY).days for e in picked] == [8, 16, 33, 47]
+    assert len(picked) == len(SWEEP_DTES)
+    # The listed expiry nearest each of SWEEP_DTES, and never one twice.
+    assert [(e - TODAY).days for e in picked] == [8, 16, 33, 47, 90]
 
 
 def test_a_thin_board_answers_with_what_it_has():
@@ -144,3 +144,21 @@ def test_such_a_horizon_is_a_row_with_the_reason_not_the_end_of_the_comparison()
     for row in out["runs"]:
         if "target" in row:
             assert row["target"]["low"] != 104.0, "every priced row is the horizon's own implied move"
+
+
+def test_a_caller_can_ask_for_horizons_further_out():
+    """The default stops at a quarter; LEAPS and anything else the board
+    lists are a request away, and the ceiling is the board's own."""
+    listed = _infos(*[TODAY + timedelta(days=d) for d in (7, 30, 120, 200, 400)])
+
+    class _Board(_Service):
+        async def expiries(self, underlying, *, far=None, board=False):
+            return {"underlying": underlying, "spot": SPOT, "expiries": [e.to_dict() for e in listed]}
+
+    out = _run(_Board(), _req(sweep_dtes=[30, 180, 365]))
+    assert [r["dte"] for r in out["runs"]] == [30, 200, 400]
+    assert out["dtes"] == [30, 180, 365]
+
+
+def test_the_default_reaches_a_quarter_out():
+    assert max(SWEEP_DTES) >= 90
