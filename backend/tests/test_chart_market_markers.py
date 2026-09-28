@@ -45,6 +45,28 @@ def test_daily_closes_land_on_new_york_midnight_like_alpacas_daily_bars():
     assert point.value == pytest.approx(4.15)
 
 
+def test_a_redirected_cboe_host_is_followed_rather_than_read_as_no_data():
+    """Observed 2026-09-28: every cdn.cboe.com path began answering 307 ->
+    cdn-api.cboe.com. httpx does not follow redirects unless asked, so the
+    yield line, the VIX and the backtest's VIX bands all went quietly empty
+    -- a redirect must never read as "the index has no history"."""
+
+    def handler(request):
+        if request.url.host == "cdn.cboe.com":
+            return httpx.Response(
+                307,
+                headers={"location": str(request.url.copy_with(host="cdn-api.cboe.com"))},
+            )
+        return httpx.Response(200, json={"data": [{"date": "2026-09-18", "close": "50.0"}]})
+
+    async def run():
+        history = CboeHistory(httpx.AsyncClient(transport=httpx.MockTransport(handler)), "_TNX")
+        return await history.daily()
+
+    [point] = asyncio.run(run())
+    assert point.value == pytest.approx(5.0)
+
+
 def test_history_is_cached_and_a_failure_is_not():
     calls = []
     status = {"code": 500}

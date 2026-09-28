@@ -5,10 +5,13 @@ server or an Alpaca call.
 
 from app.dash_app.pages.backtest import (
     _BUCKET_COLUMNS,
+    _SLICE_COLUMNS,
+    _STRATEGY_COLUMNS,
     _bucket_rows,
     _daily_report_layout,
     _noise_flag,
     _stats_cell,
+    _strategy_row,
 )
 from app.scanners import bucket_analysis
 
@@ -91,3 +94,52 @@ def test_daily_report_layout_builds_with_flagged_buckets():
         ],
     }
     assert _daily_report_layout(report) is not None
+
+
+# --- the strategy-rules section ---------------------------------------------
+
+
+def _slice(trades: int = 300, expectancy: float | None = 0.21) -> dict:
+    return {
+        "trades": trades,
+        "expectancy_r": expectancy,
+        "win_rate": 44.0,
+        "avg_win_r": 2.1,
+        "avg_loss_r": -1.0,
+        "ambiguous_pct": 6.5,
+    }
+
+
+def test_a_strategy_row_carries_both_the_text_and_the_number():
+    """The colouring is a filter query over expectancy_r, and the formatted
+    "+0.21" cannot be compared to zero -- so the row needs both."""
+    row = _strategy_row(_slice(), "strategy", "orb_break")
+    assert row["strategy"] == "orb_break"
+    assert row["expectancy"] == "+0.21"
+    assert row["expectancy_r"] == 0.21
+    assert row["win_rate"] == "44.0%"
+    assert row["avg_loss"] == "-1.00"
+
+
+def test_a_bucket_with_no_signals_reads_as_nothing_not_as_break_even():
+    row = _strategy_row(_slice(trades=0, expectancy=None), "bucket", "12:00-14:00 midday")
+    assert row["expectancy"] == "—"
+    assert row["trades"] == 0
+    # Sorting and colouring need a number; it must not be mistaken for a
+    # measured zero, which is why the displayed cell stays a dash.
+    assert row["expectancy_r"] == 0
+
+
+def test_a_thin_strategy_is_flagged_with_the_same_wording_as_every_other_table():
+    assert _strategy_row(_slice(trades=_FLOOR - 1), "strategy", "retest")["flag"] == f"noisy (n<{_FLOOR})"
+    assert _strategy_row(_slice(trades=_FLOOR), "strategy", "retest")["flag"] == ""
+
+
+def test_both_strategy_tables_declare_every_column_the_rows_fill():
+    for columns, label_id in ((_STRATEGY_COLUMNS, "strategy"), (_SLICE_COLUMNS, "bucket")):
+        declared = {c["id"] for c in columns}
+        row = _strategy_row(_slice(), label_id, "x")
+        # expectancy_r is deliberately undeclared: it is the sort/colour key,
+        # not a column the reader sees.
+        assert declared <= set(row), declared - set(row)
+        assert label_id in declared

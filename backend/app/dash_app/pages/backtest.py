@@ -23,12 +23,14 @@ against past dates), momentum backtest/sweep are long-side only.
 
 import logging
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import dash
+import httpx
 from dash import Input, Output, State, callback, dash_table, dcc, html
 
 from app.alpaca.universe import UniverseSymbol
+from app.attribution.sources import cboe_daily_closes
 from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
 from app.dash_app.theme import DELTA_DOWN, DELTA_UP, TEXT_MUTED
@@ -36,6 +38,9 @@ from app.scanners import bucket_analysis
 from app.scanners.backtest import run_backtest
 from app.scanners.bar_cache import get_cached_5m_bars_multi
 from app.scanners.momentum_backtest import run_momentum_backtest, sweep_momentum_params
+from app.scanners.strategy_backtest import run_strategy_backtest
+from app.scanners.strategy_slices import by_exit_reason, by_session_part, by_vix_band
+from app.strategies.loader import inventory, load_strategies
 
 dash.register_page(__name__, path="/backtest", name="Backtest")
 
@@ -60,6 +65,7 @@ _TABLE_STYLE = dict(
         {"if": {"column_id": "bucket"}, "textAlign": "left"},
         {"if": {"column_id": "group"}, "textAlign": "left"},
         {"if": {"column_id": "kind"}, "textAlign": "left"},
+        {"if": {"column_id": "strategy"}, "textAlign": "left", "fontWeight": "600"},
         {"if": {"column_id": "flag"}, "textAlign": "left", "color": TEXT_MUTED},
         {"if": {"column_id": "symbol"}, "textAlign": "left", "fontWeight": "600"},
         {"if": {"column_id": "trading_date"}, "textAlign": "left"},
@@ -1031,6 +1037,266 @@ def update_backtest_symbol_panel(daily_active_cell, momentum_active_cell):
     return _iframe_src(symbol, target_time, timeframe), symbol
 
 
+# --- Strategy rules -----------------------------------------------------------
+#
+# What the section is for: the app has nine entry rules and, until now, no
+# answer to which of them is worth firing on. Each is replayed over the same
+# bars by app.scanners.strategy_backtest -- the production rule objects, not
+# reimplementations -- and scored in R at the exit its own stop and target
+# produced. The slices underneath exist because an expectancy of zero over
+# three hundred signals is usually two different rules averaged together.
+
+_R = "{:+.2f}"
+
+
+def _format_r(value: float | None) -> str:
+    return "—" if value is None else _R.format(value)
+
+
+def _format_share(value: float | None) -> str:
+    return "—" if value is None else f"{value:.1f}%"
+
+
+_STRATEGY_COLUMNS = [
+    {"name": "Strategy", "id": "strategy"},
+    {"name": "", "id": "flag"},
+    {"name": "Signals", "id": "trades", "type": "numeric"},
+    {"name": "Expectancy R", "id": "expectancy"},
+    {"name": "Win rate", "id": "win_rate"},
+    {"name": "Avg win R", "id": "avg_win"},
+    {"name": "Avg loss R", "id": "avg_loss"},
+    {"name": "Ambiguous", "id": "ambiguous"},
+]
+
+_SLICE_COLUMNS = [
+    {"name": "Bucket", "id": "bucket"},
+    {"name": "", "id": "flag"},
+    {"name": "Signals", "id": "trades", "type": "numeric"},
+    {"name": "Expectancy R", "id": "expectancy"},
+    {"name": "Win rate", "id": "win_rate"},
+    {"name": "Avg win R", "id": "avg_win"},
+    {"name": "Avg loss R", "id": "avg_loss"},
+]
+
+
+def _strategy_row(bucket: dict, label_id: str, label: str) -> dict:
+    """One table row from one slice_stats dict. Numbers stay in the row as
+    well as their formatted strings: the conditional colouring is a filter
+    query over a numeric field, and "—" cannot be compared to zero."""
+    return {
+        label_id: label,
+        "trades": bucket["trades"],
+        "expectancy": _format_r(bucket["expectancy_r"]),
+        "expectancy_r": bucket["expectancy_r"] if bucket["expectancy_r"] is not None else 0,
+        "win_rate": _format_share(bucket["win_rate"]),
+        "avg_win": _format_r(bucket["avg_win_r"]),
+        "avg_loss": _format_r(bucket["avg_loss_r"]),
+        "ambiguous": _format_share(bucket.get("ambiguous_pct")),
+        "flag": _noise_flag(bucket["trades"]),
+    }
+
+
+def _strategy_section():
+    return html.Div(
+        [
+            html.H3("Strategy Rules"),
+            html.P(
+                "Every strategy on disk replayed over the same 5-minute bars, including the ones currently "
+                "switched off -- a parked rule has to be measurable before it is turned back on. Each signal "
+                "gets its own structural stop and target and is scored where the trade ended, in R, so a rule "
+                "whose average forward move is positive but whose path runs through its stop reads as the loser "
+                "it is. Expectancy leads and win rate follows: a rule taking +0.3R wins and -1R losses can win "
+                "seven times in ten and still lose money. Costs are charged on both sides and are an assumption, "
+                "not a measurement -- historical spreads are not available here, so an edge worth having must "
+                "survive a pessimistic figure. Click a row for that rule's slices. Every rule walks every bar, so "
+                "the run costs roughly a minute per strategy per 60 symbols and 30 days -- the defaults are sized "
+                "for a few minutes, not for a fast answer.",
+                className="benchmark-disclaimer",
+            ),
+            html.Div(
+                [
+                    _labeled_input("Lookback days", "backtest-strategy-lookback", 20, min=5, step=5),
+                    _labeled_input("Cost bps per side", "backtest-strategy-cost", 10, min=0, step=1),
+                    _labeled_input("Max symbols", "backtest-strategy-max-symbols", 40, min=5, step=5),
+                    _force_refresh_checklist("backtest-strategy-force-refresh"),
+                    html.Button("Run Strategy Backtest", id="backtest-strategy-run", n_clicks=0),
+                ],
+                style={"display": "flex", "gap": "16px", "alignItems": "flex-end", "marginBottom": "10px", "flexWrap": "wrap"},
+            ),
+            dcc.Loading(html.Div(id="backtest-strategy-output"), type="circle"),
+            dash_table.DataTable(
+                id="backtest-strategy-table",
+                columns=_STRATEGY_COLUMNS,
+                data=[],
+                sort_action="native",
+                style_data_conditional=_delta_conditional("expectancy", "expectancy_r"),
+                **_TABLE_STYLE,
+            ),
+            html.Div(id="backtest-strategy-slices", style={"marginTop": "12px"}),
+            dcc.Store(id="backtest-strategy-picks"),
+        ]
+    )
+
+
+def _slice_table(title: str, note: str, buckets: list[dict]):
+    return html.Div(
+        [
+            html.H4(title, style={"marginTop": "14px", "marginBottom": "2px", "fontSize": "13px"}),
+            html.P(note, className="benchmark-disclaimer"),
+            dash_table.DataTable(
+                columns=_SLICE_COLUMNS,
+                data=[_strategy_row(b, "bucket", b["bucket"]) for b in buckets],
+                style_data_conditional=_delta_conditional("expectancy", "expectancy_r"),
+                **_TABLE_STYLE,
+            ),
+        ]
+    )
+
+
+@callback(
+    Output("backtest-strategy-output", "children"),
+    Output("backtest-strategy-table", "data"),
+    Output("backtest-strategy-picks", "data"),
+    Input("backtest-strategy-run", "n_clicks"),
+    State("backtest-strategy-lookback", "value"),
+    State("backtest-strategy-cost", "value"),
+    State("backtest-strategy-max-symbols", "value"),
+    State("backtest-strategy-force-refresh", "value"),
+    prevent_initial_call=True,
+)
+def run_strategy_backtest_callback(_n_clicks, lookback_days, cost_bps, max_symbols, force_refresh):
+    clients = backend_state.alpaca_clients
+    universe = backend_state.universe
+    if clients is None:
+        return html.P(_NOT_READY, className="benchmark-disclaimer"), [], None
+    if not universe:
+        return html.P(_NO_UNIVERSE, className="benchmark-disclaimer"), [], None
+
+    lookback = int(lookback_days or 30)
+    cost = float(cost_bps or 0)
+    symbols = _top_symbols(universe, int(max_symbols or 60))
+    # inventory() rather than load_strategies(): a rule switched off in the
+    # Signals panel is exactly the one whose measurement is interesting, and
+    # loading it by stem is the loader's own way of overriding the toggle.
+    states, errors = inventory()
+    notes = [f"{e.filename}: {e.error}" for e in errors]
+
+    rows: list[dict] = []
+    picks_by_strategy: dict[str, list[dict]] = {}
+    for state in states:
+        loaded, load_errors = load_strategies(only=state.stem)
+        notes += [f"{e.filename}: {e.error}" for e in load_errors]
+        if not loaded:
+            notes.append(f"{state.name}: could not be loaded from {state.filename}")
+            continue
+        try:
+            report = run_async(
+                run_strategy_backtest(
+                    clients,
+                    loaded[0],
+                    symbols,
+                    lookback_days=lookback,
+                    cost_bps=cost,
+                    force_refresh="refresh" in (force_refresh or []),
+                )
+            )
+        except Exception as exc:
+            logger.exception("Strategy backtest failed for %s", state.name)
+            notes.append(f"{state.name}: {type(exc).__name__}: {exc}")
+            continue
+
+        stats = report["expectancy"]
+        picks = report["picks"]
+        picks_by_strategy[state.name] = picks
+        row = _strategy_row(
+            {
+                "trades": stats["trades"],
+                "expectancy_r": stats["expectancy_r"],
+                "win_rate": stats["win_rate"],
+                "avg_win_r": stats["avg_win_r"],
+                "avg_loss_r": stats["avg_loss_r"],
+                "ambiguous_pct": round(stats["ambiguous_exits"] / stats["trades"] * 100, 1) if stats["trades"] else None,
+            },
+            "strategy",
+            state.name if state.enabled else f"{state.name} (off)",
+        )
+        rows.append(row)
+
+    # Best expectancy first, and anything below the sample floor after it
+    # regardless of how good the number looks -- same ordering rule as the
+    # parameter sweep.
+    rows.sort(key=lambda r: (bool(r["flag"]), -r["expectancy_r"]))
+    summary = [
+        html.P(
+            f"{len(rows)} of {len(states)} strategies over {lookback} days and {len(symbols)} symbols, "
+            f"{cost:.0f}bp per side. Rows marked "
+            f"\u201cnoisy\u201d rest on fewer than {bucket_analysis.MIN_SAMPLE_SIZE} signals.",
+            style={"margin": "4px 0"},
+        )
+    ]
+    summary += [html.P(n, className="benchmark-disclaimer", style={"margin": "2px 0"}) for n in notes]
+    return html.Div(summary), rows, picks_by_strategy
+
+
+@callback(
+    Output("backtest-strategy-slices", "children"),
+    Input("backtest-strategy-table", "active_cell"),
+    State("backtest-strategy-table", "derived_viewport_data"),
+    State("backtest-strategy-picks", "data"),
+    prevent_initial_call=True,
+)
+def show_strategy_slices(active_cell, rows, picks_by_strategy):
+    """The clicked rule cut three ways. derived_viewport_data rather than
+    data: the table sorts natively, and after a sort the active cell's row
+    index refers to what is on screen."""
+    if not active_cell or not rows or not picks_by_strategy:
+        return None
+    label = rows[active_cell["row"]]["strategy"]
+    name = label.removesuffix(" (off)")
+    picks = picks_by_strategy.get(name) or []
+    if not picks:
+        return html.P(f"{name} produced no signals over this window.", className="benchmark-disclaimer")
+
+    # The VIX close per day from Cboe's keyless history -- the same source as
+    # the header's reading, so "calm" here means what it means there. A
+    # failed fetch leaves every signal in the "VIX not known" band rather
+    # than dropping the slice.
+    vix_by_day: dict = {}
+    try:
+        vix_by_day = run_async(_vix_closes())
+    except Exception:
+        logger.exception("VIX closes for the strategy slices could not be fetched")
+
+    return html.Div(
+        [
+            html.H3(f"{name}: where it worked", style={"marginTop": "18px"}),
+            _slice_table(
+                "By part of the session",
+                "When the signal fired. A rule that pays in the first half hour and gives it back after lunch "
+                "is invisible in the whole-sample figure.",
+                by_session_part(picks),
+            ),
+            _slice_table(
+                "By how the trade ended",
+                "A rule whose wins are all session-close exits is a rule whose target is never reached, "
+                "whatever its expectancy.",
+                by_exit_reason(picks),
+            ),
+            _slice_table(
+                "By the day's VIX",
+                "The tape the signal fired into, by that day's VIX close (Cboe delayed). Days without a close "
+                "are kept apart rather than dropped, so the buckets still add up to the sample.",
+                by_vix_band(picks, vix_by_day),
+            ),
+        ]
+    )
+
+
+async def _vix_closes() -> dict[date, float]:
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        return await cboe_daily_closes(client, "_VIX")
+
+
 def layout(**_kwargs):
     return html.Div(
         [
@@ -1047,7 +1313,7 @@ def layout(**_kwargs):
             ),
             html.Div(
                 [
-                    html.Div([_daily_section(), _momentum_section(), _sweep_section()], className="backtest-main"),
+                    html.Div([_strategy_section(), _daily_section(), _momentum_section(), _sweep_section()], className="backtest-main"),
                     _symbol_panel(),
                 ],
                 className="backtest-layout",

@@ -16,7 +16,11 @@ AFTERHOURS_END = time(20, 0)
 Session = str  # "premarket" | "regular" | "afterhours" | "closed"
 
 
-@lru_cache(maxsize=16)
+# A NYSE schedule lookup costs ~0.2 s, and a backtest asks for the same
+# handful of days once per symbol: 16 entries thrashed badly enough to be
+# a third of a strategy replay (measured 2026-09-28, 744 misses over 60
+# symbols x 30 days). Two years of sessions cost a few hundred kilobytes.
+@lru_cache(maxsize=512)
 def trading_hours_for(day: date) -> tuple[datetime, datetime] | None:
     """(market_open, market_close) in ET for a given date, or None if it's
     not a NYSE trading day (weekend/holiday). Public so callers that need the

@@ -208,7 +208,9 @@ async def cboe_daily_closes(client: httpx.AsyncClient, symbol: str) -> dict[date
     if cached is not None:
         return cached
     try:
-        resp = await client.get(_CBOE_DAILY.format(symbol=symbol), headers={"User-Agent": "trading-dashboard"})
+        resp = await client.get(
+            _CBOE_DAILY.format(symbol=symbol), headers={"User-Agent": "trading-dashboard"}, follow_redirects=True
+        )
         resp.raise_for_status()
         points = parse_daily(resp.json(), symbol)
     except Exception:

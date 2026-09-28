@@ -30,6 +30,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Cboe moved this API behind a redirect (observed 2026-09-28: every
+# cdn.cboe.com path answers 307 -> cdn-api.cboe.com), and httpx does not
+# follow redirects unless asked -- so every reading silently went missing.
+# Following them keeps working if the host moves again.
 _BASE = "https://cdn.cboe.com/api/global/delayed_quotes/charts"
 _HEADERS = {"User-Agent": "trading-dashboard"}
 _NY = ZoneInfo("America/New_York")
@@ -118,7 +122,9 @@ class CboeHistory:
             if cached is not None and self._now() - cached[0] < ttl:
                 return cached[1]
             try:
-                resp = await self._client.get(f"{_BASE}/{kind}/{self._symbol}.json", headers=_HEADERS)
+                resp = await self._client.get(
+                    f"{_BASE}/{kind}/{self._symbol}.json", headers=_HEADERS, follow_redirects=True
+                )
                 resp.raise_for_status()
                 points = parse(resp.json(), self._symbol)
             except Exception:

@@ -93,7 +93,7 @@ async def fetch_vix_cboe(client: httpx.AsyncClient) -> VixReading | None:
     """The VIX from the exchange that computes it. Delayed by a quarter of
     an hour, which a regime reading does not care about."""
     try:
-        resp = await client.get(_CBOE_VIX, headers={"User-Agent": "trading-dashboard"})
+        resp = await client.get(_CBOE_VIX, headers={"User-Agent": "trading-dashboard"}, follow_redirects=True)
         resp.raise_for_status()
         data = (resp.json() or {}).get("data") or {}
     except Exception:
@@ -138,7 +138,7 @@ async def fetch_vix(client: httpx.AsyncClient, api_key: str) -> VixReading | Non
 
 async def fetch_ten_year_cboe(client: httpx.AsyncClient) -> TenYearReading | None:
     try:
-        resp = await client.get(_CBOE_TNX, headers={"User-Agent": "trading-dashboard"})
+        resp = await client.get(_CBOE_TNX, headers={"User-Agent": "trading-dashboard"}, follow_redirects=True)
         resp.raise_for_status()
         data = (resp.json() or {}).get("data") or {}
     except Exception:
