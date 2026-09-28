@@ -19,6 +19,7 @@ from dash import Input, Output, callback, dash_table, dcc, html
 from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
 from app.dash_app.theme import DELTA_DOWN, DELTA_UP, TEXT_MUTED
+from app.scanners import history_store
 
 dash.register_page(__name__, path="/scanner-history", name="Scanner Match History")
 
@@ -122,13 +123,9 @@ def _format_pct(value: float | None) -> str:
 def _fetch_history(days: int = _DAYS, view: str | None = None) -> dict:
     store = backend_state.scanner_history_store
     if store is None:
-        return {
-            "summary": [],
-            "leaderboard_best": [],
-            "leaderboard_worst": [],
-            "gap_buckets": [],
-            "rvol_buckets": [],
-        }
+        # The store's own empty answer, so "no backend yet" and "no matches
+        # in the window" hand this page the same shape.
+        return history_store.empty_performance()
     return run_async(store.compute_performance(days=days, view=view))
 
 

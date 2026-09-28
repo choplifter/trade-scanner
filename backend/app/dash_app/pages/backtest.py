@@ -21,6 +21,7 @@ point-in-time universe reconstruction (today's live universe is backtested
 against past dates), momentum backtest/sweep are long-side only.
 """
 
+import asyncio
 import logging
 import urllib.parse
 from datetime import date, datetime, timezone
@@ -34,9 +35,11 @@ from app.attribution.sources import cboe_daily_closes
 from app.dash_app.async_bridge import run_async
 from app.dash_app.state import backend_state
 from app.dash_app.theme import DELTA_DOWN, DELTA_UP, TEXT_MUTED
+from app.market_data.cot import HISTORY_YEARS, weeks_for
 from app.scanners import bucket_analysis
 from app.scanners.backtest import run_backtest
 from app.scanners.bar_cache import get_cached_5m_bars_multi
+from app.scanners.cot_slices import by_cot_band, covered_symbols
 from app.scanners.momentum_backtest import run_momentum_backtest, sweep_momentum_params
 from app.scanners.strategy_backtest import run_strategy_backtest
 from app.scanners.strategy_slices import by_exit_reason, by_session_part, by_vix_band
@@ -413,6 +416,23 @@ def _bucket_rows(buckets: list[dict]) -> list[dict]:
     ]
 
 
+def _cot_rows(buckets: list[dict]) -> list[dict]:
+    """COT bands as group rows. Unlike _bucket_rows these may be empty --
+    a band nothing landed in is the common case for a run of mostly
+    uncovered symbols, and it has to read as "no picks", not as 0.0%."""
+    return [
+        {
+            "group": b["bucket"],
+            "sample_size": b["sample_size"],
+            "win_rate": "—" if b["win_rate"] is None else f"{b['win_rate']:.1f}%",
+            "avg_return": _format_pct(b["avg_return"]),
+            "avg_return_num": b["avg_return"] if b["avg_return"] is not None else 0,
+            "flag": _noise_flag(b["sample_size"]),
+        }
+        for b in buckets
+    ]
+
+
 def _bucket_table(table_id: str, rows: list[dict]):
     return dash_table.DataTable(
         id=table_id,
@@ -623,8 +643,36 @@ def _daily_report_layout(report: dict):
             _group_table("backtest-daily-fade-table", fade_rows, show_view=True),
             html.H4("Shaved-Top Entry Candle"),
             _group_table("backtest-daily-shaved-table", shaved_rows, show_view=True),
+            *_cot_section(report),
         ]
     )
+
+
+def _cot_section(report: dict) -> list:
+    """Only for the ETFs the CFTC covers, and only when the fetch came
+    back. Everything else in this run sits in the "no COT contract" row,
+    which is usually most of it -- a slice that quietly measured ten
+    symbols out of three hundred would be the worst kind of finding."""
+    bands = report.get("cot_bands")
+    if not bands:
+        return []
+    covered = report.get("cot_symbols") or []
+    return [
+        html.H4("COT Positioning"),
+        html.P(
+            "Picks cut by how the speculative side of the future behind the ETF was positioned, as a "
+            "percentile of its own trailing three years (CFTC, weekly). Only "
+            + (", ".join(covered) if covered else "none of these symbols")
+            + " have a contract at all; everything else is kept in its own row so the buckets still add "
+            "up to the run. The report counts Tuesday's positions and is published the Friday after, so "
+            "a pick is only ever given a report that was public before its own date -- and the percentile "
+            "is ranked against the weeks that existed then, not against today's range. In the index "
+            "futures the speculative side is usually net short as a basis-trade leg: the percentile is "
+            "the reading, not the sign.",
+            className="benchmark-disclaimer",
+        ),
+        _group_table("backtest-daily-cot-table", _cot_rows(bands)),
+    ]
 
 
 @callback(
@@ -656,7 +704,37 @@ def run_daily_backtest_callback(_n_clicks, lookback_days, horizon_days, max_symb
         logger.exception("Daily backtest failed")
         return html.P("Backtest failed -- check backend logs.", className="benchmark-disclaimer"), []
 
+    _attach_cot_bands(report, int(lookback_days or 180))
     return _daily_report_layout(report), report["picks"]
+
+
+def _attach_cot_bands(report: dict, lookback_days: int) -> None:
+    """The COT slice, best-effort: a failed CFTC call leaves the rest of
+    the report standing without the section rather than failing the run.
+
+    The history has to reach a full ranking window *before* the earliest
+    pick, or the first weeks of a long lookback would all fall into "not
+    yet published" for want of something to rank against.
+    """
+    symbols = covered_symbols(report["picks"])
+    if not symbols:
+        return
+    years = HISTORY_YEARS + lookback_days // 365 + 1
+    try:
+        weeks_by_symbol = run_async(_cot_weeks(symbols, years))
+    except Exception:
+        logger.exception("COT history for the backtest slice failed")
+        return
+    if not any(weeks_by_symbol.values()):
+        return
+    report["cot_symbols"] = symbols
+    report["cot_bands"] = by_cot_band(report["picks"], weeks_by_symbol)
+
+
+async def _cot_weeks(symbols: list[str], years: int) -> dict:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        histories = await asyncio.gather(*(weeks_for(client, s, years=years) for s in symbols))
+    return dict(zip(symbols, histories))
 
 
 # --- Momentum alarm backtest -------------------------------------------------

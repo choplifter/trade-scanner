@@ -287,13 +287,42 @@ class CotCache:
             return value
 
     async def _fetch(self, contract: Contract) -> list[dict]:
-        since = (datetime.now(timezone.utc).date() - timedelta(days=365 * HISTORY_YEARS)).isoformat()
-        params = {
-            "$select": contract.spec.fields,
-            "$where": f"cftc_contract_market_code='{contract.code}' and report_date_as_yyyy_mm_dd>'{since}'",
-            "$order": "report_date_as_yyyy_mm_dd ASC",
-            "$limit": 400,
-        }
-        resp = await self._client.get(contract.spec.url, params=params, headers=_HEADERS, timeout=20.0)
-        resp.raise_for_status()
-        return resp.json()
+        return await fetch_rows(self._client, contract, years=HISTORY_YEARS)
+
+
+async def fetch_rows(client: httpx.AsyncClient, contract: Contract, *, years: int = HISTORY_YEARS) -> list[dict]:
+    """The raw Socrata rows for one contract, oldest first."""
+    since = (datetime.now(timezone.utc).date() - timedelta(days=365 * years)).isoformat()
+    params = {
+        "$select": contract.spec.fields,
+        "$where": f"cftc_contract_market_code='{contract.code}' and report_date_as_yyyy_mm_dd>'{since}'",
+        "$order": "report_date_as_yyyy_mm_dd ASC",
+        "$limit": 52 * years + 60,
+    }
+    resp = await client.get(contract.spec.url, params=params, headers=_HEADERS, timeout=20.0)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def weeks_for(client: httpx.AsyncClient, symbol: str, *, years: int = HISTORY_YEARS) -> list[Week]:
+    """Every published week for the contract behind `symbol`, oldest first.
+
+    What a backtest needs and `reading` does not give it: the whole series,
+    so a date can be ranked against the weeks that existed then rather than
+    against today's three years (see app.scanners.cot_slices). `years`
+    reaches further back when the window does -- a slice still needs a year
+    of history *before* its earliest pick to rank anything at all.
+
+    Empty for a symbol the CFTC does not cover and for a failed call: the
+    caller shows "no contract" either way, and a missing history must not
+    read as positioning nobody held.
+    """
+    contract = CONTRACTS.get(symbol.upper())
+    if contract is None:
+        return []
+    try:
+        rows = await fetch_rows(client, contract, years=years)
+    except Exception:
+        logger.warning("COT history fetch failed for %s (%s)", symbol, contract.code, exc_info=True)
+        return []
+    return parse_weeks(rows, contract.spec)

@@ -398,3 +398,15 @@ def test_symbols_for_date_orders_and_limits_by_move_magnitude(tmp_path):
 def test_symbols_for_date_empty_when_nothing_recorded(tmp_path):
     store = _store(tmp_path)
     assert asyncio.run(store.symbols_for_date("2026-08-12")) == []
+
+
+def test_a_window_with_no_appearances_still_answers_in_the_full_shape(tmp_path):
+    """The Analytics history page indexes gap_buckets directly, so a short
+    answer is not a smaller answer -- it is a 500 on every page load, which
+    is what happened for as long as the last recorded appearance sat
+    outside the window."""
+    from app.scanners.history_store import empty_performance
+
+    quiet = asyncio.run(_store(tmp_path).compute_performance(days=7))
+    assert set(quiet) == set(empty_performance())
+    assert quiet["gap_buckets"] == [] and quiet["rvol_buckets"] == []

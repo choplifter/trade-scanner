@@ -173,6 +173,17 @@ class NewAppearance:
     entry_float_shares: float | None = None
 
 
+def empty_performance() -> dict:
+    """The shape compute_performance always answers in, with nothing in it."""
+    return {
+        "summary": [],
+        "leaderboard_best": [],
+        "leaderboard_worst": [],
+        "gap_buckets": [],
+        "rvol_buckets": [],
+    }
+
+
 class ScannerHistoryStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -359,7 +370,14 @@ class ScannerHistoryStore:
             appearances = conn.execute(query, params).fetchall()
 
             if not appearances:
-                return {"summary": [], "leaderboard_best": [], "leaderboard_worst": []}
+                # Every key the full answer carries, or the caller reads a
+                # quiet window as a missing field: the Analytics history
+                # page indexed gap_buckets directly and 500'd on every load
+                # for as long as the scanner had not run (seen whenever the
+                # last recorded appearance falls outside the window, e.g.
+                # after a paused stretch). An empty list is "nothing to
+                # show"; a missing key is a crash.
+                return empty_performance()
 
             appearance_ids = [a["id"] for a in appearances]
             placeholders = ",".join("?" * len(appearance_ids))
