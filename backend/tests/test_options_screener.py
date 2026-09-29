@@ -173,11 +173,11 @@ def test_a_rich_chain_passes_the_premium_screen_and_a_cheap_one_does_not():
     assert [r["symbol"] for r in body["rows"]] == ["RICH", "CHEAP"]
 
 
-def test_the_buy_side_bias_turns_the_verdict_and_the_order_around():
+def test_a_buy_side_strategy_turns_the_verdict_and_the_order_around():
     service = _Service({"RICH": _chain(iv=0.40), "CHEAP": _chain(iv=0.12)})
     body = _run(
         service,
-        ScreenRequest(symbols=["RICH", "CHEAP"], bias="buy_premium"),
+        ScreenRequest(symbols=["RICH", "CHEAP"], strategy="long_option"),
         closes={"RICH": _closes(0.01), "CHEAP": _closes(0.01)},
     )
     rows = {r["symbol"]: r for r in body["rows"]}
@@ -233,3 +233,121 @@ def test_rank_puts_the_unpriced_last_whatever_it_passed():
     priced = Row(symbol="P", expiry=EXPIRY, iv_rv_ratio=1.5)
     unpriced = Row(symbol="U")
     assert [r.symbol for r in rank_rows([unpriced, priced], "sell_premium")] == ["P", "U"]
+
+
+# --- what a spread needs beyond a premium screen -----------------------------
+
+
+def _criterion(row: dict, key: str) -> dict:
+    return next(c for c in row["criteria"] if c["key"] == key)
+
+
+def test_a_vertical_screen_finds_the_wing_and_measures_the_credit_against_it():
+    service = _Service({"A": _chain(spot=100.0)})
+    body = _run(service, ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    spread = row["put_spread"]
+    assert spread is not None
+    assert spread["long_strike"] < spread["short_strike"], "the long leg sits further out of the money"
+    assert spread["width"] == pytest.approx(5.0), "the nearest listed strike on a five-dollar chain"
+    assert spread["credit_to_width"] == pytest.approx(spread["credit"] / spread["width"])
+    assert _criterion(row, "wing")["passed"] is True
+    assert _criterion(row, "credit_to_width")["value"] == spread["credit_to_width"]
+
+
+def test_a_chain_with_no_strike_beyond_the_short_fails_the_wing_criterion():
+    """Five-dollar strikes on a fifteen-dollar stock: a premium screen
+    passes it and a vertical has nothing to buy."""
+    lone = StrikeRow(
+        strike=95.0,
+        call=_quote("XC", 95.0, "call", bid=1.0, ask=1.1, delta=0.6),
+        put=_quote("XP", 95.0, "put", bid=1.0, ask=1.1, delta=-0.15),
+    )
+    chain = Chain(underlying="A", expiry=EXPIRY, spot=100.0, feed="opra", as_of=None, rows=[lone])
+    body = _run(_Service({"A": chain}), ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    assert row["put_spread"] is None
+    assert _criterion(row, "wing")["passed"] is False
+    assert "nothing to cap the risk with" in _criterion(row, "wing")["detail"]
+
+
+def test_an_iron_condor_needs_both_wings():
+    puts_only = Chain(
+        underlying="A", expiry=EXPIRY, spot=100.0, feed="opra", as_of=None,
+        rows=[r for r in _chain(spot=100.0).rows if r.strike <= 100],
+    )
+    body = _run(_Service({"A": puts_only}), ScreenRequest(symbols=["A"], strategy="iron_condor"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    assert row["put_spread"] is not None and row["call_spread"] is None
+    assert _criterion(row, "wing")["passed"] is False, "one wing is not a condor"
+
+
+def test_a_debit_spread_asks_for_the_wing_but_not_for_a_credit():
+    body = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"], strategy="debit_spread"), closes={"A": _closes(0.01)})
+    keys = {c["key"] for c in body["rows"][0]["criteria"]}
+    assert "wing" in keys and "credit_to_width" not in keys
+    assert _criterion(body["rows"][0], "iv_vs_rv")["detail"].endswith("(implied cheap against realised)")
+
+
+def test_a_thin_credit_against_the_width_fails():
+    # A chain whose far strikes are nearly worthless: the credit is a
+    # rounding error against five points of width.
+    rows = []
+    for r in _chain(spot=100.0).rows:
+        put = r.put
+        if put is not None and r.strike < 95:
+            put = _quote(put.symbol, r.strike, "put", bid=0.10, ask=0.12, delta=put.delta)
+        rows.append(StrikeRow(strike=r.strike, call=r.call, put=put))
+    chain = Chain(underlying="A", expiry=EXPIRY, spot=100.0, feed="opra", as_of=None, rows=rows)
+    body = _run(_Service({"A": chain}), ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    assert _criterion(body["rows"][0], "credit_to_width")["passed"] is False
+
+
+class _TwoExpiryService(_Service):
+    """A front and a back chain, the way a calendar wants them."""
+
+    def __init__(self, front: Chain, back: Chain, back_expiry: date):
+        super().__init__({"A": front})
+        self.back = back
+        self.back_expiry = back_expiry
+
+    async def expiries(self, symbol: str, *, board: bool = False) -> dict:
+        assert board, "the calendar screen asks for the full board, not the 60-day strip"
+        return {
+            "underlying": symbol,
+            "spot": self.chains[symbol].spot,
+            "expiries": [
+                {"expiry": self.chains[symbol].expiry.isoformat(), "dte": 45, "contract_count": 40},
+                {"expiry": self.back_expiry.isoformat(), "dte": (self.back_expiry - TODAY).days, "contract_count": 40},
+            ],
+        }
+
+    async def chain(self, symbol: str, expiry: date) -> Chain:
+        self.fetched.append(symbol)
+        return self.back if expiry == self.back_expiry else self.chains[symbol]
+
+
+def test_a_calendar_reads_the_slope_between_two_expiries():
+    back_expiry = TODAY + timedelta(days=110)
+    service = _TwoExpiryService(_chain(iv=0.35), _chain(iv=0.25), back_expiry)
+    body = _run(service, ScreenRequest(symbols=["A"], strategy="calendar"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    assert row["back_expiry"] == back_expiry.isoformat()
+    assert row["term_ratio"] == pytest.approx(0.35 / 0.25, rel=1e-3)
+    assert _criterion(row, "term_structure")["passed"] is True
+    assert service.fetched.count("A") == 2, "the slope costs a second chain"
+
+
+def test_a_flat_term_structure_fails_the_calendar():
+    back_expiry = TODAY + timedelta(days=110)
+    service = _TwoExpiryService(_chain(iv=0.25), _chain(iv=0.26), back_expiry)
+    body = _run(service, ScreenRequest(symbols=["A"], strategy="calendar"), closes={"A": _closes(0.01)})
+    assert _criterion(body["rows"][0], "term_structure")["passed"] is False
+
+
+def test_the_other_strategies_do_not_pay_for_a_second_chain_or_a_wing():
+    service = _Service({"A": _chain()})
+    body = _run(service, ScreenRequest(symbols=["A"], strategy="cash_secured_put"), closes={"A": _closes(0.01)})
+    keys = {c["key"] for c in body["rows"][0]["criteria"]}
+    assert "wing" not in keys and "term_structure" not in keys
+    assert service.fetched.count("A") == 1

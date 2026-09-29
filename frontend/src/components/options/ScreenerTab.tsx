@@ -3,7 +3,7 @@ import { useState } from "react";
 import { OrderRejectedError } from "../../api/http";
 import { screenUnderlyings } from "../../api/options";
 import { useWatchlist } from "../../hooks/useWatchlist";
-import type { ScreenBias, ScreenResponse, ScreenRow } from "../../types/options";
+import type { ScreenResponse, ScreenRow, ScreenStrategy } from "../../types/options";
 import { formatPrice } from "../../utils/format";
 
 interface ScreenerTabProps {
@@ -11,18 +11,42 @@ interface ScreenerTabProps {
   onSelectSymbol?: (symbol: string) => void;
 }
 
-const BIASES: { key: ScreenBias; label: string; title: string }[] = [
+const STRATEGIES: { key: ScreenStrategy; label: string; title: string }[] = [
   {
-    key: "sell_premium",
-    label: "Sell premium",
-    title: "Cash-secured puts, covered calls, credit spreads, condors: wants implied volatility rich against realised, deep open interest and tight quotes.",
+    key: "cash_secured_put",
+    label: "Cash-sec. put",
+    title: "Wants implied volatility rich against realised, deep open interest and tight quotes at a 0.10-0.20 delta put.",
   },
   {
-    key: "buy_premium",
-    label: "Buy premium",
-    title: "Long calls and puts, debit spreads: wants implied volatility cheap against realised, and quotes tight enough that the debit is not the spread.",
+    key: "covered_call",
+    label: "Covered call",
+    title: "The same chain qualities, read off the call side.",
   },
-  { key: "neutral", label: "Just the numbers", title: "Reports the volatility comparison without judging it." },
+  {
+    key: "credit_spread",
+    label: "Credit spread",
+    title: "As above, and the chain must list a strike further out to buy as the wing -- with enough credit against the width it risks.",
+  },
+  {
+    key: "iron_condor",
+    label: "Iron condor",
+    title: "A wing on both sides, and both verticals paying enough against their width.",
+  },
+  {
+    key: "debit_spread",
+    label: "Debit spread",
+    title: "Wants implied volatility cheap against realised, and a wing to sell against the long leg.",
+  },
+  {
+    key: "long_option",
+    label: "Long option",
+    title: "Cheap implied volatility and quotes tight enough that the debit is not the spread.",
+  },
+  {
+    key: "calendar",
+    label: "Calendar",
+    title: "Wants the front expiry's implied volatility above the back one's -- the only screen that costs a second chain fetch per symbol.",
+  },
 ];
 
 function pct(value: number | null | undefined, digits = 0): string {
@@ -56,7 +80,7 @@ function Criteria({ row }: { row: ScreenRow }) {
  */
 export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const { symbols } = useWatchlist();
-  const [bias, setBias] = useState<ScreenBias>("sell_premium");
+  const [strategy, setStrategy] = useState<ScreenStrategy>("cash_secured_put");
   const [result, setResult] = useState<ScreenResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +91,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     setLoading(true);
     setError(null);
     try {
-      setResult(await screenUnderlyings({ symbols: symbols.slice(0, 60), bias }));
+      setResult(await screenUnderlyings({ symbols: symbols.slice(0, 60), strategy }));
     } catch (err: unknown) {
       setError(err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err));
     } finally {
@@ -78,13 +102,13 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   return (
     <div className="opt-screener">
       <div className="opt-preference">
-        {BIASES.map((b) => (
+        {STRATEGIES.map((b) => (
           <button
             key={b.key}
             type="button"
             className="timeframe-button"
-            aria-pressed={bias === b.key}
-            onClick={() => setBias(b.key)}
+            aria-pressed={strategy === b.key}
+            onClick={() => setStrategy(b.key)}
             title={b.title}
           >
             {b.label}
@@ -120,6 +144,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 <th scope="col">Expiry</th>
                 <th scope="col" title="The strike nearest the delta band, and what crossing its quote costs.">Short put</th>
                 <th scope="col">Short call</th>
+                {result.rows.some((r) => r.put_spread || r.call_spread) && (
+                  <th scope="col" title="The wing the chain offers, and what comes back as credit per dollar of width.">
+                    Vertical
+                  </th>
+                )}
+                {result.rows.some((r) => r.term_ratio != null) && (
+                  <th scope="col" title="The front expiry's implied volatility over the back one's.">Front/back</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -166,10 +198,23 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                         ? `${formatPrice(row.short_call.strike)} · Δ${row.short_call.delta.toFixed(2)} · ${pct(row.short_call.spread_fraction)}`
                         : "—"}
                     </td>
+                    {result.rows.some((r) => r.put_spread || r.call_spread) && (
+                      <td>
+                        {(() => {
+                          const v = row.put_spread ?? row.call_spread;
+                          return v
+                            ? `${formatPrice(v.long_strike)}/${formatPrice(v.short_strike)} · ${v.width}w · ${pct(v.credit_to_width)}`
+                            : "—";
+                        })()}
+                      </td>
+                    )}
+                    {result.rows.some((r) => r.term_ratio != null) && (
+                      <td>{row.term_ratio == null ? "—" : `${row.term_ratio.toFixed(2)}×`}</td>
+                    )}
                   </tr>
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={10}>
+                      <td colSpan={12}>
                         <Criteria row={row} />
                       </td>
                     </tr>

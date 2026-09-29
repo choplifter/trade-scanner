@@ -1437,9 +1437,24 @@ criteria a premium seller uses, and ranks by how many pass.
 | Short put / call delta | the strike nearest the middle of `SHORT_DELTA_BAND` (0.10-0.20) |
 | IV vs realised | ATM IV over the 20-session close-to-close volatility |
 
-**Sell premium** wants that last ratio at `RICH_IV_RATIO` (1.20) or above,
-**buy premium** at `CHEAP_IV_RATIO` (0.95) or below, and *Just the numbers*
-reports it without a verdict. Each row folds out into every criterion with
+The screen is picked by **strategy**, not just by direction, because a
+chain that suits a cash-secured put can be useless for a vertical. Each
+adds what its own shape needs on top of the shared criteria:
+
+| Strategy | Wants, beyond the above |
+|---|---|
+| Cash-sec. put, Covered call | IV at `RICH_IV_RATIO` (1.20x realised) or above |
+| Credit spread | the same, plus a **wing** to buy (the listed strike nearest `WING_TARGET_PCT`, 3 % of spot, out to 6 %) and a credit of `MIN_CREDIT_TO_WIDTH` (10 %) of that width |
+| Iron condor | a wing and a credit on **both** sides |
+| Debit spread | IV at `CHEAP_IV_RATIO` (0.95x) or below, and a wing to sell against |
+| Long option | cheap IV and tight quotes; nothing else to build |
+| Calendar | the **front over the back** expiry at `MIN_TERM_RATIO` (1.03) -- the one screen that costs a second chain fetch, and asks for the full expiry board rather than the 60-day strip |
+
+Both numbers are calibrated to what is measured rather than to a published
+rule of thumb: aimed at 3 % of spot the wing is 5-8 points on these names
+and a 0.15-delta vertical brings back 7-11 % of its width (IWM 253/261 at
+9 %, AAPL 305/310 at 11 %), where the nearest-strike wing of half a point
+would have read as a failure on every row. Each row folds out into every criterion with
 the number behind it, so a cross can be traced; a measure that could not be
 had is "unknown" and never a pass.
 

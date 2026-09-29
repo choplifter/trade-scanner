@@ -830,9 +830,21 @@ export interface CotReading {
 /** The options screener -- backend app/options/screener.py. */
 export type ScreenBias = "sell_premium" | "buy_premium" | "neutral";
 
+/** What is being screened for. The shared criteria describe a chain; each
+ * strategy adds what its own shape needs (a wing to buy, a credit against
+ * the width, a slope between two expiries). */
+export type ScreenStrategy =
+  | "cash_secured_put"
+  | "covered_call"
+  | "credit_spread"
+  | "iron_condor"
+  | "debit_spread"
+  | "long_option"
+  | "calendar";
+
 export interface ScreenRequest {
   symbols: string[];
-  bias?: ScreenBias;
+  strategy?: ScreenStrategy;
   dte_min?: number;
   dte_max?: number;
   min_open_interest?: number;
@@ -864,6 +876,17 @@ export interface ScreenShortLeg {
   spread_fraction: number | null;
 }
 
+export interface ScreenVertical {
+  short_strike: number;
+  long_strike: number;
+  width: number;
+  credit: number;
+  /** What comes back as credit per dollar of width risked. */
+  credit_to_width: number;
+  wing_open_interest: number;
+  wing_spread_fraction: number | null;
+}
+
 export interface ScreenRow {
   symbol: string;
   expiry: string | null;
@@ -877,6 +900,13 @@ export interface ScreenRow {
   open_interest: number;
   short_put: ScreenShortLeg | null;
   short_call: ScreenShortLeg | null;
+  /** The vertical built off each short leg, where the chain had a wing. */
+  put_spread: ScreenVertical | null;
+  call_spread: ScreenVertical | null;
+  /** The calendar's second expiry and the slope to it. */
+  back_expiry: string | null;
+  back_iv: number | null;
+  term_ratio: number | null;
   earnings_date: string | null;
   criteria: ScreenCriterion[];
   passed: number;
@@ -886,6 +916,7 @@ export interface ScreenRow {
 
 export interface ScreenResponse {
   as_of: string;
+  strategy: ScreenStrategy;
   bias: ScreenBias;
   criteria: {
     dte: [number, number];
