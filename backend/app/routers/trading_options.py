@@ -17,6 +17,7 @@ from app.ai.options_suggest import suggest_options_ideas
 from app.options.optimize import OptimizeRequest, compare_horizons, optimize_structures
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, RollRequest, SpreadTicket, TriggerCreate
+from app.options.screener import ScreenRequest, screen_underlyings
 from app.options.service import OptionsService, market_order_refusal
 from app.routers.trading import _account, _confirm
 from app.trading.errors import BrokerNotConnected, TradingError
@@ -432,6 +433,29 @@ async def option_events(
         atm_iv=atm_iv,
         dte=dte,
     )
+
+
+@router.post("/screen")
+async def screen(body: ScreenRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
+    """Which of these underlyings suit the strategy -- one chain fetch per
+    symbol, so the caller sends a list it has already narrowed (the
+    watchlist, the scanner's movers), not a universe. Read-only: nothing is
+    priced into a ticket and nothing is ordered."""
+    try:
+        return await screen_underlyings(
+            service,
+            request.app.state.alpaca_clients,
+            body,
+            earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
+            iv_store=getattr(request.app.state, "iv_history_store", None),
+        )
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Options screen failed for %d symbols", len(body.symbols))
+        raise HTTPException(status_code=502, detail="Failed to screen these underlyings")
 
 
 class IdeaRequest(BaseModel):

@@ -1420,6 +1420,41 @@ refuses a call that arrives anyway (`replay_active`).
 Framed as descriptive annotation, not investment advice — the same line the
 AI Trade Ideas widget and the GEX plan draw.
 
+### Screener: which underlyings suit a strategy
+
+The Optimizer's question one level up: not "what shape on this symbol" but
+"which symbols are worth the trouble at all". The fifth tab screens the
+**watchlist** -- every row costs a chain fetch, so it reads a list you
+already keep rather than a universe (`MAX_SYMBOLS`, 60) -- against the
+criteria a premium seller uses, and ranks by how many pass.
+
+| Criterion | Read from |
+|---|---|
+| Open interest | the screened expiry's fetched strikes, `MIN_OPEN_INTEREST` (5,000) |
+| Quote width | the wider short leg, under `MAX_SPREAD_FRACTION` (10 % of mid) |
+| Days to expiry | a listed expiry in `DTE_RANGE` (30-60), nearest its middle |
+| Earnings clear | the FMP calendar: no report on or before that expiry |
+| Short put / call delta | the strike nearest the middle of `SHORT_DELTA_BAND` (0.10-0.20) |
+| IV vs realised | ATM IV over the 20-session close-to-close volatility |
+
+**Sell premium** wants that last ratio at `RICH_IV_RATIO` (1.20) or above,
+**buy premium** at `CHEAP_IV_RATIO` (0.95) or below, and *Just the numbers*
+reports it without a verdict. Each row folds out into every criterion with
+the number behind it, so a cross can be traced; a measure that could not be
+had is "unknown" and never a pass.
+
+Two criteria a screen usually carries are deliberately absent. **Contract
+volume** would need a day bar per contract, hundreds of calls per symbol --
+open interest and the quoted sizes stand in. **IV percentile** needs 20
+recorded sessions of a symbol's own ATM IV, and the store fills only for
+symbols someone has looked at (`app/options/iv_history_store.py`); it shows
+where it exists (SPY, 55 % at the time of writing) and the IV/RV ratio is
+what always works. Note that open interest here is *one expiry's*, an order
+of magnitude below the whole-chain number a published screen quotes: the
+liquid index ETFs come in at 6-14k, a single name around 1k.
+
+A run over 12 watchlist symbols takes about six seconds.
+
 ### Optimizer: structures for a price target
 
 The Options widget's fourth tab is OptionStrat's optimizer on this app's

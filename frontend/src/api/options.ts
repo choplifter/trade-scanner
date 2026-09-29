@@ -26,6 +26,8 @@ import type {
   RollPreview,
   RollRequest,
   RollResponse,
+  ScreenRequest,
+  ScreenResponse,
   SpreadPreview,
   SpreadTicketRequest,
   SpreadsResponse,
@@ -70,6 +72,12 @@ async function send<T>(method: "POST" | "DELETE", path: string, body?: unknown, 
     throw new Error(await extractErrorMessage(res, `${method} ${path} failed: ${res.status}`));
   }
   return (await res.json()) as T;
+}
+
+/** Which underlyings suit a strategy: one chain fetch per symbol, so the
+ * caller sends a list it has already narrowed. */
+export function screenUnderlyings(body: ScreenRequest): Promise<ScreenResponse> {
+  return send<ScreenResponse>("POST", "/trading/options/screen", body);
 }
 
 export function getOptionsAccount(): Promise<OptionsAccountResponse> {

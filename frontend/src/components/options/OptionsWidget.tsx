@@ -55,6 +55,7 @@ import { IvCurve } from "./IvCurve";
 import { subscribeTicketIntent, type TicketIntent } from "./ticketIntent";
 import { useCampaigns } from "../../hooks/useCampaigns";
 import { OptionsHelp } from "./OptionsHelp";
+import { ScreenerTab } from "./ScreenerTab";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
 import {
@@ -69,7 +70,7 @@ import {
   type BuilderLeg,
 } from "./builderLegs";
 
-type Tab = "chain" | "spreads" | "idea" | "optimizer" | "playbooks";
+type Tab = "chain" | "spreads" | "idea" | "optimizer" | "screener" | "playbooks";
 
 interface OptionsWidgetProps {
   symbol: string | null;
@@ -545,6 +546,15 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           >
             {optimizer.loading ? "Optimizer…" : "Optimizer"}
           </button>
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={tab === "screener"}
+            onClick={() => setTab("screener")}
+            title="Which of your watchlist's underlyings suit a strategy: implied against realised volatility, open interest, quote width, expiry and the short strikes' deltas"
+          >
+            Screener
+          </button>
           {/* Simulation and Paper: the runner reconciles the simulated book's
             * orders, or the paper account's orders and activities. Not Live:
             * a campaign there would propose real orders on a real account. */}
@@ -630,6 +640,8 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             onIntentHandled={(seq) => setIntent((cur) => (cur && cur.seq === seq ? null : cur))}
             onLoad={loadStructure}
           />
+        ) : tab === "screener" ? (
+          <ScreenerTab onSelectSymbol={onSelectSymbol} />
         ) : tab === "playbooks" ? (
           <PlaybooksTab
             symbol={symbol}

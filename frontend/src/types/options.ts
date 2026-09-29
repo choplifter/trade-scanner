@@ -826,3 +826,76 @@ export interface CotReading {
   /** Why the raw sign would mislead on this contract (index futures). */
   caveat: string | null;
 }
+
+/** The options screener -- backend app/options/screener.py. */
+export type ScreenBias = "sell_premium" | "buy_premium" | "neutral";
+
+export interface ScreenRequest {
+  symbols: string[];
+  bias?: ScreenBias;
+  dte_min?: number;
+  dte_max?: number;
+  min_open_interest?: number;
+  max_spread_fraction?: number;
+  short_delta_min?: number;
+  short_delta_max?: number;
+  avoid_earnings?: boolean;
+}
+
+/** One criterion: the number found, the verdict, and why. `passed` is null
+ * when the number could not be had -- unknown, never a pass. */
+export interface ScreenCriterion {
+  key: string;
+  label: string;
+  value: number | null;
+  passed: boolean | null;
+  detail: string;
+}
+
+export interface ScreenShortLeg {
+  symbol: string;
+  strike: number;
+  delta: number;
+  in_band: boolean;
+  bid: number | null;
+  ask: number | null;
+  mid: number | null;
+  open_interest: number;
+  spread_fraction: number | null;
+}
+
+export interface ScreenRow {
+  symbol: string;
+  expiry: string | null;
+  dte: number | null;
+  spot: number | null;
+  atm_iv: number | null;
+  realised_vol: number | null;
+  iv_rv_ratio: number | null;
+  iv_rank: number | null;
+  iv_rank_samples: number;
+  open_interest: number;
+  short_put: ScreenShortLeg | null;
+  short_call: ScreenShortLeg | null;
+  earnings_date: string | null;
+  criteria: ScreenCriterion[];
+  passed: number;
+  scored: number;
+  note: string | null;
+}
+
+export interface ScreenResponse {
+  as_of: string;
+  bias: ScreenBias;
+  criteria: {
+    dte: [number, number];
+    min_open_interest: number;
+    max_spread_fraction: number;
+    short_delta: [number, number];
+    avoid_earnings: boolean;
+    rich_iv_ratio: number;
+    cheap_iv_ratio: number;
+  };
+  rows: ScreenRow[];
+  disclaimer: string;
+}
