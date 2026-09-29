@@ -6131,3 +6131,107 @@ td.chain-side.chain-stale {
 .header-balance strong {
   font-size: 13px;
 }
+
+/* --- Options screener ---------------------------------------------------
+ * A table of chains rather than of prices: every column is a measure, so
+ * the numbers are tabular and right-aligned, and a row folds out into the
+ * criteria behind its verdict. The scroll container is the panel, so the
+ * head sticks the way the chain's does.
+ */
+.opt-screener {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  padding: 6px 8px 10px;
+}
+
+.screen-table {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.screen-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-raised);
+  text-align: right;
+  padding: 3px 8px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.screen-table thead th:first-child,
+.screen-table tbody th {
+  text-align: left;
+}
+
+.screen-table tbody td,
+.screen-table tbody th {
+  padding: 3px 8px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--gridline);
+}
+
+.screen-row {
+  cursor: pointer;
+}
+
+.screen-row:hover,
+.screen-row.open {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+}
+
+/* The count of criteria passed: the eye goes here first, so it carries the
+ * only weight in the row. */
+.screen-table tbody td:nth-child(2) {
+  font-weight: 600;
+}
+
+.screen-actions {
+  text-align: right;
+}
+
+.screen-detail td {
+  padding: 4px 8px 8px 24px;
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.18));
+}
+
+.screen-criteria {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 2px 16px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+  text-align: left;
+}
+
+.screen-criteria li {
+  color: var(--text-secondary);
+}
+
+.screen-criteria li.pass .screen-mark {
+  color: var(--delta-up);
+}
+
+.screen-criteria li.fail .screen-mark {
+  color: var(--delta-down);
+}
+
+.screen-criteria li.unknown {
+  color: var(--text-muted);
+}
+
+.screen-mark {
+  display: inline-block;
+  width: 12px;
+  font-weight: 700;
+}

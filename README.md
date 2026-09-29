@@ -1468,6 +1468,15 @@ what always works. Note that open interest here is *one expiry's*, an order
 of magnitude below the whole-chain number a published screen quotes: the
 liquid index ETFs come in at 6-14k, a single name around 1k.
 
+Each row carries a **Ticket** button where the screen names a shape it can
+build: the cash-secured put's strike, the vertical's short and its wing,
+the condor's four. It selects the symbol and plants the structure in the
+spread ticket on the Chain tab (`requestTicket`, the same bus the Earnings
+screen uses) -- the screener already found the expiry and the strikes, so
+re-picking them by hand would be busywork. A long option, a debit spread
+and a calendar have no short strike to build from and offer no button;
+they judged the chain, not a direction.
+
 A run over 12 watchlist symbols takes about six seconds.
 
 ### Optimizer: structures for a price target

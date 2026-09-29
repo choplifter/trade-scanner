@@ -3,8 +3,9 @@ import { useState } from "react";
 import { OrderRejectedError } from "../../api/http";
 import { screenUnderlyings } from "../../api/options";
 import { useWatchlist } from "../../hooks/useWatchlist";
-import type { ScreenResponse, ScreenRow, ScreenStrategy } from "../../types/options";
+import type { LoadableStructure, ScreenResponse, ScreenRow, ScreenStrategy, Strategy } from "../../types/options";
 import { formatPrice } from "../../utils/format";
+import { requestTicket } from "./ticketIntent";
 
 interface ScreenerTabProps {
   /** Clicking a row loads that symbol into the widget (and the chart). */
@@ -48,6 +49,55 @@ const STRATEGIES: { key: ScreenStrategy; label: string; title: string }[] = [
     title: "Wants the front expiry's implied volatility above the back one's -- the only screen that costs a second chain fetch per symbol.",
   },
 ];
+
+/**
+ * The structure the row's own numbers already describe, ready for the
+ * ticket -- the screener found the expiry and the strikes, so sending the
+ * reader back to the chain to re-pick them by hand would be busywork.
+ *
+ * Null where the row does not name a shape: a long option or a debit
+ * spread has no short strike to build from (the screen judged the chain,
+ * not a direction), and a calendar's second leg is in another expiry the
+ * row carries only as a date. Those rows offer the chain instead.
+ */
+export function structureOf(row: ScreenRow, strategy: ScreenStrategy): LoadableStructure | null {
+  if (!row.expiry) return null;
+  const base = { underlying: row.symbol, expiry: row.expiry, qty: 1 };
+  const put = row.short_put;
+  const call = row.short_call;
+  if (strategy === "cash_secured_put" && put) {
+    return { strategy: "cash_secured_put" as Strategy, ticket: { ...base, strategy: "cash_secured_put" as Strategy, short_strike: put.strike } };
+  }
+  if (strategy === "covered_call" && call) {
+    return { strategy: "covered_call" as Strategy, ticket: { ...base, strategy: "covered_call" as Strategy, short_strike: call.strike } };
+  }
+  if (strategy === "credit_spread" && row.put_spread) {
+    // A put vertical written below the money: bullish, hence bull_put.
+    return {
+      strategy: "bull_put" as Strategy,
+      ticket: {
+        ...base,
+        strategy: "bull_put" as Strategy,
+        long_strike: row.put_spread.long_strike,
+        short_strike: row.put_spread.short_strike,
+      },
+    };
+  }
+  if (strategy === "iron_condor" && row.put_spread && row.call_spread) {
+    return {
+      strategy: "iron_condor" as Strategy,
+      ticket: {
+        ...base,
+        strategy: "iron_condor" as Strategy,
+        put_long_strike: row.put_spread.long_strike,
+        put_short_strike: row.put_spread.short_strike,
+        call_short_strike: row.call_spread.short_strike,
+        call_long_strike: row.call_spread.long_strike,
+      },
+    };
+  }
+  return null;
+}
 
 function pct(value: number | null | undefined, digits = 0): string {
   return value == null ? "—" : `${(value * 100).toFixed(digits)} %`;
@@ -152,6 +202,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 {result.rows.some((r) => r.term_ratio != null) && (
                   <th scope="col" title="The front expiry's implied volatility over the back one's.">Front/back</th>
                 )}
+                <th scope="col" aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -211,6 +262,25 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     {result.rows.some((r) => r.term_ratio != null) && (
                       <td>{row.term_ratio == null ? "—" : `${row.term_ratio.toFixed(2)}×`}</td>
                     )}
+                    <td className="screen-actions">
+                      {(() => {
+                        const structure = structureOf(row, result.strategy);
+                        return structure ? (
+                          <button
+                            type="button"
+                            className="timeframe-button"
+                            title="Load these strikes into the spread ticket on the Chain tab"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectSymbol?.(row.symbol);
+                              requestTicket({ symbol: row.symbol, structure });
+                            }}
+                          >
+                            Ticket
+                          </button>
+                        ) : null;
+                      })()}
+                    </td>
                   </tr>
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
