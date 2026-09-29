@@ -85,6 +85,11 @@ const STRATEGY_HOTKEYS: Strategy[] = ["bull_call", "bear_put", "bull_put", "bear
 /** A calendar's long leg defaults to the first expiry at least this many
  * days after the short one. */
 const LONG_EXPIRY_MIN_GAP_DAYS = 7;
+/** The strike bands on offer, mirroring STRIKE_WIDTHS in
+ * app/options/chain_fetch.py. The first is the default every poll pays
+ * for; the wider ones exist because an iron condor's wings sit outside
+ * ±10 % on a volatile name, and the strikes were simply never fetched. */
+const STRIKE_WIDTHS = [0.1, 0.25, 0.5] as const;
 
 /** The Options widget: the chain picker with the ticket beside it, and
  * the open positions with their close and trigger controls. In Simulation
@@ -156,10 +161,19 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const manualRef = useRef(false);
 
   const isTime = TIME_STRATEGIES.has(strategy);
-  const chainState = useOptionChain(symbol, enabled);
+  // How far either side of spot the chain is fetched. The default is what
+  // every fifteen-second poll costs; a condor's wings sit outside it, so
+  // the wider bands are asked for per symbol rather than paid for always.
+  const [chainWidth, setChainWidth] = useState<number>(STRIKE_WIDTHS[0]);
+  const chainState = useOptionChain(symbol, enabled, chainWidth);
   // The later expiry's chain for a calendar/diagonal: a second instance of
   // the same hook (its expiries fetch is served from the server cache).
-  const longChainState = useOptionChain(symbol, enabled && isTime);
+  const longChainState = useOptionChain(symbol, enabled && isTime, chainWidth);
+  // A new symbol starts narrow again: a wide band asked for on one name
+  // should not quietly make every later symbol's poll eight times bigger.
+  useEffect(() => {
+    setChainWidth(STRIKE_WIDTHS[0]);
+  }, [symbol]);
   const spreads = useSpreads(enabled);
   const badge = modeBadge(mode);
   const replayFeed = spreads.account?.feed === "replay";
@@ -729,6 +743,28 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   IV curve {ivCurveOpen ? "▴" : "▾"}
                 </button>
                 {ivCurveOpen && <IvCurve chain={shownChain} />}
+              </div>
+            )}
+            {shownChain && (
+              <div className="opt-strike-width">
+                <span className="opt-strike-width-label">Strikes</span>
+                {STRIKE_WIDTHS.map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    className={`row-action${w === chainWidth ? " is-active" : ""}`}
+                    aria-pressed={w === chainWidth}
+                    onClick={() => setChainWidth(w)}
+                    title={`Fetch strikes within ±${Math.round(w * 100)} % of spot. Wider reaches the wings of a condor; it also makes every refresh bigger.`}
+                  >
+                    ±{Math.round(w * 100)} %
+                  </button>
+                ))}
+                {shownChain.strike_low != null && shownChain.strike_high != null && (
+                  <span className="opt-strike-width-band">
+                    {shownChain.strike_low.toFixed(0)} – {shownChain.strike_high.toFixed(0)}
+                  </span>
+                )}
               </div>
             )}
             {shownChain && (

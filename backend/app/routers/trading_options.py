@@ -141,9 +141,16 @@ async def chain(
     underlying: str,
     request: Request, service: OptionsService = Depends(_service),
     expiry: date = Query(..., description="Expiration date, YYYY-MM-DD"),
+    width: float | None = Query(
+        None,
+        gt=0,
+        le=1,
+        description="Strike band as a fraction of spot either side (default 0.10). "
+        "Widen it to reach the wings of a condor; every poll pays for what is asked.",
+    ),
 ) -> dict:
     try:
-        return (await service.chain(underlying.upper(), expiry)).to_dict()
+        return (await service.chain(underlying.upper(), expiry, width)).to_dict()
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
     except HTTPException:

@@ -249,6 +249,10 @@ export interface ChainResponse {
   spot: number;
   feed: string;
   as_of: string;
+  /** The strike band this chain was fetched with, so an empty end of the
+   * board can be told from a band that stopped there. */
+  strike_low?: number | null;
+  strike_high?: number | null;
   rows: StrikeRow[];
 }
 

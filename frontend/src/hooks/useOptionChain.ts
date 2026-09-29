@@ -32,7 +32,14 @@ export interface OptionChainState {
  * nothing else), and the selected expiry's chain re-polled while mounted
  * and refetched on every replay tick. Off entirely when `enabled` is false
  * (no symbol, or a calendar's second chain while no calendar is picked). */
-export function useOptionChain(underlying: string | null, enabled: boolean): OptionChainState {
+export function useOptionChain(
+  underlying: string | null,
+  enabled: boolean,
+  /** Strike band as a fraction of spot either side; undefined = the
+   * backend's ±10 %. A change refetches, because the extra strikes are
+   * not in the chain already held. */
+  width?: number,
+): OptionChainState {
   // The strip belongs to a date: in a replay it is the replayed one, and a
   // replay that starts (or runs past midnight) has to fetch it again.
   // Without this the picker kept today's expiries under a chain priced
@@ -105,7 +112,7 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
     if (!underlying || !enabled || !expiry) return;
     let cancelled = false;
     const load = () => {
-      getChain(underlying, expiry)
+      getChain(underlying, expiry, width)
         .then((res) => {
           if (cancelled) return;
           setChain(res);
@@ -133,7 +140,7 @@ export function useOptionChain(underlying: string | null, enabled: boolean): Opt
       unsubscribe();
       if (debounce != null) window.clearTimeout(debounce);
     };
-  }, [underlying, enabled, expiry, tick]);
+  }, [underlying, enabled, expiry, tick, width]);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 

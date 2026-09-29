@@ -109,6 +109,12 @@ class Chain:
     feed: str
     as_of: datetime
     rows: list[StrikeRow] = field(default_factory=list)
+    # The strike band this chain was fetched with. Carried so the reader
+    # can be told what was asked for rather than inferring it from the
+    # rows -- "no strike above 1155" and "MU lists nothing above 1155" are
+    # different statements, and only one of them is true.
+    strike_low: float | None = None
+    strike_high: float | None = None
 
     def quote(self, kind: Kind, strike: float) -> LegQuote | None:
         for row in self.rows:
@@ -123,6 +129,8 @@ class Chain:
             "spot": self.spot,
             "feed": self.feed,
             "as_of": self.as_of.isoformat(),
+            "strike_low": self.strike_low,
+            "strike_high": self.strike_high,
             "rows": [row.to_dict() for row in self.rows],
         }
 

@@ -3,7 +3,7 @@ test_gamma_exposure.py -- no SDK objects, no network."""
 
 import asyncio
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from alpaca.trading.enums import ContractType
@@ -15,9 +15,19 @@ from app.options.chain import (
     mid_price,
     quote_from_snapshot,
 )
-from app.options.chain_fetch import ChainCache, fetch_contracts
+from app.options.chain_fetch import ChainCache, fetch_contracts, strike_band
 
-EXPIRY = date(2026, 9, 18)
+# Anchored to the clock rather than written down: ChainCache drops expiries
+# that have passed, so a fixed date turns every cache test red the moment
+# the calendar reaches it (which it did on 2026-09-19).
+def _utc_today() -> date:
+    """The same "today" ChainCache uses. Deliberately not date.today():
+    that is this machine's local date, which after 20:00 ET is already
+    tomorrow in Europe -- the test would pass by day and fail at night."""
+    return datetime.now(timezone.utc).date()
+
+
+EXPIRY = _utc_today() + timedelta(days=16)
 
 
 def _meta(symbol, kind, strike, expiry=EXPIRY, oi=5, tradable=True) -> ContractMeta:
@@ -107,15 +117,16 @@ def test_volume_is_merged_per_contract_and_absent_means_none_traded():
 
 
 def test_expiries_are_counted_and_dated():
-    today = date(2026, 9, 2)
+    today = _utc_today()
+    soon = today + timedelta(days=2)
     contracts = [
         _meta("a", "call", 1), _meta("b", "put", 1),
-        _meta("c", "call", 1, expiry=date(2026, 9, 4)),
-        _meta("d", "call", 1, expiry=date(2026, 8, 28)),  # already expired: dropped
+        _meta("c", "call", 1, expiry=soon),
+        _meta("d", "call", 1, expiry=today - timedelta(days=5)),  # already expired: dropped
     ]
     out = expiries_from_contracts(contracts, today)
     assert [(e.expiry, e.dte, e.contract_count) for e in out] == [
-        (date(2026, 9, 4), 2, 1),
+        (soon, 2, 1),
         (EXPIRY, 16, 2),
     ]
 
@@ -171,7 +182,7 @@ class _FakeClients:
 
 def test_fetch_contracts_paginates_and_sends_strike_bounds_as_strings():
     clients = _FakeClients()
-    contracts = asyncio.run(fetch_contracts(clients, "SPY", date(2026, 9, 2), date(2026, 11, 1), 675.0, 825.0))
+    contracts = asyncio.run(fetch_contracts(clients, "SPY", _utc_today(), _utc_today() + timedelta(days=60), 675.0, 825.0))
     assert set(contracts) == {"SPY260918C00750000", "SPY260918P00750000"}
     assert contracts["SPY260918C00750000"].open_interest == 0  # None -> 0
     assert contracts["SPY260918P00750000"].open_interest == 7
@@ -274,3 +285,71 @@ def test_the_board_lists_far_expiries_from_a_sliver_of_strikes():
     before = len(clients.trading.requests)
     asyncio.run(cache.board_expiries("SPY"))
     assert len(clients.trading.requests) == before
+
+
+# --- the strike band the reader asks for ---------------------------------------
+
+
+def test_the_default_band_is_ten_percent_either_side_with_a_dollar_floor():
+    assert strike_band(750.0) == (675.0, 825.0)
+    # A cheap name: 10 % of $12 is $1.20, which on $0.50 strikes is nothing
+    # to build a spread from, so the dollar floor takes over.
+    assert strike_band(12.0) == (7.0, 17.0)
+
+
+def test_a_wider_band_reaches_the_wings_the_default_cannot():
+    """The reason this parameter exists: a condor on a $1,050 name wants
+    strikes a third of the way down, and ±10 % stops at 945."""
+    narrow_low, narrow_high = strike_band(1050.0)
+    wide_low, wide_high = strike_band(1050.0, 0.50, 0.50)
+    assert (narrow_low, narrow_high) == (945.0, 1155.0)
+    assert (wide_low, wide_high) == (525.0, 1575.0)
+
+
+def test_a_band_wider_than_the_spot_never_asks_for_a_strike_below_zero():
+    low, _high = strike_band(4.0, 2.0, 2.0)
+    assert low > 0
+
+
+def test_the_width_reaches_alpaca_and_is_not_rounded_away():
+    clients = _FakeClients()
+
+    async def spot(_symbol):
+        return 1050.0
+
+    cache = ChainCache(clients, spot)
+    try:
+        asyncio.run(cache.chain("SPY", EXPIRY, 0.50))
+    except LookupError:
+        pass  # the fake lists one strike; the request is what is under test
+    first = clients.trading.requests[0]
+    assert first.strike_price_gte == "525.0" and first.strike_price_lte == "1575.0"
+
+
+def test_a_narrow_cache_entry_is_not_served_to_a_wide_request():
+    """The bug this key exists to prevent: fetch ±10 %, then ask for ±50 %
+    and get the narrow rows back from the cache -- the wings would vanish
+    again, silently, and only for as long as the TTL."""
+    clients = _FakeClients()
+
+    async def spot(_symbol):
+        return 750.0
+
+    cache = ChainCache(clients, spot, now=lambda: 1000.0)
+    asyncio.run(cache.chain("SPY", EXPIRY))
+    before = len(clients.trading.requests)
+    asyncio.run(cache.chain("SPY", EXPIRY, 0.50))
+    assert len(clients.trading.requests) > before, "a wider band must go and fetch"
+
+
+def test_the_chain_says_which_band_it_was_fetched_with():
+    """So "nothing above 825" can be told apart from "the fetch stopped at
+    825" -- the reader has to know which of the two they are looking at."""
+    clients = _FakeClients()
+
+    async def spot(_symbol):
+        return 750.0
+
+    chain = asyncio.run(ChainCache(clients, spot).chain("SPY", EXPIRY))
+    assert (chain.strike_low, chain.strike_high) == (675.0, 825.0)
+    assert chain.to_dict()["strike_high"] == 825.0

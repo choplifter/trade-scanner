@@ -4655,6 +4655,32 @@ td.chain-side.chain-stale {
   margin: 4px 0 0;
 }
 
+/* How wide the chain was fetched, above the strike rail: a row of bands
+   and, beside them, the strikes actually asked for -- so an empty end of
+   the board is not read as "this name lists nothing up there". */
+.opt-strike-width {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.opt-strike-width-label,
+.opt-strike-width-band {
+  font-size: 11px;
+  color: var(--text-muted, #6b6b6b);
+}
+
+.opt-strike-width-band {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.opt-strike-width .row-action.is-active {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
 .opt-outlooks {
   display: flex;
   flex-wrap: wrap;

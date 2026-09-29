@@ -43,8 +43,14 @@ class QuoteSource(Protocol):
         price or no contracts."""
         ...
 
-    async def chain(self, underlying: str, expiry: date) -> Chain:
-        """Raises LookupError for an expiry the strip does not offer."""
+    async def chain(self, underlying: str, expiry: date, width: float | None = None) -> Chain:
+        """Raises LookupError for an expiry the strip does not offer.
+
+        `width` is the strike band as a fraction of spot either side; None
+        means the source's own default. A source that cannot widen ignores
+        it rather than failing -- an unusable chain is worse than a narrow
+        one.
+        """
         ...
 
     async def leg_quotes(self, symbols: list[str]) -> dict[str, LegQuote]: ...
@@ -80,8 +86,10 @@ class LiveQuoteSource:
         """Every expiry beyond the picker's window (see ChainCache.board_expiries)."""
         return await self._chain_cache.board_expiries(underlying)
 
-    async def chain(self, underlying: str, expiry: date) -> Chain:
-        return await self._chain_cache.chain(underlying, expiry)
+    async def chain(self, underlying: str, expiry: date, width: float | None = None) -> Chain:
+        if width is None:
+            return await self._chain_cache.chain(underlying, expiry)
+        return await self._chain_cache.chain(underlying, expiry, width)
 
     async def leg_quotes(self, symbols: list[str]) -> dict[str, LegQuote]:
         return await fetch_leg_quotes(self._clients, symbols)
@@ -111,7 +119,11 @@ class ReplayQuoteSource:
     async def expiries(self, underlying: str) -> tuple[float, list[ExpiryInfo]]:
         return await self._engine.expiries(underlying.upper(), self._as_of)
 
-    async def chain(self, underlying: str, expiry: date) -> Chain:
+    async def chain(self, underlying: str, expiry: date, width: float | None = None) -> Chain:
+        # A replay reads the contracts it already cached for that day, whose
+        # band was fixed when the day was loaded; widening it now would mean
+        # refetching the whole day. The reader gets the day's band, which is
+        # why the widget's control cannot reach past it in a replay.
         return await self._engine.chain(underlying.upper(), expiry, self._as_of)
 
     async def leg_quotes(self, symbols: list[str]) -> dict[str, LegQuote]:

@@ -48,6 +48,12 @@ STRIKE_PCT_RANGE = 0.10
 # side alongside the percentage, restores a usable chain there and changes
 # nothing above $50 (10 % of which is already $5).
 STRIKE_MIN_RANGE = 5.0
+# The widths the reader may ask for. ±10 % is the default and what every
+# poll costs; the wider ones exist for the spread builder, where a condor's
+# wings sit far outside anything the picker shows -- asked for per symbol
+# rather than paid for on every chain, since ±50 % on a $1-strike name is
+# several hundred strikes a side fetched every fifteen seconds.
+STRIKE_WIDTHS: tuple[float, ...] = (0.10, 0.25, 0.50)
 # The far strip, fetched only when asked for and only for the window asked
 # for (a playbook's LEAPS window, the one expiry a ticket loads): the
 # expiries beyond the picker's, with a strike band that reaches the deep
@@ -234,10 +240,14 @@ class ChainCache:
         self._clients = clients
         self._spot_fn = spot_fn
         self._now = now
-        self._contracts: dict[str, _Entry] = {}
+        # Keyed by (underlying, width) and (underlying, expiry, width):
+        # a wide fetch is a superset of a narrow one, but caching them as
+        # one entry would serve the narrow band to the next asker and the
+        # wings would silently vanish again.
+        self._contracts: dict[tuple[str, float], _Entry] = {}
         self._far: dict[tuple[str, str, str], _Entry] = {}
         self._board: dict[str, _Entry] = {}
-        self._chains: dict[tuple[str, str], _Entry] = {}
+        self._chains: dict[tuple[str, str, float], _Entry] = {}
         self._locks: dict[object, asyncio.Lock] = {}
 
     def _lock(self, key) -> asyncio.Lock:
@@ -252,19 +262,27 @@ class ChainCache:
         return await self._spot_fn(underlying.upper())
 
     def invalidate(self, underlying: str) -> None:
-        self._contracts.pop(underlying, None)
+        for key in [k for k in self._contracts if k[0] == underlying]:
+            self._contracts.pop(key, None)
         for key in [k for k in self._far if k[0] == underlying]:
             self._far.pop(key, None)
         self._board.pop(underlying, None)
         for key in [k for k in self._chains if k[0] == underlying]:
             self._chains.pop(key, None)
 
-    async def contracts(self, underlying: str) -> tuple[float, dict[str, ContractMeta], list[ExpiryInfo]]:
+    async def contracts(
+        self, underlying: str, width: float = STRIKE_PCT_RANGE
+    ) -> tuple[float, dict[str, ContractMeta], list[ExpiryInfo]]:
         """(spot, contracts in the window, expiries) -- the picker's expiry
-        strip and the strike band the chain fetch is bounded to."""
+        strip and the strike band the chain fetch is bounded to.
+
+        `width` is the fraction of spot either side. The default is what
+        every poll pays; a builder asking for wings passes more.
+        """
         underlying = underlying.upper()
-        async with self._lock(("contracts", underlying)):
-            entry = self._contracts.get(underlying)
+        key = (underlying, width)
+        async with self._lock(("contracts", key)):
+            entry = self._contracts.get(key)
             if entry is not None and self._now() - entry.fetched_at < CONTRACTS_TTL_SECONDS:
                 return entry.value  # type: ignore[return-value]
             spot = await self._spot_fn(underlying)
@@ -276,11 +294,11 @@ class ChainCache:
                 underlying,
                 today,
                 today + timedelta(days=CHAIN_DAYS_AHEAD),
-                *strike_band(spot),
+                *strike_band(spot, width, width),
             )
             expiries = expiries_from_contracts(contracts.values(), today)
             value = (spot, contracts, expiries)
-            self._contracts[underlying] = _Entry(self._now(), value)
+            self._contracts[key] = _Entry(self._now(), value)
             return value
 
     async def far_contracts(self, underlying: str, gte: date, lte: date) -> tuple[float, dict[str, ContractMeta], list[ExpiryInfo]]:
@@ -343,15 +361,15 @@ class ChainCache:
         spot, _contracts, expiries = await self.far_contracts(underlying, today + timedelta(days=lo_days), today + timedelta(days=hi_days))
         return spot, expiries
 
-    async def chain(self, underlying: str, expiry: date) -> Chain:
+    async def chain(self, underlying: str, expiry: date, width: float = STRIKE_PCT_RANGE) -> Chain:
         underlying = underlying.upper()
-        key = (underlying, expiry.isoformat())
+        key = (underlying, expiry.isoformat(), width)
         async with self._lock(("chain", key)):
             entry = self._chains.get(key)
             if entry is not None and self._now() - entry.fetched_at < CHAIN_TTL_SECONDS:
                 return entry.value  # type: ignore[return-value]
-            spot, contracts, expiries = await self.contracts(underlying)
-            below, above = STRIKE_PCT_RANGE, STRIKE_PCT_RANGE
+            spot, contracts, expiries = await self.contracts(underlying, width)
+            below, above = width, width
             if not any(e.expiry == expiry for e in expiries):
                 # Beyond the picker's window: that one expiry of the far strip.
                 spot, contracts, expiries = await self.far_contracts(underlying, expiry, expiry)
@@ -369,10 +387,13 @@ class ChainCache:
             volumes = await fetch_day_volumes(
                 self._clients, [m.symbol for m in contracts.values() if m.expiry == expiry]
             )
+            low, high = strike_band(spot, below, above)
             chain = Chain(
                 underlying=underlying,
                 expiry=expiry,
                 spot=spot,
+                strike_low=low,
+                strike_high=high,
                 feed=str(getattr(self._clients.options_feed, "value", self._clients.options_feed)),
                 as_of=datetime.now(timezone.utc),
                 rows=build_chain_rows(contracts, snapshots, expiry, volumes),

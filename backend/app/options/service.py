@@ -385,9 +385,11 @@ class OptionsService:
         _spot, expiries = await fetch(underlying, lo_days, hi_days)
         return list(expiries)
 
-    async def chain(self, underlying: str, expiry) -> Chain:
+    async def chain(self, underlying: str, expiry, width: float | None = None) -> Chain:
         try:
-            return await self._source.chain(underlying, expiry)
+            if width is None:
+                return await self._source.chain(underlying, expiry)
+            return await self._source.chain(underlying, expiry, width)
         except LookupError as exc:
             raise OrderRejected(str(exc), field="expiry") from exc
 

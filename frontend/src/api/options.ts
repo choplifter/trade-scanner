@@ -121,9 +121,13 @@ export function getContractQuote(symbol: string): Promise<LegQuote> {
   return getJson<LegQuote>(tradingPath(`/trading/options/contract/${encodeURIComponent(symbol)}`));
 }
 
-export function getChain(underlying: string, expiry: string): Promise<ChainResponse> {
+/** `width` is the strike band as a fraction of spot either side. Omitted
+ * means the backend's default (±10 %); a spread builder reaching for the
+ * wings of a condor asks for more, and pays for it on every poll. */
+export function getChain(underlying: string, expiry: string, width?: number): Promise<ChainResponse> {
+  const band = width == null ? "" : `&width=${encodeURIComponent(String(width))}`;
   return getJson<ChainResponse>(
-    tradingPath(`/trading/options/chain/${encodeURIComponent(underlying)}?expiry=${encodeURIComponent(expiry)}`),
+    tradingPath(`/trading/options/chain/${encodeURIComponent(underlying)}?expiry=${encodeURIComponent(expiry)}${band}`),
   );
 }
 
