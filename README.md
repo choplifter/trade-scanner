@@ -1477,6 +1477,14 @@ re-picking them by hand would be busywork. A long option, a debit spread
 and a calendar have no short strike to build from and offer no button;
 they judged the chain, not a direction.
 
+Beside it, **Optimize** hands the symbol to the Optimizer with the screen's
+own question: the family the strategy names, the expiry the row was judged
+at, a view that sets the target, and the reason line ("screen: 7/8 criteria
+· IV 1.60x realised") above the results. For the income strategies it also
+clears the budget -- a cash-secured put puts up the strike in cash, so the
+Optimizer's spread-sized default would drop every candidate as over budget
+and answer with an empty list.
+
 A run over 12 watchlist symbols takes about six seconds.
 
 ### Optimizer: structures for a price target

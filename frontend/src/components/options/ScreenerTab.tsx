@@ -3,8 +3,16 @@ import { useState } from "react";
 import { OrderRejectedError } from "../../api/http";
 import { screenUnderlyings } from "../../api/options";
 import { useWatchlist } from "../../hooks/useWatchlist";
-import type { LoadableStructure, ScreenResponse, ScreenRow, ScreenStrategy, Strategy } from "../../types/options";
+import type {
+  LoadableStructure,
+  OptimizerOutlook,
+  ScreenResponse,
+  ScreenRow,
+  ScreenStrategy,
+  Strategy,
+} from "../../types/options";
 import { formatPrice } from "../../utils/format";
+import { requestOptimizer } from "./optimizerIntent";
 import { requestTicket } from "./ticketIntent";
 
 interface ScreenerTabProps {
@@ -97,6 +105,31 @@ export function structureOf(row: ScreenRow, strategy: ScreenStrategy): LoadableS
     };
   }
   return null;
+}
+
+/** The Optimizer question this screen's strategy asks: which family to
+ * rank, and the view that sets the target. The screened expiry travels
+ * with it, so the tab opens on the same horizon the row was judged at
+ * rather than on its own default. */
+const OPTIMIZER_INTENT: Record<ScreenStrategy, { outlook: OptimizerOutlook; strategies: Strategy[]; income?: boolean }> = {
+  // Income structures put up the position itself -- the strike in cash, the
+  // hundred shares -- so the Optimizer's spread-sized default budget would
+  // drop every candidate as over budget and answer with an empty list.
+  cash_secured_put: { outlook: "bullish", strategies: ["cash_secured_put"], income: true },
+  covered_call: { outlook: "neutral", strategies: ["covered_call"], income: true },
+  // The screen read the put side, so the vertical it ranks is the bull put.
+  credit_spread: { outlook: "bullish", strategies: ["bull_put"] },
+  iron_condor: { outlook: "neutral", strategies: ["iron_condor"] },
+  debit_spread: { outlook: "bullish", strategies: ["bull_call"] },
+  long_option: { outlook: "bullish", strategies: ["long_call"] },
+  calendar: { outlook: "neutral", strategies: ["calendar"] },
+};
+
+function reasonFor(row: ScreenRow): string {
+  const parts = [`${row.passed}/${row.scored} criteria`];
+  if (row.iv_rv_ratio != null) parts.push(`IV ${row.iv_rv_ratio.toFixed(2)}x realised`);
+  if (row.iv_rank != null) parts.push(`IV rank ${row.iv_rank.toFixed(0)} %`);
+  return `screen: ${parts.join(" · ")}`;
 }
 
 function pct(value: number | null | undefined, digits = 0): string {
@@ -280,6 +313,28 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                           </button>
                         ) : null;
                       })()}
+                      <button
+                        type="button"
+                        className="timeframe-button"
+                        title="Rank the structures for this symbol in the Optimizer, on the expiry and family this screen used"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const intent = OPTIMIZER_INTENT[result.strategy];
+                          onSelectSymbol?.(row.symbol);
+                          requestOptimizer({
+                            symbol: row.symbol,
+                            outlook: intent.outlook,
+                            reason: reasonFor(row),
+                            request: {
+                              strategies: intent.strategies,
+                              ...(intent.income ? { budget: null } : {}),
+                              ...(row.expiry ? { horizon_expiry: row.expiry } : {}),
+                            },
+                          });
+                        }}
+                      >
+                        Optimize
+                      </button>
                     </td>
                   </tr>
                   {open === row.symbol && (
