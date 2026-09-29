@@ -566,3 +566,28 @@ def test_the_response_reports_the_width_it_allowed():
             abs(r["spread"]["legs"][0]["strike"] - r["spread"]["legs"][-1]["strike"]) <= width + 1e-9
             for r in body["results"]
         )
+
+
+def test_the_width_slider_raises_the_floor_to_a_share_of_the_move():
+    """Left at 0 the tightest pair around the target wins -- it risks least
+    per dollar of return. Pushed right, a structure has to span the move,
+    which is the pair that pays on the way to the target rather than only
+    at it."""
+    tight = _run(_Service(), _req(strategies=["bull_call"]))
+    wide = _run(_Service(), _req(strategies=["bull_call"], width_preference=1.0))
+    move = tight["implied_move"]
+
+    assert tight["width_preference"] == 0.0 and wide["width_preference"] == 1.0
+    assert wide["min_width"] == pytest.approx(move, abs=0.01)
+    assert tight["min_width"] < wide["min_width"], "the floor moves with the slider"
+
+    def widths(body):
+        return [abs(r["spread"]["legs"][-1]["strike"] - r["spread"]["legs"][0]["strike"]) for r in body["results"]]
+
+    assert all(w >= move - 1e-9 for w in widths(wide))
+    assert min(widths(tight)) < move, "the tight end is free to pick a narrow pair"
+
+
+def test_a_named_min_width_still_overrides_the_slider():
+    body = _run(_Service(), _req(strategies=["bull_call"], width_preference=1.0, min_width=0.0))
+    assert body["min_width"] == 0.0

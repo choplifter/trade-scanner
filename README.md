@@ -1469,6 +1469,16 @@ grid is 121 points rather than 201 -- the same number to four decimals on
 these shapes. A QQQ run prices ~7,200 candidates in about 0.7 s at Max
 Return and 5.6 s at Max Chance.
 
+A second slider, **At the target <-> Spans the move**, sets the *floor* on
+that width as a share of the implied move (`width_preference`, 0 by
+default; `min_width` in dollars overrides it). At the left the tightest
+pair around the target wins, because return per dollar is what the ranking
+reads and a four-point spread risks little -- but it pays only if the
+target is reached. At the right a structure has to span the whole move,
+which earns on the way there. On a QQQ run (spot 737, move 42.79, target
+778.63) the left end proposes 763/767 at 254 % and the right end 747/790
+at 131 % and a chance of 32 % against 25 %.
+
 A multi-strike structure narrower than `MIN_WIDTH_PCT` of spot (0.5 %, so
 ~$4 on SPY and under a strike increment on a cheap name) is not offered at
 all, counted as `under_min_width`; legs across expiries are exempt, since a

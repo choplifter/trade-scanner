@@ -316,6 +316,9 @@ interface RunParams {
   budget: number | null;
   maxLoss: number | null;
   preference: number;
+  /** 0 keeps the tightest pair around the target, 1 demands a structure
+   * that spans the implied move. */
+  widthPreference: number;
   avoidEarnings: boolean;
 }
 
@@ -357,6 +360,7 @@ export function OptimizerTab({
   const [horizonExpiry, setHorizonExpiry] = useState<string>(remembered?.horizon_expiry ?? "");
   const [budget, setBudget] = useState<string>(remembered?.budget != null ? String(remembered.budget) : "1000");
   const [preference, setPreference] = useState<number>(remembered?.preference ?? 0.5);
+  const [widthPreference, setWidthPreference] = useState<number>(remembered?.width_preference ?? 0);
   const [holdThroughEarnings, setHoldThroughEarnings] = useState<boolean>(!(remembered?.avoid_earnings ?? false));
   const [more, setMore] = useState(false);
   // Which horizon of a comparison the cards below belong to; null shows the
@@ -510,6 +514,7 @@ export function OptimizerTab({
       strategies: [...p.families],
       outlook: p.outlook,
       preference: p.preference,
+      width_preference: p.widthPreference,
       avoid_earnings: p.avoidEarnings,
       top_n: 9,
     };
@@ -531,6 +536,7 @@ export function OptimizerTab({
       budget: numeric(budget),
       maxLoss: numeric(maxLoss),
       preference,
+      widthPreference,
       avoidEarnings: !holdThroughEarnings,
     });
     if (body) optimizer.run(body);
@@ -557,6 +563,7 @@ export function OptimizerTab({
       budget: numeric(budget),
       maxLoss: numeric(maxLoss),
       preference,
+      widthPreference,
       avoidEarnings: !holdThroughEarnings,
     });
     if (!body) return;
@@ -599,6 +606,7 @@ export function OptimizerTab({
       budget: numeric(budget),
       maxLoss: numeric(maxLoss),
       preference,
+      widthPreference,
       avoidEarnings: !holdThroughEarnings,
     });
     if (body) optimizer.run({ ...body, ...over });
@@ -629,6 +637,9 @@ export function OptimizerTab({
           underlying: comparison.underlying,
           spot: comparison.spot,
           as_of: singleShown?.as_of ?? "",
+          width_preference: singleShown?.width_preference ?? widthPreference,
+          max_vertical_width: singleShown?.max_vertical_width ?? null,
+          min_width: singleShown?.min_width ?? 0,
           target: pickedRun.target,
           outlook: singleShown?.outlook ?? null,
           preference,
@@ -824,6 +835,20 @@ export function OptimizerTab({
           title="Where the ranking stands between the highest return on risk and the highest chance of profit."
         />
         <span className="opt-pref-label">Max Chance →</span>
+      </div>
+
+      <div className="opt-preference">
+        <span className="opt-pref-label">← At the target</span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={widthPreference}
+          onChange={(e) => setWidthPreference(Number(e.target.value))}
+          title="How wide a structure has to be, as a share of the implied move. Left, the tightest pair around the target wins -- it risks least for what it pays, but only at the target. Right, a structure has to span the whole move, so it earns on the way there too."
+        />
+        <span className="opt-pref-label">Spans the move →</span>
         <button type="button" className="generate-button opt-run" disabled={!canRun || loading} onClick={run}>
           {loading ? "Pricing structures…" : "Find structures"}
         </button>

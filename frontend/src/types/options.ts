@@ -571,9 +571,12 @@ export interface OptimizeRequest {
   /** Drop a finalist whose market costs more than this share of its own
    * price to cross. */
   max_cross_fraction?: number | null;
-  /** Narrowest multi-strike structure to offer, in dollars (0.5 % of spot
-   * by default; 0 offers every width). */
+  /** Narrowest multi-strike structure to offer, in dollars. Overrides the
+   * width slider; 0 offers every width. */
   min_width?: number | null;
+  /** 0 keeps the tightest pair around the target, 1 demands a structure
+   * that spans the implied move; in between, that share of it. */
+  width_preference?: number;
   /** What crossing may cost against the money the position puts up (20 %
    * by default). */
   max_cross_of_risk?: number | null;
@@ -706,8 +709,13 @@ export interface OptimizeResponse {
   target: { low: number; high: number; points: number[] };
   outlook: OptimizerOutlook | null;
   preference: number;
+  width_preference: number;
   /** One standard deviation of the move the market prices to the horizon (dollars). */
   implied_move: number | null;
+  /** The widest a vertical was allowed to be, and the narrowest any
+   * multi-strike structure could be, both in dollars. */
+  max_vertical_width: number | null;
+  min_width: number;
   atm_iv: number | null;
   horizon: { date: string; expiries_considered: string[] };
   /** The next report against the horizon; null when no calendar or no report is known. */

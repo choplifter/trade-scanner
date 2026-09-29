@@ -165,8 +165,16 @@ class OptimizeRequest(BaseModel):
     # DEFAULT_MAX_CROSS_OF_RISK; ignored once the rules are switched off.
     max_cross_of_risk: float | None = Field(default=None, gt=0.0)
     # The narrowest multi-strike structure to offer, in dollars. Left out,
-    # MIN_WIDTH_PCT of spot; 0 offers every width the chain lists.
+    # the width slider below decides it; 0 offers every width the chain
+    # lists.
     min_width: float | None = Field(default=None, ge=0.0)
+    # The width slider. At 0 the floor stays at MIN_WIDTH_PCT of spot and
+    # the tightest pair around the target wins, because return per dollar
+    # is what the ranking reads and a narrow spread risks little; at 1 a
+    # structure has to span the whole implied move, which pays on the way
+    # to the target instead of only at it. In between it is that share of
+    # the move. `min_width`, when given, overrides the slider outright.
+    width_preference: float = Field(default=0.0, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _check(self) -> "OptimizeRequest":
@@ -401,13 +409,21 @@ async def optimize_structures(
         else:
             candidates.append(priced)
     skipped.scored = len(candidates)
+    # The floor on a structure's width: the slider's share of the implied
+    # move, never below the fat-finger floor of MIN_WIDTH_PCT, and set
+    # aside entirely when the caller names a width of its own.
+    min_width = (
+        req.min_width
+        if req.min_width is not None
+        else round(max(spot * MIN_WIDTH_PCT, req.width_preference * (implied_move or 0.0)), 2)
+    )
     finalists, drop_reasons = filter_and_rank(
         candidates,
         budget=req.budget,
         max_loss=req.max_loss,
         top_k=FINALISTS,
         preference=req.preference,
-        min_width=spot * MIN_WIDTH_PCT if req.min_width is None else req.min_width,
+        min_width=min_width,
     )
     for reason, n in drop_reasons.items():
         skipped.add(reason, n)
@@ -594,6 +610,8 @@ async def optimize_structures(
         "preference": req.preference,
         "implied_move": implied_move,
         "max_vertical_width": max_vertical_width,
+        "min_width": min_width,
+        "width_preference": req.width_preference,
         "atm_iv": round(sigma, 4) if sigma else None,
         "horizon": {"date": horizon.isoformat(), "expiries_considered": [e.isoformat() for e in expiries]},
         "earnings": earnings_block,
