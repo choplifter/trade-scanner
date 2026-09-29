@@ -35,6 +35,7 @@ from app.options.models import STRATEGY_LABELS, Strategy
 from app.options.optimizer import (
     CONDOR_SHORT_DELTA,
     MIN_WIDTH_PCT,
+    VERTICAL_WIDTH_SIGMAS,
     PER_STRATEGY_CAP,
     DEFAULT_STRATEGIES,
     FINALISTS,
@@ -84,6 +85,13 @@ DEFAULT_MAX_CROSS_FRACTION = 0.25
 # put spread quoted 19 wide either way crosses at 15 % of its own price and
 # still costs 5,740 dollars against 1,000 of risk. Measured against the
 # risk, that is the same trade told honestly.
+# How many strikes per expiry the optimizer keeps. condense_chain's own
+# default is 24, which is a *prompt* budget: the Idea tab shows a model the
+# chain and pays by the token. This path prices candidates itself, and 24
+# strikes around the money is ~12 dollars either side on a dollar-strike
+# chain -- narrower than one implied move, so every vertical it could build
+# hugged the spot however wide the width bound allowed.
+OPTIMIZER_MAX_STRIKES = 60
 DEFAULT_MAX_CROSS_OF_RISK = 0.20
 
 
@@ -337,7 +345,7 @@ async def optimize_structures(
         raise OrderRejected(f"No listed expiry on or after {horizon.isoformat()} for {underlying}", field="horizon")
 
     rows_by_expiry_payload, _strikes, _chains = await _chain_block(
-        service, underlying, expiries, today, strike_pct_range=req.strike_pct_range
+        service, underlying, expiries, today, strike_pct_range=req.strike_pct_range, max_strikes=OPTIMIZER_MAX_STRIKES
     )
     rows_by_expiry = {expiry: block["strikes"] for expiry, block in rows_by_expiry_payload.items()}
     horizon_moment = datetime.combine(horizon, time(16, 0), tzinfo=ET)
@@ -368,10 +376,26 @@ async def optimize_structures(
         )
 
     short_delta = CONDOR_SHORT_DELTA if req.condor_short_delta_max is None else (CONDOR_SHORT_DELTA[0], req.condor_short_delta_max)
-    raws, skipped = enumerate_candidates(rows_by_expiry, spot, target, strategies, short_delta=short_delta)
+    # A vertical may be as wide as the move the market prices to the
+    # horizon (see VERTICAL_WIDTH_SIGMAS); with no implied move to measure
+    # against, the strike-count cap inside enumerate_candidates applies.
+    max_vertical_width = round(implied_move * VERTICAL_WIDTH_SIGMAS, 2) if implied_move else None
+    raws, skipped = enumerate_candidates(
+        rows_by_expiry, spot, target, strategies, short_delta=short_delta, max_vertical_width=max_vertical_width
+    )
+    # The chance is a 201-point integration per candidate, and thousands of
+    # candidates are enumerated since the strike window was widened. At Max
+    # Return the ranking does not read it (rank_score uses the return alone
+    # at preference 0), and every finalist has it recomputed from its
+    # previewed legs anyway -- so the cheap pass only pays for it when the
+    # slider actually asks.
+    cheap_sigma = sigma if req.preference > 0 else None
+    cheap_years = years if req.preference > 0 else None
     candidates: list[Candidate] = []
     for raw in raws:
-        priced = price_candidate(raw, rows_by_expiry, spot, target, horizon_moment, sigma=sigma, years=years)
+        priced = price_candidate(
+            raw, rows_by_expiry, spot, target, horizon_moment, sigma=cheap_sigma, years=cheap_years
+        )
         if isinstance(priced, str):
             skipped.add(priced)
         else:
@@ -569,6 +593,7 @@ async def optimize_structures(
         "outlook": req.outlook,
         "preference": req.preference,
         "implied_move": implied_move,
+        "max_vertical_width": max_vertical_width,
         "atm_iv": round(sigma, 4) if sigma else None,
         "horizon": {"date": horizon.isoformat(), "expiries_considered": [e.isoformat() for e in expiries]},
         "earnings": earnings_block,

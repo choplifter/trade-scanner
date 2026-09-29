@@ -43,7 +43,14 @@ from app.ai.options_resolve import ticket_from_legs
 # candidates -- pricing is cheap (dict lookups and a few Black-Scholes
 # evaluations), but the count is what the reader gets told, and ten
 # thousand near-duplicates would not be a more honest answer.
-MAX_CANDIDATES = 1000
+# Every shape is priced in-process with closed-form arithmetic, so the cap
+# is about keeping the response honest rather than fast: past it the list
+# is truncated and says so (candidate_cap). It was raised with the strike
+# window (OPTIMIZER_MAX_STRIKES): 60 strikes and a width bound of one
+# implied move makes a few thousand verticals per expiry, and a cap that
+# cut them off mid-enumeration would quietly favour the low strikes it
+# happened to reach first.
+MAX_CANDIDATES = 8000
 FINALISTS = 12
 PER_STRATEGY_CAP = 3
 # Dollars per position. A structure that costs a cent -- a far-dated fly
@@ -60,7 +67,21 @@ MIN_RISK = 5.0
 # nothing is dropped. Legs of different expiries are exempt -- a calendar's
 # strikes are the same by construction.
 MIN_WIDTH_PCT = 0.005
-VERTICAL_MAX_WIDTH = 3  # strikes between long and short
+# How wide a vertical may be. Counted in strikes it cannot travel: three
+# strikes is 3 dollars on a name with dollar strikes and 15 on one with
+# five-dollar strikes, and neither number has anything to do with how far
+# the underlying can actually move by the horizon. A spread whose short leg
+# sits inside the move it is built for gives up most of the payoff -- which
+# is why a list capped this way clusters at the money while a wider one
+# spans the target.
+#
+# So the bound is the implied move itself (spot x ATM IV x sqrt(T), the one
+# standard deviation the market prices to the horizon), times this factor:
+# far enough for the short leg to sit past a one-sigma move, near enough
+# that the pair count stays sane. The strike count below is the fallback
+# for when no volatility is available to compute a move from.
+VERTICAL_MAX_WIDTH = 3  # strikes between long and short, when no move is known
+VERTICAL_WIDTH_SIGMAS = 1.25
 CONDOR_WING_WIDTHS = (1, 2, 3)
 CONDOR_SHORT_DELTA = (0.10, 0.40)  # |delta| band for the short strikes
 FLY_WING_WIDTHS = (1, 2, 3, 4)
@@ -69,7 +90,11 @@ STRANGLE_WIDTHS = (1, 2, 3)
 TARGET_POINTS = 5
 # The price grid the chance of profit integrates over: +/- 4 sigma of the
 # lognormal move to the horizon, in 201 steps.
-CHANCE_GRID_POINTS = 201
+# The integration grid. 121 points over +/-4 sigma agrees with 201 to four
+# decimals on the structures here (a vertical's mass sits in a handful of
+# steps around its breakeven), and the pass prices thousands of candidates
+# when the slider asks for chances. 81 and below start to wander.
+CHANCE_GRID_POINTS = 121
 CHANCE_SIGMA_REACH = 4.0
 
 # OptionStrat's sentiment buttons, as the strategy families each one
@@ -289,6 +314,7 @@ def enumerate_candidates(
     *,
     max_candidates: int = MAX_CANDIDATES,
     short_delta: tuple[float, float] = CONDOR_SHORT_DELTA,
+    max_vertical_width: float | None = None,
 ) -> tuple[list[RawCandidate], Skipped]:
     """Every shape worth pricing, per expiry, within the bounds above.
 
@@ -297,6 +323,11 @@ def enumerate_candidates(
     horizon -- a leg expiring before the horizon has no value to speak of
     there, so the orchestration does not load such expiries. Calendars pair
     each expiry with every later one in the dict.
+
+    `max_vertical_width` bounds a vertical in dollars (see
+    VERTICAL_WIDTH_SIGMAS); left None, the old cap of VERTICAL_MAX_WIDTH
+    strikes applies, which is what a chain with no implied move to measure
+    against gets.
 
     Over `max_candidates` the rest is counted under `candidate_cap` rather
     than silently truncated.
@@ -338,8 +369,12 @@ def enumerate_candidates(
         # ticket_from_legs reads for the strike-field strategies.
         for kind, side_rows, bull, bear in (("call", calls, "bull_call", "bear_call"), ("put", puts, "bull_put", "bear_put")):
             for i in range(len(side_rows)):
-                for j in range(i + 1, min(len(side_rows), i + VERTICAL_MAX_WIDTH + 1)):
+                # In dollars where a move is known, in strikes otherwise.
+                last = len(side_rows) if max_vertical_width is not None else min(len(side_rows), i + VERTICAL_MAX_WIDTH + 1)
+                for j in range(i + 1, last):
                     lo, hi = side_rows[i]["strike"], side_rows[j]["strike"]
+                    if max_vertical_width is not None and hi - lo > max_vertical_width:
+                        break
                     if bull in strategies:
                         emit(bull, expiry, [_leg(kind, lo, "buy"), _leg(kind, hi, "sell")])
                     if bear in strategies:

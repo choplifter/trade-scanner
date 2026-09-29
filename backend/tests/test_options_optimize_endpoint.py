@@ -313,8 +313,13 @@ def test_results_carry_chance_implied_move_and_honour_the_slider():
     by_chance = _run(_Service(), _req(target_high=106.0, preference=1.0))
     assert by_return["implied_move"] and by_return["atm_iv"] == pytest.approx(IV, abs=1e-3)
     assert all(0 <= r["chance"] <= 1 for r in by_return["results"])
+    # Not a strictly descending list: every family gets a seat before any
+    # family takes a second one (represent_each_family), so a lone
+    # cash-secured put can sit above a second bull put with a better
+    # chance. What the slider has to do is lift the chances as a whole.
     chances = [r["chance"] for r in by_chance["results"]]
-    assert chances == sorted(chances, reverse=True)
+    assert chances[0] == max(chances)
+    assert sum(chances) / len(chances) > sum(r["chance"] for r in by_return["results"]) / len(by_return["results"])
     assert by_return["preference"] == 0.0 and by_chance["preference"] == 1.0
     assert by_return["target"]["points"][0] == 104.0
 
@@ -528,3 +533,36 @@ def test_the_chance_has_to_clear_the_cross_too():
     assert free is not None and charged is not None
     assert charged < free, "clearing a 60-dollar cross is less likely than clearing zero"
     assert chance_of_profit(*args, threshold=0.0) == free
+
+
+def test_a_vertical_is_bounded_by_the_move_not_by_a_strike_count():
+    """Three strikes is 3 dollars on a dollar-strike chain and 15 on a
+    five-dollar one, and neither is the distance the underlying can travel
+    by the horizon. Bounded by the implied move, the pair spans the target
+    instead of hugging the spot."""
+    from app.options.optimizer import enumerate_candidates
+
+    rows = {NEAR: [{"strike": float(s), "call": {"mid": 1.0, "iv": 0.2}, "put": {"mid": 1.0, "iv": 0.2}} for s in range(90, 131)]}
+    target = _req().target
+
+    narrow, _ = enumerate_candidates(rows, 100.0, target, frozenset({"bull_call"}))
+    wide, _ = enumerate_candidates(rows, 100.0, target, frozenset({"bull_call"}), max_vertical_width=20.0)
+
+    def widest(cands):
+        return max(abs(c.legs[1].strike - c.legs[0].strike) for c in cands)
+
+    assert widest(narrow) == 3, "the fallback is still the strike count"
+    assert widest(wide) == 20, "in dollars, up to the bound and not past it"
+    assert len(wide) > len(narrow)
+
+
+def test_the_response_reports_the_width_it_allowed():
+    body = _run(_Service(), _req(strategies=["bull_call"]))
+    width = body["max_vertical_width"]
+    # None only when there was no implied move to measure against.
+    if width is not None:
+        assert width == pytest.approx(body["implied_move"] * 1.25, rel=1e-6)
+        assert all(
+            abs(r["spread"]["legs"][0]["strike"] - r["spread"]["legs"][-1]["strike"]) <= width + 1e-9
+            for r in body["results"]
+        )

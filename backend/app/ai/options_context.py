@@ -124,7 +124,13 @@ def pick_expiries(expiries: list[ExpiryInfo], *, targets=EXPIRY_TARGET_DTE, limi
 
 
 async def _chain_block(
-    service, underlying: str, expiries: list[date], today: date, *, strike_pct_range: float | None = None
+    service,
+    underlying: str,
+    expiries: list[date],
+    today: date,
+    *,
+    strike_pct_range: float | None = None,
+    max_strikes: int | None = None,
 ) -> tuple[dict, dict, list]:
     """(rows per expiry for the prompt, strikes per expiry for the resolver,
     the loaded chains). The one part that may not fail quietly: with no
@@ -133,11 +139,18 @@ async def _chain_block(
     `strike_pct_range` widens or narrows the window condense_chain keeps
     around spot; None is its own default. A name whose implied move is a
     fifth of its price has every interesting strike outside the default
-    window, so the earnings path passes its own (app.options.optimize)."""
+    window, so the earnings path passes its own (app.options.optimize).
+
+    `max_strikes` is how many rows survive the trim toward spot. Its
+    default exists to keep a *prompt* small; a caller that does arithmetic
+    rather than asking a model (the Optimizer) passes its own, or every
+    structure it can build is one the trim left standing near the money."""
     chains = await asyncio.gather(*(service.chain(underlying, expiry) for expiry in expiries))
     rows_by_expiry = {}
     strikes_by_expiry = {}
-    window = {} if strike_pct_range is None else {"strike_pct_range": strike_pct_range}
+    window: dict = {} if strike_pct_range is None else {"strike_pct_range": strike_pct_range}
+    if max_strikes is not None:
+        window["max_strikes"] = max_strikes
     for chain in chains:
         rows, strikes = condense_chain(chain, **window)
         if not rows:

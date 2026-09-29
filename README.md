@@ -1452,6 +1452,23 @@ a `max_cross_fraction` of 1.0 switches every cross rule off. The **chance**
 clears the same bar: `chance_of_profit` sums the implied distribution's mass
 where the P/L is above the cross, not above zero, so a card's chance and its
 profit answer the same question.
+A vertical may be as wide as the **implied move** the market prices to the
+horizon (`VERTICAL_WIDTH_SIGMAS`, 1.25 sigma) rather than a fixed number of
+strikes: three strikes is 3 dollars on a dollar-strike chain and 15 on a
+five-dollar one, and neither is a distance the underlying can travel. The
+strike window is the optimizer's own (`OPTIMIZER_MAX_STRIKES`, 60), not
+condense_chain's default of 24 -- that one is a *prompt* budget for the
+Idea tab, and 24 strikes around the money is narrower than one implied
+move, so every vertical it allowed hugged the spot. With no volatility to
+measure a move against, the old cap of `VERTICAL_MAX_WIDTH` strikes stands.
+
+Widening the window makes thousands of candidates, so the cheap pass skips
+the chance integration at Max Return, where the ranking does not read it
+(the finalists recompute it from their previewed legs regardless), and the
+grid is 121 points rather than 201 -- the same number to four decimals on
+these shapes. A QQQ run prices ~7,200 candidates in about 0.7 s at Max
+Return and 5.6 s at Max Chance.
+
 A multi-strike structure narrower than `MIN_WIDTH_PCT` of spot (0.5 %, so
 ~$4 on SPY and under a strike increment on a cheap name) is not offered at
 all, counted as `under_min_width`; legs across expiries are exempt, since a
