@@ -232,6 +232,9 @@ export interface LegQuote {
   tradable: boolean;
   /** Replay: when the bar this price comes from printed (null live). */
   last_at?: string | null;
+  /** Contracts traded this session. Null when no day bars were read: a
+   * replayed day, or a quote fetched on its own for a preview. */
+  volume?: number | null;
 }
 
 export interface StrikeRow {

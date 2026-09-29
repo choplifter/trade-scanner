@@ -88,6 +88,24 @@ def test_build_chain_rows_joins_sorts_and_keeps_unquoted_strikes():
     assert rows[1].call.mid == 1.1 and rows[1].put is not None
 
 
+def test_volume_is_merged_per_contract_and_absent_means_none_traded():
+    """The snapshot carries no volume, so it arrives from a separate day-bar
+    call keyed by symbol. A contract missing from that set did not trade --
+    a zero -- while a chain built without the call at all is unknown."""
+    contracts = {
+        "SPY260918C00750000": _meta("SPY260918C00750000", "call", 750),
+        "SPY260918P00750000": _meta("SPY260918P00750000", "put", 750),
+    }
+    snapshots = {"SPY260918C00750000": _Snap(_Quote(1.0, 1.2), None, None, None)}
+
+    rows = build_chain_rows(contracts, snapshots, EXPIRY, {"SPY260918C00750000": 1234})
+    assert rows[0].call.volume == 1234
+    assert rows[0].put.volume == 0, "asked for and not traded"
+
+    unknown = build_chain_rows(contracts, snapshots, EXPIRY)
+    assert unknown[0].call.volume is None and unknown[0].put.volume is None
+
+
 def test_expiries_are_counted_and_dated():
     today = date(2026, 9, 2)
     contracts = [

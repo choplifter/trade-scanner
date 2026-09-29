@@ -9,7 +9,7 @@ zero) and skips contracts whose IV solver did not converge -- see the
 docstring of app.market_data.gamma_exposure, where this was verified live.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Any, Iterable
 
@@ -55,6 +55,14 @@ class LegQuote:
     # bar's own time, so a stale print on an illiquid strike can be told
     # from a fresh one. None on a live snapshot.
     last_at: datetime | None = None
+    # Contracts traded today. Open interest says how many positions exist,
+    # volume how many changed hands -- a strike can carry ten thousand of
+    # the first and nothing of the second, and only the second says the
+    # market is awake right now. Defaulted rather than required: the
+    # snapshot does not carry it, so everything that builds a quote without
+    # day bars (a preview's legs, the replay engine, the synthetic chains
+    # in tests) means "not known" here, and 0 means "none traded".
+    volume: int | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -74,6 +82,7 @@ class LegQuote:
             "theta": self.theta,
             "iv": self.iv,
             "open_interest": self.open_interest,
+            "volume": self.volume,
             "tradable": self.tradable,
         }
 
@@ -182,7 +191,10 @@ def quote_from_snapshot(meta: ContractMeta, snap: Any) -> LegQuote:
 
 
 def build_chain_rows(
-    contracts: dict[str, ContractMeta], snapshots: dict[str, Any], expiry: date
+    contracts: dict[str, ContractMeta],
+    snapshots: dict[str, Any],
+    expiry: date,
+    volumes: dict[str, int] | None = None,
 ) -> list[StrikeRow]:
     """Contracts of one expiry, joined to their snapshots by symbol, one row
     per strike with the call and the put side by side, ascending strike. A
@@ -193,6 +205,10 @@ def build_chain_rows(
         if meta.expiry != expiry:
             continue
         quote = quote_from_snapshot(meta, snapshots.get(meta.symbol))
+        if volumes is not None:
+            # Missing from the day-bar set means it did not trade, which is
+            # a zero rather than an unknown: the request named every symbol.
+            quote = replace(quote, volume=volumes.get(meta.symbol, 0))
         by_strike.setdefault(meta.strike, {})[meta.kind] = quote
     return [
         StrikeRow(strike=strike, call=sides.get("call"), put=sides.get("put"))

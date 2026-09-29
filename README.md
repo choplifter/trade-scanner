@@ -1038,6 +1038,7 @@ around the spot (at least $5 either side -- see `strike_band`). Columns, from th
 | Column | Meaning |
 |---|---|
 | **OI** | Open interest: contracts outstanding. Liquidity and where the crowd is positioned; `61.0k` style shorthand. |
+| **Vol** | Contracts traded in this session, from one day-bar call for the whole expiry (`fetch_day_volumes`) -- the snapshot the rest of the row comes from carries no volume. Open interest says how many positions exist, volume which strikes are being touched *today*: a SPY 757 put with 18 open and 299 traded is where the flow is. "—" where no bars were read (a replayed day). |
 | **IV** | Implied volatility, annualised, backed out of the contract's own price. Higher IV = dearer premium; the smile across strikes is visible top to bottom. |
 | **Δ** | Delta: how much the premium moves per $1 of the underlying, and roughly the probability of expiring in the money. Calls 0 to 1, puts 0 to −1. |
 | **Bid / Mid / Ask** | The market. Mid is what the ticket prices from; the bid/ask width is the cost of getting in and out. |

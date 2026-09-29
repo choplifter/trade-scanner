@@ -151,6 +151,44 @@ async def fetch_snapshots(
     return await asyncio.to_thread(clients.options.get_option_chain, request)
 
 
+async def fetch_day_volumes(clients: AlpacaClients, symbols: list[str]) -> dict[str, int]:
+    """symbol -> contracts traded in the current session, for a whole
+    expiry in one call.
+
+    The snapshot the chain is built from carries open interest and quotes
+    but no volume (alpaca-py's OptionsSnapshot drops the daily bar the
+    stock snapshot keeps), and a day bar per contract would be hundreds of
+    calls. get_option_bars takes the list, so the whole chain costs one
+    request -- which is why volume is a chain column and not something the
+    screener could afford per symbol.
+
+    Best-effort: a failure leaves the column blank rather than the chain
+    unbuilt, since a quote without a volume is still a quote.
+    """
+    if not symbols:
+        return {}
+    from alpaca.data.requests import OptionBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+
+    request = OptionBarsRequest(
+        symbol_or_symbols=symbols,
+        timeframe=TimeFrame.Day,
+        # Two days back, so a session that has not opened yet still answers
+        # with yesterday's rather than with nothing; the newest bar wins.
+        start=datetime.now(timezone.utc) - timedelta(days=2),
+    )
+    try:
+        bars = await asyncio.to_thread(clients.options.get_option_bars, request)
+    except Exception:
+        logger.warning("Option day bars failed for %d contracts", len(symbols), exc_info=True)
+        return {}
+    out: dict[str, int] = {}
+    for symbol, rows in (getattr(bars, "data", None) or {}).items():
+        if rows:
+            out[str(symbol)] = int(getattr(rows[-1], "volume", 0) or 0)
+    return out
+
+
 async def fetch_leg_quotes(clients: AlpacaClients, symbols: list[str]) -> dict[str, LegQuote]:
     """Fresh quotes for specific contracts -- what a preview or close prices
     from, so it never depends on the picker's cached chain. Open interest is
@@ -326,13 +364,18 @@ class ChainCache:
                 expiry,
                 *strike_band(spot, below, above),
             )
+            # One extra call for the whole expiry, alongside the snapshot
+            # one: the chain is cached for CHAIN_TTL_SECONDS either way.
+            volumes = await fetch_day_volumes(
+                self._clients, [m.symbol for m in contracts.values() if m.expiry == expiry]
+            )
             chain = Chain(
                 underlying=underlying,
                 expiry=expiry,
                 spot=spot,
                 feed=str(getattr(self._clients.options_feed, "value", self._clients.options_feed)),
                 as_of=datetime.now(timezone.utc),
-                rows=build_chain_rows(contracts, snapshots, expiry),
+                rows=build_chain_rows(contracts, snapshots, expiry, volumes),
             )
             self._chains[key] = _Entry(self._now(), chain)
             return chain

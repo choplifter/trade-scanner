@@ -133,11 +133,15 @@ function Side({
     .filter(Boolean)
     .join(" ");
   const oiCell = replay ? "—" : oi(quote?.open_interest ?? 0);
+  // Volume is the session's own trades: a strike with open interest but no
+  // volume is an old position nobody is touching today. Unknown (a replayed
+  // day, or a chain built without day bars) reads as a dash, not as zero.
+  const volCell = replay || quote?.volume == null ? "—" : oi(quote.volume);
   const greekCell = num(greekValue(quote, greek.key), greek.digits);
   const cells =
     kind === "call"
-      ? [oiCell, pct(quote?.iv ?? null), greekCell, num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2)]
-      : [num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2), greekCell, pct(quote?.iv ?? null), oiCell];
+      ? [oiCell, volCell, pct(quote?.iv ?? null), greekCell, num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2)]
+      : [num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2), greekCell, pct(quote?.iv ?? null), volCell, oiCell];
   const printNote = lastAt != null ? ` -- last print ${lastPrintLabel(lastAt)} ${timeZoneLabel()}${stale ? " (stale)" : ""}` : replay && quote ? " -- no print yet today" : "";
   return (
     <>
@@ -210,7 +214,10 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
     </th>
   );
   const quoteTitle = replay ? "Replay: last print ± slippage (max(2%, 0.01)) -- the simulated fill price" : undefined;
-  const oiTitle = replay ? "Open interest is not known for a replayed day" : undefined;
+  const oiTitle = replay ? "Open interest is not known for a replayed day" : "Open positions outstanding in this contract";
+  const volTitle = replay
+    ? "Volume is not known for a replayed day"
+    : "Contracts traded in this session. Open interest without volume is a position nobody is touching today.";
   const spotRowRef = useRef<HTMLTableRowElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrolledFor = useRef<string | null>(null);
@@ -243,16 +250,17 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
       <table className="performance-table chain-table">
         <thead>
           <tr>
-            <th colSpan={6} className="chain-group">
+            <th colSpan={7} className="chain-group">
               Calls
             </th>
             <th className="chain-strike">Strike</th>
-            <th colSpan={6} className="chain-group">
+            <th colSpan={7} className="chain-group">
               Puts
             </th>
           </tr>
           <tr>
             <th title={oiTitle}>OI</th>
+            <th title={volTitle}>Vol</th>
             <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV</th>
             {greekHeader}
             <th title={quoteTitle}>Bid{replay ? "*" : ""}</th>
@@ -264,6 +272,7 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
             <th title={quoteTitle}>Ask{replay ? "*" : ""}</th>
             {greekHeader}
             <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV</th>
+            <th title={volTitle}>Vol</th>
             <th title={oiTitle}>OI</th>
           </tr>
         </thead>
@@ -271,7 +280,7 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
           {rows.map((row) =>
             row === "spot" ? (
               <tr key="spot" ref={spotRowRef} className="chain-spot-row">
-                <td colSpan={13}>spot {chain.spot.toFixed(2)}</td>
+                <td colSpan={15}>spot {chain.spot.toFixed(2)}</td>
               </tr>
             ) : (
               <tr key={row.strike}>
