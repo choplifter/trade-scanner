@@ -489,6 +489,42 @@ class OptionsService:
             return {"symbol": underlying, "qty": qty, "avg_entry_price": _number(p.get("avg_entry_price"))}
         return None
 
+    async def _chains_for(self, ticket: SpreadTicket) -> dict[date, Chain]:
+        """One chain per expiry the ticket uses, fetched wide enough to
+        contain the ticket's own strikes.
+
+        The default band is ±10 % of spot, which is the right cost for a
+        chain being polled every fifteen seconds and far too narrow for the
+        wings of a condor: a 600 put on a 1,070 underlying sits 44 % out,
+        and resolve_legs answered "No put at strike 600" for a strike that
+        is listed and tradable. The width the reader picked in the widget
+        cannot help here -- this is the server resolving a ticket, and it
+        has the strikes in front of it, so it works out the band itself.
+
+        The common case still costs one fetch: only a ticket that reaches
+        outside the default band is fetched again, and then at the width
+        its own strikes ask for.
+        """
+        chains = {expiry: await self.chain(ticket.underlying, expiry) for expiry in ticket.expiries}
+        wanted: dict[date, list] = {}
+        for spec in ticket.leg_specs_full():
+            wanted.setdefault(spec.expiry or ticket.expiry, []).append(spec)
+
+        for expiry, specs in wanted.items():
+            chain = chains.get(expiry)
+            if chain is None or not chain.spot or chain.spot <= 0:
+                continue
+            # The precise question, rather than comparing against the band:
+            # is any leg missing from what we hold? A chain that resolves is
+            # never fetched twice, whatever width it came back at.
+            if all(chain.quote(spec.kind, spec.strike) is not None for spec in specs):
+                continue
+            # A tenth beyond the furthest strike, so the leg is not the very
+            # edge of the band and a neighbouring strike is there to roll to.
+            reach = max(abs(spec.strike - chain.spot) for spec in specs) / chain.spot
+            chains[expiry] = await self.chain(ticket.underlying, expiry, min(reach * 1.1, 1.0))
+        return chains
+
     async def preview(self, ticket: SpreadTicket, *, account: dict | None = None) -> ResolvedSpread:
         """What the ticket would become. Ungated, like the equity preview:
         seeing the risk of a spread you may not place is useful, not
@@ -497,7 +533,7 @@ class OptionsService:
         `account` lets a caller that previews many tickets in one go (the
         optimizer's finalists) fetch the account once and pass it in; left
         out, it is fetched here as before."""
-        chains = {expiry: await self.chain(ticket.underlying, expiry) for expiry in ticket.expiries}
+        chains = await self._chains_for(ticket)
         chain = chains[ticket.expiry]
         legs = resolve_legs(ticket, chains)
         signed_mid = net_price(legs, "mid")
