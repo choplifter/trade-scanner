@@ -197,7 +197,10 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const [deltaMax, setDeltaMax] = useState("0.20");
   const [minOi, setMinOi] = useState("5000");
   const [maxSpread, setMaxSpread] = useState("10");
-  const [avoidEarnings, setAvoidEarnings] = useState(true);
+  // Not a checkbox: for a short premium structure *when* the report falls
+  // decides everything. Early is the crush arriving while the strikes are
+  // still far away; late is a gap meeting high gamma and no time left.
+  const [earnings, setEarnings] = useState<"avoid" | "early" | "ignore">("early");
 
   // The background pass writes one table per strategy every half hour
   // (backend app/options/screen_job.py). Showing it on open is the whole
@@ -232,7 +235,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         min_open_interest: Math.round(numeric(minOi, 5000)),
         // Typed as a percentage, sent as the fraction the backend wants.
         max_spread_fraction: numeric(maxSpread, 10) / 100,
-        avoid_earnings: avoidEarnings,
+        earnings_policy: earnings,
       };
       setResult(
         await screenUnderlyings(
@@ -305,9 +308,13 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           <input type="number" min={1} max={100} step={1} value={maxSpread} onChange={(e) => setMaxSpread(e.target.value)} />
           <span aria-hidden> %</span>
         </label>
-        <label title="Fail a symbol whose next report falls on or before the screened expiry. The premium is rich because of the print, and it collapses with it.">
-          <input type="checkbox" checked={avoidEarnings} onChange={(e) => setAvoidEarnings(e.target.checked)} /> No earnings
-          inside
+        <label title="What a report inside the expiry means. Early: one in the first third of the position's life passes -- the implied volatility that made the credit fat collapses while the strikes are still far away, and weeks of decay follow. Avoid: any report inside fails. Ignore: reported, not judged.">
+          Earnings{" "}
+          <select value={earnings} onChange={(e) => setEarnings(e.target.value as "avoid" | "early" | "ignore")}>
+            <option value="early">early ok</option>
+            <option value="avoid">avoid</option>
+            <option value="ignore">ignore</option>
+          </select>
         </label>
       </div>
 
@@ -337,7 +344,11 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
             {result.criteria.dte[0]}–{result.criteria.dte[1]} DTE · OI {result.criteria.min_open_interest.toLocaleString()}+ ·
             quotes under {pct(result.criteria.max_spread_fraction)} · short delta {result.criteria.short_delta[0].toFixed(2)}–
             {result.criteria.short_delta[1].toFixed(2)}
-            {result.criteria.avoid_earnings ? " · no earnings inside" : ""}
+            {result.criteria.earnings_policy === "avoid"
+              ? " · no earnings inside"
+              : result.criteria.earnings_policy === "early"
+                ? ` · earnings only in the first ${Math.round(result.criteria.early_earnings_fraction * 100)} % of the position`
+                : ""}
           </p>
           <table className="opt-table screen-table">
             <thead>

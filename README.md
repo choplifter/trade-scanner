@@ -1434,10 +1434,23 @@ criteria a premium seller uses, and ranks by how many pass.
 | Open interest | the screened expiry's fetched strikes, `MIN_OPEN_INTEREST` (5,000) |
 | Quote width | the wider short leg, under `MAX_SPREAD_FRACTION` (10 % of mid) |
 | Days to expiry | a listed expiry in `DTE_RANGE` (30-60), nearest its middle. A window reaching past the picker's 60-day strip asks for the full expiry board instead, so a 90-day screen finds the expiries that exist |
-| Earnings clear | the FMP calendar: no report on or before that expiry |
+| Earnings | *where* the report falls, not just whether: `EARNINGS_POLICY` per strategy |
 | Short put / call delta | the strike nearest the middle of `SHORT_DELTA_BAND` (0.10-0.20) |
 | IV vs realised | ATM IV over the 20-session close-to-close volatility |
 | **Expected value** | the structure the row names, valued across the implied distribution at expiry (`structure_outcome`) |
+
+**When the report falls decides more than whether.** For a short premium
+structure an *early* print is the thesis: the implied volatility that made
+the credit fat collapses within days, and weeks of decay follow on strikes
+chosen for the whole period. A *late* one is the opposite -- the same jump
+lands on a position with little time left, high gamma, and strikes the
+market has walked up to. So the criterion has three settings rather than a
+checkbox: **avoid** (any report inside fails), **early** (one in the first
+`EARLY_EARNINGS_FRACTION`, a third, of the position's life passes) and
+**ignore**. The credit structures default to early, the debit ones to
+avoid -- a long option bought before a print pays for the event and then
+watches its own volatility collapse. Every row says where the report sits:
+"reports 41 % into the position (2026-10-21, 51 days to expiry)".
 
 The screen is picked by **strategy**, not just by direction, because a
 chain that suits a cash-secured put can be useless for a vertical. Each

@@ -584,3 +584,88 @@ def test_a_chain_without_day_bars_reports_no_volume_rather_than_zero():
         _Service({"A": _chain()}), ScreenRequest(symbols=["A"], min_option_volume=100), closes={"A": _closes(0.01)}
     )
     assert _criterion(strict["rows"][0], "option_volume")["passed"] is None, "asked for, and not knowable"
+
+
+# --- where the report falls, not just whether ---------------------------------
+
+
+def _with_earnings(day: date, strategy="iron_condor", **over):
+    """A screen of one symbol whose report falls on `day`."""
+    service = _Service({"A": _chain()})
+    calendar = _Calendar({"A": day})
+    body = _run(service, ScreenRequest(symbols=["A"], strategy=strategy, **over), calendar=calendar, closes={"A": _closes(0.01)})
+    return _criterion(body["rows"][0], "earnings")
+
+
+def test_an_early_report_passes_for_a_credit_structure():
+    """The whole thesis: the implied volatility that made the credit fat
+    collapses within days, and weeks of decay follow on strikes chosen for
+    the whole period."""
+    early = _with_earnings(TODAY + timedelta(days=5))  # 5 of 45 days, 11 % in
+    assert early["passed"] is True
+    assert early["value"] == pytest.approx(5 / 45, abs=0.01)
+    assert "time to recover" in early["detail"]
+
+
+def test_a_late_report_fails_even_for_a_credit_structure():
+    late = _with_earnings(EXPIRY - timedelta(days=3))
+    assert late["passed"] is False
+    assert "high gamma and no time" in late["detail"]
+
+
+def test_the_boundary_is_a_third_of_the_position():
+    from app.options.screener import EARLY_EARNINGS_FRACTION
+
+    assert EARLY_EARNINGS_FRACTION == pytest.approx(1 / 3)
+    on_the_line = _with_earnings(TODAY + timedelta(days=15))  # 15 of 45
+    assert on_the_line["passed"] is True
+    just_past = _with_earnings(TODAY + timedelta(days=16))
+    assert just_past["passed"] is False
+
+
+def test_avoid_still_fails_any_report_inside_the_expiry():
+    early = _with_earnings(TODAY + timedelta(days=5), earnings_policy="avoid")
+    assert early["passed"] is False, "asked to avoid, and it is inside"
+    assert early["label"] == "Earnings clear"
+
+
+def test_ignore_leaves_the_criterion_out_entirely():
+    service = _Service({"A": _chain()})
+    calendar = _Calendar({"A": TODAY + timedelta(days=5)})
+    body = _run(
+        service,
+        ScreenRequest(symbols=["A"], strategy="iron_condor", earnings_policy="ignore"),
+        calendar=calendar,
+        closes={"A": _closes(0.01)},
+    )
+    assert not any(c["key"] == "earnings" for c in body["rows"][0]["criteria"])
+
+
+def test_a_report_after_the_expiry_passes_under_either_policy():
+    for policy in ("early", "avoid"):
+        out = _with_earnings(EXPIRY + timedelta(days=10), earnings_policy=policy)
+        assert out["passed"] is True and "after this expiry" in out["detail"]
+
+
+def test_the_buy_side_strategies_still_avoid_the_print_by_default():
+    """A long option bought before a report pays for the event and then
+    watches its own volatility collapse."""
+    from app.options.screener import EARNINGS_POLICY
+
+    assert EARNINGS_POLICY["long_option"] == "avoid" and EARNINGS_POLICY["debit_spread"] == "avoid"
+    assert EARNINGS_POLICY["iron_condor"] == "early" and EARNINGS_POLICY["credit_spread"] == "early"
+    early_for_a_long = _with_earnings(TODAY + timedelta(days=5), strategy="debit_spread")
+    assert early_for_a_long["passed"] is False
+
+
+def test_the_old_boolean_still_means_something():
+    """avoid_earnings=False was "do not judge it"; that has to keep working
+    for anything written before the policy existed."""
+    service = _Service({"A": _chain()})
+    body = _run(
+        service,
+        ScreenRequest(symbols=["A"], strategy="iron_condor", avoid_earnings=False),
+        calendar=_Calendar({"A": TODAY + timedelta(days=5)}),
+        closes={"A": _closes(0.01)},
+    )
+    assert not any(c["key"] == "earnings" for c in body["rows"][0]["criteria"])

@@ -53,6 +53,25 @@ logger = logging.getLogger(__name__)
 
 Bias = Literal["sell_premium", "buy_premium", "neutral"]
 
+# What to do about a report inside the expiry. Not a boolean, because
+# *when* it falls decides everything for a short premium structure:
+#
+#   early -- the implied volatility that made the credit fat collapses
+#   within days, and weeks of quiet decay follow on strikes that were
+#   chosen for the whole period. The crush is most of the edge.
+#
+#   late -- the same jump lands on a position with little time left, high
+#   gamma and strikes the market has since walked up to. Nothing recovers
+#   a gap two days before expiry.
+#
+# "early" is the default for the credit structures for that reason. It is
+# not a free lunch: the market prices the jump, and the edge is the
+# variance premium on average, not the absence of a tail.
+EarningsPolicy = Literal["avoid", "early", "ignore"]
+# Where the line between early and late sits, as a share of the position's
+# life. A third leaves two thirds of the period to recover in.
+EARLY_EARNINGS_FRACTION = 1 / 3
+
 # What is being screened for. The shared criteria (open interest, quote
 # width, expiry, earnings, the short deltas) describe a chain and apply to
 # all of them; each strategy adds what its own shape needs, because a
@@ -67,6 +86,20 @@ Strategy = Literal[
     "long_option",
     "calendar",
 ]
+
+# Which policy each strategy gets when the request does not name one. The
+# credit structures are the ones whose whole thesis is the crush; a long
+# option bought before a print pays for the event and then watches its own
+# volatility collapse, so those avoid it.
+EARNINGS_POLICY: dict[str, EarningsPolicy] = {
+    "cash_secured_put": "early",
+    "covered_call": "early",
+    "credit_spread": "early",
+    "iron_condor": "early",
+    "debit_spread": "avoid",
+    "long_option": "avoid",
+    "calendar": "avoid",
+}
 
 STRATEGY_BIAS: dict[str, Bias] = {
     "cash_secured_put": "sell_premium",
@@ -168,11 +201,22 @@ class ScreenRequest(BaseModel):
     short_delta_max: float = Field(default=SHORT_DELTA_BAND[1], gt=0.0, lt=1.0)
     # An earnings report inside the expiry is a different trade: the IV is
     # rich because of the print, and it collapses with it.
+    # Left unset, each strategy's own default applies (see EARNINGS_POLICY):
+    # the credit structures take an early report, the rest avoid one.
+    earnings_policy: EarningsPolicy | None = None
+    # Kept for callers written before the policy existed: True means
+    # "avoid", False means "ignore", and `earnings_policy` wins when given.
     avoid_earnings: bool = True
 
     @property
     def bias(self) -> Bias:
         return STRATEGY_BIAS[self.strategy]
+
+    @property
+    def policy(self) -> EarningsPolicy:
+        if self.earnings_policy is not None:
+            return self.earnings_policy
+        return EARNINGS_POLICY[self.strategy] if self.avoid_earnings else "ignore"
 
     @model_validator(mode="after")
     def _check(self) -> "ScreenRequest":
@@ -409,7 +453,7 @@ def pick_expiry(expiries: list[date], today: date, dte_min: int, dte_max: int) -
     return min(inside, key=lambda e: abs((e - today).days - target)) if inside else None
 
 
-def _criteria(row: Row, req: ScreenRequest) -> list[Criterion]:
+def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
     """The screen, read off a priced row. Each criterion answers with a
     number and a verdict, or None when the number is not knowable."""
     out: list[Criterion] = []
@@ -469,19 +513,8 @@ def _criteria(row: Row, req: ScreenRequest) -> list[Criterion]:
         )
     )
 
-    if req.avoid_earnings:
-        inside = row.earnings_date is not None and row.expiry is not None and row.earnings_date <= row.expiry
-        out.append(
-            Criterion(
-                "earnings",
-                "Earnings clear",
-                None,
-                (not inside) if row.earnings_date is not None else None,
-                f"reports {row.earnings_date}, inside this expiry" if inside
-                else f"next report {row.earnings_date}, after this expiry" if row.earnings_date
-                else "no report date known",
-            )
-        )
+    if req.policy != "ignore":
+        out.append(_earnings_criterion(row, req, today))
 
     for leg, label in ((row.short_put, "Short put delta"), (row.short_call, "Short call delta")):
         key = "short_put_delta" if "put" in label.lower() else "short_call_delta"
@@ -584,6 +617,44 @@ def _criteria(row: Row, req: ScreenRequest) -> list[Criterion]:
     return out
 
 
+def earnings_position(row: Row, today: date) -> float | None:
+    """Where the next report falls in the position's life, 0 to 1. None
+    when there is no report inside the expiry, or nothing to measure
+    against -- a report *after* the expiry is not in the position at all."""
+    if row.earnings_date is None or row.expiry is None or row.dte is None or row.dte <= 0:
+        return None
+    if row.earnings_date > row.expiry:
+        return None
+    days_in = (row.earnings_date - today).days
+    return max(0.0, min(1.0, days_in / row.dte))
+
+
+def _earnings_criterion(row: Row, req: ScreenRequest, today: date) -> Criterion:
+    """Avoid: any report inside the expiry fails. Early: one in the first
+    EARLY_EARNINGS_FRACTION of the position's life passes -- the crush
+    arrives while the strikes are still far away and weeks of decay
+    follow -- and one in the rest fails."""
+    where = earnings_position(row, today)
+    label = "Earnings clear" if req.policy == "avoid" else "Earnings early or clear"
+    if row.earnings_date is None:
+        return Criterion("earnings", label, None, None, "no report date known")
+    if where is None:
+        return Criterion("earnings", label, None, True, f"next report {row.earnings_date}, after this expiry")
+    share = f"{where:.0%} into the position ({row.earnings_date}, {row.dte} days to expiry)"
+    if req.policy == "avoid":
+        return Criterion("earnings", label, round(where, 4), False, f"reports {share}")
+    early = where <= EARLY_EARNINGS_FRACTION
+    return Criterion(
+        "earnings",
+        label,
+        round(where, 4),
+        early,
+        f"reports {share} -- the crush lands early and the position has time to recover"
+        if early
+        else f"reports {share} -- late, where a gap meets high gamma and no time",
+    )
+
+
 def rank_rows(rows: list[Row], bias: Bias) -> list[Row]:
     """Most criteria passed first; ties broken by the IV/RV ratio in the
     direction the bias asks for, then by open interest. A row that could
@@ -631,7 +702,7 @@ async def _priced(
     expiry = pick_expiry(listed, today, req.dte_min, req.dte_max)
     if expiry is None:
         row.note = f"no listed expiry {req.dte_min}-{req.dte_max} days out"
-        row.criteria = _criteria(row, req)
+        row.criteria = _criteria(row, req, today)
         return row
     row.expiry, row.dte = expiry, (expiry - today).days
 
@@ -639,7 +710,7 @@ async def _priced(
         chain: Chain = await service.chain(symbol, expiry)
     except Exception as exc:
         row.note = f"no chain: {exc}"
-        row.criteria = _criteria(row, req)
+        row.criteria = _criteria(row, req, today)
         return row
 
     row.spot = chain.spot or row.spot
@@ -692,7 +763,7 @@ async def _priced(
         except Exception:
             logger.debug("Earnings lookup failed for %s", symbol, exc_info=True)
 
-    row.criteria = _criteria(row, req)
+    row.criteria = _criteria(row, req, today)
     return row
 
 
@@ -849,6 +920,8 @@ async def screen_underlyings(
             "max_spread_fraction": req.max_spread_fraction,
             "short_delta": [req.short_delta_min, req.short_delta_max],
             "avoid_earnings": req.avoid_earnings,
+            "earnings_policy": req.policy,
+            "early_earnings_fraction": EARLY_EARNINGS_FRACTION,
             "rich_iv_ratio": RICH_IV_RATIO,
             "cheap_iv_ratio": CHEAP_IV_RATIO,
         },

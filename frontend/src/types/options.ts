@@ -868,6 +868,10 @@ export interface ScreenRequest {
   short_delta_min?: number;
   short_delta_max?: number;
   avoid_earnings?: boolean;
+  /** What a report inside the expiry means. "avoid" fails any; "early"
+   * passes one in the first third of the position's life, where the crush
+   * lands while the strikes are still far away; "ignore" does not judge. */
+  earnings_policy?: "avoid" | "early" | "ignore";
 }
 
 /** One criterion: the number found, the verdict, and why. `passed` is null
@@ -966,6 +970,10 @@ export interface ScreenResponse {
     max_spread_fraction: number;
     short_delta: [number, number];
     avoid_earnings: boolean;
+    /** What a report inside the expiry meant for this run. */
+    earnings_policy: "avoid" | "early" | "ignore";
+    /** Where "early" ends, as a share of the position's life. */
+    early_earnings_fraction: number;
     rich_iv_ratio: number;
     cheap_iv_ratio: number;
   };
