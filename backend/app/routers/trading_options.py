@@ -455,6 +455,9 @@ async def screen(body: ScreenRequest, request: Request, service: OptionsService 
             body,
             earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
             iv_store=getattr(request.app.state, "iv_history_store", None),
+            # Stage one reads the scanner's universe: it already carries
+            # last price and 20-day dollar volume for every tradable name.
+            universe=getattr(request.app.state, "universe", None),
         )
     except TradingError as exc:
         raise HTTPException(status_code=422, detail=exc.to_detail()) from exc

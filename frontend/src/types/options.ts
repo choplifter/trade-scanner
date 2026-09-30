@@ -850,7 +850,16 @@ export type ScreenStrategy =
   | "calendar";
 
 export interface ScreenRequest {
-  symbols: string[];
+  /** Omitted with `scan_universe`: stage one picks the list. */
+  symbols?: string[] | null;
+  /** Screen the tradable universe: stage one narrows it on price and
+   * dollar volume (free -- both are already on the universe entry) and
+   * only the survivors cost a chain fetch. */
+  scan_universe?: boolean;
+  limit?: number;
+  min_dollar_volume?: number;
+  min_price?: number;
+  max_price?: number;
   strategy?: ScreenStrategy;
   dte_min?: number;
   dte_max?: number;
@@ -936,8 +945,17 @@ export interface ScreenRow {
   note: string | null;
 }
 
+/** What stage one did, when it ran: how many names it looked at, how many
+ * got a chain, and what the rest fell on. Null for a named list. */
+export interface ScreenPreselection {
+  considered: number;
+  selected: number;
+  dropped: Record<string, number>;
+}
+
 export interface ScreenResponse {
   as_of: string;
+  preselection: ScreenPreselection | null;
   strategy: ScreenStrategy;
   bias: ScreenBias;
   criteria: {

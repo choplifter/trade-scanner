@@ -168,13 +168,19 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  // Watchlist, or the whole tradable universe narrowed by stage one.
+  const [universe, setUniverse] = useState(false);
 
   const run = async () => {
-    if (symbols.length === 0) return;
+    if (!universe && symbols.length === 0) return;
     setLoading(true);
     setError(null);
     try {
-      setResult(await screenUnderlyings({ symbols: symbols.slice(0, 60), strategy }));
+      setResult(
+        await screenUnderlyings(
+          universe ? { scan_universe: true, limit: 40, strategy } : { symbols: symbols.slice(0, 60), strategy },
+        ),
+      );
     } catch (err: unknown) {
       setError(err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err));
     } finally {
@@ -197,17 +203,44 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
             {b.label}
           </button>
         ))}
-        <button type="button" className="generate-button opt-run" disabled={loading || symbols.length === 0} onClick={() => void run()}>
-          {loading ? "Reading chains…" : `Screen ${Math.min(symbols.length, 60)} symbols`}
+        <button
+          type="button"
+          className="timeframe-button"
+          aria-pressed={universe}
+          onClick={() => setUniverse((v) => !v)}
+          title="Screen the tradable universe instead of the watchlist. Stage one narrows it on price and dollar volume -- numbers the scanner's universe already carries, so that part is free -- and only the survivors cost a chain fetch."
+        >
+          {universe ? "Universe" : "Watchlist"}
         </button>
-        <span className="order-hint">from your watchlist · one chain fetch each</span>
+        <button
+          type="button"
+          className="generate-button opt-run"
+          disabled={loading || (!universe && symbols.length === 0)}
+          onClick={() => void run()}
+        >
+          {loading ? "Reading chains…" : universe ? "Screen the universe" : `Screen ${Math.min(symbols.length, 60)} symbols`}
+        </button>
+        <span className="order-hint">
+          {universe ? "top 40 by dollar volume · one chain fetch each" : "from your watchlist · one chain fetch each"}
+        </span>
       </div>
 
       {error && <p className="order-rejection">{error}</p>}
-      {symbols.length === 0 && <p className="widget-empty">Add symbols to the watchlist to screen them.</p>}
+      {!universe && symbols.length === 0 && <p className="widget-empty">Add symbols to the watchlist to screen them.</p>}
 
       {result && (
         <>
+          {result.preselection && (
+            <p className="order-hint">
+              Stage one: {result.preselection.considered.toLocaleString()} symbols considered,{" "}
+              {result.preselection.selected} priced
+              {Object.keys(result.preselection.dropped).length > 0
+                ? ` · dropped ${Object.entries(result.preselection.dropped)
+                    .map(([reason, n]) => `${n} ${reason.replace(/_/g, " ")}`)
+                    .join(", ")}`
+                : ""}
+            </p>
+          )}
           <p className="order-hint">
             {result.criteria.dte[0]}–{result.criteria.dte[1]} DTE · OI {result.criteria.min_open_interest.toLocaleString()}+ ·
             quotes under {pct(result.criteria.max_spread_fraction)} · short delta {result.criteria.short_delta[0].toFixed(2)}–

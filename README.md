@@ -1502,6 +1502,23 @@ Measured on the watchlist: IWM's condor wins 74 % of the distribution and
 is worth **-9.57**, TLT's wins 76 % and is worth **-4.61**, IEF's wins
 78 % and is worth **+1.57**. A high win rate is not an edge.
 
+**Two stages, so the universe is reachable.** A chain costs three calls
+and about half a second per symbol, which is why the screen took a list
+rather than a market. Stage one (`preselect`) narrows the scanner's whole
+universe on last price and 20-day dollar volume -- both already on the
+universe entry, so it costs nothing at all -- and only the survivors are
+priced. Dollar volume is the ranking because it is the only proxy for
+chain quality available *before* the chain is fetched; whether the premium
+is rich or the quotes tight is stage two's business.
+
+Measured: 1,928 symbols considered, 25 priced, 12.9 s, and the response
+says what the rest fell on (840 under the 15-dollar floor, 192 too thin,
+871 past the limit). The floors are `MIN_DOLLAR_VOLUME` (20 M a day),
+`MIN_UNDERLYING_PRICE` (15) and `MAX_UNDERLYING_PRICE` (500 -- above it a
+cash-secured put puts up more than the account has), all overridable per
+request. The **Watchlist / Universe** toggle in the tab picks between the
+two.
+
 A run over 12 watchlist symbols takes about six seconds.
 
 ### Optimizer: structures for a price target

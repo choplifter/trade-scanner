@@ -418,3 +418,87 @@ def test_a_long_option_screen_values_nothing_because_it_names_no_structure():
     body = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"], strategy="long_option"), closes={"A": _closes(0.01)})
     assert body["rows"][0]["outcome"] is None
     assert not any(c["key"] == "expected_value" for c in body["rows"][0]["criteria"])
+
+
+# --- stage one: who is worth a chain at all ----------------------------------
+
+
+class _Uni:
+    def __init__(self, price, dollar_vol):
+        self.prev_close = price
+        self.avg_dollar_vol_20d = dollar_vol
+
+
+def _universe(**names) -> dict:
+    return {sym: _Uni(*args) for sym, args in names.items()}
+
+
+def test_stage_one_keeps_the_liquid_and_affordable_and_says_what_it_dropped():
+    from app.options.screener import preselect
+
+    universe = _universe(
+        LIQUID=(200.0, 500e6),
+        ALSO=(50.0, 80e6),
+        THIN=(100.0, 1e6),
+        PRICEY=(1500.0, 900e6),
+        PENNY=(3.0, 400e6),
+        BROKEN=(0.0, 400e6),
+    )
+    pre = preselect(universe, ScreenRequest(symbols=None, scan_universe=True, limit=10))
+    assert pre.symbols == ["LIQUID", "ALSO"], "ranked by dollar volume"
+    assert pre.considered == 6
+    assert pre.reasons == {"thin_dollar_volume": 1, "over_max_price": 1, "under_min_price": 1, "no_price": 1}
+
+
+def test_stage_one_stops_at_the_limit_and_counts_the_rest():
+    from app.options.screener import preselect
+
+    universe = _universe(**{f"S{i}": (100.0, 100e6 + i) for i in range(10)})
+    pre = preselect(universe, ScreenRequest(symbols=None, scan_universe=True, limit=3))
+    assert len(pre.symbols) == 3
+    assert pre.symbols[0] == "S9", "the most liquid first"
+    assert pre.reasons["past_limit"] == 7
+
+
+def test_a_named_list_skips_stage_one_entirely():
+    service = _Service({"A": _chain()})
+    body = _run(service, ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})
+    assert body["preselection"] is None
+
+
+def test_scanning_the_universe_reports_the_stage_and_prices_only_the_survivors():
+    service = _Service({"AAA": _chain(), "BBB": _chain()})
+    req = ScreenRequest(symbols=None, scan_universe=True, limit=2)
+    universe = _universe(AAA=(100.0, 500e6), BBB=(100.0, 400e6), THIN=(100.0, 1e6))
+
+    async def bars(clients, symbols, lookback_days=45):
+        return {s: [type("B", (), {"close": c})() for c in _closes(0.01)] for s in symbols}
+
+    import app.market_data.bars as bars_module
+
+    original = bars_module.get_daily_bars_multi
+    bars_module.get_daily_bars_multi = bars
+    try:
+        body = asyncio.run(screen_underlyings(service, object(), req, today=TODAY, universe=universe))
+    finally:
+        bars_module.get_daily_bars_multi = original
+
+    assert body["preselection"] == {"considered": 3, "selected": 2, "dropped": {"thin_dollar_volume": 1}}
+    assert {r["symbol"] for r in body["rows"]} == {"AAA", "BBB"}
+    assert "THIN" not in service.fetched, "a dropped symbol never costs a chain"
+
+
+def test_an_empty_universe_is_refused_with_a_reason_rather_than_an_empty_table():
+    from app.trading.errors import OrderRejected
+
+    with pytest.raises(OrderRejected, match="none in the universe"):
+        asyncio.run(
+            screen_underlyings(
+                _Service({}), object(), ScreenRequest(symbols=None, scan_universe=True), today=TODAY, universe={}
+            )
+        )
+
+
+def test_a_request_must_name_symbols_or_ask_for_the_universe():
+    with pytest.raises(ValueError, match="scan_universe"):
+        ScreenRequest(symbols=None)

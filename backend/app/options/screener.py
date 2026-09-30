@@ -118,13 +118,36 @@ REALISED_SESSIONS = 20
 # options pays at all -- so "rich" has to mean more than "positive".
 RICH_IV_RATIO = 1.20
 CHEAP_IV_RATIO = 0.95
-# How many symbols one run may price. Each is a chain fetch; the cap is
-# what keeps a screen off the broker's rate limit.
+# How many symbols one run may price. Each costs three calls (contracts,
+# snapshots, day bars) and about 0.4 s, so the cap is what keeps a screen
+# off the broker's rate limit rather than an opinion about breadth.
 MAX_SYMBOLS = 60
+# Stage one: which of the universe's thousands are worth a chain at all.
+# The universe already carries last price and 20-day dollar volume, so
+# this costs nothing -- the expensive part is deliberately downstream.
+#
+# Dollar volume rather than share volume, because a liquid *stock* is the
+# only cheap proxy for a liquid *chain*: the screen cannot see quote
+# widths before it fetches them. 20 million a day is roughly where option
+# quotes stop being a penny wide.
+MIN_DOLLAR_VOLUME = 20_000_000.0
+# A cash-secured put on a 1,000-dollar stock puts up 100,000. Above this
+# the structures a screen finds are ones the account cannot take.
+MAX_UNDERLYING_PRICE = 500.0
+MIN_UNDERLYING_PRICE = 15.0
 
 
 class ScreenRequest(BaseModel):
-    symbols: list[str] = Field(min_length=1, max_length=MAX_SYMBOLS)
+    # The list to price. Left out with `scan_universe`, stage one picks it.
+    symbols: list[str] | None = Field(default=None, max_length=MAX_SYMBOLS)
+    # Screen the whole tradable universe instead of a named list: stage one
+    # narrows it to `limit` on price and dollar volume, which the universe
+    # already carries, and only those get a chain.
+    scan_universe: bool = False
+    limit: int = Field(default=40, ge=1, le=MAX_SYMBOLS)
+    min_dollar_volume: float = Field(default=MIN_DOLLAR_VOLUME, ge=0.0)
+    min_price: float = Field(default=MIN_UNDERLYING_PRICE, gt=0.0)
+    max_price: float = Field(default=MAX_UNDERLYING_PRICE, gt=0.0)
     strategy: Strategy = "cash_secured_put"
     dte_min: int = Field(default=DTE_RANGE[0], ge=1, le=400)
     dte_max: int = Field(default=DTE_RANGE[1], ge=1, le=400)
@@ -142,6 +165,10 @@ class ScreenRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "ScreenRequest":
+        if not self.symbols and not self.scan_universe:
+            raise ValueError("give symbols, or ask for scan_universe")
+        if self.min_price > self.max_price:
+            raise ValueError("min_price must not exceed max_price")
         if self.dte_min > self.dte_max:
             raise ValueError("dte_min must not exceed dte_max")
         if self.short_delta_min > self.short_delta_max:
@@ -630,6 +657,64 @@ async def _priced(
     return row
 
 
+@dataclass
+class Preselection:
+    """Stage one's answer: who gets a chain, and what the rest fell on."""
+
+    symbols: list[str]
+    considered: int
+    reasons: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "considered": self.considered,
+            "selected": len(self.symbols),
+            "dropped": dict(sorted(self.reasons.items())),
+        }
+
+
+def preselect(universe: dict, req: ScreenRequest) -> Preselection:
+    """Which of the universe's symbols are worth a chain fetch.
+
+    Pure and free: every number here (last price, 20-day dollar volume) is
+    already on the universe entry the scanner keeps, so narrowing several
+    thousand names to a few dozen costs no call at all. Stage two, which
+    does cost three calls a symbol, then only runs on what survives.
+
+    The ranking is by dollar volume, which is not an opinion about the
+    trade -- it is the only proxy for chain quality available before the
+    chain is fetched. Whether the premium is rich, the quotes tight or the
+    expiry clear of earnings is stage two's business, and it says so.
+    """
+    reasons: dict[str, int] = {}
+
+    def drop(reason: str) -> None:
+        reasons[reason] = reasons.get(reason, 0) + 1
+
+    kept: list[tuple[float, str]] = []
+    for symbol, entry in (universe or {}).items():
+        price = float(getattr(entry, "prev_close", 0.0) or 0.0)
+        dollar_vol = float(getattr(entry, "avg_dollar_vol_20d", 0.0) or 0.0)
+        if price <= 0:
+            drop("no_price")
+            continue
+        if price < req.min_price:
+            drop("under_min_price")
+            continue
+        if price > req.max_price:
+            drop("over_max_price")
+            continue
+        if dollar_vol < req.min_dollar_volume:
+            drop("thin_dollar_volume")
+            continue
+        kept.append((dollar_vol, symbol.upper()))
+    kept.sort(reverse=True)
+    selected = [symbol for _vol, symbol in kept[: req.limit]]
+    if len(kept) > req.limit:
+        reasons["past_limit"] = len(kept) - req.limit
+    return Preselection(symbols=selected, considered=len(universe or {}), reasons=reasons)
+
+
 def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
     """The structure this screen would write, valued. Built from the legs
     the row already picked, so the numbers belong to the strikes shown and
@@ -677,15 +762,24 @@ async def screen_underlyings(
     today: date | None = None,
     earnings_calendar=None,
     iv_store=None,
+    universe: dict | None = None,
 ) -> dict:
     """The screen: one row per symbol, ranked, with what every criterion
     found. One chain fetch per symbol (cached five minutes like every other
     chain in the app) and one batched bars call for all of them."""
     from app.market_data.bars import get_daily_bars_multi
 
-    symbols = list(dict.fromkeys(s.upper() for s in req.symbols))
+    pre: Preselection | None = None
+    if req.symbols:
+        symbols = list(dict.fromkeys(s.upper() for s in req.symbols))
+    else:
+        pre = preselect(universe or {}, req)
+        symbols = pre.symbols
     if not symbols:
-        raise OrderRejected("No symbols to screen", field="symbols")
+        raise OrderRejected(
+            "Nothing to screen: no symbols given, and none in the universe passed the price and volume floors",
+            field="symbols",
+        )
     today = today or datetime.now(timezone.utc).date()
 
     closes: dict[str, list[float]] = {}
@@ -707,6 +801,9 @@ async def screen_underlyings(
         "as_of": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "strategy": req.strategy,
         "bias": req.bias,
+        # Stage one, when it ran: how many names were considered and what
+        # the ones that never got a chain fell on.
+        "preselection": pre.to_dict() if pre is not None else None,
         "criteria": {
             "dte": [req.dte_min, req.dte_max],
             "min_open_interest": req.min_open_interest,
