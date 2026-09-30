@@ -6261,3 +6261,24 @@ td.chain-side.chain-stale {
   width: 12px;
   font-weight: 700;
 }
+
+/* The screener's bounds row: compact number fields that read as one line
+ * of criteria rather than as a form. */
+.screen-filters {
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.screen-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.screen-filters input[type="number"] {
+  width: 56px;
+  font-variant-numeric: tabular-nums;
+}

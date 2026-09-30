@@ -1522,6 +1522,14 @@ cash-secured put puts up more than the account has), all overridable per
 request. The **Watchlist / Universe** toggle in the tab picks between the
 two.
 
+The bounds themselves are editable beside it -- **DTE** from/to, the short
+strikes' **delta band**, minimum **open interest**, the widest **quote** to
+accept, and whether to fail a symbol reporting inside the expiry. The
+backend always took them; the tab sent none until now, so every run was
+the 30-60 day default. On this market that default was the difference
+between +1.54 and +14.10 of expected value: a 51-day expiry sits behind
+the whole earnings season and a 16-day one in front of it.
+
 A run over 12 watchlist symbols takes about six seconds.
 
 ### Optimizer: structures for a price target

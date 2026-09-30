@@ -132,6 +132,13 @@ function reasonFor(row: ScreenRow): string {
   return `screen: ${parts.join(" · ")}`;
 }
 
+/** A typed bound, or the default when the field is empty or nonsense --
+ * a half-typed "0." must not send NaN and be refused by the validator. */
+function numeric(text: string, fallback: number): number {
+  const value = Number(text);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function pct(value: number | null | undefined, digits = 0): string {
   return value == null ? "—" : `${(value * 100).toFixed(digits)} %`;
 }
@@ -170,15 +177,38 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const [open, setOpen] = useState<string | null>(null);
   // Watchlist, or the whole tradable universe narrowed by stage one.
   const [universe, setUniverse] = useState(false);
+  // The screen's own bounds. The backend has always taken them; until now
+  // the tab sent none, so every run was the 30-60 day default -- and on
+  // this market that was the difference between +1.54 and +14.10 of
+  // expected value, since a 51-day expiry sits behind the whole earnings
+  // season and a 16-day one in front of it.
+  const [dteMin, setDteMin] = useState("30");
+  const [dteMax, setDteMax] = useState("60");
+  const [deltaMin, setDeltaMin] = useState("0.10");
+  const [deltaMax, setDeltaMax] = useState("0.20");
+  const [minOi, setMinOi] = useState("5000");
+  const [maxSpread, setMaxSpread] = useState("10");
+  const [avoidEarnings, setAvoidEarnings] = useState(true);
 
   const run = async () => {
     if (!universe && symbols.length === 0) return;
     setLoading(true);
     setError(null);
     try {
+      const bounds = {
+        strategy,
+        dte_min: numeric(dteMin, 30),
+        dte_max: numeric(dteMax, 60),
+        short_delta_min: numeric(deltaMin, 0.1),
+        short_delta_max: numeric(deltaMax, 0.2),
+        min_open_interest: Math.round(numeric(minOi, 5000)),
+        // Typed as a percentage, sent as the fraction the backend wants.
+        max_spread_fraction: numeric(maxSpread, 10) / 100,
+        avoid_earnings: avoidEarnings,
+      };
       setResult(
         await screenUnderlyings(
-          universe ? { scan_universe: true, limit: 40, strategy } : { symbols: symbols.slice(0, 60), strategy },
+          universe ? { ...bounds, scan_universe: true, limit: 40 } : { ...bounds, symbols: symbols.slice(0, 60) },
         ),
       );
     } catch (err: unknown) {
@@ -223,6 +253,34 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         <span className="order-hint">
           {universe ? "top 40 by dollar volume · one chain fetch each" : "from your watchlist · one chain fetch each"}
         </span>
+      </div>
+
+      <div className="opt-preference screen-filters">
+        <label title="Days to expiry. The screen takes the listed expiry nearest the middle of this window; past 60 days it asks for the full expiry board.">
+          DTE{" "}
+          <input type="number" min={1} max={400} step={1} value={dteMin} onChange={(e) => setDteMin(e.target.value)} />
+          <span aria-hidden>–</span>
+          <input type="number" min={1} max={400} step={1} value={dteMax} onChange={(e) => setDteMax(e.target.value)} />
+        </label>
+        <label title="The band the short strike's delta must fall in. 0.10-0.20 is the conventional premium-selling range; higher takes more premium and more risk.">
+          Δ{" "}
+          <input type="number" min={0.01} max={0.99} step={0.01} value={deltaMin} onChange={(e) => setDeltaMin(e.target.value)} />
+          <span aria-hidden>–</span>
+          <input type="number" min={0.01} max={0.99} step={0.01} value={deltaMax} onChange={(e) => setDeltaMax(e.target.value)} />
+        </label>
+        <label title="Open interest across the screened expiry's fetched strikes -- one expiry's, an order of magnitude below a whole-chain number.">
+          OI{" "}
+          <input type="number" min={0} step={500} value={minOi} onChange={(e) => setMinOi(e.target.value)} />
+        </label>
+        <label title="How wide the quote at the wider short leg may be, as a percentage of its mid.">
+          Quote ≤{" "}
+          <input type="number" min={1} max={100} step={1} value={maxSpread} onChange={(e) => setMaxSpread(e.target.value)} />
+          <span aria-hidden> %</span>
+        </label>
+        <label title="Fail a symbol whose next report falls on or before the screened expiry. The premium is rich because of the print, and it collapses with it.">
+          <input type="checkbox" checked={avoidEarnings} onChange={(e) => setAvoidEarnings(e.target.checked)} /> No earnings
+          inside
+        </label>
       </div>
 
       {error && <p className="order-rejection">{error}</p>}
