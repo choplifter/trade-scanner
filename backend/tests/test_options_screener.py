@@ -351,3 +351,70 @@ def test_the_other_strategies_do_not_pay_for_a_second_chain_or_a_wing():
     keys = {c["key"] for c in body["rows"][0]["criteria"]}
     assert "wing" not in keys and "term_structure" not in keys
     assert service.fetched.count("A") == 1
+
+
+# --- the expected value ------------------------------------------------------
+
+
+def test_the_expected_value_is_the_payoff_weighted_by_the_distribution():
+    """The number a screen sorted by max profit hides: a wide condor can
+    pay a big credit and still be negative once the chance of paying the
+    width is counted."""
+    from app.options.screener import structure_outcome
+
+    legs = [
+        {"kind": "put", "strike": 90.0, "side": "sell", "iv": 0.30},
+        {"kind": "put", "strike": 85.0, "side": "buy", "iv": 0.30},
+        {"kind": "call", "strike": 110.0, "side": "sell", "iv": 0.30},
+        {"kind": "call", "strike": 115.0, "side": "buy", "iv": 0.30},
+    ]
+    out = structure_outcome(legs, credit=1.0, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
+    assert out is not None
+    assert out["max_profit"] == pytest.approx(100.0, abs=1.0), "the credit, times the multiplier"
+    assert out["max_loss"] == pytest.approx(-400.0, abs=1.0), "width less credit"
+    assert 0 < out["win_probability"] < 1
+    assert out["loss_probability"] == pytest.approx(1 - out["win_probability"])
+    # The expected value sits between the two extremes and follows the odds.
+    assert out["max_loss"] < out["expected_value"] < out["max_profit"]
+    assert out["risk_reward"] == pytest.approx(4.0, abs=0.05)
+
+
+def test_a_fatter_credit_for_the_same_risk_lifts_the_expected_value():
+    from app.options.screener import structure_outcome
+
+    legs = [
+        {"kind": "put", "strike": 90.0, "side": "sell", "iv": 0.30},
+        {"kind": "put", "strike": 85.0, "side": "buy", "iv": 0.30},
+    ]
+    thin = structure_outcome(legs, credit=0.25, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
+    fat = structure_outcome(legs, credit=1.50, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
+    assert fat["expected_value"] > thin["expected_value"]
+    assert fat["win_probability"] >= thin["win_probability"], "a wider breakeven wins more often"
+
+
+def test_no_volatility_means_no_expected_value_rather_than_a_guess():
+    from app.options.screener import structure_outcome
+
+    legs = [{"kind": "put", "strike": 90.0, "side": "sell", "iv": None}]
+    assert structure_outcome(legs, 1.0, 100.0, None, 45 / 365, EXPIRY) is None
+    assert structure_outcome(legs, 1.0, 100.0, 0.3, 0.0, EXPIRY) is None
+
+
+def test_the_screen_carries_the_outcome_and_judges_it():
+    body = _run(
+        _Service({"A": _chain(iv=0.40)}),
+        ScreenRequest(symbols=["A"], strategy="credit_spread"),
+        closes={"A": _closes(0.01)},
+    )
+    row = body["rows"][0]
+    assert row["outcome"] is not None and "expected_value" in row["outcome"]
+    ev = _criterion(row, "expected_value")
+    assert ev["value"] == row["outcome"]["expected_value"]
+    assert ev["passed"] is (row["outcome"]["expected_value"] > 0)
+    assert "of the distribution wins" in ev["detail"]
+
+
+def test_a_long_option_screen_values_nothing_because_it_names_no_structure():
+    body = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"], strategy="long_option"), closes={"A": _closes(0.01)})
+    assert body["rows"][0]["outcome"] is None
+    assert not any(c["key"] == "expected_value" for c in body["rows"][0]["criteria"])

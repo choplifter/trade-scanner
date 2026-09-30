@@ -34,12 +34,15 @@ import asyncio
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.options.chain import Chain, StrikeRow
+from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl
+from app.options.payoff import PayoffLeg
+from app.services.market_clock import ET
 from app.trading.errors import OrderRejected
 
 logger = logging.getLogger(__name__)
@@ -176,6 +179,9 @@ class Row:
     # A vertical built off each short leg, where the chain has a wing.
     put_spread: dict | None = None
     call_spread: dict | None = None
+    # What the structure the screen names is worth: max profit and loss,
+    # the chance of each, and the expected value across the distribution.
+    outcome: dict | None = None
     # The calendar's slope: the back expiry's ATM IV and front over back.
     back_expiry: date | None = None
     back_iv: float | None = None
@@ -208,6 +214,7 @@ class Row:
             "short_call": self.short_call,
             "put_spread": self.put_spread,
             "call_spread": self.call_spread,
+            "outcome": self.outcome,
             "back_expiry": self.back_expiry.isoformat() if self.back_expiry else None,
             "back_iv": None if self.back_iv is None else round(self.back_iv, 4),
             "term_ratio": None if self.term_ratio is None else round(self.term_ratio, 3),
@@ -481,6 +488,19 @@ def _criteria(row: Row, req: ScreenRequest) -> list[Criterion]:
             )
         )
 
+    if row.outcome is not None:
+        ev = row.outcome["expected_value"]
+        out.append(
+            Criterion(
+                "expected_value",
+                "Expected value",
+                ev,
+                ev > 0,
+                f"{ev:+,.0f} per structure: {row.outcome['win_probability']:.0%} of the distribution wins up to "
+                f"{row.outcome['max_profit']:,.0f}, the rest loses down to {row.outcome['max_loss']:,.0f}",
+            )
+        )
+
     ratio = row.iv_rv_ratio
     if req.bias == "buy_premium":
         passed = None if ratio is None else ratio <= CHEAP_IV_RATIO
@@ -575,6 +595,7 @@ async def _priced(
                 continue
             wing = pick_wing(chain.rows, kind, leg["strike"], chain.spot)
             setattr(row, attr, vertical_of(leg, wing))
+    row.outcome = _outcome_for(row, req, chain)
     if req.strategy == "calendar":
         # The slope needs a second expiry, so this is the one strategy that
         # costs two chain fetches a symbol. Roughly twice the front's DTE,
@@ -607,6 +628,45 @@ async def _priced(
 
     row.criteria = _criteria(row, req)
     return row
+
+
+def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
+    """The structure this screen would write, valued. Built from the legs
+    the row already picked, so the numbers belong to the strikes shown and
+    not to some other version of the trade."""
+    legs: list[dict] = []
+    credit = 0.0
+    if req.strategy in ("cash_secured_put", "covered_call"):
+        leg = row.short_put if req.strategy == "cash_secured_put" else row.short_call
+        if leg is None or leg.get("mid") is None:
+            return None
+        kind = "put" if req.strategy == "cash_secured_put" else "call"
+        legs = [{"kind": kind, "strike": leg["strike"], "side": "sell", "iv": _leg_iv(chain, kind, leg["strike"])}]
+        credit = leg["mid"]
+    elif req.strategy in SPREAD_STRATEGIES:
+        pairs = [row.put_spread, row.call_spread] if req.strategy == "iron_condor" else [row.put_spread]
+        if any(p is None for p in pairs):
+            return None
+        for pair, kind in zip(pairs, ("put", "call")):
+            legs.append({"kind": kind, "strike": pair["short_strike"], "side": "sell", "iv": _leg_iv(chain, kind, pair["short_strike"])})
+            legs.append({"kind": kind, "strike": pair["long_strike"], "side": "buy", "iv": _leg_iv(chain, kind, pair["long_strike"])})
+            credit += pair["credit"]
+        if req.strategy == "debit_spread":
+            credit = -abs(credit)
+    else:
+        # A long option or a calendar: the screen judged the chain, not a
+        # structure, so there is nothing here to value.
+        return None
+    years = max((row.expiry - datetime.now(timezone.utc).date()).days, 0) / 365 if row.expiry else 0.0
+    return structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry) if row.expiry else None
+
+
+def _leg_iv(chain: Chain, kind: str, strike: float) -> float | None:
+    for r in chain.rows:
+        if abs(r.strike - strike) < 1e-6:
+            quote = r.call if kind == "call" else r.put
+            return quote.iv if quote else None
+    return None
 
 
 async def screen_underlyings(
@@ -662,4 +722,82 @@ async def screen_underlyings(
             "IV percentile appears once a symbol has 20 recorded sessions; until then the measure is implied "
             "against realised volatility. Criteria describe a chain -- they are not a view on the underlying."
         ),
+    }
+
+
+# --- what the structure is worth ---------------------------------------------
+
+
+def structure_outcome(
+    legs: list[dict],
+    credit: float,
+    spot: float,
+    sigma: float | None,
+    years: float,
+    expiry: date,
+) -> dict | None:
+    """Max profit, max loss, the chance of each, and the **expected value**
+    of the structure at expiry under the option market's own implied
+    distribution.
+
+    This is the number a screener sorted by max profit hides. A condor
+    paying 44 dollars against 106 of risk at a 40 % chance of loss is
+    0.603 x 44 - 0.397 x (its average loss): negative before a commission
+    is paid. Barchart shows every term of that and not the product.
+
+    Integrated rather than assumed: the loss is not always the maximum --
+    price can settle between a short strike and its breakeven -- so the
+    P/L is evaluated across the distribution and weighted, the same grid
+    and the same lognormal the Optimizer's chance of profit uses.
+
+    `legs` are the screener's own leg dicts (strike, kind, side); `credit`
+    is per share, positive for a structure that takes one in. None when
+    there is no volatility to build a distribution from.
+    """
+    if sigma is None or sigma <= 0 or years <= 0 or spot <= 0 or not legs:
+        return None
+    payoff = [
+        PayoffLeg(kind=leg["kind"], strike=leg["strike"], side=leg["side"], ratio=1, expiry=expiry, iv=leg.get("iv"))
+        for leg in legs
+    ]
+    at = datetime.combine(expiry, time(16, 0), tzinfo=ET)
+    net = -credit  # signed like the ticket: positive is paid, negative received
+
+    width = sigma * math.sqrt(years)
+    mu = -0.5 * width * width
+    lo, hi = -CHANCE_SIGMA_REACH * width, CHANCE_SIGMA_REACH * width
+    step = (hi - lo) / (CHANCE_GRID_POINTS - 1)
+    expected = 0.0
+    win = 0.0
+    mass_total = 0.0
+    best: float | None = None
+    worst: float | None = None
+    for i in range(CHANCE_GRID_POINTS):
+        x = lo + i * step
+        mass = _norm_cdf((x + step / 2 - mu) / width) - _norm_cdf((x - step / 2 - mu) / width)
+        if mass <= 0:
+            continue
+        pnl = position_pnl(payoff, net, spot * math.exp(x), at, 1)
+        if pnl is None:
+            return None
+        expected += mass * pnl
+        mass_total += mass
+        if pnl > 0:
+            win += mass
+        best = pnl if best is None else max(best, pnl)
+        worst = pnl if worst is None else min(worst, pnl)
+    if mass_total <= 0:
+        return None
+    return {
+        # Normalised by the mass actually covered: +/-4 sigma leaves a
+        # sliver outside, and dividing by it keeps "expected" an average
+        # rather than a number quietly shrunk by the tails it missed.
+        "expected_value": round(expected / mass_total, 2),
+        "win_probability": round(win / mass_total, 4),
+        "loss_probability": round(1 - win / mass_total, 4),
+        "max_profit": None if best is None else round(best, 2),
+        "max_loss": None if worst is None else round(worst, 2),
+        "risk_reward": None
+        if not best or worst is None or worst >= 0
+        else round(abs(worst) / best, 2),
     }

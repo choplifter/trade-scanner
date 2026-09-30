@@ -1437,6 +1437,7 @@ criteria a premium seller uses, and ranks by how many pass.
 | Earnings clear | the FMP calendar: no report on or before that expiry |
 | Short put / call delta | the strike nearest the middle of `SHORT_DELTA_BAND` (0.10-0.20) |
 | IV vs realised | ATM IV over the 20-session close-to-close volatility |
+| **Expected value** | the structure the row names, valued across the implied distribution at expiry (`structure_outcome`) |
 
 The screen is picked by **strategy**, not just by direction, because a
 chain that suits a cash-secured put can be useless for a vertical. Each
@@ -1485,6 +1486,21 @@ at, a view that sets the target, and the reason line ("screen: 7/8 criteria
 clears the budget -- a cash-secured put puts up the strike in cash, so the
 Optimizer's spread-sized default would drop every candidate as over budget
 and answer with an empty list.
+
+**The expected value is the column a published screener does not show.**
+Barchart's short-iron-condor screen lists max profit, max loss, risk/reward
+and loss probability side by side, sorted by whichever the reader picks --
+and sorting by *max profit* ranks by the price of the underlying, since a
+1,000-dollar stock pays a three-figure credit. The product of those terms
+is what decides the trade: a condor paying 44 against 106 of risk at a
+40 % chance of loss is negative before commissions. `structure_outcome`
+integrates the P/L over the market's own lognormal (the Optimizer's grid
+and sigma) rather than assuming the loss is always the maximum, and the
+row carries the expected value, the win probability and the two extremes.
+
+Measured on the watchlist: IWM's condor wins 74 % of the distribution and
+is worth **-9.57**, TLT's wins 76 % and is worth **-4.61**, IEF's wins
+78 % and is worth **+1.57**. A high win rate is not an edge.
 
 A run over 12 watchlist symbols takes about six seconds.
 

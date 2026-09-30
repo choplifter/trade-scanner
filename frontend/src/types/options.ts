@@ -894,6 +894,18 @@ export interface ScreenVertical {
   wing_spread_fraction: number | null;
 }
 
+/** The structure the screen names, valued across the implied distribution
+ * at expiry -- max profit and loss, the chance of each, and the expected
+ * value, which is the product a screener sorted by max profit hides. */
+export interface ScreenOutcome {
+  expected_value: number;
+  win_probability: number;
+  loss_probability: number;
+  max_profit: number | null;
+  max_loss: number | null;
+  risk_reward: number | null;
+}
+
 export interface ScreenRow {
   symbol: string;
   expiry: string | null;
@@ -910,6 +922,9 @@ export interface ScreenRow {
   /** The vertical built off each short leg, where the chain had a wing. */
   put_spread: ScreenVertical | null;
   call_spread: ScreenVertical | null;
+  /** Null where the screen judged a chain rather than a structure (a long
+   * option, a calendar). */
+  outcome: ScreenOutcome | null;
   /** The calendar's second expiry and the slope to it. */
   back_expiry: string | null;
   back_iv: number | null;

@@ -11,7 +11,7 @@ import type {
   ScreenStrategy,
   Strategy,
 } from "../../types/options";
-import { formatPrice } from "../../utils/format";
+import { formatMoney, formatPrice } from "../../utils/format";
 import { requestOptimizer } from "./optimizerIntent";
 import { requestTicket } from "./ticketIntent";
 
@@ -232,6 +232,22 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     Vertical
                   </th>
                 )}
+                {result.rows.some((r) => r.outcome) && (
+                  <>
+                    <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
+                      Profit / Loss
+                    </th>
+                    <th scope="col" title="Share of the option market's own implied distribution at expiry under which the structure loses.">
+                      Loss prob
+                    </th>
+                    <th
+                      scope="col"
+                      title="The payoff weighted by that distribution. A structure can pay a large credit, lose rarely, and still be negative here -- which is what a list sorted by max profit hides."
+                    >
+                      EV
+                    </th>
+                  </>
+                )}
                 {result.rows.some((r) => r.term_ratio != null) && (
                   <th scope="col" title="The front expiry's implied volatility over the back one's.">Front/back</th>
                 )}
@@ -292,6 +308,19 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                         })()}
                       </td>
                     )}
+                    {result.rows.some((r) => r.outcome) && (
+                      <>
+                        <td>
+                          {row.outcome
+                            ? `${formatMoney(row.outcome.max_profit ?? 0)} / ${formatMoney(row.outcome.max_loss ?? 0)}`
+                            : "—"}
+                        </td>
+                        <td>{row.outcome ? pct(row.outcome.loss_probability) : "—"}</td>
+                        <td className={row.outcome ? (row.outcome.expected_value > 0 ? "delta-up" : "delta-down") : undefined}>
+                          {row.outcome ? formatMoney(row.outcome.expected_value) : "—"}
+                        </td>
+                      </>
+                    )}
                     {result.rows.some((r) => r.term_ratio != null) && (
                       <td>{row.term_ratio == null ? "—" : `${row.term_ratio.toFixed(2)}×`}</td>
                     )}
@@ -339,7 +368,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   </tr>
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={12}>
+                      <td colSpan={15}>
                         <Criteria row={row} />
                       </td>
                     </tr>
