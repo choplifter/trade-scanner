@@ -40,6 +40,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.options.chain import Chain, StrikeRow
+from app.options.chain_fetch import CHAIN_DAYS_AHEAD
 from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl
 from app.options.payoff import PayoffLeg
 from app.services.market_clock import ET
@@ -583,9 +584,14 @@ async def _priced(
     should not fail on one of them."""
     row = Row(symbol=symbol)
     try:
-        # A calendar's back leg sits past the picker's 60-day strip, so that
-        # screen (and only it) asks for the full board of listed expiries.
-        strip = await service.expiries(symbol, board=True) if req.strategy == "calendar" else await service.expiries(symbol)
+        # The picker's strip stops at CHAIN_DAYS_AHEAD (60 days), so a
+        # window that reaches past it -- or a calendar, whose back leg
+        # always does -- has to ask for the full board of listed expiries
+        # instead. Without this a screen for 90-day structures answered
+        # "no listed expiry" for every symbol, which reads as a market
+        # that lists none.
+        needs_board = req.strategy == "calendar" or req.dte_max > CHAIN_DAYS_AHEAD
+        strip = await service.expiries(symbol, board=needs_board) if needs_board else await service.expiries(symbol)
     except Exception as exc:
         row.note = f"no expiries: {exc}"
         return row

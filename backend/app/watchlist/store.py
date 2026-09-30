@@ -45,6 +45,20 @@ class WatchlistStore:
     async def list_symbols(self, user_id: int) -> list[str]:
         return await asyncio.to_thread(self._list_symbols_sync, user_id)
 
+    def _all_symbols_sync(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT DISTINCT symbol FROM watchlist_symbols ORDER BY symbol").fetchall()
+        return [row["symbol"] for row in rows]
+
+    async def all_symbols(self) -> list[str]:
+        """Every symbol anyone follows, without saying who follows it.
+
+        For the IV recorder (app.options.iv_recorder), which builds one
+        history per symbol rather than per user: a name someone keeps is
+        worth a daily reading even when it is not among the most liquid,
+        because that is the name they will ask for a rank on."""
+        return await asyncio.to_thread(self._all_symbols_sync)
+
     def _add_symbol_sync(self, user_id: int, symbol: str, now: str) -> None:
         with self._connect() as conn:
             conn.execute(

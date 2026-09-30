@@ -502,3 +502,41 @@ def test_an_empty_universe_is_refused_with_a_reason_rather_than_an_empty_table()
 def test_a_request_must_name_symbols_or_ask_for_the_universe():
     with pytest.raises(ValueError, match="scan_universe"):
         ScreenRequest(symbols=None)
+
+
+def test_a_window_past_the_strip_asks_for_the_full_board():
+    """The picker's strip stops at 60 days. A 90-day screen that did not
+    say so answered "no listed expiry" for every symbol -- which reads as
+    a market that lists none."""
+    seen: list[bool] = []
+    far = TODAY + timedelta(days=95)
+
+    class _Recording(_Service):
+        async def expiries(self, symbol: str, *, board: bool = False) -> dict:
+            seen.append(board)
+            return {
+                "underlying": symbol,
+                "spot": 100.0,
+                "expiries": [{"expiry": far.isoformat(), "dte": 95, "contract_count": 40}],
+            }
+
+        async def chain(self, symbol: str, expiry: date):
+            self.fetched.append(symbol)
+            near = _chain()
+            return Chain(underlying=symbol, expiry=far, spot=100.0, feed="opra", as_of=None, rows=near.rows)
+
+    body = _run(_Recording({"A": _chain()}), ScreenRequest(symbols=["A"], dte_min=80, dte_max=120), closes={"A": _closes(0.01)})
+    assert seen == [True], "the board, because 120 days reaches past the strip"
+    assert body["rows"][0]["expiry"] == far.isoformat()
+
+
+def test_a_window_inside_the_strip_does_not_pay_for_the_board():
+    seen: list[bool] = []
+
+    class _Recording(_Service):
+        async def expiries(self, symbol: str, *, board: bool = False) -> dict:
+            seen.append(board)
+            return await super().expiries(symbol)
+
+    _run(_Recording({"A": _chain()}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})
+    assert seen == [False]

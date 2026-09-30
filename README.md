@@ -1433,7 +1433,7 @@ criteria a premium seller uses, and ranks by how many pass.
 |---|---|
 | Open interest | the screened expiry's fetched strikes, `MIN_OPEN_INTEREST` (5,000) |
 | Quote width | the wider short leg, under `MAX_SPREAD_FRACTION` (10 % of mid) |
-| Days to expiry | a listed expiry in `DTE_RANGE` (30-60), nearest its middle |
+| Days to expiry | a listed expiry in `DTE_RANGE` (30-60), nearest its middle. A window reaching past the picker's 60-day strip asks for the full expiry board instead, so a 90-day screen finds the expiries that exist |
 | Earnings clear | the FMP calendar: no report on or before that expiry |
 | Short put / call delta | the strike nearest the middle of `SHORT_DELTA_BAND` (0.10-0.20) |
 | IV vs realised | ATM IV over the 20-session close-to-close volatility |
@@ -1463,10 +1463,13 @@ had is "unknown" and never a pass.
 Two criteria a screen usually carries are deliberately absent. **Contract
 volume** would need a day bar per contract, hundreds of calls per symbol --
 open interest and the quoted sizes stand in. **IV percentile** needs 20
-recorded sessions of a symbol's own ATM IV, and the store fills only for
-symbols someone has looked at (`app/options/iv_history_store.py`); it shows
-where it exists (SPY, 55 % at the time of writing) and the IV/RV ratio is
-what always works. Note that open interest here is *one expiry's*, an order
+recorded sessions of a symbol's own ATM IV. That history is now *collected*
+rather than stumbled upon: `app/options/iv_recorder.py` runs one pass a
+session -- 45 minutes after the open, so the opening auction's noise has
+cleared and readings stay comparable -- over the watchlist plus the 150
+most liquid names, recording the ATM IV of an expiry 30-60 days out. One
+chain fetch per symbol, once a day. Until a symbol has its twenty
+sessions the rank is blank and the IV/RV ratio is what works. Note that open interest here is *one expiry's*, an order
 of magnitude below the whole-chain number a published screen quotes: the
 liquid index ETFs come in at 6-14k, a single name around 1k.
 
