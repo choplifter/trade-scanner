@@ -3,6 +3,7 @@ run over a fake chain. No network -- the chain is built by hand, so the
 numbers in the assertions are the ones a reader can check."""
 
 import asyncio
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
@@ -540,3 +541,46 @@ def test_a_window_inside_the_strip_does_not_pay_for_the_board():
 
     _run(_Recording({"A": _chain()}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})
     assert seen == [False]
+
+
+def test_contract_volume_is_summed_from_the_chain_and_judged_only_when_asked():
+    """It rides along with the chain now (fetch_day_volumes takes a whole
+    expiry in one call), so the criterion the first screen could not
+    afford costs nothing."""
+    chain = _chain()
+    rows = [
+        StrikeRow(
+            strike=r.strike,
+            call=None if r.call is None else replace(r.call, volume=10),
+            put=None if r.put is None else replace(r.put, volume=5),
+        )
+        for r in chain.rows
+    ]
+    traded = Chain(underlying="A", expiry=EXPIRY, spot=100.0, feed="opra", as_of=None, rows=rows)
+    expected = 15 * len(rows)
+
+    body = _run(_Service({"A": traded}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    assert row["option_volume"] == expected
+    reported = _criterion(row, "option_volume")
+    assert reported["passed"] is None and "not judged" in reported["detail"]
+
+    strict = _run(
+        _Service({"A": traded}),
+        ScreenRequest(symbols=["A"], min_option_volume=expected + 1),
+        closes={"A": _closes(0.01)},
+    )
+    assert _criterion(strict["rows"][0], "option_volume")["passed"] is False
+
+
+def test_a_chain_without_day_bars_reports_no_volume_rather_than_zero():
+    body = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    assert row["option_volume"] is None, "unknown, not none traded"
+    # Nothing to report and nothing asked for: the criterion is left out
+    # rather than shown as a question mark nobody can answer.
+    assert not any(c["key"] == "option_volume" for c in row["criteria"])
+    strict = _run(
+        _Service({"A": _chain()}), ScreenRequest(symbols=["A"], min_option_volume=100), closes={"A": _closes(0.01)}
+    )
+    assert _criterion(strict["rows"][0], "option_volume")["passed"] is None, "asked for, and not knowable"

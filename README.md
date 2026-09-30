@@ -1461,8 +1461,11 @@ the number behind it, so a cross can be traced; a measure that could not be
 had is "unknown" and never a pass.
 
 Two criteria a screen usually carries are deliberately absent. **Contract
-volume** would need a day bar per contract, hundreds of calls per symbol --
-open interest and the quoted sizes stand in. **IV percentile** needs 20
+volume** now rides along with the chain (`fetch_day_volumes` takes a whole
+expiry in one request), so the screen sums it across the screened expiry
+and judges it against `min_option_volume` -- reported but not judged at the
+default of zero, since a screen run before the open has no volume yet and a
+criterion that fails everything at 09:00 is noise rather than a filter. **IV percentile** needs 20
 recorded sessions of a symbol's own ATM IV. That history is now *collected*
 rather than stumbled upon: `app/options/iv_recorder.py` runs one pass a
 session -- 45 minutes after the open, so the opening auction's noise has
@@ -1530,7 +1533,15 @@ the 30-60 day default. On this market that default was the difference
 between +1.54 and +14.10 of expected value: a 51-day expiry sits behind
 the whole earnings season and a 16-day one in front of it.
 
-A run over 12 watchlist symbols takes about six seconds.
+A run over 12 watchlist symbols takes about six seconds. It does not have
+to be waited for: `app/options/screen_job.py` runs the universe screen for
+the premium-selling strategies every half hour of the regular session and
+stores each answer (`ScreenStore`, one row per strategy, replaced in
+place). The tab loads the stored table on open and says how old it is --
+"Stored run from 15:42 (7 min ago)" -- and the button still asks for a live
+one. Nothing runs outside the session: a pass at 03:00 would price
+yesterday's quotes and replace a good table with a stale one. An empty
+answer is not stored, for the same reason.
 
 ### Optimizer: structures for a price target
 

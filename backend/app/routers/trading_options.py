@@ -442,6 +442,22 @@ async def option_events(
     )
 
 
+@router.get("/screen/latest")
+async def latest_screen(request: Request, strategy: str = "credit_spread") -> dict:
+    """The stored background run for one strategy, or `{"screen": null}`
+    when none has been written yet (a fresh install, or before the first
+    pass of the session). Carries `stored_at`, so a table from Friday can
+    say so instead of looking live."""
+    store = getattr(request.app.state, "screen_store", None)
+    if store is None:
+        return {"strategy": strategy, "screen": None, "stored": []}
+    return {
+        "strategy": strategy,
+        "screen": await store.latest(strategy),
+        "stored": await store.strategies(),
+    }
+
+
 @router.post("/screen")
 async def screen(body: ScreenRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
     """Which of these underlyings suit the strategy -- one chain fetch per

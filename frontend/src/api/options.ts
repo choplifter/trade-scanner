@@ -76,6 +76,16 @@ async function send<T>(method: "POST" | "DELETE", path: string, body?: unknown, 
 
 /** Which underlyings suit a strategy: one chain fetch per symbol, so the
  * caller sends a list it has already narrowed. */
+/** The stored background run for a strategy, or null before the first
+ * pass of the session. Carries `stored_at` so a stale table says so. */
+export function latestScreen(strategy: string): Promise<{
+  strategy: string;
+  screen: (ScreenResponse & { stored_at?: string }) | null;
+  stored: { strategy: string; ran_at: string; rows_count: number }[];
+}> {
+  return getJson(`/trading/options/screen/latest?strategy=${encodeURIComponent(strategy)}`);
+}
+
 export function screenUnderlyings(body: ScreenRequest): Promise<ScreenResponse> {
   return send<ScreenResponse>("POST", "/trading/options/screen", body);
 }

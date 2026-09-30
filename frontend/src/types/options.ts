@@ -955,6 +955,8 @@ export interface ScreenPreselection {
 
 export interface ScreenResponse {
   as_of: string;
+  /** Set only on a run read back from the store: when it was written. */
+  stored_at?: string;
   preselection: ScreenPreselection | null;
   strategy: ScreenStrategy;
   bias: ScreenBias;

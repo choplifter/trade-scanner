@@ -11,9 +11,12 @@ given delta.
 Two of the usual criteria are not available here and the rows say so
 rather than guessing:
 
-*Contract volume* would need a day bar per contract -- hundreds of calls
-per symbol. Open interest and the quoted sizes stand in; they answer "can
-this be traded" nearly as well and cost nothing extra.
+*Contract volume* was once out of reach -- a day bar per contract is
+hundreds of calls -- until the chain itself started carrying it
+(`fetch_day_volumes` asks for a whole expiry in one request). The screen
+now sums it across the screened expiry and judges it like open interest:
+the two answer different questions, since a strike can carry ten thousand
+open contracts and trade none of them today.
 
 *IV percentile* needs a year of readings per symbol, and the store fills
 only for symbols someone looked at (app.options.iv_history_store). Where
@@ -109,6 +112,12 @@ DTE_RANGE = (30, 60)
 # at 5k. A screen written against a whole-chain number like 50k would
 # reject everything and look broken.
 MIN_OPEN_INTEREST = 5_000
+# Contracts traded today across the screened expiry, not the whole chain
+# and not a whole session's worth for every expiry -- the same narrowing
+# that put the open-interest bar at 5,000 rather than a published 50,000.
+# Zero by default: a screen run before the open has no volume yet, and a
+# criterion that fails everything at 09:00 is noise, not a filter.
+MIN_OPTION_VOLUME = 0
 MAX_SPREAD_FRACTION = 0.10
 SHORT_DELTA_BAND = (0.10, 0.20)
 # Sessions of closes behind the realised volatility. Twenty is a trading
@@ -153,6 +162,7 @@ class ScreenRequest(BaseModel):
     dte_min: int = Field(default=DTE_RANGE[0], ge=1, le=400)
     dte_max: int = Field(default=DTE_RANGE[1], ge=1, le=400)
     min_open_interest: int = Field(default=MIN_OPEN_INTEREST, ge=0)
+    min_option_volume: int = Field(default=MIN_OPTION_VOLUME, ge=0)
     max_spread_fraction: float = Field(default=MAX_SPREAD_FRACTION, gt=0.0, le=1.0)
     short_delta_min: float = Field(default=SHORT_DELTA_BAND[0], gt=0.0, lt=1.0)
     short_delta_max: float = Field(default=SHORT_DELTA_BAND[1], gt=0.0, lt=1.0)
@@ -202,6 +212,9 @@ class Row:
     iv_rank: float | None = None
     iv_rank_samples: int = 0
     open_interest: int = 0
+    # Contracts traded today across this expiry; None when the chain was
+    # built without day bars (a replayed session).
+    option_volume: int | None = None
     short_put: dict | None = None
     short_call: dict | None = None
     # A vertical built off each short leg, where the chain has a wing.
@@ -238,6 +251,7 @@ class Row:
             "iv_rank": self.iv_rank,
             "iv_rank_samples": self.iv_rank_samples,
             "open_interest": self.open_interest,
+            "option_volume": self.option_volume,
             "short_put": self.short_put,
             "short_call": self.short_call,
             "put_spread": self.put_spread,
@@ -409,6 +423,23 @@ def _criteria(row: Row, req: ScreenRequest) -> list[Criterion]:
             f"{row.open_interest:,} across this expiry's fetched strikes, wanted {req.min_open_interest:,}+",
         )
     )
+
+    if req.min_option_volume > 0 or row.option_volume is not None:
+        traded = row.option_volume
+        out.append(
+            Criterion(
+                "option_volume",
+                "Contracts traded",
+                None if traded is None else float(traded),
+                # Reported but not judged at a threshold of zero: a column
+                # that passes for everything would only inflate the score.
+                None if traded is None or req.min_option_volume <= 0 else traded >= req.min_option_volume,
+                "no day bars for this expiry"
+                if traded is None
+                else f"{traded:,} traded today across this expiry"
+                + (f", wanted {req.min_option_volume:,}+" if req.min_option_volume > 0 else " (not judged)"),
+            )
+        )
 
     fracs = [
         leg["spread_fraction"]
@@ -615,6 +646,8 @@ async def _priced(
     row.open_interest = sum(
         q.open_interest for r in chain.rows for q in (r.call, r.put) if q is not None and q.open_interest
     )
+    volumes = [q.volume for r in chain.rows for q in (r.call, r.put) if q is not None and q.volume is not None]
+    row.option_volume = sum(volumes) if volumes else None
     row.atm_iv = atm_iv_of(chain.rows, chain.spot)
     row.realised_vol = realised_vol(closes)
     if row.atm_iv and row.realised_vol:

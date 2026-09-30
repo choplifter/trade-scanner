@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { OrderRejectedError } from "../../api/http";
-import { screenUnderlyings } from "../../api/options";
+import { latestScreen, screenUnderlyings } from "../../api/options";
 import { useWatchlist } from "../../hooks/useWatchlist";
 import type {
   LoadableStructure,
@@ -139,6 +139,15 @@ function numeric(text: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+/** How old a stored run is, in the words a trader uses about a table. */
+function ageOf(iso: string): string {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
+}
+
 function pct(value: number | null | undefined, digits = 0): string {
   return value == null ? "—" : `${(value * 100).toFixed(digits)} %`;
 }
@@ -189,6 +198,25 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const [minOi, setMinOi] = useState("5000");
   const [maxSpread, setMaxSpread] = useState("10");
   const [avoidEarnings, setAvoidEarnings] = useState(true);
+
+  // The background pass writes one table per strategy every half hour
+  // (backend app/options/screen_job.py). Showing it on open is the whole
+  // point: a universe screen is a dozen seconds, and nobody should spend
+  // them to find out what the market looked like four minutes ago.
+  useEffect(() => {
+    let cancelled = false;
+    setResult(null);
+    latestScreen(strategy)
+      .then((res) => {
+        if (!cancelled && res.screen) setResult(res.screen);
+      })
+      .catch(() => {
+        // No stored run is the ordinary case before the first pass.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [strategy]);
 
   const run = async () => {
     if (!universe && symbols.length === 0) return;
@@ -286,6 +314,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
       {error && <p className="order-rejection">{error}</p>}
       {!universe && symbols.length === 0 && <p className="widget-empty">Add symbols to the watchlist to screen them.</p>}
 
+      {result?.stored_at && (
+        <p className="order-hint">
+          Stored run from {new Date(result.stored_at).toLocaleTimeString()} ({ageOf(result.stored_at)}) · the background
+          pass screens the universe every half hour. Press the button for a live one.
+        </p>
+      )}
       {result && (
         <>
           {result.preselection && (
