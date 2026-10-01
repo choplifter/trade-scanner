@@ -170,7 +170,13 @@ CHEAP_IV_RATIO = 0.95
 # How many symbols one run may price. Each costs three calls (contracts,
 # snapshots, day bars) and about 0.4 s, so the cap is what keeps a screen
 # off the broker's rate limit rather than an opinion about breadth.
-MAX_SYMBOLS = 60
+#
+# It was 60, which is where the breadth was actually being lost: measured
+# 2026-10-01, 829 names cleared price and liquidity and 769 of them were
+# dropped by this number alone. 300 is about two minutes cold and seconds
+# warm, in line with the other click-to-run tools here; the default stays
+# well under it so the common run is quick.
+MAX_SYMBOLS = 300
 # Stage one: which of the universe's thousands are worth a chain at all.
 # The universe already carries last price and 20-day dollar volume, so
 # this costs nothing -- the expensive part is deliberately downstream.
@@ -180,10 +186,20 @@ MAX_SYMBOLS = 60
 # widths before it fetches them. 20 million a day is roughly where option
 # quotes stop being a penny wide.
 MIN_DOLLAR_VOLUME = 20_000_000.0
-# A cash-secured put on a 1,000-dollar stock puts up 100,000. Above this
-# the structures a screen finds are ones the account cannot take.
+# A cash-secured put on a 1,000-dollar stock puts up 100,000, and a
+# covered call needs the hundred shares first. Above this the structures a
+# screen finds are ones the account cannot take -- but that is an argument
+# about *committing capital*, and it was being applied to every strategy.
+# A defined-risk spread on the same stock risks the width between its
+# wings, which has nothing to do with the share price: an iron condor on a
+# 1,070-dollar underlying can risk 150 dollars. So the ceiling belongs to
+# the strategies that tie up the underlying, and the rest only need a
+# price high enough for strikes to be spaced usefully.
 MAX_UNDERLYING_PRICE = 500.0
+MAX_UNDERLYING_PRICE_DEFINED_RISK = 5000.0
 MIN_UNDERLYING_PRICE = 15.0
+# Strategies that put up the underlying rather than a width.
+CAPITAL_STRATEGIES = frozenset({"cash_secured_put", "covered_call"})
 
 
 class ScreenRequest(BaseModel):
@@ -193,7 +209,7 @@ class ScreenRequest(BaseModel):
     # narrows it to `limit` on price and dollar volume, which the universe
     # already carries, and only those get a chain.
     scan_universe: bool = False
-    limit: int = Field(default=40, ge=1, le=MAX_SYMBOLS)
+    limit: int = Field(default=100, ge=1, le=MAX_SYMBOLS)
     min_dollar_volume: float = Field(default=MIN_DOLLAR_VOLUME, ge=0.0)
     min_price: float = Field(default=MIN_UNDERLYING_PRICE, gt=0.0)
     max_price: float = Field(default=MAX_UNDERLYING_PRICE, gt=0.0)
@@ -229,6 +245,11 @@ class ScreenRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "ScreenRequest":
+        # The price ceiling follows the strategy unless the caller named
+        # one: capital-committing shapes keep the old limit, defined-risk
+        # ones are not bounded by a share price they never put up.
+        if "max_price" not in self.model_fields_set and self.strategy not in CAPITAL_STRATEGIES:
+            object.__setattr__(self, "max_price", MAX_UNDERLYING_PRICE_DEFINED_RISK)
         if not self.symbols and not self.scan_universe:
             raise ValueError("give symbols, or ask for scan_universe")
         if self.min_price > self.max_price:

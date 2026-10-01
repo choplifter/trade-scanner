@@ -128,10 +128,30 @@ async def list_active_equity_symbols(clients: AlpacaClients) -> list[SymbolSugge
     )
 
 
-async def build_universe(
-    clients: AlpacaClients, settings: Settings
-) -> dict[str, UniverseSymbol]:
-    """Build the pool of symbols scanners are allowed to consider.
+@dataclass(frozen=True)
+class Universes:
+    """The two pools the one bar pass produces.
+
+    `scanner` is what it always was. `options` is a wider, separate pool for
+    the options screener: a different price band and ETFs kept, because the
+    names an option is written on and the names an intraday catalyst scanner
+    wants barely overlap. Built here rather than on its own because the
+    expensive part -- twenty daily bars for every tradable US equity -- is
+    already being paid for, and a second pass would double a startup that
+    already takes a minute and a half.
+    """
+
+    scanner: dict[str, UniverseSymbol]
+    options: dict[str, UniverseSymbol]
+
+
+async def build_universe(clients: AlpacaClients, settings: Settings) -> dict[str, UniverseSymbol]:
+    """The scanner's pool alone -- see build_universes."""
+    return (await build_universes(clients, settings)).scanner
+
+
+async def build_universes(clients: AlpacaClients, settings: Settings) -> Universes:
+    """Build both pools of symbols from one pass over the daily bars.
 
     Two passes: (1) list all tradable US equities and cheaply filter by
     exchange/ticker shape, (2) pull 20 daily bars per candidate to compute
@@ -146,20 +166,23 @@ async def build_universe(
         GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE),
     )
 
-    candidates = [
-        a.symbol
+    # One candidate list for both pools: ETFs are carried through the bar
+    # pass and dropped from the scanner's pool at the end, so SPY and IWM
+    # reach the options screener without a second fetch.
+    tradable = [
+        a
         for a in assets
-        if a.tradable
-        and a.exchange.value in _ALLOWED_EXCHANGES
-        and _PLAIN_TICKER_RE.match(a.symbol)
-        and not _looks_like_etf(a.name)
+        if a.tradable and a.exchange.value in _ALLOWED_EXCHANGES and _PLAIN_TICKER_RE.match(a.symbol)
     ]
+    is_etf = {a.symbol: _looks_like_etf(a.name) for a in tradable}
+    candidates = [a.symbol for a in tradable]
     exchange_by_symbol = {a.symbol: a.exchange.value for a in assets}
     shortable_by_symbol = {a.symbol: bool(a.shortable) for a in assets}
     logger.info("Universe candidates after exchange/ticker filter: %d", len(candidates))
 
     start = datetime.now(timezone.utc) - timedelta(days=40)
     universe: dict[str, UniverseSymbol] = {}
+    options: dict[str, UniverseSymbol] = {}
 
     for batch in _chunk(candidates, _BATCH_SIZE):
         try:
@@ -186,12 +209,7 @@ async def build_universe(
             avg_vol_20d = sum(b.volume for b in bars) / len(bars)
             avg_dollar_vol_20d = avg_vol_20d * prev_close
 
-            if not (settings.universe_min_price <= prev_close <= settings.universe_max_price):
-                continue
-            if avg_vol_20d < settings.universe_min_avg_volume:
-                continue
-
-            universe[symbol] = UniverseSymbol(
+            entry = UniverseSymbol(
                 symbol=symbol,
                 exchange=exchange_by_symbol.get(symbol, ""),
                 prev_close=prev_close,
@@ -204,12 +222,34 @@ async def build_universe(
                 shortable=shortable_by_symbol.get(symbol, False),
             )
 
-    ranked = sorted(universe.values(), key=lambda u: u.avg_dollar_vol_20d, reverse=True)
-    ranked = ranked[: settings.max_universe_size]
-    result = {u.symbol: u for u in ranked}
+            if (
+                settings.universe_min_price <= prev_close <= settings.universe_max_price
+                and avg_vol_20d >= settings.universe_min_avg_volume
+                and not is_etf.get(symbol, False)
+            ):
+                universe[symbol] = entry
+            if (
+                settings.options_universe_min_price <= prev_close <= settings.options_universe_max_price
+                and avg_dollar_vol_20d >= settings.options_universe_min_dollar_volume
+                and (settings.options_universe_etfs or not is_etf.get(symbol, False))
+            ):
+                options[symbol] = entry
 
-    logger.info("Universe built: %d symbols (capped at %d)", len(result), settings.max_universe_size)
-    return result
+    scanner_pool = _top_by_dollar_volume(universe, settings.max_universe_size)
+    options_pool = _top_by_dollar_volume(options, settings.max_options_universe_size)
+    logger.info(
+        "Universe built: %d scanner symbols (capped at %d), %d options symbols (capped at %d)",
+        len(scanner_pool),
+        settings.max_universe_size,
+        len(options_pool),
+        settings.max_options_universe_size,
+    )
+    return Universes(scanner=scanner_pool, options=options_pool)
+
+
+def _top_by_dollar_volume(pool: dict[str, UniverseSymbol], cap: int) -> dict[str, UniverseSymbol]:
+    ranked = sorted(pool.values(), key=lambda u: u.avg_dollar_vol_20d, reverse=True)[:cap]
+    return {u.symbol: u for u in ranked}
 
 
 async def fetch_movers_backstop(

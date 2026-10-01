@@ -782,3 +782,36 @@ def test_without_an_account_there_is_no_risk_share_but_still_a_ratio():
     row = body["rows"][0]
     assert row["risk_share"] is None, "no account, no share of it"
     assert row["outcome"] is not None, "the structure is still valued"
+
+
+# --- how wide the screen may look ---------------------------------------------
+
+
+def test_the_price_ceiling_follows_what_the_strategy_actually_ties_up():
+    """A cash-secured put on a 1,000-dollar stock puts up 100,000, so the
+    ceiling is right there. An iron condor on the same stock risks the width
+    between its wings -- a hundred and fifty dollars -- and the share price
+    has nothing to do with it. One rule was being applied to both, which is
+    why MU at 1,070 could never appear in a condor screen."""
+    from app.options.screener import MAX_UNDERLYING_PRICE, ScreenRequest
+
+    assert ScreenRequest(strategy="cash_secured_put", scan_universe=True).max_price == MAX_UNDERLYING_PRICE
+    assert ScreenRequest(strategy="covered_call", scan_universe=True).max_price == MAX_UNDERLYING_PRICE
+    for defined_risk in ("iron_condor", "credit_spread", "debit_spread"):
+        assert ScreenRequest(strategy=defined_risk, scan_universe=True).max_price > 1070.0, defined_risk
+
+
+def test_a_ceiling_the_caller_names_is_never_overridden():
+    from app.options.screener import ScreenRequest
+
+    asked = ScreenRequest(strategy="iron_condor", scan_universe=True, max_price=200.0)
+    assert asked.max_price == 200.0
+
+
+def test_the_symbol_cap_is_wide_enough_for_the_pool_that_clears_the_filters():
+    """Measured 2026-10-01: 829 names cleared price and liquidity and 769 of
+    them were dropped by this cap alone. A cap under a few hundred is the
+    breadth being lost, not the broker's rate limit being respected."""
+    from app.options.screener import MAX_SYMBOLS
+
+    assert MAX_SYMBOLS >= 300

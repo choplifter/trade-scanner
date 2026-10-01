@@ -220,6 +220,25 @@ class Settings(BaseSettings):
     universe_min_avg_volume: int = 300_000
     max_universe_size: int = 2000
 
+    # The options screener's own pool, deliberately not the scanner's. The
+    # scanner hunts intraday catalysts and is tuned for cheap, fast-moving
+    # single names (locally 2-100 $), which excludes almost everything an
+    # option is written on: measured 2026-10-01, every one of the screener's
+    # sixty candidates priced between 15 and 100 $, and MU at 1,070 -- a
+    # symbol a condor had just been built on by hand -- was not in the pool
+    # at all. Index ETFs were missing for a second reason: the scanner drops
+    # them by name, since a leveraged ETF moving with its index crowds out
+    # real single-name setups. Both are right for the scanner and wrong
+    # here, so options get their own pool out of the same bar pass.
+    options_universe_min_price: float = 15.0
+    options_universe_max_price: float = 2000.0
+    # Liquidity is the only pre-chain proxy for a tradable chain. Judged on
+    # dollar volume rather than shares: a 1,000-dollar stock trading 30,000
+    # shares is liquid, the same share count on a 20-dollar one is not.
+    options_universe_min_dollar_volume: float = 20_000_000.0
+    options_universe_etfs: bool = True
+    max_options_universe_size: int = 1500
+
     # Minimum *today's* dollar volume (price x shares actually traded so
     # far today, not a trailing average) a row needs to appear in a ranked
     # scanner view -- distinct from universe_min_avg_volume, which gates

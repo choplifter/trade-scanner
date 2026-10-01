@@ -23,7 +23,7 @@ from app.playbooks.runner import PlaybookRunner
 from app.playbooks.store import PlaybookStore
 from app.routers import playbooks as playbooks_router
 from app.alpaca.client import AlpacaClients
-from app.alpaca.universe import build_universe, list_active_equity_symbols
+from app.alpaca.universe import build_universes, list_active_equity_symbols
 from app.auth.dependency import get_current_user
 from app.auth.store import UserStore
 from app.broker.crypto import secret_box_from_settings
@@ -253,10 +253,11 @@ async def lifespan(app: FastAPI):
 
     if settings.has_credentials:
         try:
-            universe = await build_universe(clients, settings)
+            universes = await build_universes(clients, settings)
+            universe, options_universe = universes.scanner, universes.options
         except Exception:
             logger.exception("Failed to build universe at startup -- scanners will stay empty")
-            universe = {}
+            universe, options_universe = {}, {}
         try:
             all_symbols = await list_active_equity_symbols(clients)
         except Exception:
@@ -271,8 +272,12 @@ async def lifespan(app: FastAPI):
             "and fill in ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY to get live data."
         )
         universe = {}
+        options_universe = {}
         all_symbols = []
     app.state.universe = universe
+    # The options screener's own pool: a wider price band and ETFs kept.
+    # See app.alpaca.universe.Universes for why it is not the scanner's.
+    app.state.options_universe = options_universe
     app.state.all_symbols = all_symbols
 
     engine = ScannerEngine(
