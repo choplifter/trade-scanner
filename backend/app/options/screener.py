@@ -227,13 +227,19 @@ class ScreenRequest(BaseModel):
     symbols: list[str] | None = Field(default=None, max_length=MAX_SYMBOLS)
     # Screen the whole tradable universe instead of a named list: stage one
     # narrows it to `limit` on price and dollar volume, which the universe
-    # already carries, and only those get a chain.
-    scan_universe: bool = False
+    # already carries, and only those get a chain. The default, because the
+    # question this answers is "where is there something worth writing",
+    # and a watchlist cannot answer it. A caller that passes `symbols` is
+    # screening that list regardless -- see screen_underlyings.
+    scan_universe: bool = True
     limit: int = Field(default=100, ge=1, le=MAX_SYMBOLS)
     min_dollar_volume: float = Field(default=MIN_DOLLAR_VOLUME, ge=0.0)
     min_price: float = Field(default=MIN_UNDERLYING_PRICE, gt=0.0)
     max_price: float = Field(default=MAX_UNDERLYING_PRICE, gt=0.0)
-    strategy: Strategy = "cash_secured_put"
+    # Defined risk, both sides, and the shape the rest of the app is
+    # built to price. A cash-secured put ties up the underlying, which is
+    # a different decision and rarely the one being asked here.
+    strategy: Strategy = "iron_condor"
     dte_min: int = Field(default=DTE_RANGE[0], ge=1, le=400)
     dte_max: int = Field(default=DTE_RANGE[1], ge=1, le=400)
     min_open_interest: int = Field(default=MIN_OPEN_INTEREST, ge=0)

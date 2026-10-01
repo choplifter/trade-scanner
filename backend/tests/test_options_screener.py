@@ -445,10 +445,20 @@ def test_stage_one_keeps_the_liquid_and_affordable_and_says_what_it_dropped():
         PENNY=(3.0, 400e6),
         BROKEN=(0.0, 400e6),
     )
-    pre = preselect(universe, ScreenRequest(symbols=None, scan_universe=True, limit=10))
+    # A cash-secured put, where the ceiling applies: it puts up the
+    # underlying, so a 1,500-dollar name is a position the account cannot
+    # take. See CAPITAL_STRATEGIES.
+    capital = ScreenRequest(symbols=None, scan_universe=True, limit=10, strategy="cash_secured_put")
+    pre = preselect(universe, capital)
     assert pre.symbols == ["LIQUID", "ALSO"], "ranked by dollar volume"
     assert pre.considered == 6
     assert pre.reasons == {"thin_dollar_volume": 1, "over_max_price": 1, "under_min_price": 1, "no_price": 1}
+
+    # The same universe for a condor, which risks the width between its
+    # wings: the expensive name is a candidate like any other.
+    condor = preselect(universe, ScreenRequest(symbols=None, scan_universe=True, limit=10))
+    assert condor.symbols == ["PRICEY", "LIQUID", "ALSO"]
+    assert "over_max_price" not in condor.reasons
 
 
 def test_stage_one_stops_at_the_limit_and_counts_the_rest():
@@ -501,8 +511,12 @@ def test_an_empty_universe_is_refused_with_a_reason_rather_than_an_empty_table()
 
 
 def test_a_request_must_name_symbols_or_ask_for_the_universe():
+    """The universe is the default now, so a bare request is valid and
+    means "scan it". The guard still catches the one way to ask for
+    nothing at all: no symbols and the universe explicitly switched off."""
+    assert ScreenRequest(symbols=None).scan_universe is True
     with pytest.raises(ValueError, match="scan_universe"):
-        ScreenRequest(symbols=None)
+        ScreenRequest(symbols=None, scan_universe=False)
 
 
 def test_a_window_past_the_strip_asks_for_the_full_board():
@@ -892,3 +906,23 @@ def test_a_real_shortage_of_open_interest_still_fails():
     req = ScreenRequest(symbols=["XYZ"], min_open_interest=500)
     oi = next(c for c in _criteria(row, req, date(2026, 10, 1)) if c.key == "open_interest")
     assert oi.passed is False and oi.value == 5.0
+
+
+def test_the_bare_request_screens_the_universe_for_a_condor():
+    """What a screener is for: where in the market is there anything worth
+    writing. A watchlist cannot answer that, and a cash-secured put ties up
+    the underlying -- a different decision from the one being asked."""
+    from app.options.screener import ScreenRequest
+
+    req = ScreenRequest()
+    assert req.strategy == "iron_condor"
+    assert req.scan_universe is True
+
+
+def test_a_named_list_is_still_screened_as_a_list():
+    """The default must not quietly swallow a caller's own symbols --
+    screen_underlyings takes req.symbols when there are any."""
+    from app.options.screener import ScreenRequest
+
+    req = ScreenRequest(symbols=["AAPL", "NVDA"])
+    assert req.symbols == ["AAPL", "NVDA"]

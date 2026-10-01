@@ -179,13 +179,16 @@ function Criteria({ row }: { row: ScreenRow }) {
  */
 export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const { symbols } = useWatchlist();
-  const [strategy, setStrategy] = useState<ScreenStrategy>("cash_secured_put");
+  const [strategy, setStrategy] = useState<ScreenStrategy>("iron_condor");
   const [result, setResult] = useState<ScreenResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-  // Watchlist, or the whole tradable universe narrowed by stage one.
-  const [universe, setUniverse] = useState(false);
+  // Watchlist, or the whole tradable universe narrowed by stage one. The
+  // universe by default: the watchlist answers "is this one worth it",
+  // the universe answers "where is there anything worth it at all", and
+  // the second is the question a screener exists for.
+  const [universe, setUniverse] = useState(true);
   // The screen's own bounds. The backend has always taken them; until now
   // the tab sent none, so every run was the 30-60 day default -- and on
   // this market that was the difference between +1.54 and +14.10 of
