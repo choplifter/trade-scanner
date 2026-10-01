@@ -550,6 +550,22 @@ async def fetch_gex(clients: AlpacaClients, symbol: str) -> GexReading | None:
             for row in rows
             if row.gamma is not None and row.expiry > today
         ]
+        # Every dollar of gamma here is gamma x open interest, so a set in
+        # which nothing reports any leaves net_gex at exactly zero -- and
+        # zero is not a gap, it reads as "dealers are flat", which is a
+        # claim about positioning nobody reported. The same distinction
+        # _fetch_contracts documents and options_resolve draws: zeros
+        # interleaved with real values are a real "nothing open on this
+        # strike"; zeros everywhere are the feed not saying. Seen on a
+        # single GOOGL expiry on 2026-10-01, and one expiry is survivable
+        # here because this aggregates many -- all of them silent is not.
+        if matched and not any(open_interest > 0 for _g, open_interest, _c, _s in matched):
+            logger.warning(
+                "GEX for %s: not one of %d contracts reports open interest -- no reading rather than zeros",
+                symbol,
+                len(matched),
+            )
+            return None
         reading = compute_gex(symbol, spot_price, matched, now)
 
         near_expiry = nearest_expiry([row.expiry for row in rows], now)
