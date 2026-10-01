@@ -43,7 +43,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.options.chain import Chain, StrikeRow
-from app.options.chain_fetch import CHAIN_DAYS_AHEAD
+from app.options.chain_fetch import CHAIN_DAYS_AHEAD, STRIKE_PCT_RANGE
 from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl
 from app.options.payoff import PayoffLeg
 from app.services.market_clock import ET
@@ -131,6 +131,26 @@ MIN_CREDIT_TO_WIDTH = 0.10
 # ETF, the width these are actually written at.
 WING_TARGET_PCT = 0.03
 WING_REACH_PCT = 0.06
+# How far the chain must be fetched. The default band is ten percent of
+# spot, which is the right cost for a chain being polled every fifteen
+# seconds and nowhere near what this screen looks for: a short strike
+# around fifteen delta sits roughly one standard deviation out, and a wing
+# is bought beyond it. Measured 2026-10-01 on NVDA at 230.72 -- 43 days,
+# 32 % implied -- the fetched band ended at 253.79 while the wing for the
+# 250 call had to be found between 250 and 263.8. The band held nine
+# strikes, no wing existed in it, and the row failed as though the market
+# offered none.
+#
+# So the band is sized per symbol from the realised volatility, which is
+# already in hand before the chain is fetched: a move of this many sigma
+# over the holding period, plus the wing's own reach. Calm names stay
+# cheap -- an index ETF at 11 % realised over 43 days asks for 12 % -- and
+# only the volatile ones pay for the width they actually need.
+CHAIN_SIGMA_REACH = 1.5
+# With no usable closes there is nothing to size from, and the failure
+# mode being fixed here is a band that is too narrow.
+CHAIN_WIDTH_UNKNOWN = 0.25
+CHAIN_WIDTH_MAX = 0.60
 # A calendar wants the front expiry priced above the back one. Below this
 # the slope is not worth the two commissions.
 MIN_TERM_RATIO = 1.03
@@ -285,7 +305,9 @@ class Row:
     iv_rv_ratio: float | None = None
     iv_rank: float | None = None
     iv_rank_samples: int = 0
-    open_interest: int = 0
+    # None when the expiry reports none at all -- not knowable, as
+    # opposed to zero. See where it is summed.
+    open_interest: int | None = None
     # Contracts traded today across this expiry; None when the chain was
     # built without day bars (a replayed session).
     option_volume: int | None = None
@@ -324,7 +346,7 @@ class Row:
         the expiry is being *built* today rather than carried: the open
         interest says a crowd is positioned, this says whether anyone is
         still trading it. None when no day bars were read."""
-        if self.option_volume is None or self.open_interest <= 0:
+        if self.option_volume is None or not self.open_interest:
             return None
         return self.option_volume / self.open_interest
 
@@ -453,6 +475,22 @@ def pick_short(rows: list[StrikeRow], kind: str, band: tuple[float, float]) -> d
     }
 
 
+def chain_width_for(realised: float | None, dte: int) -> float:
+    """The strike band to fetch for a screen of `dte` days, as a fraction
+    of spot either side.
+
+    Reaches CHAIN_SIGMA_REACH standard deviations -- far enough past the
+    short strike that the delta band is covered -- plus WING_REACH_PCT for
+    the wing bought beyond it. Never below the chain's own default, so a
+    very quiet name is not screened on less than it would have had.
+    """
+    if realised is None or realised <= 0 or dte <= 0:
+        return CHAIN_WIDTH_UNKNOWN
+    sigma = realised * math.sqrt(dte / 365.0)
+    needed = CHAIN_SIGMA_REACH * sigma + WING_REACH_PCT
+    return round(min(max(needed, STRIKE_PCT_RANGE), CHAIN_WIDTH_MAX), 4)
+
+
 def pick_wing(rows: list[StrikeRow], kind: str, short_strike: float, spot: float) -> dict | None:
     """The long leg of a vertical: the listed strike further out of the
     money whose distance from the short is nearest WING_TARGET_PCT of spot,
@@ -519,14 +557,15 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
     """The screen, read off a priced row. Each criterion answers with a
     number and a verdict, or None when the number is not knowable."""
     out: list[Criterion] = []
-    oi_ok = row.open_interest >= req.min_open_interest
     out.append(
         Criterion(
             "open_interest",
             "Open interest",
-            float(row.open_interest),
-            oi_ok,
-            f"{row.open_interest:,} across this expiry's fetched strikes, wanted {req.min_open_interest:,}+",
+            None if row.open_interest is None else float(row.open_interest),
+            None if row.open_interest is None else row.open_interest >= req.min_open_interest,
+            "not reported for this expiry right now"
+            if row.open_interest is None
+            else f"{row.open_interest:,} across this expiry's fetched strikes, wanted {req.min_open_interest:,}+",
         )
     )
 
@@ -545,7 +584,7 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
                 else f"{traded:,} traded today across this expiry"
                 + (
                     f" against {row.open_interest:,} open ({row.volume_oi_ratio:.2f}x)"
-                    if row.volume_oi_ratio is not None
+                    if row.volume_oi_ratio is not None and row.open_interest is not None
                     else ""
                 )
                 + (f", wanted {req.min_option_volume:,}+" if req.min_option_volume > 0 else " -- not judged"),
@@ -753,7 +792,10 @@ def rank_rows(rows: list[Row], bias: Bias) -> list[Row]:
             vol_key = 0.0
         else:
             vol_key = ratio if bias == "sell_premium" else (-ratio if bias == "buy_premium" else 0.0)
-        return (-(row.expiry is not None), -row.passed, -vol_key, -row.open_interest)
+        # Open interest only breaks ties, and it is None where the
+        # expiry reported none -- which sorts with the unknowns, not
+        # ahead of a chain that reported a real zero.
+        return (-(row.expiry is not None), -row.passed, -vol_key, -(row.open_interest or 0))
 
     return sorted(rows, key=key)
 
@@ -794,21 +836,30 @@ async def _priced(
         return row
     row.expiry, row.dte = expiry, (expiry - today).days
 
+    # Sized before the fetch from the closes already in hand: see
+    # chain_width_for for the band the default could not reach.
+    row.realised_vol = realised_vol(closes)
     try:
-        chain: Chain = await service.chain(symbol, expiry)
+        chain: Chain = await service.chain(symbol, expiry, chain_width_for(row.realised_vol, row.dte))
     except Exception as exc:
         row.note = f"no chain: {exc}"
         row.criteria = _criteria(row, req, today)
         return row
 
     row.spot = chain.spot or row.spot
-    row.open_interest = sum(
+    # None, not zero, when the whole expiry reports nothing: Alpaca's
+    # contracts endpoint leaves open interest unset for stretches of the
+    # session (seen 2026-10-01 at 09:45 ET -- every one of NVDA's 18
+    # quotes read 0), and a chain where literally nothing is open does not
+    # exist for a name like that. Reading it as zero failed every row on a
+    # number nobody had, which is a different claim from "too few".
+    total_oi = sum(
         q.open_interest for r in chain.rows for q in (r.call, r.put) if q is not None and q.open_interest
     )
+    row.open_interest = total_oi if total_oi > 0 else None
     volumes = [q.volume for r in chain.rows for q in (r.call, r.put) if q is not None and q.volume is not None]
     row.option_volume = sum(volumes) if volumes else None
     row.atm_iv = atm_iv_of(chain.rows, chain.spot)
-    row.realised_vol = realised_vol(closes)
     if row.atm_iv and row.realised_vol:
         row.iv_rv_ratio = row.atm_iv / row.realised_vol
     band = (req.short_delta_min, req.short_delta_max)

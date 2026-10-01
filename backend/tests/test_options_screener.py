@@ -126,7 +126,7 @@ class _Service:
             "expiries": [{"expiry": chain.expiry.isoformat(), "dte": (chain.expiry - TODAY).days, "contract_count": 40}],
         }
 
-    async def chain(self, symbol: str, expiry: date) -> Chain:
+    async def chain(self, symbol: str, expiry: date, width: float | None = None) -> Chain:
         self.fetched.append(symbol)
         return self.chains[symbol]
 
@@ -323,7 +323,7 @@ class _TwoExpiryService(_Service):
             ],
         }
 
-    async def chain(self, symbol: str, expiry: date) -> Chain:
+    async def chain(self, symbol: str, expiry: date, width: float | None = None) -> Chain:
         self.fetched.append(symbol)
         return self.back if expiry == self.back_expiry else self.chains[symbol]
 
@@ -521,7 +521,7 @@ def test_a_window_past_the_strip_asks_for_the_full_board():
                 "expiries": [{"expiry": far.isoformat(), "dte": 95, "contract_count": 40}],
             }
 
-        async def chain(self, symbol: str, expiry: date):
+        async def chain(self, symbol: str, expiry: date, width: float | None = None):
             self.fetched.append(symbol)
             near = _chain()
             return Chain(underlying=symbol, expiry=far, spot=100.0, feed="opra", as_of=None, rows=near.rows)
@@ -815,3 +815,80 @@ def test_the_symbol_cap_is_wide_enough_for_the_pool_that_clears_the_filters():
     from app.options.screener import MAX_SYMBOLS
 
     assert MAX_SYMBOLS >= 300
+
+
+# --- how wide the chain has to be fetched to find anything --------------------
+
+
+def test_the_band_reaches_past_the_short_strike_to_where_the_wing_is_bought():
+    """The failure this exists to stop. NVDA on 2026-10-01: 230.72, 43 days,
+    ~32 % volatility. The default ten percent ended at 253.79, held nine
+    strikes, and the wing for the 250 call had to be found between 250 and
+    263.8 -- so no wing existed, and the row failed as though the market
+    offered none."""
+    from app.options.screener import WING_REACH_PCT, chain_width_for
+
+    width = chain_width_for(0.32, 43)
+    reach = 230.72 * width
+    assert 230.72 + reach > 263.8, "the wing's own reach must be inside the band"
+    # And it is sized, not merely large: the short strike plus the wing.
+    assert width < 0.4
+    assert width > WING_REACH_PCT
+
+
+def test_a_calm_underlying_is_not_made_to_pay_for_width_it_does_not_need():
+    """An index ETF at 11 % realised over 43 days asks for barely more than
+    the default, so the common case stays cheap."""
+    from app.options.screener import chain_width_for
+
+    assert chain_width_for(0.11, 43) < 0.15
+
+
+def test_the_band_never_falls_below_the_chains_own_default():
+    from app.options.chain_fetch import STRIKE_PCT_RANGE
+    from app.options.screener import chain_width_for
+
+    assert chain_width_for(0.02, 7) == STRIKE_PCT_RANGE
+
+
+def test_without_closes_to_size_from_the_band_errs_wide_not_narrow():
+    """Too narrow is the failure being fixed; an unknown volatility must not
+    land back on it."""
+    from app.options.chain_fetch import STRIKE_PCT_RANGE
+    from app.options.screener import CHAIN_WIDTH_UNKNOWN, chain_width_for
+
+    assert chain_width_for(None, 43) == CHAIN_WIDTH_UNKNOWN > STRIKE_PCT_RANGE
+
+
+def test_a_very_volatile_name_is_still_capped():
+    from app.options.screener import CHAIN_WIDTH_MAX, chain_width_for
+
+    assert chain_width_for(3.0, 365) == CHAIN_WIDTH_MAX
+
+
+# --- open interest nobody reported --------------------------------------------
+
+
+def test_an_expiry_reporting_no_open_interest_at_all_is_unknown_not_zero():
+    """Alpaca leaves open interest unset for stretches of the session -- on
+    2026-10-01 at 09:45 ET every one of NVDA's eighteen quotes read 0. Read
+    as zero it failed every row in the screen on a number nobody had, which
+    is a different claim from "too few"."""
+    from app.options.screener import Row, ScreenRequest, _criteria
+
+    row = Row(symbol="NVDA", expiry=date(2026, 11, 13), dte=43, spot=230.72)
+    row.open_interest = None
+    oi = next(c for c in _criteria(row, ScreenRequest(symbols=["NVDA"]), date(2026, 10, 1)) if c.key == "open_interest")
+    assert oi.passed is None, "not knowable is not the same as failing"
+    assert oi.value is None
+    assert "not reported" in oi.detail
+
+
+def test_a_real_shortage_of_open_interest_still_fails():
+    from app.options.screener import Row, ScreenRequest, _criteria
+
+    row = Row(symbol="XYZ", expiry=date(2026, 11, 13), dte=43, spot=100.0)
+    row.open_interest = 5
+    req = ScreenRequest(symbols=["XYZ"], min_open_interest=500)
+    oi = next(c for c in _criteria(row, req, date(2026, 10, 1)) if c.key == "open_interest")
+    assert oi.passed is False and oi.value == 5.0
