@@ -926,3 +926,71 @@ def test_a_named_list_is_still_screened_as_a_list():
 
     req = ScreenRequest(symbols=["AAPL", "NVDA"])
     assert req.symbols == ["AAPL", "NVDA"]
+
+
+# --- the wing's width -----------------------------------------------------------
+
+
+def test_the_wing_is_aimed_at_a_share_of_spot_by_default():
+    from app.options.screener import WING_REACH_PCT, WING_TARGET_PCT, ScreenRequest
+
+    target, reach = ScreenRequest(symbols=["X"]).wing_width_for(200.0)
+    assert target == pytest.approx(200.0 * WING_TARGET_PCT)
+    assert reach == pytest.approx(200.0 * WING_REACH_PCT)
+
+
+def test_a_width_named_in_points_wins_and_keeps_the_reach_in_proportion():
+    """A chain lists whole dollars, not percentages, so naming the width
+    outright is how the reader actually thinks about it -- and it must not
+    silently narrow what is still accepted."""
+    from app.options.screener import ScreenRequest
+
+    target, reach = ScreenRequest(symbols=["TLT"], wing_points=2.5).wing_width_for(77.86)
+    assert target == 2.5
+    assert reach == pytest.approx(5.0), "the reach keeps its 2x proportion to the aim"
+
+
+def test_the_aim_never_falls_under_a_point():
+    """3 % of a cheap ETF rounds the aim below one strike increment, and the
+    picker then takes a one-point wing: 22.50 of maximum profit against
+    77.50 of risk on TLT, where eight legs of commission are a real share of
+    the credit."""
+    from app.options.screener import WING_MIN_POINTS, ScreenRequest
+
+    target, _reach = ScreenRequest(symbols=["X"]).wing_width_for(10.0)
+    assert target == WING_MIN_POINTS
+
+
+def test_a_wider_wing_is_asked_for_from_the_chain_too():
+    """The band has to hold what the picker is allowed to reach for, or a
+    width the reader asked for would come back as "no wing"."""
+    from app.options.screener import ScreenRequest, _reach_fraction, chain_width_for
+
+    req = ScreenRequest(symbols=["TLT"], wing_points=8.0)
+    reach = _reach_fraction(req, 77.86)
+    assert reach > 0.15
+    assert chain_width_for(0.10, 43, reach) > chain_width_for(0.10, 43)
+
+
+def test_the_picker_takes_the_width_it_is_given():
+    from app.options.screener import pick_wing
+
+    rows = [
+        StrikeRow(
+            strike=k,
+            call=_quote(f"T{k:g}C", k, "call", bid=0.95, ask=1.05, delta=0.2),
+            put=_quote(f"T{k:g}P", k, "put", bid=0.95, ask=1.05, delta=-0.2),
+        )
+        for k in (70.0, 72.0, 74.0, 75.0, 76.0)
+    ]
+    near = pick_wing(rows, "put", 76.0, 77.86, target=1.0, reach=6.0)
+    far = pick_wing(rows, "put", 76.0, 77.86, target=4.0, reach=6.0)
+    assert near["strike"] == 75.0 and near["width"] == 1.0
+    assert far["strike"] == 72.0 and far["width"] == 4.0
+
+
+def test_a_reach_shorter_than_the_aim_is_refused():
+    from app.options.screener import ScreenRequest
+
+    with pytest.raises(ValueError, match="wing_target_pct"):
+        ScreenRequest(symbols=["X"], wing_target_pct=0.08, wing_reach_pct=0.04)

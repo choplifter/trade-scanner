@@ -199,6 +199,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const [deltaMin, setDeltaMin] = useState("0.10");
   const [deltaMax, setDeltaMax] = useState("0.20");
   const [minOi, setMinOi] = useState("5000");
+  // How wide the bought wing sits from the short, in points. Blank leaves
+  // it at the backend's 3 % of spot. It is worth having at hand because
+  // the width *is* the risk of the vertical: on a 78-dollar ETF the
+  // default lands on a one-point wing, 22.50 of profit against 77.50, and
+  // eight legs of commission then decide the expectancy.
+  const [wingPoints, setWingPoints] = useState("");
   const [maxSpread, setMaxSpread] = useState("10");
   // Not a checkbox: for a short premium structure *when* the report falls
   // decides everything. Early is the crush arriving while the strikes are
@@ -239,6 +245,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         // Typed as a percentage, sent as the fraction the backend wants.
         max_spread_fraction: numeric(maxSpread, 10) / 100,
         earnings_policy: earnings,
+        ...(wingPoints.trim() === "" ? {} : { wing_points: numeric(wingPoints, 0) }),
       };
       setResult(
         await screenUnderlyings(
@@ -305,6 +312,17 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         <label title="Open interest across the screened expiry's fetched strikes -- one expiry's, an order of magnitude below a whole-chain number.">
           OI{" "}
           <input type="number" min={0} step={500} value={minOi} onChange={(e) => setMinOi(e.target.value)} />
+        </label>
+        <label title="How far the bought wing sits from the short strike, in points. Blank aims at 3 % of spot, which on a cheap ETF rounds down to a one-point wing. The width is the whole risk of the vertical, so widening it changes the credit-to-width ratio and the expectancy with it.">
+          Wing{" "}
+          <input
+            type="number"
+            min={0.5}
+            step={0.5}
+            placeholder="3 %"
+            value={wingPoints}
+            onChange={(e) => setWingPoints(e.target.value)}
+          />
         </label>
         <label title="How wide the quote at the wider short leg may be, as a percentage of its mid.">
           Quote ≤{" "}

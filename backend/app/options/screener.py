@@ -131,6 +131,14 @@ MIN_CREDIT_TO_WIDTH = 0.10
 # ETF, the width these are actually written at.
 WING_TARGET_PCT = 0.03
 WING_REACH_PCT = 0.06
+# A floor in points, so the aim never lands under one strike increment. 3 %
+# of a 78-dollar ETF is 2.30 and reads as "a bit over two points"; on a
+# chain listing whole dollars the picker then takes 2. 3 % of a 39-dollar
+# one is 1.18 and the nearest listed width is 1 -- a vertical whose whole
+# risk is a dollar, where the commission on eight legs is a real share of
+# the credit. Seen on TLT and XLU on 2026-10-01, both of which came back
+# with one-point wings and an expectancy a hair under zero because of it.
+WING_MIN_POINTS = 1.0
 # How far the chain must be fetched. The default band is ten percent of
 # spot, which is the right cost for a chain being polled every fifteen
 # seconds and nowhere near what this screen looks for: a short strike
@@ -248,6 +256,16 @@ class ScreenRequest(BaseModel):
     # MAX_RISK_PCT; 0 leaves the criterion out.
     max_risk_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     max_spread_fraction: float = Field(default=MAX_SPREAD_FRACTION, gt=0.0, le=1.0)
+    # How wide the wing is aimed at, as a share of spot, and how far out one
+    # is accepted at all. Worth varying per run: the width sets the whole
+    # risk of the vertical, and with it the credit-to-width ratio and the
+    # expectancy, so the same chain can be a trade at one width and not at
+    # another.
+    wing_target_pct: float = Field(default=WING_TARGET_PCT, gt=0.0, le=0.5)
+    wing_reach_pct: float = Field(default=WING_REACH_PCT, gt=0.0, le=0.5)
+    # Or name the width in points outright, which is how a chain with fixed
+    # strike increments is actually read. Wins over the percentage.
+    wing_points: float | None = Field(default=None, gt=0.0)
     short_delta_min: float = Field(default=SHORT_DELTA_BAND[0], gt=0.0, lt=1.0)
     short_delta_max: float = Field(default=SHORT_DELTA_BAND[1], gt=0.0, lt=1.0)
     # An earnings report inside the expiry is a different trade: the IV is
@@ -284,7 +302,19 @@ class ScreenRequest(BaseModel):
             raise ValueError("dte_min must not exceed dte_max")
         if self.short_delta_min > self.short_delta_max:
             raise ValueError("short_delta_min must not exceed short_delta_max")
+        if self.wing_target_pct > self.wing_reach_pct:
+            raise ValueError("wing_target_pct must not exceed wing_reach_pct")
         return self
+
+    def wing_width_for(self, spot: float) -> tuple[float, float]:
+        """(aimed width, furthest accepted) in points for this spot."""
+        if self.wing_points is not None:
+            # The reach keeps its proportion to the aim, so naming a width
+            # in points does not also silently narrow what is accepted.
+            ratio = self.wing_reach_pct / self.wing_target_pct
+            return self.wing_points, self.wing_points * ratio
+        target = max(spot * self.wing_target_pct, WING_MIN_POINTS)
+        return target, max(spot * self.wing_reach_pct, target)
 
 
 @dataclass
@@ -481,7 +511,7 @@ def pick_short(rows: list[StrikeRow], kind: str, band: tuple[float, float]) -> d
     }
 
 
-def chain_width_for(realised: float | None, dte: int) -> float:
+def chain_width_for(realised: float | None, dte: int, wing_reach_pct: float = WING_REACH_PCT) -> float:
     """The strike band to fetch for a screen of `dte` days, as a fraction
     of spot either side.
 
@@ -493,19 +523,37 @@ def chain_width_for(realised: float | None, dte: int) -> float:
     if realised is None or realised <= 0 or dte <= 0:
         return CHAIN_WIDTH_UNKNOWN
     sigma = realised * math.sqrt(dte / 365.0)
-    needed = CHAIN_SIGMA_REACH * sigma + WING_REACH_PCT
+    needed = CHAIN_SIGMA_REACH * sigma + wing_reach_pct
     return round(min(max(needed, STRIKE_PCT_RANGE), CHAIN_WIDTH_MAX), 4)
 
 
-def pick_wing(rows: list[StrikeRow], kind: str, short_strike: float, spot: float) -> dict | None:
+def _reach_fraction(req: "ScreenRequest", spot: float | None) -> float:
+    """The wing's reach as a share of spot, whichever way it was named --
+    the chain has to be fetched wide enough to hold it."""
+    if not spot or spot <= 0:
+        return req.wing_reach_pct
+    _target, reach = req.wing_width_for(spot)
+    return reach / spot
+
+
+def pick_wing(
+    rows: list[StrikeRow],
+    kind: str,
+    short_strike: float,
+    spot: float,
+    *,
+    target: float | None = None,
+    reach: float | None = None,
+) -> dict | None:
     """The long leg of a vertical: the listed strike further out of the
-    money whose distance from the short is nearest WING_TARGET_PCT of spot,
-    accepted out to WING_REACH_PCT, quoted on both sides. None when the
-    chain has no wing to buy -- the answer for a five-dollar-strike chain
-    on a cheap stock, and the reason a vertical screen is not just a
-    premium screen."""
-    reach = spot * WING_REACH_PCT
-    target = spot * WING_TARGET_PCT
+    money whose distance from the short is nearest `target` points,
+    accepted out to `reach`, quoted on both sides. Left out, both come from
+    WING_TARGET_PCT / WING_REACH_PCT of spot as before. None when the chain
+    has no wing to buy -- the answer for a five-dollar-strike chain on a
+    cheap stock, and the reason a vertical screen is not just a premium
+    screen."""
+    reach = spot * WING_REACH_PCT if reach is None else reach
+    target = spot * WING_TARGET_PCT if target is None else target
     candidates = []
     for row in rows:
         quote = row.call if kind == "call" else row.put
@@ -654,7 +702,7 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
                 None if not found else float(min(p["width"] for p in found)),
                 len(found) == len(pairs),
                 "no listed strike further out within "
-                f"{WING_REACH_PCT:.0%} of spot -- nothing to cap the risk with"
+                f"{_reach_fraction(req, row.spot):.0%} of spot -- nothing to cap the risk with"
                 if len(found) < len(pairs)
                 else " and ".join(f"{p['long_strike']:g} against {p['short_strike']:g} ({p['width']:g} wide)" for p in found),
             )
@@ -846,7 +894,8 @@ async def _priced(
     # chain_width_for for the band the default could not reach.
     row.realised_vol = realised_vol(closes)
     try:
-        chain: Chain = await service.chain(symbol, expiry, chain_width_for(row.realised_vol, row.dte))
+        width = chain_width_for(row.realised_vol, row.dte, _reach_fraction(req, row.spot))
+        chain: Chain = await service.chain(symbol, expiry, width)
     except Exception as exc:
         row.note = f"no chain: {exc}"
         row.criteria = _criteria(row, req, today)
@@ -875,7 +924,8 @@ async def _priced(
         for leg, kind, attr in ((row.short_put, "put", "put_spread"), (row.short_call, "call", "call_spread")):
             if leg is None:
                 continue
-            wing = pick_wing(chain.rows, kind, leg["strike"], chain.spot)
+            target, reach = req.wing_width_for(chain.spot)
+            wing = pick_wing(chain.rows, kind, leg["strike"], chain.spot, target=target, reach=reach)
             setattr(row, attr, vertical_of(leg, wing))
     row.outcome = _outcome_for(row, req, chain)
     if req.strategy == "calendar":

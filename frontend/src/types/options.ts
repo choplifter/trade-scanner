@@ -864,6 +864,9 @@ export interface ScreenRequest {
   dte_min?: number;
   dte_max?: number;
   min_open_interest?: number;
+  /** The bought wing's distance from the short, in points. Omitted leaves
+   * it at the backend's share of spot. */
+  wing_points?: number;
   max_spread_fraction?: number;
   short_delta_min?: number;
   short_delta_max?: number;
