@@ -639,6 +639,23 @@ class OptionsService:
         if payoff is not None and payoff.today is None:
             warnings.append("No IV on at least one leg: the risk chart shows the expiry curve only.")
 
+        # What this position risks against the account behind it. Said here
+        # because nothing else says it: the order ceilings bound the
+        # notional, the broker bounds the buying power, and neither of them
+        # notices that one trade is a quarter of the equity.
+        equity = _number(account.get("equity"))
+        # A max loss is signed (-7,500 is a loss of 7,500); a collateral is
+        # not. Both are a size here, so both are read as magnitudes.
+        at_risk = abs(risk.max_loss) if risk.max_loss is not None else abs(risk.collateral)
+        if equity and equity > 0 and at_risk:
+            share = at_risk / equity
+            limit = self._settings.trading_max_position_risk_pct / 100
+            if share > limit:
+                warnings.append(
+                    f"Position risk {at_risk:,.0f} is {share:.0%} of the account's {equity:,.0f} equity "
+                    f"(over the {limit:.0%} mark): {ticket.qty} of these, not the strikes, is the size decision."
+                )
+
         dte = (ticket.expiry - self._source.now().date()).days
         if dte <= 0:
             # Two different times, and they were conflated here before: 15:15

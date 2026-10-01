@@ -194,3 +194,29 @@ def test_an_uncovered_put_reports_the_floor_the_grid_cannot_reach(service):
 def test_an_uncovered_call_has_no_floor_at_all(service):
     spread = asyncio.run(service.preview(_built(TicketLeg(kind="call", strike=105, side="sell"))))
     assert spread.naked is True and spread.max_loss is None
+
+
+def test_a_position_large_against_the_account_says_so(service):
+    """The MU condor's lesson in the ticket: the strikes were defensible,
+    the size was not, and nothing in the app said so before it was placed.
+    The simulated account here holds 100,000."""
+    small = asyncio.run(
+        service.preview(_built(
+            TicketLeg(kind="call", strike=105, side="sell"),
+            TicketLeg(kind="call", strike=110, side="buy"),
+        ))
+    )
+    assert not any("of the account" in w for w in small.warnings), "a few hundred of risk is not worth a warning"
+
+    # The same structure at the per-order contract ceiling: ~400 of risk a
+    # spread, twenty of them, which is 8 % of the account in one trade.
+    big = asyncio.run(
+        service.preview(_built(
+            TicketLeg(kind="call", strike=105, side="sell"),
+            TicketLeg(kind="call", strike=110, side="buy"),
+            qty=20,
+        ))
+    )
+    warning = next((w for w in big.warnings if "of the account" in w), None)
+    assert warning is not None
+    assert "Position risk" in warning and "the size decision" in warning

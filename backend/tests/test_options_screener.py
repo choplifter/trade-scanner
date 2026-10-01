@@ -669,3 +669,62 @@ def test_the_old_boolean_still_means_something():
         closes={"A": _closes(0.01)},
     )
     assert not any(c["key"] == "earnings" for c in body["rows"][0]["criteria"])
+
+
+# --- the size of the thing, against the account --------------------------------
+
+
+class _AccountService(_Service):
+    def __init__(self, chains, equity):
+        super().__init__(chains)
+        self.equity = equity
+
+    async def account(self) -> dict:
+        return {"equity": self.equity, "options_buying_power": self.equity}
+
+
+def _sized(equity, **over):
+    service = _AccountService({"A": _chain()}, equity)
+    body = _run(service, ScreenRequest(symbols=["A"], strategy="credit_spread", **over), closes={"A": _closes(0.01)})
+    return body, body["rows"][0]
+
+
+def test_a_structure_small_against_the_account_passes():
+    body, row = _sized(1_000_000.0)
+    criterion = _criterion(row, "position_risk")
+    assert criterion["passed"] is True
+    assert body["criteria"]["equity"] == 1_000_000.0
+    assert "of the account's" in criterion["detail"]
+
+
+def test_the_same_structure_against_a_small_account_fails():
+    """The MU condor's lesson, in one assertion: the strikes were fine and
+    the size was not."""
+    _body, row = _sized(2_000.0)
+    criterion = _criterion(row, "position_risk")
+    assert criterion["passed"] is False
+    assert criterion["value"] > 0.02
+
+
+def test_without_an_account_the_risk_is_reported_and_not_judged():
+    _body, row = _sized(None)
+    criterion = _criterion(row, "position_risk")
+    assert criterion["passed"] is None
+    assert "no account to measure it against" in criterion["detail"]
+
+
+def test_the_limit_is_configurable_and_zero_leaves_the_criterion_out():
+    _body, strict = _sized(100_000.0, max_risk_pct=0.1)
+    assert _criterion(strict, "position_risk")["passed"] is False
+
+    _body, loose = _sized(100_000.0, max_risk_pct=90.0)
+    assert _criterion(loose, "position_risk")["passed"] is True
+
+    _body, off = _sized(100_000.0, max_risk_pct=0.0)
+    assert not any(c["key"] == "position_risk" for c in off["criteria"])
+
+
+def test_a_screen_without_an_account_endpoint_still_runs():
+    """service.account() failing is not a reason to answer nothing."""
+    body = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})
+    assert body["rows"] and body["criteria"]["equity"] is None

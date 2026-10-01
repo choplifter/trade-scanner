@@ -1438,6 +1438,7 @@ criteria a premium seller uses, and ranks by how many pass.
 | Short put / call delta | the strike nearest the middle of `SHORT_DELTA_BAND` (0.10-0.20) |
 | IV vs realised | ATM IV over the 20-session close-to-close volatility |
 | **Expected value** | the structure the row names, valued across the implied distribution at expiry (`structure_outcome`) |
+| **Risk vs account** | its max loss against the account's equity, over `MAX_RISK_PCT` (2 %) fails |
 
 **When the report falls decides more than whether.** For a short premium
 structure an *early* print is the thesis: the implied volatility that made
@@ -1545,6 +1546,15 @@ backend always took them; the tab sent none until now, so every run was
 the 30-60 day default. On this market that default was the difference
 between +1.54 and +14.10 of expected value: a 51-day expiry sits behind
 the whole earnings season and a 16-day one in front of it.
+
+**Size is a criterion, not an afterthought.** The screen fetches the
+account once and measures each structure's max loss against its equity;
+the ticket says the same thing on the way in, as a warning past
+`TRADING_MAX_POSITION_RISK_PCT` (2 %). Neither is a ceiling -- the order
+ceilings and the broker's buying power do that -- but nothing in the app
+used to say that a 150-wide condor on a 1,000-dollar stock risks 13,487 a
+contract, which is 14 % of a 97,000 account in a single trade. Without an
+account to measure against, the risk is reported and not judged.
 
 A run over 12 watchlist symbols takes about six seconds. It does not have
 to be waited for: `app/options/screen_job.py` runs the universe screen for

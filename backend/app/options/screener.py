@@ -151,6 +151,12 @@ MIN_OPEN_INTEREST = 5_000
 # Zero by default: a screen run before the open has no volume yet, and a
 # criterion that fails everything at 09:00 is noise, not a filter.
 MIN_OPTION_VOLUME = 0
+# What one position may risk against the account, as a share of equity.
+# The screen can only judge this when it knows the account; without one it
+# reports the dollars and leaves the verdict out. Two percent is the
+# conventional line, and it is the one the MU condor missed by a factor of
+# fourteen (13,487 a contract against 97,000 of equity).
+MAX_RISK_PCT = 2.0
 MAX_SPREAD_FRACTION = 0.10
 SHORT_DELTA_BAND = (0.10, 0.20)
 # Sessions of closes behind the realised volatility. Twenty is a trading
@@ -196,6 +202,9 @@ class ScreenRequest(BaseModel):
     dte_max: int = Field(default=DTE_RANGE[1], ge=1, le=400)
     min_open_interest: int = Field(default=MIN_OPEN_INTEREST, ge=0)
     min_option_volume: int = Field(default=MIN_OPTION_VOLUME, ge=0)
+    # Share of equity one position may risk, in percent. None uses
+    # MAX_RISK_PCT; 0 leaves the criterion out.
+    max_risk_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     max_spread_fraction: float = Field(default=MAX_SPREAD_FRACTION, gt=0.0, le=1.0)
     short_delta_min: float = Field(default=SHORT_DELTA_BAND[0], gt=0.0, lt=1.0)
     short_delta_max: float = Field(default=SHORT_DELTA_BAND[1], gt=0.0, lt=1.0)
@@ -272,6 +281,8 @@ class Row:
     back_iv: float | None = None
     term_ratio: float | None = None
     earnings_date: date | None = None
+    # The account this row is judged against, when the screen knows one.
+    equity: float | None = None
     criteria: list[Criterion] = field(default_factory=list)
     note: str | None = None
 
@@ -313,6 +324,13 @@ class Row:
             "scored": self.scored,
             "note": self.note,
         }
+
+
+def _number_or_none(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def realised_vol(closes: list[float], sessions: int = REALISED_SESSIONS) -> float | None:
@@ -580,6 +598,26 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
             )
         )
 
+    if row.outcome is not None and row.outcome.get("max_loss") is not None:
+        at_risk = abs(row.outcome["max_loss"])
+        limit = MAX_RISK_PCT if req.max_risk_pct is None else req.max_risk_pct
+        share = at_risk / row.equity if row.equity else None
+        if limit > 0:
+            out.append(
+                Criterion(
+                    "position_risk",
+                    "Risk vs account",
+                    None if share is None else round(share, 4),
+                    None if share is None else share <= limit / 100,
+                    f"{at_risk:,.0f} at risk per structure"
+                    + (
+                        f", {share:.1%} of the account's {row.equity:,.0f} equity (wanted under {limit:.0f} %)"
+                        if share is not None
+                        else " -- no account to measure it against"
+                    ),
+                )
+            )
+
     if row.outcome is not None:
         ev = row.outcome["expected_value"]
         out.append(
@@ -679,12 +717,13 @@ async def _priced(
     closes: list[float],
     earnings_calendar,
     iv_store,
+    equity: float | None = None,
 ) -> Row:
     """One symbol's row: its expiry in the window, that chain's numbers, and
     the criteria read off them. Never raises -- a symbol that cannot be
     priced comes back as a row with a note, because a screen of sixty names
     should not fail on one of them."""
-    row = Row(symbol=symbol)
+    row = Row(symbol=symbol, equity=equity)
     try:
         # The picker's strip stops at CHAIN_DAYS_AHEAD (60 days), so a
         # window that reaches past it -- or a calendar, whose back leg
@@ -892,6 +931,16 @@ async def screen_underlyings(
         )
     today = today or datetime.now(timezone.utc).date()
 
+    # The account the rows are sized against. Best-effort: a screen is
+    # still worth reading without one, it just cannot say "that is a
+    # quarter of your equity".
+    equity: float | None = None
+    try:
+        account = await service.account()
+        equity = _number_or_none(account.get("equity"))
+    except Exception:
+        logger.debug("Screener: no account to size against", exc_info=True)
+
     closes: dict[str, list[float]] = {}
     try:
         # Calendar days, so a 20-session window survives weekends and holidays.
@@ -902,7 +951,7 @@ async def screen_underlyings(
 
     rows = await asyncio.gather(
         *(
-            _priced(service, symbol, req, today, closes.get(symbol, []), earnings_calendar, iv_store)
+            _priced(service, symbol, req, today, closes.get(symbol, []), earnings_calendar, iv_store, equity)
             for symbol in symbols
         )
     )
@@ -922,6 +971,8 @@ async def screen_underlyings(
             "avoid_earnings": req.avoid_earnings,
             "earnings_policy": req.policy,
             "early_earnings_fraction": EARLY_EARNINGS_FRACTION,
+            "max_risk_pct": MAX_RISK_PCT if req.max_risk_pct is None else req.max_risk_pct,
+            "equity": equity,
             "rich_iv_ratio": RICH_IV_RATIO,
             "cheap_iv_ratio": CHEAP_IV_RATIO,
         },

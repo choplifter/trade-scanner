@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     # Absolute backstop, applied as well as the percentage. Independent on
     # purpose: it still bounds the damage if equity is ever misreported.
     trading_max_order_notional: float = 25_000.0
+    # What one position may risk, as a share of equity. Not a ceiling the
+    # app enforces -- the notional ones above do that -- but the line past
+    # which a ticket says so out loud. A 150-wide condor on a 1,000-dollar
+    # stock risks 13,487 a contract, which is 14 % of a 97,000 account in
+    # one trade, and nothing in the app said that before it was placed.
+    trading_max_position_risk_pct: float = 2.0
     trading_max_order_qty: int = 10_000
 
     # Default share of equity risked per trade when sizing from a stop, used
