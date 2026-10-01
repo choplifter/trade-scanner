@@ -1,14 +1,39 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from app.scanners.history_store import NewAppearance, ScannerHistoryStore
+from app.services.market_clock import ET, trading_hours_for
 
-# A real NYSE trading day (Wednesday) and a real non-trading day (the Saturday
-# after it). Fixed rather than derived from "today" so these tests behave the
-# same whichever day they run on -- _is_trading_day consults the actual NYSE
-# calendar, so seeding on a weekend would otherwise drop every row.
-TRADING_DAY = datetime(2026, 8, 12, 15, 0, tzinfo=timezone.utc)
-NON_TRADING_DAY = datetime(2026, 8, 15, 15, 0, tzinfo=timezone.utc)
+
+def _at(day) -> datetime:
+    """A UTC moment inside that day's session (11:00 ET)."""
+    return datetime.combine(day, time(15, 0), tzinfo=timezone.utc)
+
+
+def _recent_days() -> tuple[datetime, datetime]:
+    """The most recent NYSE session and the closed day before it.
+
+    Both halves matter and pull in opposite directions, which is what the
+    fixed dates here could not do at once. _is_trading_day consults the real
+    NYSE calendar, so seeding on a weekend drops every row -- hence a real
+    session. And compute_performance counts back from *now*, so a date
+    written down in the source falls out of a 30-day window as soon as the
+    calendar passes it: these three tests had been red since mid-September
+    on dates chosen in August.
+    """
+    day = datetime.now(timezone.utc).astimezone(ET).date()
+    while trading_hours_for(day) is None:
+        day -= timedelta(days=1)
+    closed = day - timedelta(days=1)
+    while trading_hours_for(closed) is not None:
+        closed -= timedelta(days=1)
+    return _at(day), _at(closed)
+
+
+TRADING_DAY, NON_TRADING_DAY = _recent_days()
+# The ET date rows seeded at TRADING_DAY are recorded under, which is what
+# symbols_for_date is queried with.
+TRADING_DATE = TRADING_DAY.astimezone(ET).date().isoformat()
 
 
 def _store(tmp_path) -> ScannerHistoryStore:
@@ -364,10 +389,10 @@ def test_symbols_for_date_returns_every_symbol_seen_that_day(tmp_path):
     store = _store(tmp_path)
     _seed_appearance(store, "AAA", pct_change=5.0, view="gainers", now=TRADING_DAY)
     _seed_appearance(store, "BBB", pct_change=-8.0, view="losers", now=TRADING_DAY)
-    # A different day -- must not leak into the 2026-08-12 query below.
+    # A different day -- must not leak into the TRADING_DATE query below.
     _seed_appearance(store, "CCC", pct_change=50.0, view="gainers", now=NON_TRADING_DAY)
 
-    symbols = asyncio.run(store.symbols_for_date("2026-08-12"))
+    symbols = asyncio.run(store.symbols_for_date(TRADING_DATE))
 
     assert set(symbols) == {"AAA", "BBB"}
 
@@ -377,7 +402,7 @@ def test_symbols_for_date_dedupes_a_symbol_seen_in_multiple_views(tmp_path):
     _seed_appearance(store, "AAA", pct_change=5.0, view="gainers", now=TRADING_DAY)
     _seed_appearance(store, "AAA", pct_change=5.0, view="most_active", now=TRADING_DAY)
 
-    symbols = asyncio.run(store.symbols_for_date("2026-08-12"))
+    symbols = asyncio.run(store.symbols_for_date(TRADING_DATE))
 
     assert symbols == ["AAA"]
 
@@ -391,13 +416,13 @@ def test_symbols_for_date_orders_and_limits_by_move_magnitude(tmp_path):
     _seed_appearance(store, "BIG", pct_change=-40.0, view="losers", now=TRADING_DAY)
     _seed_appearance(store, "MEDIUM", pct_change=10.0, view="gainers", now=TRADING_DAY)
 
-    assert asyncio.run(store.symbols_for_date("2026-08-12")) == ["BIG", "MEDIUM", "SMALL"]
-    assert asyncio.run(store.symbols_for_date("2026-08-12", limit=2)) == ["BIG", "MEDIUM"]
+    assert asyncio.run(store.symbols_for_date(TRADING_DATE)) == ["BIG", "MEDIUM", "SMALL"]
+    assert asyncio.run(store.symbols_for_date(TRADING_DATE, limit=2)) == ["BIG", "MEDIUM"]
 
 
 def test_symbols_for_date_empty_when_nothing_recorded(tmp_path):
     store = _store(tmp_path)
-    assert asyncio.run(store.symbols_for_date("2026-08-12")) == []
+    assert asyncio.run(store.symbols_for_date(TRADING_DATE)) == []
 
 
 def test_a_window_with_no_appearances_still_answers_in_the_full_shape(tmp_path):
