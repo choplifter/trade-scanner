@@ -158,6 +158,22 @@ def _quote_payload(quote: LegQuote) -> dict:
     }
 
 
+def reports_open_interest(chain: Chain) -> bool:
+    """Whether this chain carries open interest at all.
+
+    Alpaca leaves the field unset for stretches of the session: seen
+    2026-10-01 around 10:00 ET, every one of GOOGL's 28 quotes for the 13
+    November expiry read 0 while all 28 were tradable and quoted on both
+    sides. A chain in which nothing whatsoever is open does not exist for a
+    name like that, so a flat zero across the board is the feed not saying,
+    not the market being empty -- and a minimum open interest cannot
+    discriminate on a number nobody reported.
+    """
+    return any(
+        q.open_interest > 0 for row in chain.rows for q in (row.call, row.put) if q is not None
+    )
+
+
 def condense_chain(
     chain: Chain,
     *,
@@ -177,6 +193,12 @@ def condense_chain(
     spot = chain.spot
     low = spot * (1 - strike_pct_range)
     high = spot * (1 + strike_pct_range)
+    # With the field unreported across the whole chain there is nothing to
+    # filter on, and keeping the threshold would drop every strike -- which
+    # is how the Optimizer came to answer "no tradable, two-sided strikes
+    # near the money" for a chain that was entirely tradable and two-sided.
+    if not reports_open_interest(chain):
+        min_oi = 0
 
     kept: list[tuple[float, LegQuote | None, LegQuote | None]] = []
     for row in chain.rows:

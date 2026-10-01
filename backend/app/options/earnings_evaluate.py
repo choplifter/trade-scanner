@@ -33,7 +33,12 @@ import logging
 from datetime import date, datetime, timezone
 
 from app.ai.options_context import _chain_block, _daily_block, _gex_block, pick_expiries
-from app.ai.options_resolve import MAX_SPREAD_FRACTION, MIN_OPEN_INTEREST, _quote_is_offerable
+from app.ai.options_resolve import (
+    MAX_SPREAD_FRACTION,
+    MIN_OPEN_INTEREST,
+    _quote_is_offerable,
+    reports_open_interest,
+)
 from app.market_data.earnings_screen import gather_symbol_facts, implied_move_pct
 from app.options.chain import ExpiryInfo
 from app.options.iv_context import iv_premium, term_structure
@@ -121,12 +126,16 @@ def wing_counts(chain, spot: float, move: float) -> tuple[int, int]:
     if spot <= 0 or move <= 0 or chain is None:
         return 0, 0
     low, high = spot * (1 - move), spot * (1 + move)
+    # Same reading as condense_chain: a chain that reports no open interest
+    # anywhere is a feed that did not say, so the threshold would count
+    # every wing as missing.
+    min_oi = MIN_OPEN_INTEREST if reports_open_interest(chain) else 0
     puts = 0
     calls = 0
     for row in getattr(chain, "rows", []):
-        if row.strike <= low and _quote_is_offerable(row.put, min_oi=MIN_OPEN_INTEREST, max_spread_frac=MAX_SPREAD_FRACTION):
+        if row.strike <= low and _quote_is_offerable(row.put, min_oi=min_oi, max_spread_frac=MAX_SPREAD_FRACTION):
             puts += 1
-        if row.strike >= high and _quote_is_offerable(row.call, min_oi=MIN_OPEN_INTEREST, max_spread_frac=MAX_SPREAD_FRACTION):
+        if row.strike >= high and _quote_is_offerable(row.call, min_oi=min_oi, max_spread_frac=MAX_SPREAD_FRACTION):
             calls += 1
     return puts, calls
 

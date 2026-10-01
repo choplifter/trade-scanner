@@ -565,3 +565,45 @@ def test_the_proposal_table_covers_every_strategy():
     # there is nothing for the idea generator to propose and no canonical
     # arrangement to snap. Every strategy it can name is covered here.
     assert set(_PROPOSALS) == set(get_args(Strategy)) - {"custom"}
+
+
+# --- a chain that reports no open interest at all -----------------------------
+
+
+def _chain_with_oi(oi_by_strike: dict[float, int]) -> Chain:
+    """A well-behaved chain whose every quote carries the given open
+    interest -- the one field under test here."""
+    strikes = sorted(oi_by_strike)
+    quotes = {
+        (kind, strike): _quote(kind, strike, oi=oi_by_strike[strike])
+        for strike in strikes
+        for kind in ("call", "put")
+    }
+    return _chain(strikes, quotes=quotes)
+
+
+def test_a_chain_reporting_no_open_interest_is_not_filtered_on_it():
+    """Alpaca leaves the field unset for stretches of the session. Seen
+    2026-10-01 around 10:00 ET: all 28 of GOOGL's quotes for the 13 November
+    expiry read 0 while every one was tradable and quoted on both sides.
+    Read as real, the minimum dropped the entire chain -- the Optimizer then
+    had no at-the-money strike to take a volatility from, so the implied
+    move was None and every structure came back without a chance of
+    profit."""
+    rows, strikes = condense_chain(_chain_with_oi({745.0: 0, 750.0: 0, 755.0: 0}))
+    assert [r["strike"] for r in rows] == [745.0, 750.0, 755.0]
+    assert strikes.call and strikes.put
+
+
+def test_a_single_reported_strike_is_enough_to_trust_the_field_again():
+    """One contract carrying open interest means the feed is reporting it,
+    so the quiet ones really are untouched and the threshold applies."""
+    rows, _strikes = condense_chain(_chain_with_oi({745.0: 900, 750.0: 0, 755.0: 0}))
+    assert [r["strike"] for r in rows] == [745.0]
+
+
+def test_reports_open_interest_says_which_of_the_two_it_is():
+    from app.ai.options_resolve import reports_open_interest
+
+    assert reports_open_interest(_chain_with_oi({750.0: 0, 755.0: 0})) is False
+    assert reports_open_interest(_chain_with_oi({750.0: 0, 755.0: 1})) is True
