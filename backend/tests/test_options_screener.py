@@ -761,3 +761,24 @@ def test_no_ratio_without_the_two_numbers_it_needs():
     empty = Chain(underlying="A", expiry=EXPIRY, spot=100.0, feed="opra", as_of=None, rows=rows)
     no_oi = _run(_Service({"A": empty}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})["rows"][0]
     assert no_oi["volume_oi_ratio"] is None, "nothing open to measure against"
+
+
+def test_the_row_carries_both_risk_numbers_and_keeps_them_apart():
+    """R/R is the structure's own shape; the risk share is the size
+    decision against the account. Two different questions, two fields."""
+    service = _AccountService({"A": _chain()}, 50_000.0)
+    body = _run(service, ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    outcome = row["outcome"]
+    if outcome["max_profit"]:
+        assert outcome["risk_reward"] == pytest.approx(abs(outcome["max_loss"]) / outcome["max_profit"], rel=1e-6)
+    else:
+        assert outcome["risk_reward"] is None, "nothing to make, so no ratio rather than a division by zero"
+    assert row["risk_share"] == pytest.approx(abs(outcome["max_loss"]) / 50_000.0, rel=1e-6)
+
+
+def test_without_an_account_there_is_no_risk_share_but_still_a_ratio():
+    body = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    assert row["risk_share"] is None, "no account, no share of it"
+    assert row["outcome"] is not None, "the structure is still valued"

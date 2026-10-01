@@ -943,6 +943,10 @@ export interface ScreenRow {
   /** Null where the screen judged a chain rather than a structure (a long
    * option, a calendar). */
   outcome: ScreenOutcome | null;
+  /** The structure's max loss as a share of the account's equity -- the
+   * size decision, not the structure's own reward ratio. Null without an
+   * account to measure against. */
+  risk_share: number | null;
   /** The calendar's second expiry and the slope to it. */
   back_expiry: string | null;
   back_iv: number | null;

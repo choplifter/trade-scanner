@@ -287,6 +287,17 @@ class Row:
     note: str | None = None
 
     @property
+    def risk_share(self) -> float | None:
+        """What this structure's max loss is of the account's equity. The
+        other "risk" on the row is the structure's own reward ratio; this
+        one is the size decision, and they are easy to confuse, so both
+        travel as their own field rather than as one word."""
+        if not self.equity or self.equity <= 0 or not self.outcome:
+            return None
+        max_loss = self.outcome.get("max_loss")
+        return None if max_loss is None else abs(max_loss) / self.equity
+
+    @property
     def volume_oi_ratio(self) -> float | None:
         """Today's contracts against the positions already open. Above 1
         the expiry is being *built* today rather than carried: the open
@@ -323,6 +334,7 @@ class Row:
             "put_spread": self.put_spread,
             "call_spread": self.call_spread,
             "outcome": self.outcome,
+            "risk_share": None if self.risk_share is None else round(self.risk_share, 4),
             "back_expiry": self.back_expiry.isoformat() if self.back_expiry else None,
             "back_iv": None if self.back_iv is None else round(self.back_iv, 4),
             "term_ratio": None if self.term_ratio is None else round(self.term_ratio, 3),

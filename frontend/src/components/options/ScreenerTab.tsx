@@ -379,6 +379,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
                       Profit / Loss
                     </th>
+                    <th scope="col" title="What the structure risks against what it can make. 3:1 means three dollars at risk for every one it pays.">
+                      R/R
+                    </th>
                     <th scope="col" title="Share of the option market's own implied distribution at expiry under which the structure loses.">
                       Loss prob
                     </th>
@@ -387,6 +390,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       title="The payoff weighted by that distribution. A structure can pay a large credit, lose rarely, and still be negative here -- which is what a list sorted by max profit hides."
                     >
                       EV
+                    </th>
+                    <th
+                      scope="col"
+                      title="The max loss against your account's equity -- the size decision, as opposed to R/R, which is the structure's own shape. The criterion fails past 2 %."
+                    >
+                      Risk %
                     </th>
                   </>
                 )}
@@ -460,9 +469,13 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                             ? `${formatMoney(row.outcome.max_profit ?? 0)} / ${formatMoney(row.outcome.max_loss ?? 0)}`
                             : "—"}
                         </td>
+                        <td>{row.outcome?.risk_reward == null ? "—" : `${row.outcome.risk_reward.toFixed(1)} : 1`}</td>
                         <td>{row.outcome ? pct(row.outcome.loss_probability) : "—"}</td>
                         <td className={row.outcome ? (row.outcome.expected_value > 0 ? "delta-up" : "delta-down") : undefined}>
                           {row.outcome ? formatMoney(row.outcome.expected_value) : "—"}
+                        </td>
+                        <td className={row.risk_share != null && row.risk_share > 0.02 ? "delta-down" : undefined}>
+                          {row.risk_share == null ? "—" : pct(row.risk_share, 1)}
                         </td>
                       </>
                     )}
@@ -513,7 +526,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   </tr>
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={16}>
+                      <td colSpan={18}>
                         <Criteria row={row} />
                       </td>
                     </tr>
