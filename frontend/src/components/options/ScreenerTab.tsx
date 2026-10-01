@@ -360,6 +360,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 <th scope="col" title="Implied over realised. Above 1.2 the premium is rich, below 0.95 it is cheap.">IV/RV</th>
                 <th scope="col" title="Where today's IV sits in this symbol's own recorded range. Needs 20 sessions.">IV rank</th>
                 <th scope="col" title="Open interest across the fetched strikes of that expiry.">OI</th>
+                <th
+                  scope="col"
+                  title="Contracts traded today against the positions already open. Open interest says a crowd is positioned; this says whether anyone is still trading it. Above 1 the expiry is being built today rather than carried."
+                >
+                  Vol/OI
+                </th>
                 <th scope="col">Expiry</th>
                 <th scope="col" title="The strike nearest the delta band, and what crossing its quote costs.">Short put</th>
                 <th scope="col">Short call</th>
@@ -423,6 +429,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       {row.iv_rank == null ? "—" : `${row.iv_rank.toFixed(0)} %`}
                     </td>
                     <td>{row.open_interest.toLocaleString()}</td>
+                    <td className={row.volume_oi_ratio != null && row.volume_oi_ratio >= 1 ? "delta-up" : undefined}>
+                      {row.volume_oi_ratio == null ? "—" : `${row.volume_oi_ratio.toFixed(2)}×`}
+                    </td>
                     <td>{row.expiry ? `${row.expiry} (${row.dte}d)` : "—"}</td>
                     <td>
                       {row.short_put
@@ -504,7 +513,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   </tr>
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={15}>
+                      <td colSpan={16}>
                         <Criteria row={row} />
                       </td>
                     </tr>

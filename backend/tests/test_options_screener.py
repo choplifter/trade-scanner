@@ -728,3 +728,36 @@ def test_a_screen_without_an_account_endpoint_still_runs():
     """service.account() failing is not a reason to answer nothing."""
     body = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})
     assert body["rows"] and body["criteria"]["equity"] is None
+
+
+def test_volume_against_open_interest_says_whether_the_expiry_is_alive_today():
+    """Open interest says a crowd is positioned; the ratio says whether
+    anyone is still trading it. Above 1 the expiry is being built today."""
+    def traded(volume: int) -> Chain:
+        base = _chain(oi=1_000)
+        rows = [
+            StrikeRow(
+                strike=r.strike,
+                call=None if r.call is None else replace(r.call, volume=volume),
+                put=None if r.put is None else replace(r.put, volume=volume),
+            )
+            for r in base.rows
+        ]
+        return Chain(underlying="A", expiry=EXPIRY, spot=100.0, feed="opra", as_of=None, rows=rows)
+
+    quiet = _run(_Service({"A": traded(50)}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})["rows"][0]
+    assert quiet["volume_oi_ratio"] == pytest.approx(0.05)
+    assert "0.05x" in _criterion(quiet, "option_volume")["detail"]
+
+    busy = _run(_Service({"A": traded(2_000)}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})["rows"][0]
+    assert busy["volume_oi_ratio"] == pytest.approx(2.0)
+
+
+def test_no_ratio_without_the_two_numbers_it_needs():
+    no_bars = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})["rows"][0]
+    assert no_bars["volume_oi_ratio"] is None, "no day bars, no ratio"
+
+    rows = [StrikeRow(strike=r.strike, call=None, put=None) for r in _chain().rows]
+    empty = Chain(underlying="A", expiry=EXPIRY, spot=100.0, feed="opra", as_of=None, rows=rows)
+    no_oi = _run(_Service({"A": empty}), ScreenRequest(symbols=["A"]), closes={"A": _closes(0.01)})["rows"][0]
+    assert no_oi["volume_oi_ratio"] is None, "nothing open to measure against"

@@ -6224,15 +6224,24 @@ td.chain-side.chain-stale {
   text-align: right;
 }
 
-.screen-detail td {
+/* Specific enough to beat ".screen-table tbody td { white-space: nowrap }",
+ * which is what made the criteria run across each other. */
+.screen-table tbody tr.screen-detail td {
   padding: 4px 8px 8px 24px;
   background: var(--surface-sunken, rgba(0, 0, 0, 0.18));
+  /* The table's cells are nowrap so the columns stay aligned; the
+   * criteria below are sentences and have to wrap, or they run across
+   * their neighbours in the grid. */
+  white-space: normal;
 }
 
 .screen-criteria {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 2px 16px;
+  /* minmax(0, 1fr) rather than a bare 1fr: a grid column's default
+   * min-width is its content, so one long sentence pushed the others out
+   * of their tracks instead of wrapping inside its own. */
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 4px 20px;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -6242,6 +6251,13 @@ td.chain-side.chain-stale {
 
 .screen-criteria li {
   color: var(--text-secondary);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  /* The mark hangs in the gutter so wrapped lines align under the text
+   * rather than under the tick. */
+  padding-left: 16px;
+  text-indent: -16px;
 }
 
 .screen-criteria li.pass .screen-mark {

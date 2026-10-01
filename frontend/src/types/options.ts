@@ -930,6 +930,11 @@ export interface ScreenRow {
   iv_rank: number | null;
   iv_rank_samples: number;
   open_interest: number;
+  /** Contracts traded today across this expiry; null without day bars. */
+  option_volume: number | null;
+  /** That volume against the open interest. Above 1 the expiry is being
+   * built today rather than carried. */
+  volume_oi_ratio: number | null;
   short_put: ScreenShortLeg | null;
   short_call: ScreenShortLeg | null;
   /** The vertical built off each short leg, where the chain had a wing. */

@@ -1439,6 +1439,7 @@ criteria a premium seller uses, and ranks by how many pass.
 | IV vs realised | ATM IV over the 20-session close-to-close volatility |
 | **Expected value** | the structure the row names, valued across the implied distribution at expiry (`structure_outcome`) |
 | **Risk vs account** | its max loss against the account's equity, over `MAX_RISK_PCT` (2 %) fails |
+| **Vol/OI** | today's contracts against the positions already open: above 1 the expiry is being built today rather than carried |
 
 **When the report falls decides more than whether.** For a short premium
 structure an *early* print is the thesis: the implied volatility that made

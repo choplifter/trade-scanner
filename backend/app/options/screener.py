@@ -287,6 +287,16 @@ class Row:
     note: str | None = None
 
     @property
+    def volume_oi_ratio(self) -> float | None:
+        """Today's contracts against the positions already open. Above 1
+        the expiry is being *built* today rather than carried: the open
+        interest says a crowd is positioned, this says whether anyone is
+        still trading it. None when no day bars were read."""
+        if self.option_volume is None or self.open_interest <= 0:
+            return None
+        return self.option_volume / self.open_interest
+
+    @property
     def passed(self) -> int:
         return sum(1 for c in self.criteria if c.passed)
 
@@ -307,6 +317,7 @@ class Row:
             "iv_rank_samples": self.iv_rank_samples,
             "open_interest": self.open_interest,
             "option_volume": self.option_volume,
+            "volume_oi_ratio": None if self.volume_oi_ratio is None else round(self.volume_oi_ratio, 3),
             "short_put": self.short_put,
             "short_call": self.short_call,
             "put_spread": self.put_spread,
@@ -499,7 +510,12 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
                 "no day bars for this expiry"
                 if traded is None
                 else f"{traded:,} traded today across this expiry"
-                + (f", wanted {req.min_option_volume:,}+" if req.min_option_volume > 0 else " (not judged)"),
+                + (
+                    f" against {row.open_interest:,} open ({row.volume_oi_ratio:.2f}x)"
+                    if row.volume_oi_ratio is not None
+                    else ""
+                )
+                + (f", wanted {req.min_option_volume:,}+" if req.min_option_volume > 0 else " -- not judged"),
             )
         )
 
