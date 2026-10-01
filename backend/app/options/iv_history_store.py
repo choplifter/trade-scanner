@@ -34,6 +34,17 @@ logger = logging.getLogger(__name__)
 MIN_SAMPLES = 20
 # A year of sessions, the conventional IV-rank lookback.
 LOOKBACK_SESSIONS = 252
+# The stretch of the curve a reading has to come from to be comparable
+# with the others. A rank is today's implied volatility against this
+# symbol's own past ones, and an expiry one day out is not the same
+# measurement as one fifty days out: on the day MU reported, the 1-DTE
+# chain priced 178 % against the 51-DTE chain's 57 %. Both are real and
+# putting them in one history makes the rank meaningless.
+#
+# Readings outside the band are neither recorded nor read -- the filter on
+# the read side is what makes the rows already written before this existed
+# harmless, without a migration.
+COMPARABLE_DTE = (20, 90)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS option_iv_history (
@@ -116,6 +127,10 @@ class IvHistoryStore:
         else, and a failed insert must never take that down."""
         if not atm_iv or atm_iv <= 0:
             return
+        if not COMPARABLE_DTE[0] <= dte <= COMPARABLE_DTE[1]:
+            # Not an error: the caller read a chain, it was simply the
+            # wrong part of the curve to compare across days.
+            return
         try:
             await asyncio.to_thread(self._record_sync, symbol, session_date, atm_iv, dte)
         except Exception:
@@ -124,9 +139,9 @@ class IvHistoryStore:
     def _history_sync(self, symbol: str, limit: int) -> list[float]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT atm_iv FROM option_iv_history WHERE symbol = ? "
+                "SELECT atm_iv FROM option_iv_history WHERE symbol = ? AND dte BETWEEN ? AND ? "
                 "ORDER BY session_date DESC LIMIT ?",
-                (symbol.upper(), limit),
+                (symbol.upper(), COMPARABLE_DTE[0], COMPARABLE_DTE[1], limit),
             ).fetchall()
         return [row["atm_iv"] for row in rows]
 

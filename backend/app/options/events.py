@@ -24,6 +24,8 @@ from datetime import date, datetime, timezone
 
 from app.services.market_clock import ET
 
+from app.options.iv_history_store import COMPARABLE_DTE
+
 logger = logging.getLogger(__name__)
 
 # Reports to measure: two years of quarterlies.
@@ -172,8 +174,17 @@ async def _iv_rank_block(iv_store, underlying: str, atm_iv: float | None, dte: i
     if iv_store is None or atm_iv is None:
         return block
     try:
+        # A reading from the wrong stretch of the curve must not *join* the
+        # history -- a 1-DTE chain priced 178 % on the day MU reported,
+        # against 57 % at 51 days -- but it can still be placed against it:
+        # a caller asking "where does this number sit" gets an answer, and
+        # one that does not say which expiry it read gets the benefit of
+        # the doubt. Only the write is guarded.
+        comparable = dte is not None and COMPARABLE_DTE[0] <= dte <= COMPARABLE_DTE[1]
+        if dte is not None and not comparable:
+            return block
         rank, samples = await iv_store.rank(underlying, atm_iv)
-        if dte is not None and dte > 0 and hasattr(iv_store, "record"):
+        if comparable and hasattr(iv_store, "record"):
             await iv_store.record(underlying, today, atm_iv, dte)
     except Exception:
         logger.exception("IV rank lookup failed for %s", underlying)

@@ -170,3 +170,57 @@ def test_readings_accumulate_into_a_rank(tmp_path):
     rank, samples = asyncio.run(store.rank("A", 0.50))
     assert samples == MIN_SAMPLES
     assert rank is not None and rank.percent == pytest.approx(100.0), "today is the top of its own range"
+
+
+# --- one stretch of the curve, or the rank means nothing -----------------------
+
+
+def test_a_reading_from_the_wrong_part_of_the_curve_is_not_recorded(tmp_path):
+    """The day MU reported, its 1-DTE chain priced 178 % against the
+    51-DTE chain's 57 %. Both are real; in one history they are noise."""
+    from app.options.iv_history_store import COMPARABLE_DTE, IvHistoryStore
+
+    store = IvHistoryStore(str(tmp_path / "iv.sqlite3"))
+    asyncio.run(store.init_schema())
+    asyncio.run(store.record("MU", TODAY, 1.78, 1))
+    assert asyncio.run(store.history("MU")) == [], "a one-day expiry is a different measurement"
+
+    asyncio.run(store.record("MU", TODAY, 0.575, 51))
+    assert asyncio.run(store.history("MU")) == [0.575]
+    assert COMPARABLE_DTE[0] <= 51 <= COMPARABLE_DTE[1]
+
+
+def test_rows_written_before_the_band_existed_are_ignored_on_read(tmp_path):
+    """No migration: the filter sits on the read side, so the rows already
+    in the file stop counting without being deleted."""
+    import sqlite3
+
+    from app.options.iv_history_store import IvHistoryStore
+
+    path = str(tmp_path / "iv.sqlite3")
+    store = IvHistoryStore(path)
+    asyncio.run(store.init_schema())
+    with sqlite3.connect(path) as conn:  # straight past record()'s guard
+        conn.execute(
+            "INSERT INTO option_iv_history (symbol, session_date, atm_iv, dte, recorded_at) VALUES (?, ?, ?, ?, ?)",
+            ("MU", TODAY.isoformat(), 1.78, 1, "2026-10-01T12:00:00+00:00"),
+        )
+    assert asyncio.run(store.history("MU")) == []
+    rank, samples = asyncio.run(store.rank("MU", 0.60))
+    assert rank is None and samples == 0
+
+
+def test_the_events_block_skips_a_chain_outside_the_band(tmp_path):
+    from app.options.events import _iv_rank_block
+    from app.options.iv_history_store import IvHistoryStore
+
+    store = IvHistoryStore(str(tmp_path / "iv.sqlite3"))
+    asyncio.run(store.init_schema())
+
+    near = asyncio.run(_iv_rank_block(store, "MU", 1.78, 1, TODAY))
+    assert near["rank"] is None and near["samples"] == 0
+    assert asyncio.run(store.history("MU")) == [], "looking at a 0DTE chain must not write one"
+
+    normal = asyncio.run(_iv_rank_block(store, "MU", 0.57, 45, TODAY))
+    assert normal["atm_iv"] == pytest.approx(0.57)
+    assert asyncio.run(store.history("MU")) == [0.57]

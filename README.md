@@ -1486,7 +1486,17 @@ session -- 45 minutes after the open, so the opening auction's noise has
 cleared and readings stay comparable -- over the watchlist plus the 150
 most liquid names, recording the ATM IV of an expiry 30-60 days out. One
 chain fetch per symbol, once a day. Until a symbol has its twenty
-sessions the rank is blank and the IV/RV ratio is what works. Note that open interest here is *one expiry's*, an order
+sessions the rank is blank and the IV/RV ratio is what works.
+
+Only readings from a comparable stretch of the curve count
+(`COMPARABLE_DTE`, 20-90 days). A rank is today's implied volatility
+against this symbol's own past ones, and an expiry one day out is not the
+same measurement: on the day MU reported, its 1-DTE chain priced 178 %
+against the 51-DTE chain's 57 %. Both are real, and in one history they
+are noise. The filter sits on the read side as well as the write, so the
+rows written before it existed stop counting without a migration -- of the
+302 readings in the file, 144 came from chains under 20 days (every short
+expiry anyone happened to open) and now sit out. Note that open interest here is *one expiry's*, an order
 of magnitude below the whole-chain number a published screen quotes: the
 liquid index ETFs come in at 6-14k, a single name around 1k.
 
