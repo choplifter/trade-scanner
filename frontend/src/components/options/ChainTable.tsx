@@ -98,6 +98,7 @@ function Side({
   role,
   pickable,
   replay,
+  oiUnreported,
   asOfMs,
   greek,
   onPick,
@@ -111,6 +112,10 @@ function Side({
   pickable: boolean;
   /** A replayed chain: no open interest, synthetic bid/ask, stale prints. */
   replay: boolean;
+  /** This expiry reported no open interest on any strike. Alpaca leaves
+   * the field unset for a whole series sometimes, and a column of zeros
+   * then says "nothing is open here" about a chain nobody reported on. */
+  oiUnreported: boolean;
   asOfMs: number;
   greek: { key: ChainGreek; digits: number };
   onPick: () => void;
@@ -132,7 +137,7 @@ function Side({
   ]
     .filter(Boolean)
     .join(" ");
-  const oiCell = replay ? "—" : oi(quote?.open_interest ?? 0);
+  const oiCell = replay || oiUnreported ? "—" : oi(quote?.open_interest ?? 0);
   // Volume is the session's own trades: a strike with open interest but no
   // volume is an old position nobody is touching today. Unknown (a replayed
   // day, or a chain built without day bars) reads as a dash, not as zero.
@@ -199,6 +204,13 @@ function Side({
  * role. Scrolls itself to spot when a new chain arrives. */
 export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: ChainTableProps) {
   const replay = chain.feed === "replay";
+  // Zeros interleaved with real values are a real "nothing open on this
+  // strike" (see gamma_exposure's own note); zeros everywhere are the feed
+  // not reporting, and the same distinction the backend draws in
+  // options_resolve.reports_open_interest.
+  const oiUnreported = chain.rows.every(
+    (row) => !row.call?.open_interest && !row.put?.open_interest,
+  );
   const asOfMs = Date.parse(chain.as_of);
   const [settings] = useSettings();
   const greek = GREEKS.find((g) => g.key === settings.chainGreek) ?? GREEKS[0];
@@ -293,6 +305,7 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
                   role={selection.get(legKey("call", row.strike))}
                   pickable={pickable !== "put"}
                   replay={replay}
+                  oiUnreported={oiUnreported}
                   asOfMs={asOfMs}
                 greek={greek}
                   onPick={() => onPick("call", row.strike)}
@@ -307,6 +320,7 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
                   role={selection.get(legKey("put", row.strike))}
                   pickable={pickable !== "call"}
                   replay={replay}
+                  oiUnreported={oiUnreported}
                   asOfMs={asOfMs}
                 greek={greek}
                   onPick={() => onPick("put", row.strike)}
