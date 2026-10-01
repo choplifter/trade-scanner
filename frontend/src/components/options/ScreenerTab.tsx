@@ -437,7 +437,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     <td title={row.iv_rank == null ? `${row.iv_rank_samples} sessions recorded, 20 needed` : undefined}>
                       {row.iv_rank == null ? "—" : `${row.iv_rank.toFixed(0)} %`}
                     </td>
-                    <td>{row.open_interest.toLocaleString()}</td>
+                    <td title={row.open_interest == null ? "Not reported for this expiry right now" : undefined}>
+                      {row.open_interest == null ? "—" : row.open_interest.toLocaleString()}
+                    </td>
                     <td className={row.volume_oi_ratio != null && row.volume_oi_ratio >= 1 ? "delta-up" : undefined}>
                       {row.volume_oi_ratio == null ? "—" : `${row.volume_oi_ratio.toFixed(2)}×`}
                     </td>

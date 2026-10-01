@@ -929,7 +929,10 @@ export interface ScreenRow {
   iv_rv_ratio: number | null;
   iv_rank: number | null;
   iv_rank_samples: number;
-  open_interest: number;
+  /** Null when the expiry reported none at all -- Alpaca leaves the field
+   * unset for stretches of the session, which is "not knowable" and not a
+   * chain with nothing open in it. */
+  open_interest: number | null;
   /** Contracts traded today across this expiry; null without day bars. */
   option_volume: number | null;
   /** That volume against the open interest. Above 1 the expiry is being
