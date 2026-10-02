@@ -164,14 +164,20 @@ function pct(value: number | null | undefined, digits = 0): string {
  * be ordered by. Up to four values were spread across two cells and the
  * reader had to find the largest by eye.
  */
+function worstLeg(row: ScreenRow): { fraction: number; side: "P" | "C"; what: string } | null {
+  const legs: { fraction: number | null | undefined; side: "P" | "C"; what: string }[] = [
+    { fraction: row.short_put?.spread_fraction, side: "P", what: `short put ${row.short_put?.strike ?? ""}`.trim() },
+    { fraction: row.put_spread?.wing_spread_fraction, side: "P", what: `put wing ${row.put_spread?.long_strike ?? ""}`.trim() },
+    { fraction: row.short_call?.spread_fraction, side: "C", what: `short call ${row.short_call?.strike ?? ""}`.trim() },
+    { fraction: row.call_spread?.wing_spread_fraction, side: "C", what: `call wing ${row.call_spread?.long_strike ?? ""}`.trim() },
+  ];
+  const known = legs.filter((l): l is { fraction: number; side: "P" | "C"; what: string } => l.fraction != null);
+  if (!known.length) return null;
+  return known.reduce((a, b) => (b.fraction > a.fraction ? b : a));
+}
+
 function worstQuote(row: ScreenRow): number | null {
-  const widths = [
-    row.short_put?.spread_fraction,
-    row.short_call?.spread_fraction,
-    row.put_spread?.wing_spread_fraction,
-    row.call_spread?.wing_spread_fraction,
-  ].filter((w): w is number => w != null);
-  return widths.length ? Math.max(...widths) : null;
+  return worstLeg(row)?.fraction ?? null;
 }
 
 /** What each sortable column reads off a row. The server ranks by criteria
@@ -571,7 +577,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 <Th label="Passed" title="Criteria met out of those that could be judged. The server's own ranking, and the default order." sort={sort} onSort={onSort} />
                 <Th
                   label="Worst leg"
-                  title="The widest quote anywhere in the structure, as a share of its own mid. A package fills at the price of its worst leg, so sorting this ascending puts what can actually be traded on top -- which is the question to settle before reading an expectancy. Red past the limit set above."
+                  title="The widest quote anywhere in the structure, as a share of its own mid, with P or C for the side it sits on. A package fills at the price of its worst leg, so sorting this ascending puts what can actually be traded on top -- which is the question to settle before reading an expectancy. The side matters too: a wide put wing does not stand in the way of a trade that only sells the call side. Hover the letter for the exact leg. Red past the limit set above."
                   sort={sort}
                   onSort={onSort}
                 />
@@ -646,11 +652,23 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       {row.passed}/{row.scored}
                     </td>
                     <td>
-                      <Width
-                        fraction={worstQuote(row)}
-                        maxSpread={result.criteria.max_spread_fraction}
-                        what="widest leg of this structure"
-                      />
+                      {(() => {
+                        const worst = worstLeg(row);
+                        if (!worst) return "—";
+                        return (
+                          <>
+                            <Width fraction={worst.fraction} maxSpread={result.criteria.max_spread_fraction} what={worst.what} />
+                            {/* Which side it sits on, because that decides
+                                whether the constraint applies to you at all:
+                                a wide put wing does not stop a trade that
+                                only sells the call side. */}
+                            <span className="opt-worst-side" title={`The widest quote in this structure is the ${worst.what}.`}>
+                              {" "}
+                              {worst.side}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </td>
                     <td>{pct(row.atm_iv)}</td>
                     <td>{pct(row.realised_vol)}</td>

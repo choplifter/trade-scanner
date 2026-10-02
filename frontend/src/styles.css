@@ -4576,6 +4576,13 @@ td.chain-side.chain-stale {
 
 /* --- Optimizer v2: outlook bar, expiry chips, slider, cards ------------- */
 
+/* Which side the widest quote sits on -- muted, because the number is the
+   point and the letter only qualifies it. */
+.opt-worst-side {
+  color: var(--text-muted, #6b6b6b);
+  font-size: 10px;
+}
+
 /* A screen column that sorts on click. The arrow marks the one in force;
    without the pointer there is nothing to say the header is live. */
 .screen-sortable {
