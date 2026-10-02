@@ -174,6 +174,57 @@ def test_a_rich_chain_passes_the_premium_screen_and_a_cheap_one_does_not():
     assert [r["symbol"] for r in body["rows"]] == ["RICH", "CHEAP"]
 
 
+class _NearAndReferenceService(_Service):
+    """Lists a 7-day expiry at a quiet-afternoon IV and a 45-day one above
+    it -- the shape QQQ had on 2026-10-02."""
+
+    NEAR = TODAY + timedelta(days=7)
+
+    def __init__(self, near_iv: float, reference_iv: float | None):
+        super().__init__({"X": _chain(iv=near_iv)})
+        self.reference = None if reference_iv is None else _chain(iv=reference_iv)
+        self.fetched_expiries: list[date] = []
+
+    async def expiries(self, symbol: str) -> dict:
+        listed = [self.NEAR] + ([EXPIRY] if self.reference is not None else [])
+        return {"underlying": symbol, "spot": 100.0, "expiries": [{"expiry": e.isoformat()} for e in listed]}
+
+    async def chain(self, symbol: str, expiry: date, width: float | None = None) -> Chain:
+        self.fetched_expiries.append(expiry)
+        return self.reference if expiry == EXPIRY else self.chains[symbol]
+
+
+def test_a_short_window_is_judged_on_the_reference_expiry():
+    service = _NearAndReferenceService(near_iv=0.12, reference_iv=0.40)
+    body = _run(service, ScreenRequest(symbols=["X"], dte_min=5, dte_max=10), closes={"X": _closes(0.01)})
+    row = body["rows"][0]
+    rv = row["realised_vol"]
+
+    # The structure is still the 7-day one ...
+    assert row["dte"] == 7 and row["atm_iv"] == pytest.approx(0.12)
+    # ... but "is premium rich" is answered on the 45-day expiry, and says so.
+    assert row["ref_expiry"] == EXPIRY.isoformat() and row["ref_dte"] == 45 and row["ref_iv"] == pytest.approx(0.40)
+    assert row["iv_rv_ratio"] == pytest.approx(0.40 / rv, rel=1e-3)
+    detail = next(c for c in row["criteria"] if c["key"] == "iv_vs_rv")["detail"]
+    assert "40%" in detail and EXPIRY.isoformat() in detail
+
+
+def test_a_window_in_the_band_costs_no_reference_fetch():
+    service = _Service({"X": _chain(iv=0.30)})
+    body = _run(service, ScreenRequest(symbols=["X"]), closes={"X": _closes(0.01)})
+
+    assert body["rows"][0]["ref_expiry"] is None and service.fetched == ["X"]
+
+
+def test_no_reference_expiry_falls_back_to_the_screened_chain():
+    service = _NearAndReferenceService(near_iv=0.12, reference_iv=None)
+    body = _run(service, ScreenRequest(symbols=["X"], dte_min=5, dte_max=10), closes={"X": _closes(0.01)})
+    row = body["rows"][0]
+
+    assert row["ref_expiry"] is None
+    assert row["iv_rv_ratio"] == pytest.approx(0.12 / row["realised_vol"], rel=1e-3)
+
+
 def test_a_buy_side_strategy_turns_the_verdict_and_the_order_around():
     service = _Service({"RICH": _chain(iv=0.40), "CHEAP": _chain(iv=0.12)})
     body = _run(

@@ -342,6 +342,11 @@ class Row:
     spot: float | None = None
     atm_iv: float | None = None
     realised_vol: float | None = None
+    # Set when the screened expiry is outside the comparable 20-90 DTE band:
+    # the 30-60 day expiry the IV is judged on instead (see _judged_iv).
+    ref_expiry: date | None = None
+    ref_dte: int | None = None
+    ref_iv: float | None = None
     iv_rv_ratio: float | None = None
     iv_rank: float | None = None
     iv_rank_samples: int = 0
@@ -416,6 +421,9 @@ class Row:
             "spot": None if self.spot is None else round(self.spot, 2),
             "atm_iv": None if self.atm_iv is None else round(self.atm_iv, 4),
             "realised_vol": None if self.realised_vol is None else round(self.realised_vol, 4),
+            "ref_expiry": self.ref_expiry.isoformat() if self.ref_expiry else None,
+            "ref_dte": self.ref_dte,
+            "ref_iv": None if self.ref_iv is None else round(self.ref_iv, 4),
             "iv_rv_ratio": None if self.iv_rv_ratio is None else round(self.iv_rv_ratio, 3),
             "iv_rank": self.iv_rank,
             "iv_rank_samples": self.iv_rank_samples,
@@ -839,7 +847,12 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
             passed,
             "no implied or realised volatility to compare"
             if ratio is None
-            else f"IV {row.atm_iv:.0%} against RV {row.realised_vol:.0%} = {ratio:.2f}x; {want}",
+            else (
+                f"IV {row.ref_iv:.0%} on {row.ref_expiry} ({row.ref_dte} d; the {row.dte}-day chain is outside the band IV is judged on)"
+                if row.ref_iv is not None
+                else f"IV {row.atm_iv:.0%}"
+            )
+            + f" against RV {row.realised_vol:.0%} = {ratio:.2f}x; {want}",
         )
     )
     return out
@@ -900,6 +913,39 @@ def rank_rows(rows: list[Row], bias: Bias) -> list[Row]:
         return (-(row.expiry is not None), -row.passed, -vol_key, -(row.open_interest or 0))
 
     return sorted(rows, key=key)
+
+
+def _comparable(dte: int | None) -> bool:
+    from app.options.iv_history_store import COMPARABLE_DTE
+
+    return dte is not None and COMPARABLE_DTE[0] <= dte <= COMPARABLE_DTE[1]
+
+
+async def _judged_iv(service, symbol: str, row: Row, listed: list[date], today: date) -> float | None:
+    """The IV that "is premium rich" is judged on. The screened chain's own
+    when its expiry is in the comparable band; otherwise the 30-60 day
+    expiry the IV recorder keeps the history on, because a chain a few days
+    from expiry prices the next sessions rather than the stock (QQQ's 0-DTE
+    read 12 % against 15 % realised while its 49-day stood at 20 %). One
+    more chain fetch a symbol, and only for a screen set to such a window.
+    Falls back to the screened chain when no reference can be had."""
+    if row.atm_iv is None or _comparable(row.dte):
+        return row.atm_iv
+    from app.options.iv_recorder import DTE_RANGE as REFERENCE_DTE
+
+    ref = pick_expiry(listed, today, *REFERENCE_DTE)
+    if ref is None or ref == row.expiry:
+        return row.atm_iv
+    try:
+        ref_chain = await service.chain(symbol, ref)
+    except Exception:
+        logger.debug("Screener: no reference chain for %s %s", symbol, ref, exc_info=True)
+        return row.atm_iv
+    iv = atm_iv_of(ref_chain.rows, ref_chain.spot)
+    if not iv:
+        return row.atm_iv
+    row.ref_expiry, row.ref_dte, row.ref_iv = ref, (ref - today).days, iv
+    return iv
 
 
 async def _priced(
@@ -963,8 +1009,9 @@ async def _priced(
     volumes = [q.volume for r in chain.rows for q in (r.call, r.put) if q is not None and q.volume is not None]
     row.option_volume = sum(volumes) if volumes else None
     row.atm_iv = atm_iv_of(chain.rows, chain.spot)
-    if row.atm_iv and row.realised_vol:
-        row.iv_rv_ratio = row.atm_iv / row.realised_vol
+    judged = await _judged_iv(service, symbol, row, listed, today)
+    if judged and row.realised_vol:
+        row.iv_rv_ratio = judged / row.realised_vol
     band = (req.short_delta_min, req.short_delta_max)
     row.short_put = pick_short(chain.rows, "put", band)
     row.short_call = pick_short(chain.rows, "call", band)
@@ -995,9 +1042,11 @@ async def _priced(
                 if row.atm_iv and row.back_iv:
                     row.term_ratio = row.atm_iv / row.back_iv
 
-    if iv_store is not None and row.atm_iv:
+    # Only a reading from the band the history is kept on is placed in it:
+    # with no reference expiry to be had, a 7-DTE chain gets no rank.
+    if iv_store is not None and judged and (row.ref_iv is not None or _comparable(row.dte)):
         try:
-            rank, samples = await iv_store.rank(symbol, row.atm_iv)
+            rank, samples = await iv_store.rank(symbol, judged)
             row.iv_rank = None if rank is None else round(rank.percent, 1)
             row.iv_rank_samples = samples
         except Exception:

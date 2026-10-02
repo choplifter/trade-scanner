@@ -934,6 +934,11 @@ export interface ScreenRow {
   spot: number | null;
   atm_iv: number | null;
   realised_vol: number | null;
+  /** Set when the screened expiry is outside 20-90 DTE: the 30-60 day
+   * expiry iv_rv_ratio and iv_rank were judged on instead. */
+  ref_expiry: string | null;
+  ref_dte: number | null;
+  ref_iv: number | null;
   iv_rv_ratio: number | null;
   iv_rank: number | null;
   iv_rank_samples: number;

@@ -15,6 +15,7 @@ import type {
   Strategy,
 } from "../../types/options";
 import { formatMoney, formatPrice } from "../../utils/format";
+import { formatExpiry } from "../../utils/occ";
 import { ScreenerHelp } from "./ScreenerHelp";
 import { CHEAP_IV_RATIO, RICH_IV_RATIO } from "./eventMarks";
 import { requestOptimizer } from "./optimizerIntent";
@@ -132,7 +133,7 @@ const OPTIMIZER_INTENT: Record<ScreenStrategy, { outlook: OptimizerOutlook; stra
 
 function reasonFor(row: ScreenRow): string {
   const parts = [`${row.passed}/${row.scored} criteria`];
-  if (row.iv_rv_ratio != null) parts.push(`IV ${row.iv_rv_ratio.toFixed(2)}x realised`);
+  if (row.iv_rv_ratio != null) parts.push(`IV ${row.iv_rv_ratio.toFixed(2)}x realised${row.ref_dte != null ? ` (on the ${row.ref_dte}-day expiry)` : ""}`);
   if (row.iv_rank != null) parts.push(`IV rank ${row.iv_rank.toFixed(0)} %`);
   return `screen: ${parts.join(" · ")}`;
 }
@@ -673,8 +674,16 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     </td>
                     <td>{pct(row.atm_iv)}</td>
                     <td>{pct(row.realised_vol)}</td>
-                    <td className={row.iv_rv_ratio == null ? undefined : row.iv_rv_ratio >= RICH_IV_RATIO ? "delta-up" : row.iv_rv_ratio <= CHEAP_IV_RATIO ? "delta-down" : undefined}>
+                    <td
+                      className={row.iv_rv_ratio == null ? undefined : row.iv_rv_ratio >= RICH_IV_RATIO ? "delta-up" : row.iv_rv_ratio <= CHEAP_IV_RATIO ? "delta-down" : undefined}
+                      title={
+                        row.ref_iv != null && row.ref_expiry
+                          ? `Judged on ${formatExpiry(row.ref_expiry)} (${row.ref_dte} d), IV ${pct(row.ref_iv)}: the ${row.dte}-day chain screened is outside the 20-90 day band, and a chain that near prices the next few sessions rather than the stock. The IV rank is read on the same expiry.`
+                          : undefined
+                      }
+                    >
                       {row.iv_rv_ratio == null ? "—" : `${row.iv_rv_ratio.toFixed(2)}×`}
+                      {row.ref_iv != null && <span className="screen-ref"> {row.ref_dte}d</span>}
                     </td>
                     <td title={row.iv_rank == null ? `${row.iv_rank_samples} sessions recorded, 20 needed` : undefined}>
                       {row.iv_rank == null ? "—" : `${row.iv_rank.toFixed(0)} %`}
