@@ -10,6 +10,7 @@ import type {
   ScreenRow,
   ScreenShortLeg,
   ScreenStrategy,
+  ScreenVertical,
   Strategy,
 } from "../../types/options";
 import { formatMoney, formatPrice } from "../../utils/format";
@@ -202,6 +203,32 @@ function ShortLegCell({ leg, maxSpread }: { leg: ScreenShortLeg | null; maxSprea
       >
         {pct(leg.spread_fraction)}
       </span>
+    </td>
+  );
+}
+
+/** The bought wings, as long/short · width · credit per dollar of width.
+ *
+ * Both sides, where the strategy has both. This column was written when a
+ * screen meant a cash-secured put or a single vertical, and it showed
+ * `put_spread ?? call_spread` -- fine for one wing, and for an iron condor
+ * it printed three of the four strikes and silently dropped whichever side
+ * lost the coin toss. The long call was nowhere in the row. */
+function VerticalCell({ put, call }: { put: ScreenVertical | null; call: ScreenVertical | null }) {
+  const sides = [
+    ["P", put],
+    ["C", call],
+  ].filter(([, v]) => v) as [string, ScreenVertical][];
+  if (sides.length === 0) return <td>—</td>;
+  return (
+    <td>
+      {sides.map(([mark, v], i) => (
+        <span key={mark}>
+          {i > 0 && <br />}
+          {sides.length > 1 && <span className="opt-wing-side">{mark} </span>}
+          {formatPrice(v.long_strike)}/{formatPrice(v.short_strike)} · {v.width}w · {pct(v.credit_to_width)}
+        </span>
+      ))}
     </td>
   );
 }
@@ -437,8 +464,11 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 </th>
                 <th scope="col">Short call</th>
                 {result.rows.some((r) => r.put_spread || r.call_spread) && (
-                  <th scope="col" title="The wing the chain offers, and what comes back as credit per dollar of width.">
-                    Vertical
+                  <th
+                    scope="col"
+                    title="The wings the chain offers: long/short strike, the width between them, and what comes back as credit per dollar of that width. An iron condor shows both, P above C -- with the two short strikes to the left, that is all four legs."
+                  >
+                    Wings
                   </th>
                 )}
                 {result.rows.some((r) => r.outcome) && (
@@ -511,17 +541,10 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       {row.volume_oi_ratio == null ? "—" : `${row.volume_oi_ratio.toFixed(2)}×`}
                     </td>
                     <td>{row.expiry ? `${row.expiry} (${row.dte}d)` : "—"}</td>
-                <ShortLegCell leg={row.short_put} maxSpread={result.criteria.max_spread_fraction} />
+                    <ShortLegCell leg={row.short_put} maxSpread={result.criteria.max_spread_fraction} />
                     <ShortLegCell leg={row.short_call} maxSpread={result.criteria.max_spread_fraction} />
                     {result.rows.some((r) => r.put_spread || r.call_spread) && (
-                      <td>
-                        {(() => {
-                          const v = row.put_spread ?? row.call_spread;
-                          return v
-                            ? `${formatPrice(v.long_strike)}/${formatPrice(v.short_strike)} · ${v.width}w · ${pct(v.credit_to_width)}`
-                            : "—";
-                        })()}
-                      </td>
+                      <VerticalCell put={row.put_spread} call={row.call_spread} />
                     )}
                     {result.rows.some((r) => r.outcome) && (
                       <>
