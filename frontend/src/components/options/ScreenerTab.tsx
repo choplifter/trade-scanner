@@ -156,6 +156,73 @@ function pct(value: number | null | undefined, digits = 0): string {
   return value == null ? "—" : `${(value * 100).toFixed(digits)} %`;
 }
 
+/** What each sortable column reads off a row. The server ranks by criteria
+ * passed, which is the right default and the wrong lens for several real
+ * questions: the highest expectancy on one side of a condor sat eight rows
+ * down behind structures that merely failed fewer tests, and there was no
+ * way to bring it up. Null sorts last whichever direction is chosen -- a
+ * row that could not be measured is not the best or the worst of anything.
+ */
+const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
+  Symbol: (r) => r.symbol,
+  Passed: (r) => r.passed,
+  IV: (r) => r.atm_iv,
+  RV: (r) => r.realised_vol,
+  "IV/RV": (r) => r.iv_rv_ratio,
+  "IV rank": (r) => r.iv_rank,
+  OI: (r) => r.open_interest,
+  "Vol/OI": (r) => r.volume_oi_ratio,
+  Expiry: (r) => r.dte,
+  "Put side": (r) => r.put_outcome?.expected_value ?? null,
+  "Call side": (r) => r.call_outcome?.expected_value ?? null,
+  "R/R": (r) => r.outcome?.risk_reward ?? null,
+  "Loss prob": (r) => r.outcome?.loss_probability ?? null,
+  EV: (r) => r.outcome?.expected_value ?? null,
+  "Risk %": (r) => r.risk_share,
+};
+
+function sortRows(rows: ScreenRow[], by: string | null, desc: boolean): ScreenRow[] {
+  const read = by ? SORTS[by] : undefined;
+  if (!read) return rows;
+  return [...rows].sort((a, b) => {
+    const x = read(a);
+    const y = read(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    const cmp = typeof x === "string" || typeof y === "string" ? String(x).localeCompare(String(y)) : x - y;
+    return desc ? -cmp : cmp;
+  });
+}
+
+/** A header that sorts when the column has something to sort by. */
+function Th({
+  label,
+  title,
+  sort,
+  onSort,
+}: {
+  label: string;
+  title?: string;
+  sort: { by: string | null; desc: boolean };
+  onSort: (label: string) => void;
+}) {
+  const sortable = label in SORTS;
+  const active = sort.by === label;
+  return (
+    <th
+      scope="col"
+      title={title}
+      aria-sort={active ? (sort.desc ? "descending" : "ascending") : undefined}
+      className={sortable ? "screen-sortable" : undefined}
+      onClick={sortable ? () => onSort(label) : undefined}
+    >
+      {label}
+      {active && <span aria-hidden> {sort.desc ? "▾" : "▴"}</span>}
+    </th>
+  );
+}
+
 function mark(passed: boolean | null): string {
   return passed === null ? "?" : passed ? "✓" : "✗";
 }
@@ -293,6 +360,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   // eight legs of commission then decide the expectancy.
   const [wingPoints, setWingPoints] = useState("");
   const [helpOpen, setHelpOpen] = useState(false);
+  // Null keeps the server's ranking, which is the sensible default; a
+  // click takes over from it. Reset whenever a new run arrives, so a sort
+  // chosen for one screen does not silently govern the next.
+  const [sort, setSort] = useState<{ by: string | null; desc: boolean }>({ by: null, desc: true });
+  const onSort = (label: string) =>
+    setSort((s) => (s.by === label ? { by: label, desc: !s.desc } : { by: label, desc: true }));
   const [maxSpread, setMaxSpread] = useState("10");
   // Not a checkbox: for a short premium structure *when* the report falls
   // decides everything. Early is the crush arriving while the strikes are
@@ -340,6 +413,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           universe ? { ...bounds, scan_universe: true, limit: 40 } : { ...bounds, symbols: symbols.slice(0, 60) },
         ),
       );
+      // A new run comes back in the server's own ranking; a sort chosen for
+      // the last one should not quietly govern this one.
+      setSort({ by: null, desc: true });
     } catch (err: unknown) {
       setError(err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err));
     } finally {
@@ -472,50 +548,46 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           <table className="opt-table screen-table">
             <thead>
               <tr>
-                <th scope="col">Symbol</th>
-                <th scope="col">Passed</th>
-                <th scope="col" title="At-the-money implied volatility of the screened expiry.">IV</th>
-                <th scope="col" title="Close-to-close volatility of the last 20 sessions, annualised.">RV</th>
-                <th scope="col" title="Implied over realised. Above 1.2 the premium is rich, below 0.95 it is cheap.">IV/RV</th>
-                <th scope="col" title="Where today's IV sits in this symbol's own recorded range. Needs 20 sessions.">IV rank</th>
-                <th scope="col" title="Open interest across the fetched strikes of that expiry.">OI</th>
-                <th
-                  scope="col"
+                <Th label="Symbol" sort={sort} onSort={onSort} />
+                <Th label="Passed" title="Criteria met out of those that could be judged. The server's own ranking, and the default order." sort={sort} onSort={onSort} />
+                <Th label="IV" title="At-the-money implied volatility of the screened expiry." sort={sort} onSort={onSort} />
+                <Th label="RV" title="Close-to-close volatility of the last 20 sessions, annualised." sort={sort} onSort={onSort} />
+                <Th label="IV/RV" title="Implied over realised. Above 1.2 the premium is rich, below 0.95 it is cheap." sort={sort} onSort={onSort} />
+                <Th label="IV rank" title="Where today's IV sits in this symbol's own recorded range. Needs 20 sessions." sort={sort} onSort={onSort} />
+                <Th label="OI" title="Open interest across the fetched strikes of that expiry." sort={sort} onSort={onSort} />
+                <Th
+                  label="Vol/OI"
                   title="Contracts traded today against the positions already open. Open interest says a crowd is positioned; this says whether anyone is still trading it. Above 1 the expiry is being built today rather than carried."
-                >
-                  Vol/OI
-                </th>
-                <th scope="col">Expiry</th>
-                <th
-                  scope="col"
-                  title="long/short · width · delta of the short · what crossing the short's quote costs / what crossing the wing's costs · credit per dollar of width · what this side is worth under the volatility its own strikes trade at. The two quote widths are the ones to read first: everything priced after them is computed from mids, so a wide quote makes the rest fiction. Either is marked red past the limit set above. Where the strategy buys no wing, the cell is the short leg alone."
-                >
-                  Put side
-                </th>
-                <th scope="col">Call side</th>
+                  sort={sort}
+                  onSort={onSort}
+                />
+                <Th label="Expiry" title="Sorts by days to expiry." sort={sort} onSort={onSort} />
+                <Th
+                  label="Put side"
+                  title="long/short · width · delta of the short · what crossing the short's quote costs / what crossing the wing's costs · credit per dollar of width · what this side is worth under the volatility its own strikes trade at. The two quote widths are the ones to read first: everything priced after them is computed from mids, so a wide quote makes the rest fiction. Either is marked red past the limit set above. Sorts by that side's own expectancy."
+                  sort={sort}
+                  onSort={onSort}
+                />
+                <Th label="Call side" title="As the put side, read off the calls. Sorts by that side's own expectancy." sort={sort} onSort={onSort} />
                 {result.rows.some((r) => r.outcome) && (
                   <>
                     <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
                       Profit / Loss
                     </th>
-                    <th scope="col" title="What the structure risks against what it can make. 3:1 means three dollars at risk for every one it pays.">
-                      R/R
-                    </th>
-                    <th scope="col" title="Share of the option market's own implied distribution at expiry under which the structure loses.">
-                      Loss prob
-                    </th>
-                    <th
-                      scope="col"
-                      title="The payoff weighted by that distribution. A structure can pay a large credit, lose rarely, and still be negative here -- which is what a list sorted by max profit hides."
-                    >
-                      EV
-                    </th>
-                    <th
-                      scope="col"
+                    <Th label="R/R" title="What the structure risks against what it can make. 3:1 means three dollars at risk for every one it pays." sort={sort} onSort={onSort} />
+                    <Th label="Loss prob" title="Share of the option market's own implied distribution at expiry under which the structure loses." sort={sort} onSort={onSort} />
+                    <Th
+                      label="EV"
+                      title="The payoff weighted by that distribution, over one distribution built from the at-the-money volatility. A structure can pay a large credit, lose rarely, and still be negative here -- which is what a list sorted by max profit hides."
+                      sort={sort}
+                      onSort={onSort}
+                    />
+                    <Th
+                      label="Risk %"
                       title="The max loss against your account's equity -- the size decision, as opposed to R/R, which is the structure's own shape. The criterion fails past 2 %."
-                    >
-                      Risk %
-                    </th>
+                      sort={sort}
+                      onSort={onSort}
+                    />
                   </>
                 )}
                 {result.rows.some((r) => r.term_ratio != null) && (
@@ -525,7 +597,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
               </tr>
             </thead>
             <tbody>
-              {result.rows.map((row) => (
+              {sortRows(result.rows, sort.by, sort.desc).map((row) => (
                 <>
                   <tr
                     key={row.symbol}
