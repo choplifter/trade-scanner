@@ -12,6 +12,7 @@ import type {
   Strategy,
 } from "../../types/options";
 import { formatMoney, formatPrice } from "../../utils/format";
+import { ScreenerHelp } from "./ScreenerHelp";
 import { requestOptimizer } from "./optimizerIntent";
 import { requestTicket } from "./ticketIntent";
 
@@ -205,6 +206,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   // default lands on a one-point wing, 22.50 of profit against 77.50, and
   // eight legs of commission then decide the expectancy.
   const [wingPoints, setWingPoints] = useState("");
+  const [helpOpen, setHelpOpen] = useState(false);
   const [maxSpread, setMaxSpread] = useState("10");
   // Not a checkbox: for a short premium structure *when* the report falls
   // decides everything. Early is the crush arriving while the strikes are
@@ -294,7 +296,17 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         <span className="order-hint">
           {universe ? "top 40 by dollar volume · one chain fetch each" : "from your watchlist · one chain fetch each"}
         </span>
+        <button
+          type="button"
+          className="timeframe-button options-help-button"
+          onClick={() => setHelpOpen(true)}
+          title="How to read a screen, and what to try when nothing passes"
+          aria-label="How to read a screen"
+        >
+          ?
+        </button>
       </div>
+      <ScreenerHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       <div className="opt-preference screen-filters">
         <label title="Days to expiry. The screen takes the listed expiry nearest the middle of this window; past 60 days it asks for the full expiry board.">
