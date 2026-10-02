@@ -4576,13 +4576,6 @@ td.chain-side.chain-stale {
 
 /* --- Optimizer v2: outlook bar, expiry chips, slider, cards ------------- */
 
-/* The P / C marker in front of a condor's two wings, so the two lines in
-   one cell can be told apart at a glance without reading the strikes. */
-.opt-wing-side {
-  color: var(--text-muted, #6b6b6b);
-  font-size: 10px;
-}
-
 .opt-tab {
   --opt-bear: #d03b3b;
   --opt-flat: #8a8f98;

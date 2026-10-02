@@ -180,55 +180,73 @@ function Criteria({ row }: { row: ScreenRow }) {
  * every row costs a chain fetch, so this screens a list you already keep
  * rather than a universe.
  */
-/** Strike, delta and the cost of crossing that leg's quote. The last of
- * the three decides whether the rest of the row means anything -- credit,
- * expectancy and risk-reward are all computed from mids, so a leg quoted
- * 0.21 against 1.31 prices the structure off a number nobody is offering.
- * It was the quietest value in the row and the one to read first, so a
- * width past the screen's own limit is marked rather than left to be
- * noticed. */
-function ShortLegCell({ leg, maxSpread }: { leg: ScreenShortLeg | null; maxSpread: number }) {
-  if (!leg) return <td>—</td>;
-  const wide = leg.spread_fraction != null && leg.spread_fraction > maxSpread;
+/** One quote width, marked when crossing it costs more than the screen
+ * allows. Credit, expectancy and risk-reward are all computed from mids,
+ * so a leg quoted 0.21 against 1.31 prices the structure off a number
+ * nobody is offering -- this is the value to read before any of them. */
+function Width({ fraction, maxSpread, what }: { fraction: number | null; maxSpread: number; what: string }) {
+  if (fraction == null) return <>—</>;
+  const wide = fraction > maxSpread;
   return (
-    <td>
-      {formatPrice(leg.strike)} · Δ{leg.delta.toFixed(2)} ·{" "}
-      <span
-        className={wide ? "delta-down" : undefined}
-        title={
-          wide
-            ? `Crossing this quote costs ${pct(leg.spread_fraction)} of its mid, past the ${pct(maxSpread)} this screen allows -- the credit below is a mid nobody is offering.`
-            : "What crossing this leg's quote costs, as a share of its mid."
-        }
-      >
-        {pct(leg.spread_fraction)}
-      </span>
-    </td>
+    <span
+      className={wide ? "delta-down" : undefined}
+      title={
+        wide
+          ? `Crossing the ${what}'s quote costs ${pct(fraction)} of its mid, past the ${pct(maxSpread)} this screen allows -- the credit beside it is a mid nobody is offering.`
+          : `What crossing the ${what}'s quote costs, as a share of its mid.`
+      }
+    >
+      {pct(fraction)}
+    </span>
   );
 }
 
-/** The bought wings, as long/short · width · credit per dollar of width.
+/** Everything about one side of the structure in one cell: the strikes,
+ * the width between them, the short's delta, what crossing each of the two
+ * quotes costs, and what comes back per dollar of width.
  *
- * Both sides, where the strategy has both. This column was written when a
- * screen meant a cash-secured put or a single vertical, and it showed
- * `put_spread ?? call_spread` -- fine for one wing, and for an iron condor
- * it printed three of the four strikes and silently dropped whichever side
- * lost the coin toss. The long call was nowhere in the row. */
-function VerticalCell({ put, call }: { put: ScreenVertical | null; call: ScreenVertical | null }) {
-  const sides = [
-    ["P", put],
-    ["C", call],
-  ].filter(([, v]) => v) as [string, ScreenVertical][];
-  if (sides.length === 0) return <td>—</td>;
+ * It was three columns -- short put, short call, and a single wing -- which
+ * repeated the short strike and left two things out. The wing of an iron
+ * condor was printed for whichever side won a coin toss, so the row never
+ * held all four legs; and the wing's own quote width was in the data and in
+ * none of the columns, although it is the leg furthest out of the money and
+ * routinely the wider of the two. Measured on 2026-10-01: GOOGL's short put
+ * quoted 23 % against 92 % on the wing behind it, NVDA's 41 % against 169 %.
+ * The number on screen was the harmless one of the pair. */
+function SideCell({
+  leg,
+  vertical,
+  maxSpread,
+  side,
+}: {
+  leg: ScreenShortLeg | null;
+  vertical: ScreenVertical | null;
+  maxSpread: number;
+  side: "put" | "call";
+}) {
+  if (!leg) return <td>—</td>;
   return (
     <td>
-      {sides.map(([mark, v], i) => (
-        <span key={mark}>
-          {i > 0 && <br />}
-          {sides.length > 1 && <span className="opt-wing-side">{mark} </span>}
-          {formatPrice(v.long_strike)}/{formatPrice(v.short_strike)} · {v.width}w · {pct(v.credit_to_width)}
+      {vertical ? (
+        <>
+          {formatPrice(vertical.long_strike)}/{formatPrice(vertical.short_strike)} · {vertical.width}w
+        </>
+      ) : (
+        formatPrice(leg.strike)
+      )}{" "}
+      · Δ{Math.abs(leg.delta).toFixed(2)} ·{" "}
+      <Width fraction={leg.spread_fraction} maxSpread={maxSpread} what={`short ${side}`} />
+      {vertical && (
+        <>
+          /<Width fraction={vertical.wing_spread_fraction} maxSpread={maxSpread} what="wing" />
+        </>
+      )}
+      {vertical && (
+        <span title="Credit taken in per dollar of width risked. The screen wants at least 10 %.">
+          {" · "}
+          {pct(vertical.credit_to_width)}
         </span>
-      ))}
+      )}
     </td>
   );
 }
@@ -458,19 +476,11 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 <th scope="col">Expiry</th>
                 <th
                   scope="col"
-                  title="Strike · delta · what crossing that leg's quote costs, as a share of its mid. The last number is the one to read first: everything priced below is computed from mids, so a wide quote makes the credit and the expectancy fiction. Marked red past the limit set above."
+                  title="long/short · width · delta of the short · what crossing the short's quote costs / what crossing the wing's costs · credit per dollar of width. The two quote widths are the ones to read first: everything priced to the right is computed from mids, so a wide quote makes the credit and the expectancy fiction. Either is marked red past the limit set above. Where the strategy buys no wing, the cell is the short leg alone."
                 >
-                  Short put
+                  Put side
                 </th>
-                <th scope="col">Short call</th>
-                {result.rows.some((r) => r.put_spread || r.call_spread) && (
-                  <th
-                    scope="col"
-                    title="The wings the chain offers: long/short strike, the width between them, and what comes back as credit per dollar of that width. An iron condor shows both, P above C -- with the two short strikes to the left, that is all four legs."
-                  >
-                    Wings
-                  </th>
-                )}
+                <th scope="col">Call side</th>
                 {result.rows.some((r) => r.outcome) && (
                   <>
                     <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
@@ -541,11 +551,18 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       {row.volume_oi_ratio == null ? "—" : `${row.volume_oi_ratio.toFixed(2)}×`}
                     </td>
                     <td>{row.expiry ? `${row.expiry} (${row.dte}d)` : "—"}</td>
-                    <ShortLegCell leg={row.short_put} maxSpread={result.criteria.max_spread_fraction} />
-                    <ShortLegCell leg={row.short_call} maxSpread={result.criteria.max_spread_fraction} />
-                    {result.rows.some((r) => r.put_spread || r.call_spread) && (
-                      <VerticalCell put={row.put_spread} call={row.call_spread} />
-                    )}
+                    <SideCell
+                      leg={row.short_put}
+                      vertical={row.put_spread}
+                      maxSpread={result.criteria.max_spread_fraction}
+                      side="put"
+                    />
+                    <SideCell
+                      leg={row.short_call}
+                      vertical={row.call_spread}
+                      maxSpread={result.criteria.max_spread_fraction}
+                      side="call"
+                    />
                     {result.rows.some((r) => r.outcome) && (
                       <>
                         <td>

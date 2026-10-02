@@ -28,16 +28,17 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
         <dl>
           <dt>1 · Quote width — can it be filled at all?</dt>
           <dd>
-            <strong>Where it is:</strong> the last of the three values in the <strong>Short put</strong> and{" "}
-            <strong>Short call</strong> columns — <code>305 · Δ0.16 · 23 %</code> is strike, delta, and what crossing
-            that leg's quote costs as a share of its mid. It turns red past the <strong>Quote ≤</strong> limit you set
-            above the table.
+            <strong>Where it is:</strong> the pair of percentages in the <strong>Put side</strong> and{" "}
+            <strong>Call side</strong> columns. <code>295/305 · 10w · Δ0.16 · 23/92 % · 19 %</code> reads as: buy 295
+            against the short 305, ten wide, the short at 0.16 delta, crossing the short's quote costs 23 % of its mid
+            and crossing the wing's costs 92 %, and 19 % of the width comes back as credit. Either percentage turns red
+            past the <strong>Quote ≤</strong> limit you set above the table.
             <br />
             This decides whether the rest of the row means anything. Credit, expectancy and risk-reward are computed
             from <em>mid</em> prices, so on a leg quoted 0.21 / 1.31 the mid is a number no one is offering. A row that
             fails it is not a worse opportunity than one that passes — it is an opportunity whose numbers are fiction.
-            Read nothing else until this passes. The wing you buy has its own width, which the screen checks too but
-            does not print; the Passed count carries it.
+            Read nothing else until this passes. Watch the second number especially: the wing sits furthest out of the
+            money and is routinely the wider of the two, and it is the leg that stops a package filling at the mid.
           </dd>
           <dt>2 · IV / RV — is the premium actually expensive?</dt>
           <dd>
