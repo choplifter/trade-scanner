@@ -28,7 +28,9 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
         <dl>
           <dt>1 · Quote width — can it be filled at all?</dt>
           <dd>
-            <strong>Where it is:</strong> the pair of percentages in the <strong>Put side</strong> and{" "}
+            <strong>Where it is:</strong> the <strong>Worst leg</strong> column holds the widest of them all, which
+            is the one that decides whether the package fills — sort by it ascending and what can actually be traded
+            comes to the top. The individual numbers are the pair of percentages in the <strong>Put side</strong> and{" "}
             <strong>Call side</strong> columns. <code>295/305 · 10w · Δ0.16 · 23/92 % · 19 %</code> reads as: buy 295
             against the short 305, ten wide, the short at 0.16 delta, crossing the short's quote costs 23 % of its mid
             and crossing the wing's costs 92 %, and 19 % of the width comes back as credit. Either percentage turns red

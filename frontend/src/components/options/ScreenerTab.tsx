@@ -156,6 +156,24 @@ function pct(value: number | null | undefined, digits = 0): string {
   return value == null ? "—" : `${(value * 100).toFixed(digits)} %`;
 }
 
+/** The widest quote anywhere in the structure, as a share of its own mid.
+ *
+ * A package fills at the price of its worst leg, so this one number
+ * answers "can this be traded at all" -- the question the help panel says
+ * to settle before reading anything else, and the one the table could not
+ * be ordered by. Up to four values were spread across two cells and the
+ * reader had to find the largest by eye.
+ */
+function worstQuote(row: ScreenRow): number | null {
+  const widths = [
+    row.short_put?.spread_fraction,
+    row.short_call?.spread_fraction,
+    row.put_spread?.wing_spread_fraction,
+    row.call_spread?.wing_spread_fraction,
+  ].filter((w): w is number => w != null);
+  return widths.length ? Math.max(...widths) : null;
+}
+
 /** What each sortable column reads off a row. The server ranks by criteria
  * passed, which is the right default and the wrong lens for several real
  * questions: the highest expectancy on one side of a condor sat eight rows
@@ -166,6 +184,7 @@ function pct(value: number | null | undefined, digits = 0): string {
 const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
   Symbol: (r) => r.symbol,
   Passed: (r) => r.passed,
+  "Worst leg": worstQuote,
   IV: (r) => r.atm_iv,
   RV: (r) => r.realised_vol,
   "IV/RV": (r) => r.iv_rv_ratio,
@@ -550,6 +569,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
               <tr>
                 <Th label="Symbol" sort={sort} onSort={onSort} />
                 <Th label="Passed" title="Criteria met out of those that could be judged. The server's own ranking, and the default order." sort={sort} onSort={onSort} />
+                <Th
+                  label="Worst leg"
+                  title="The widest quote anywhere in the structure, as a share of its own mid. A package fills at the price of its worst leg, so sorting this ascending puts what can actually be traded on top -- which is the question to settle before reading an expectancy. Red past the limit set above."
+                  sort={sort}
+                  onSort={onSort}
+                />
                 <Th label="IV" title="At-the-money implied volatility of the screened expiry." sort={sort} onSort={onSort} />
                 <Th label="RV" title="Close-to-close volatility of the last 20 sessions, annualised." sort={sort} onSort={onSort} />
                 <Th label="IV/RV" title="Implied over realised. Above 1.2 the premium is rich, below 0.95 it is cheap." sort={sort} onSort={onSort} />
@@ -619,6 +644,13 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     </th>
                     <td className={row.passed === row.scored ? "delta-up" : undefined}>
                       {row.passed}/{row.scored}
+                    </td>
+                    <td>
+                      <Width
+                        fraction={worstQuote(row)}
+                        maxSpread={result.criteria.max_spread_fraction}
+                        what="widest leg of this structure"
+                      />
                     </td>
                     <td>{pct(row.atm_iv)}</td>
                     <td>{pct(row.realised_vol)}</td>
