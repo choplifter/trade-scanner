@@ -994,3 +994,46 @@ def test_a_reach_shorter_than_the_aim_is_refused():
 
     with pytest.raises(ValueError, match="wing_target_pct"):
         ScreenRequest(symbols=["X"], wing_target_pct=0.08, wing_reach_pct=0.04)
+
+
+# --- which expiry a screen lands on ---------------------------------------------
+
+
+def test_the_monthly_is_taken_over_a_nearer_weekly():
+    """The monthly is the primary series: open interest accumulates there
+    and the quotes are tightest. Landing on a weekly two days earlier reads
+    a thinner market for no reason the reader asked for."""
+    from app.options.screener import pick_expiry
+
+    today = date(2026, 10, 2)
+    listed = [date(2026, 11, 6), date(2026, 11, 13), date(2026, 11, 20), date(2026, 11, 27)]
+    # 13 Nov is nearest the middle of a 30-60 window; 20 Nov is the monthly.
+    assert pick_expiry(listed, today, 30, 60) == date(2026, 11, 20)
+    assert pick_expiry(listed, today, 30, 60, prefer_monthly=False) == date(2026, 11, 13)
+
+
+def test_a_window_holding_no_monthly_still_answers():
+    from app.options.screener import pick_expiry
+
+    today = date(2026, 10, 2)
+    weeklies = [date(2026, 11, 6), date(2026, 11, 13)]
+    assert pick_expiry(weeklies, today, 30, 60) == date(2026, 11, 13)
+
+
+def test_the_nearest_to_the_middle_still_decides_among_monthlies():
+    from app.options.screener import pick_expiry
+
+    today = date(2026, 10, 2)
+    monthlies = [date(2026, 11, 20), date(2026, 12, 18)]
+    # 49 days against 77: only the first is inside a 30-60 window anyway,
+    # and a wider window takes the one nearer the middle.
+    assert pick_expiry(monthlies, today, 30, 90) == date(2026, 11, 20)
+
+
+def test_only_the_third_friday_counts_as_monthly():
+    from app.options.screener import is_monthly
+
+    assert is_monthly(date(2026, 11, 20))
+    assert not is_monthly(date(2026, 11, 13)), "second Friday"
+    assert not is_monthly(date(2026, 11, 27)), "fourth Friday"
+    assert not is_monthly(date(2026, 11, 19)), "a Thursday"

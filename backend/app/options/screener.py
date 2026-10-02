@@ -266,6 +266,10 @@ class ScreenRequest(BaseModel):
     # Or name the width in points outright, which is how a chain with fixed
     # strike increments is actually read. Wins over the percentage.
     wing_points: float | None = Field(default=None, gt=0.0)
+    # Take the monthly expiry when the window holds one. See pick_expiry
+    # for why it is the default: a weekly's strike ladder is short, and a
+    # wing that cannot be bought reads as a market offering none.
+    prefer_monthly: bool = True
     short_delta_min: float = Field(default=SHORT_DELTA_BAND[0], gt=0.0, lt=1.0)
     short_delta_max: float = Field(default=SHORT_DELTA_BAND[1], gt=0.0, lt=1.0)
     # An earnings report inside the expiry is a different trade: the IV is
@@ -599,12 +603,44 @@ def vertical_of(short: dict | None, wing: dict | None) -> dict | None:
     }
 
 
-def pick_expiry(expiries: list[date], today: date, dte_min: int, dte_max: int) -> date | None:
+def is_monthly(expiry: date) -> bool:
+    """The standard monthly expiry: the third Friday of its month.
+
+    Approximated by the calendar rather than looked up, which is right
+    except when the exchange is closed that Friday and the expiry moves to
+    the Thursday (Good Friday, most years). Such an expiry is then read as
+    a weekly and merely loses its preference -- it is not excluded.
+    """
+    return expiry.weekday() == 4 and 15 <= expiry.day <= 21
+
+
+def pick_expiry(
+    expiries: list[date], today: date, dte_min: int, dte_max: int, *, prefer_monthly: bool = True
+) -> date | None:
     """The listed expiry inside the window, nearest its middle -- the one a
-    screen means by "30 to 60 days"."""
+    screen means by "30 to 60 days".
+
+    Monthlies first, where the window holds one: they are the primary
+    series, where open interest accumulates and the quotes are tightest,
+    and a screen that silently lands on the weekly two days earlier is
+    reading a thinner market for no reason the reader asked for.
+
+    What this is *not* based on, because it was checked and did not hold:
+    the idea that a weekly's strike ladder is shorter. TLT's 13 November
+    weekly came back with 24 strikes from 72 to 83.5 on the afternoon of
+    2026-10-01 and with 35 from 65 to 92 the next morning -- same symbol,
+    same expiry, and on that second reading the weekly listed *more* than
+    the monthly beside it (29). Whatever moved there was Alpaca's contract
+    listing, not the difference between a weekly and a monthly, and the
+    preference does not rest on it.
+    """
     target = (dte_min + dte_max) / 2
     inside = [e for e in expiries if dte_min <= (e - today).days <= dte_max]
-    return min(inside, key=lambda e: abs((e - today).days - target)) if inside else None
+    if not inside:
+        return None
+    monthlies = [e for e in inside if is_monthly(e)]
+    candidates = monthlies if (prefer_monthly and monthlies) else inside
+    return min(candidates, key=lambda e: abs((e - today).days - target))
 
 
 def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
@@ -883,7 +919,7 @@ async def _priced(
         return row
     row.spot = strip.get("spot")
     listed = [date.fromisoformat(e["expiry"]) for e in strip.get("expiries", [])]
-    expiry = pick_expiry(listed, today, req.dte_min, req.dte_max)
+    expiry = pick_expiry(listed, today, req.dte_min, req.dte_max, prefer_monthly=req.prefer_monthly)
     if expiry is None:
         row.note = f"no listed expiry {req.dte_min}-{req.dte_max} days out"
         row.criteria = _criteria(row, req, today)
@@ -932,7 +968,7 @@ async def _priced(
         # The slope needs a second expiry, so this is the one strategy that
         # costs two chain fetches a symbol. Roughly twice the front's DTE,
         # which is where a calendar's back leg usually sits.
-        back = pick_expiry(listed, today, req.dte_min * 2, req.dte_max * 3)
+        back = pick_expiry(listed, today, req.dte_min * 2, req.dte_max * 3, prefer_monthly=req.prefer_monthly)
         if back is not None and back != expiry:
             try:
                 back_chain = await service.chain(symbol, back)
