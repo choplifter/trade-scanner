@@ -359,6 +359,16 @@ class Row:
     # What the structure the screen names is worth: max profit and loss,
     # the chance of each, and the expected value across the distribution.
     outcome: dict | None = None
+    # Each vertical valued on its own, under the volatility its own strikes
+    # trade at. Deliberately not two halves of `outcome`: that is one
+    # expectation under one distribution, and a terminal price cannot be
+    # distributed one way for the puts and another for the calls. These
+    # answer a different question -- whether a side is priced above or
+    # below what its own corner of the smile implies -- and it is the
+    # question that says which side is carrying the structure. See
+    # _side_outcome.
+    put_outcome: dict | None = None
+    call_outcome: dict | None = None
     # The calendar's slope: the back expiry's ATM IV and front over back.
     back_expiry: date | None = None
     back_iv: float | None = None
@@ -417,6 +427,8 @@ class Row:
             "put_spread": self.put_spread,
             "call_spread": self.call_spread,
             "outcome": self.outcome,
+            "put_outcome": self.put_outcome,
+            "call_outcome": self.call_outcome,
             "risk_share": None if self.risk_share is None else round(self.risk_share, 4),
             "back_expiry": self.back_expiry.isoformat() if self.back_expiry else None,
             "back_iv": None if self.back_iv is None else round(self.back_iv, 4),
@@ -964,6 +976,9 @@ async def _priced(
             wing = pick_wing(chain.rows, kind, leg["strike"], chain.spot, target=target, reach=reach)
             setattr(row, attr, vertical_of(leg, wing))
     row.outcome = _outcome_for(row, req, chain)
+    if req.strategy in SPREAD_STRATEGIES and row.expiry:
+        row.put_outcome = _side_outcome(row.put_spread, "put", chain, row.expiry)
+        row.call_outcome = _side_outcome(row.call_spread, "call", chain, row.expiry)
     if req.strategy == "calendar":
         # The slope needs a second expiry, so this is the one strategy that
         # costs two chain fetches a symbol. Roughly twice the front's DTE,
@@ -1085,6 +1100,38 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
         return None
     years = max((row.expiry - datetime.now(timezone.utc).date()).days, 0) / 365 if row.expiry else 0.0
     return structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry) if row.expiry else None
+
+
+def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date) -> dict | None:
+    """One vertical valued under the volatility its own strikes trade at.
+
+    Not half of `_outcome_for`. That one builds a single terminal
+    distribution for the whole structure, which is what an expectation
+    needs -- the price cannot be distributed one way for the puts and
+    another for the calls. This asks a narrower question: given what this
+    corner of the smile implies, is this vertical priced above or below
+    what it is worth there?
+
+    It is worth asking because the answer is lopsided and the combined
+    number hides it. Measured on IWM's 20 November condor (2026-10-02),
+    with the structure the screen itself picked: the put spread came to
+    -39 and the call spread to +8. The reason is inside the quotes -- the
+    258 put sold at 27.41 % against the 250 wing bought at 29.08 %, so the
+    wing costs 1.67 points of volatility more than the short earns, while
+    the call side gives up 0.40. A premium seller writing both sides is
+    carrying one that pays and one that does not.
+    """
+    if vertical is None:
+        return None
+    short_iv = _leg_iv(chain, kind, vertical["short_strike"])
+    if short_iv is None:
+        return None
+    legs = [
+        {"kind": kind, "strike": vertical["short_strike"], "side": "sell", "iv": short_iv},
+        {"kind": kind, "strike": vertical["long_strike"], "side": "buy", "iv": _leg_iv(chain, kind, vertical["long_strike"])},
+    ]
+    years = max((expiry - datetime.now(timezone.utc).date()).days, 0) / 365
+    return structure_outcome(legs, vertical["credit"], chain.spot, short_iv, years, expiry)
 
 
 def _leg_iv(chain: Chain, kind: str, strike: float) -> float | None:

@@ -6,6 +6,7 @@ import { useWatchlist } from "../../hooks/useWatchlist";
 import type {
   LoadableStructure,
   OptimizerOutlook,
+  ScreenOutcome,
   ScreenResponse,
   ScreenRow,
   ScreenShortLeg,
@@ -216,11 +217,13 @@ function Width({ fraction, maxSpread, what }: { fraction: number | null; maxSpre
 function SideCell({
   leg,
   vertical,
+  outcome,
   maxSpread,
   side,
 }: {
   leg: ScreenShortLeg | null;
   vertical: ScreenVertical | null;
+  outcome: ScreenOutcome | null;
   maxSpread: number;
   side: "put" | "call";
 }) {
@@ -245,6 +248,15 @@ function SideCell({
         <span title="Credit taken in per dollar of width risked. The screen wants at least 10 %.">
           {" · "}
           {pct(vertical.credit_to_width)}
+        </span>
+      )}
+      {outcome && (
+        <span
+          className={outcome.expected_value > 0 ? "delta-up" : "delta-down"}
+          title={`This side valued under the volatility its own strikes trade at. Not half of the EV column: that is one expectation over one distribution, while this says whether this ${side} spread is priced above or below what its own corner of the smile implies. It is usually the two together that explain the structure -- an equity skew makes the put wing dearer in volatility than the short beside it, and the call side rarely gives up as much.`}
+        >
+          {" · "}
+          {formatMoney(outcome.expected_value)}
         </span>
       )}
     </td>
@@ -476,7 +488,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 <th scope="col">Expiry</th>
                 <th
                   scope="col"
-                  title="long/short · width · delta of the short · what crossing the short's quote costs / what crossing the wing's costs · credit per dollar of width. The two quote widths are the ones to read first: everything priced to the right is computed from mids, so a wide quote makes the credit and the expectancy fiction. Either is marked red past the limit set above. Where the strategy buys no wing, the cell is the short leg alone."
+                  title="long/short · width · delta of the short · what crossing the short's quote costs / what crossing the wing's costs · credit per dollar of width · what this side is worth under the volatility its own strikes trade at. The two quote widths are the ones to read first: everything priced after them is computed from mids, so a wide quote makes the rest fiction. Either is marked red past the limit set above. Where the strategy buys no wing, the cell is the short leg alone."
                 >
                   Put side
                 </th>
@@ -554,12 +566,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     <SideCell
                       leg={row.short_put}
                       vertical={row.put_spread}
+                      outcome={row.put_outcome}
                       maxSpread={result.criteria.max_spread_fraction}
                       side="put"
                     />
                     <SideCell
                       leg={row.short_call}
                       vertical={row.call_spread}
+                      outcome={row.call_outcome}
                       maxSpread={result.criteria.max_spread_fraction}
                       side="call"
                     />

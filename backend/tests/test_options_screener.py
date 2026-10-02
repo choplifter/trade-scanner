@@ -1037,3 +1037,75 @@ def test_only_the_third_friday_counts_as_monthly():
     assert not is_monthly(date(2026, 11, 13)), "second Friday"
     assert not is_monthly(date(2026, 11, 27)), "fourth Friday"
     assert not is_monthly(date(2026, 11, 19)), "a Thursday"
+
+
+# --- what each side of the structure is worth ----------------------------------
+
+
+def _skewed_chain(spot: float = 283.6) -> Chain:
+    """IWM's 20 November chain in miniature, with the shape that matters:
+    puts carrying more implied volatility than calls, and inside each
+    vertical a wing dearer in volatility than the short beside it. Real
+    readings from 2026-10-02."""
+    quotes = {
+        (250.0, "put"): (1.46, 1.49, 0.2908, -0.0988),
+        (258.0, "put"): (2.25, 2.29, 0.2741, -0.1476),
+        (303.0, "call"): (1.16, 1.20, 0.1536, 0.1470),
+        (312.0, "call"): (0.43, 0.45, 0.1576, 0.0632),
+    }
+    rows = []
+    for strike in (250.0, 258.0, 303.0, 312.0):
+        call = put = None
+        for (k, kind), (bid, ask, iv, delta) in quotes.items():
+            if k != strike:
+                continue
+            q = _quote(f"IWM{k:g}{kind[0].upper()}", k, kind, bid=bid, ask=ask, delta=delta, iv=iv)
+            if kind == "call":
+                call = q
+            else:
+                put = q
+        rows.append(StrikeRow(strike=strike, call=call, put=put))
+    return Chain(underlying="IWM", expiry=EXPIRY, spot=spot, feed="opra", as_of=None, rows=rows)
+
+
+def test_each_side_is_valued_under_its_own_corner_of_the_smile():
+    """The put spread and the call spread of one condor are not two halves
+    of one number: the put side was -39 and the call side +8 on IWM, and
+    the combined figure says -19, which hides which of them is paying."""
+    from app.options.screener import _side_outcome
+
+    chain = _skewed_chain()
+    put = _side_outcome({"short_strike": 258.0, "long_strike": 250.0, "credit": 0.795}, "put", chain, EXPIRY)
+    call = _side_outcome({"short_strike": 303.0, "long_strike": 312.0, "credit": 0.74}, "call", chain, EXPIRY)
+    assert put is not None and call is not None
+    assert put["expected_value"] < 0, "the put wing costs more volatility than the short earns"
+    assert call["expected_value"] > put["expected_value"], "the call side is the one carrying this structure"
+
+
+def test_the_side_uses_the_short_strikes_volatility_not_the_at_the_money_one():
+    """The whole point of the split. Valued at the money both sides would
+    be judged on a volatility neither of them trades at."""
+    from app.options.screener import _side_outcome, structure_outcome
+
+    chain = _skewed_chain()
+    vertical = {"short_strike": 258.0, "long_strike": 250.0, "credit": 0.795}
+    own = _side_outcome(vertical, "put", chain, EXPIRY)
+    legs = [
+        {"kind": "put", "strike": 258.0, "side": "sell", "iv": 0.2741},
+        {"kind": "put", "strike": 250.0, "side": "buy", "iv": 0.2908},
+    ]
+    years = max((EXPIRY - TODAY).days, 0) / 365
+    at_the_money = structure_outcome(legs, 0.795, 283.6, 0.1989, years, EXPIRY)
+    assert own["expected_value"] != at_the_money["expected_value"]
+    assert own["loss_probability"] > at_the_money["loss_probability"], (
+        "the puts' own volatility is the higher one, so it puts more mass past the short"
+    )
+
+
+def test_a_side_the_chain_cannot_price_answers_with_nothing():
+    from app.options.screener import _side_outcome
+
+    assert _side_outcome(None, "put", _skewed_chain(), EXPIRY) is None
+    # A strike that is not in the chain has no volatility to value it with.
+    missing = {"short_strike": 999.0, "long_strike": 990.0, "credit": 1.0}
+    assert _side_outcome(missing, "put", _skewed_chain(), EXPIRY) is None

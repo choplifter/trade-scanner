@@ -946,6 +946,13 @@ export interface ScreenRow {
   /** The vertical built off each short leg, where the chain had a wing. */
   put_spread: ScreenVertical | null;
   call_spread: ScreenVertical | null;
+  /** Each vertical valued under the volatility its own strikes trade at.
+   * Not two halves of `outcome`, which is one expectation under one
+   * distribution: these say whether a side is priced above or below what
+   * its own corner of the smile implies, which is what tells you which
+   * side is carrying the structure. */
+  put_outcome: ScreenOutcome | null;
+  call_outcome: ScreenOutcome | null;
   /** Null where the screen judged a chain rather than a structure (a long
    * option, a calendar). */
   outcome: ScreenOutcome | null;
