@@ -8,6 +8,7 @@ import type {
   OptimizerOutlook,
   ScreenResponse,
   ScreenRow,
+  ScreenShortLeg,
   ScreenStrategy,
   Strategy,
 } from "../../types/options";
@@ -178,6 +179,34 @@ function Criteria({ row }: { row: ScreenRow }) {
  * every row costs a chain fetch, so this screens a list you already keep
  * rather than a universe.
  */
+/** Strike, delta and the cost of crossing that leg's quote. The last of
+ * the three decides whether the rest of the row means anything -- credit,
+ * expectancy and risk-reward are all computed from mids, so a leg quoted
+ * 0.21 against 1.31 prices the structure off a number nobody is offering.
+ * It was the quietest value in the row and the one to read first, so a
+ * width past the screen's own limit is marked rather than left to be
+ * noticed. */
+function ShortLegCell({ leg, maxSpread }: { leg: ScreenShortLeg | null; maxSpread: number }) {
+  if (!leg) return <td>—</td>;
+  const wide = leg.spread_fraction != null && leg.spread_fraction > maxSpread;
+  return (
+    <td>
+      {formatPrice(leg.strike)} · Δ{leg.delta.toFixed(2)} ·{" "}
+      <span
+        className={wide ? "delta-down" : undefined}
+        title={
+          wide
+            ? `Crossing this quote costs ${pct(leg.spread_fraction)} of its mid, past the ${pct(maxSpread)} this screen allows -- the credit below is a mid nobody is offering.`
+            : "What crossing this leg's quote costs, as a share of its mid."
+        }
+      >
+        {pct(leg.spread_fraction)}
+      </span>
+    </td>
+  );
+}
+
+
 export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const { symbols } = useWatchlist();
   const [strategy, setStrategy] = useState<ScreenStrategy>("iron_condor");
@@ -400,7 +429,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   Vol/OI
                 </th>
                 <th scope="col">Expiry</th>
-                <th scope="col" title="The strike nearest the delta band, and what crossing its quote costs.">Short put</th>
+                <th
+                  scope="col"
+                  title="Strike · delta · what crossing that leg's quote costs, as a share of its mid. The last number is the one to read first: everything priced below is computed from mids, so a wide quote makes the credit and the expectancy fiction. Marked red past the limit set above."
+                >
+                  Short put
+                </th>
                 <th scope="col">Short call</th>
                 {result.rows.some((r) => r.put_spread || r.call_spread) && (
                   <th scope="col" title="The wing the chain offers, and what comes back as credit per dollar of width.">
@@ -477,16 +511,8 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       {row.volume_oi_ratio == null ? "—" : `${row.volume_oi_ratio.toFixed(2)}×`}
                     </td>
                     <td>{row.expiry ? `${row.expiry} (${row.dte}d)` : "—"}</td>
-                    <td>
-                      {row.short_put
-                        ? `${formatPrice(row.short_put.strike)} · Δ${row.short_put.delta.toFixed(2)} · ${pct(row.short_put.spread_fraction)}`
-                        : "—"}
-                    </td>
-                    <td>
-                      {row.short_call
-                        ? `${formatPrice(row.short_call.strike)} · Δ${row.short_call.delta.toFixed(2)} · ${pct(row.short_call.spread_fraction)}`
-                        : "—"}
-                    </td>
+                <ShortLegCell leg={row.short_put} maxSpread={result.criteria.max_spread_fraction} />
+                    <ShortLegCell leg={row.short_call} maxSpread={result.criteria.max_spread_fraction} />
                     {result.rows.some((r) => r.put_spread || r.call_spread) && (
                       <td>
                         {(() => {

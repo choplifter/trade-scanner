@@ -28,11 +28,16 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
         <dl>
           <dt>1 · Quote width — can it be filled at all?</dt>
           <dd>
+            <strong>Where it is:</strong> the last of the three values in the <strong>Short put</strong> and{" "}
+            <strong>Short call</strong> columns — <code>305 · Δ0.16 · 23 %</code> is strike, delta, and what crossing
+            that leg's quote costs as a share of its mid. It turns red past the <strong>Quote ≤</strong> limit you set
+            above the table.
+            <br />
             This decides whether the rest of the row means anything. Credit, expectancy and risk-reward are computed
-            from <em>mid</em> prices, so on a leg quoted 0.21 / 1.31 the mid is a number no one is offering. The
-            criterion fails past the <strong>Quote ≤</strong> percentage you set. A row that fails it is not a worse
-            opportunity than one that passes — it is an opportunity whose numbers are fiction. Read nothing else until
-            this passes.
+            from <em>mid</em> prices, so on a leg quoted 0.21 / 1.31 the mid is a number no one is offering. A row that
+            fails it is not a worse opportunity than one that passes — it is an opportunity whose numbers are fiction.
+            Read nothing else until this passes. The wing you buy has its own width, which the screen checks too but
+            does not print; the Passed count carries it.
           </dd>
           <dt>2 · IV / RV — is the premium actually expensive?</dt>
           <dd>
