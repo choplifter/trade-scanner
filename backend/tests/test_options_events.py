@@ -6,7 +6,7 @@ the suite fakes its collaborators."""
 
 import asyncio
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from app.market_data.earnings import EarningsCalendar, EarningsDate, report_dates_from_rows
 from app.market_data.macro_calendar import MacroCalendar, MacroEvent, macro_events_from_rows, macro_label
 from app.options.events import EarningsMove, closes_by_day, earnings_moves, gather_events, summarize_moves
+from app.options.iv_context import realized_vol
 from app.options.iv_history_store import IvRank
 from app.trading.errors import OrderRejected
 
@@ -255,13 +256,56 @@ def test_gather_events_says_what_is_missing_instead_of_guessing():
     payload = asyncio.run(gather_events("AMD", today=TODAY))
 
     assert payload["earnings"] is None and payload["macro"] == []
-    assert payload["iv"] == {"atm_iv": None, "rank": None, "samples": 0}
+    assert payload["iv"] == {"atm_iv": None, "rank": None, "samples": 0, "realized_vol_20d": None, "iv_over_realized": None}
     assert payload["sources"] == {"earnings": False, "macro": False, "iv_rank": False}
 
     # Dates but no bars client: the next report is known, the history is not.
     payload = asyncio.run(gather_events("AMD", earnings_calendar=_Calendar([date(2026, 7, 29), date(2026, 10, 28)]), today=TODAY))
     assert payload["earnings"]["report_date"] == "2026-10-28"
     assert payload["earnings"]["history"] == [] and payload["earnings"]["history_note"]
+
+
+def test_the_iv_is_set_against_realised_vol_from_the_same_bars_the_earnings_history_reads(monkeypatch):
+    calls: list = []
+    # 1 % up, 1 % down, alternating: a realised vol anyone can check.
+    closes = {}
+    price = 100.0
+    for i in range(30):
+        closes[(date(2026, 7, 1) + timedelta(days=i)).isoformat()] = price
+        price *= 1.01 if i % 2 == 0 else 1 / 1.01
+
+    async def fake_bars(clients, symbols, lookback_days=14):
+        calls.append(symbols)
+        return {"AMD": _bars(closes)}
+
+    import app.market_data.bars as bars
+
+    monkeypatch.setattr(bars, "get_daily_bars_multi", fake_bars)
+    expected_rv = realized_vol(list(closes.values()))
+
+    payload = asyncio.run(
+        gather_events("AMD", earnings_calendar=_Calendar([date(2026, 7, 15), date(2026, 10, 28)]), clients=_Clients(), atm_iv=0.31, dte=3, today=TODAY)
+    )
+
+    assert len(calls) == 1
+    assert payload["iv"]["realized_vol_20d"] == round(expected_rv, 4)
+    assert payload["iv"]["iv_over_realized"] == round(0.31 / expected_rv, 2)
+    # Outside the rank's DTE band the rank stays silent; the ratio does not,
+    # it describes the chain on screen whatever its expiry.
+    assert payload["iv"]["rank"] is None
+
+
+def test_no_iv_means_no_ratio_and_no_bars_fetched_for_it(monkeypatch):
+    async def fake_bars(clients, symbols, lookback_days=14):
+        raise AssertionError("nothing asked for the bars")
+
+    import app.market_data.bars as bars
+
+    monkeypatch.setattr(bars, "get_daily_bars_multi", fake_bars)
+
+    payload = asyncio.run(gather_events("AMD", clients=_Clients(), today=TODAY))
+
+    assert payload["iv"]["realized_vol_20d"] is None and payload["iv"]["iv_over_realized"] is None
 
 
 @pytest.fixture

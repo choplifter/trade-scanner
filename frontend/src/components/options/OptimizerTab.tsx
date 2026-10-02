@@ -17,7 +17,7 @@ import {
 import { atmIv, impliedMove as impliedMoveOf } from "../../utils/atmIv";
 import { formatPrice } from "../../utils/format";
 import { formatExpiry, weekdayOf } from "../../utils/occ";
-import { earningsSentence, eventMarks, heldThroughEarnings, ivRankSentence, ivTone, macroInWindow, macroSentence } from "./eventMarks";
+import { earningsSentence, eventMarks, heldThroughEarnings, IV_PREMIUM_TITLE, ivPremiumSentence, ivPremiumTone, ivRankSentence, ivTone, macroInWindow, macroSentence } from "./eventMarks";
 import type { OptimizerIntent } from "./optimizerIntent";
 import { ResultCard } from "./ResultCard";
 import { optimizerBlockedReason } from "./optimizerBlocked";
@@ -688,7 +688,11 @@ export function OptimizerTab({
             }
       : null;
   const ivRank = symbolEvents?.iv.rank ?? null;
-  const tone = ivTone(ivRank?.percent);
+  // The rank needs a year of recorded sessions; until it has them, IV
+  // against realised vol answers the same "is premium rich" question.
+  const ivRatio = symbolEvents?.iv.iv_over_realized ?? null;
+  const tone = ivRank ? ivTone(ivRank.percent) : ivPremiumTone(ivRatio);
+  const premiumLine = symbolEvents ? ivPremiumSentence(symbolEvents.iv) : null;
 
   return (
     <div className="idea-tab opt-tab">
@@ -752,10 +756,18 @@ export function OptimizerTab({
         {symbolEvents && (
           <span
             className={`opt-ivrank ${tone ?? "none"}`}
-            title={`${ivRankSentence(symbolEvents.iv)}. Where today's at-the-money IV sits between the lowest and highest recorded over the past year of sessions: above 60 % premium is rich against its own history and credit shapes collect more, below 30 % it is cheap and debit shapes cost less. A comparison with the past, not a forecast.`}
+            title={
+              ivRank || !premiumLine
+                ? `${ivRankSentence(symbolEvents.iv)}. Where today's at-the-money IV sits between the lowest and highest recorded over the past year of sessions: above 60 % premium is rich against its own history and credit shapes collect more, below 30 % it is cheap and debit shapes cost less. A comparison with the past, not a forecast.${premiumLine ? `
+
+${premiumLine}.` : ""}`
+                : `${premiumLine}. ${IV_PREMIUM_TITLE}
+
+${ivRankSentence(symbolEvents.iv)}.`
+            }
           >
             <span className="opt-ivrank-dot" aria-hidden="true" />
-            {ivRank ? `IV rank ${ivRank.percent.toFixed(0)} %` : "IV rank n/a"}
+            {ivRank ? `IV rank ${ivRank.percent.toFixed(0)} %` : ivRatio != null ? `IV ${ivRatio.toFixed(2)}× realised` : "IV rank n/a"}
             {tone === "rich" && (
               <button type="button" className="row-action" onClick={() => setFamilies(new Set(CREDIT_STRATEGIES))} title="Search the shapes that sell premium: bull put, bear call, iron condor, iron fly">
                 credit shapes

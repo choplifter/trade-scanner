@@ -1,7 +1,7 @@
 """What is scheduled inside an option's life, and what it did to the stock
 before: the next earnings report with the stock's moves over its past
 reports, the tracked macro releases, and where today's at-the-money IV
-sits in its own history.
+sits in its own history and against the stock's realised vol.
 
 The strip and the Optimizer read this to say "this expiry is held through
 earnings", "the market prices ±4 % to this expiry, the stock moved ±6 %
@@ -24,6 +24,7 @@ from datetime import date, datetime, timezone
 
 from app.services.market_clock import ET
 
+from app.options.iv_context import iv_premium, realized_vol
 from app.options.iv_history_store import COMPARABLE_DTE
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,22 @@ def summarize_moves(moves: list[EarningsMove]) -> dict:
     }
 
 
-async def _earnings_block(earnings_calendar, clients, underlying: str, today: date) -> dict | None:
+async def _daily_bars(clients, underlying: str) -> tuple[list | None, str | None]:
+    """The daily bars both the earnings history and the realised vol read,
+    fetched once: (bars, None), or (None, why not)."""
+    if clients is None:
+        return None, "no market data client for the daily bars"
+    try:
+        from app.market_data.bars import get_daily_bars_multi
+
+        bars = await get_daily_bars_multi(clients, [underlying], lookback_days=BARS_LOOKBACK_DAYS)
+    except Exception:
+        logger.exception("Daily bars failed for %s", underlying)
+        return None, "daily bars unavailable"
+    return bars.get(underlying, []), None
+
+
+async def _earnings_block(earnings_calendar, bars: list | None, bars_note: str | None, underlying: str, today: date) -> dict | None:
     if earnings_calendar is None:
         return None
     try:
@@ -132,16 +148,8 @@ async def _earnings_block(earnings_calendar, clients, underlying: str, today: da
     if not past:
         block["history_note"] = "no past report dates known"
         return block
-    if clients is None:
-        block["history_note"] = "no market data client for the daily bars"
-        return block
-    try:
-        from app.market_data.bars import get_daily_bars_multi
-
-        bars = (await get_daily_bars_multi(clients, [underlying], lookback_days=BARS_LOOKBACK_DAYS)).get(underlying, [])
-    except Exception:
-        logger.exception("Daily bars for earnings history failed for %s", underlying)
-        block["history_note"] = "daily bars unavailable"
+    if bars is None:
+        block["history_note"] = bars_note
         return block
     moves = earnings_moves(past, closes_by_day(bars), today=today)
     block["history"] = [m.to_dict() for m in moves]
@@ -194,6 +202,19 @@ async def _iv_rank_block(iv_store, underlying: str, atm_iv: float | None, dte: i
     return block
 
 
+def _realized_block(bars: list | None, atm_iv: float | None) -> dict:
+    """Is the IV high right now, answered without any stored history: the
+    chain's ATM IV over the stock's 20-session realised vol. Unlike the
+    rank this exists from the first day, and for any expiry -- it says what
+    *this* chain charges against what the stock has been moving."""
+    realized = realized_vol([close for _, close in sorted(closes_by_day(bars).items())]) if bars else None
+    premium = iv_premium(atm_iv, realized)
+    return {
+        "realized_vol_20d": None if realized is None else round(realized, 4),
+        "iv_over_realized": None if premium is None else round(premium, 2),
+    }
+
+
 async def gather_events(
     underlying: str,
     *,
@@ -212,9 +233,11 @@ async def gather_events(
     given, today's reading is recorded for the rank's history."""
     underlying = underlying.upper()
     today = today or datetime.now(timezone.utc).astimezone(ET).date()
-    earnings = await _earnings_block(earnings_calendar, clients, underlying, today)
+    wants_bars = earnings_calendar is not None or atm_iv is not None
+    bars, bars_note = await _daily_bars(clients, underlying) if wants_bars else (None, None)
+    earnings = await _earnings_block(earnings_calendar, bars, bars_note, underlying, today)
     macro = await _macro_block(macro_calendar)
-    iv = await _iv_rank_block(iv_store, underlying, atm_iv, dte, today)
+    iv = {**await _iv_rank_block(iv_store, underlying, atm_iv, dte, today), **_realized_block(bars, atm_iv)}
     return {
         "underlying": underlying,
         "today": today.isoformat(),

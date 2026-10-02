@@ -774,6 +774,8 @@ export interface OptionEventsResponse {
     atm_iv: number | null;
     rank: { percent: number; samples: number; low: number; high: number } | null;
     samples: number;
+    realized_vol_20d: number | null;
+    iv_over_realized: number | null;
   };
   sources: { earnings: boolean; macro: boolean; iv_rank: boolean };
 }

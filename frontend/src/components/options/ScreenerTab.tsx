@@ -16,6 +16,7 @@ import type {
 } from "../../types/options";
 import { formatMoney, formatPrice } from "../../utils/format";
 import { ScreenerHelp } from "./ScreenerHelp";
+import { CHEAP_IV_RATIO, RICH_IV_RATIO } from "./eventMarks";
 import { requestOptimizer } from "./optimizerIntent";
 import { requestTicket } from "./ticketIntent";
 
@@ -672,7 +673,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     </td>
                     <td>{pct(row.atm_iv)}</td>
                     <td>{pct(row.realised_vol)}</td>
-                    <td className={row.iv_rv_ratio == null ? undefined : row.iv_rv_ratio >= 1.2 ? "delta-up" : row.iv_rv_ratio <= 0.95 ? "delta-down" : undefined}>
+                    <td className={row.iv_rv_ratio == null ? undefined : row.iv_rv_ratio >= RICH_IV_RATIO ? "delta-up" : row.iv_rv_ratio <= CHEAP_IV_RATIO ? "delta-down" : undefined}>
                       {row.iv_rv_ratio == null ? "—" : `${row.iv_rv_ratio.toFixed(2)}×`}
                     </td>
                     <td title={row.iv_rank == null ? `${row.iv_rank_samples} sessions recorded, 20 needed` : undefined}>
