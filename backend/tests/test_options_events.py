@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.market_data.earnings import EarningsCalendar, EarningsDate, report_dates_from_rows
 from app.market_data.macro_calendar import MacroCalendar, MacroEvent, macro_events_from_rows, macro_label
+from app.options.chain import Chain, LegQuote, StrikeRow
 from app.options.events import EarningsMove, closes_by_day, earnings_moves, gather_events, summarize_moves
 from app.options.iv_context import realized_vol
 from app.options.iv_history_store import IvRank
@@ -256,7 +257,7 @@ def test_gather_events_says_what_is_missing_instead_of_guessing():
     payload = asyncio.run(gather_events("AMD", today=TODAY))
 
     assert payload["earnings"] is None and payload["macro"] == []
-    assert payload["iv"] == {"atm_iv": None, "rank": None, "samples": 0, "realized_vol_20d": None, "iv_over_realized": None}
+    assert payload["iv"] == {"atm_iv": None, "rank": None, "samples": 0, "realized_vol_20d": None, "iv_over_realized": None, "reference": None}
     assert payload["sources"] == {"earnings": False, "macro": False, "iv_rank": False}
 
     # Dates but no bars client: the next report is known, the history is not.
@@ -290,9 +291,83 @@ def test_the_iv_is_set_against_realised_vol_from_the_same_bars_the_earnings_hist
     assert len(calls) == 1
     assert payload["iv"]["realized_vol_20d"] == round(expected_rv, 4)
     assert payload["iv"]["iv_over_realized"] == round(0.31 / expected_rv, 2)
-    # Outside the rank's DTE band the rank stays silent; the ratio does not,
-    # it describes the chain on screen whatever its expiry.
-    assert payload["iv"]["rank"] is None
+    # A 3-DTE chain with no service to read a later expiry through: the
+    # ratio judges the chain on screen, the rank stays out of it.
+    assert payload["iv"]["rank"] is None and payload["iv"]["reference"] is None
+
+
+class _ReferenceService:
+    """Lists one expiry 45 days out, the middle of the recorder's window."""
+
+    expiry = TODAY + timedelta(days=45)
+
+    def __init__(self, iv: float | None = 0.40):
+        self.iv = iv
+        self.chains: list = []
+
+    async def expiries(self, symbol):
+        return {"expiries": [{"expiry": (TODAY + timedelta(days=3)).isoformat()}, {"expiry": self.expiry.isoformat()}]}
+
+    async def chain(self, symbol, expiry):
+        self.chains.append(expiry)
+        quote = lambda kind: LegQuote(
+            symbol=f"{symbol}X", strike=100.0, kind=kind, expiry=expiry, bid=1.0, ask=1.1, mid=1.05, last=1.0,
+            bid_size=1, ask_size=1, delta=0.5, gamma=0.0, theta=0.0, iv=self.iv, open_interest=10, tradable=True,
+        )
+        return Chain(underlying=symbol, expiry=expiry, spot=100.0, feed="opra", as_of=None,
+                     rows=[StrikeRow(strike=100.0, call=quote("call"), put=quote("put"))])
+
+
+def _alternating_bars(monkeypatch) -> float:
+    closes = {}
+    price = 100.0
+    for i in range(30):
+        closes[(date(2026, 7, 1) + timedelta(days=i)).isoformat()] = price
+        price *= 1.01 if i % 2 == 0 else 1 / 1.01
+
+    async def fake_bars(clients, symbols, lookback_days=14):
+        return {"AMD": _bars(closes)}
+
+    import app.market_data.bars as bars
+
+    monkeypatch.setattr(bars, "get_daily_bars_multi", fake_bars)
+    return realized_vol(list(closes.values()))
+
+
+def test_a_chain_too_near_to_judge_by_is_judged_on_the_reference_expiry_instead(monkeypatch):
+    rv = _alternating_bars(monkeypatch)
+    service = _ReferenceService(iv=0.40)
+    store = _IvStore()
+
+    payload = asyncio.run(gather_events("AMD", clients=_Clients(), service=service, iv_store=store, atm_iv=0.12, dte=0, today=TODAY))
+
+    iv = payload["iv"]
+    # The chain on screen is still reported as it is ...
+    assert iv["atm_iv"] == 0.12
+    # ... but the verdict is on the 45-day expiry, and so is the rank --
+    # which, being in the band, also joins the history.
+    assert iv["reference"] == {"atm_iv": 0.4, "expiry": _ReferenceService.expiry.isoformat(), "dte": 45}
+    assert iv["iv_over_realized"] == round(0.40 / rv, 2)
+    assert iv["rank"]["percent"] == 72.0
+    assert store.recorded == [("AMD", TODAY, 0.4, 45)]
+
+
+def test_a_chain_in_the_band_is_judged_as_it_is_and_costs_no_second_fetch(monkeypatch):
+    _alternating_bars(monkeypatch)
+    service = _ReferenceService()
+
+    payload = asyncio.run(gather_events("AMD", clients=_Clients(), service=service, atm_iv=0.31, dte=30, today=TODAY))
+
+    assert payload["iv"]["reference"] is None and service.chains == []
+
+
+def test_no_reference_to_be_had_falls_back_to_the_chain_on_screen(monkeypatch):
+    rv = _alternating_bars(monkeypatch)
+
+    payload = asyncio.run(gather_events("AMD", clients=_Clients(), service=_ReferenceService(iv=None), atm_iv=0.12, dte=0, today=TODAY))
+
+    assert payload["iv"]["reference"] is None
+    assert payload["iv"]["iv_over_realized"] == round(0.12 / rv, 2)
 
 
 def test_no_iv_means_no_ratio_and_no_bars_fetched_for_it(monkeypatch):

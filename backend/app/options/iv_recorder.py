@@ -97,6 +97,23 @@ def due(now_et: datetime, recorded_on: date | None) -> bool:
     return now_et >= open_at + timedelta(minutes=OPEN_SETTLE_MINUTES)
 
 
+async def reference_reading(service, symbol: str, today: date) -> tuple[float, date] | None:
+    """(ATM IV, expiry) on the expiry the history is kept on, or None when
+    the symbol lists none in DTE_RANGE or that chain carries no IV. Also
+    what the events strip judges by when the chain on screen is too near
+    (or too far) to say anything about the stock's volatility."""
+    strip = await service.expiries(symbol)
+    listed = [date.fromisoformat(e["expiry"]) for e in strip.get("expiries", [])]
+    expiry = pick_expiry(listed, today, *DTE_RANGE)
+    if expiry is None:
+        return None
+    chain: Chain = await service.chain(symbol, expiry)
+    iv = atm_iv_of(chain.rows, chain.spot)
+    if iv is None or iv <= 0:
+        return None
+    return iv, expiry
+
+
 async def record_once(service, iv_store, symbols: list[str], today: date) -> tuple[int, int]:
     """(recorded, attempted). Sequential rather than gathered: this is a
     background pass with all session to finish, and firing 150 chain
@@ -104,15 +121,10 @@ async def record_once(service, iv_store, symbols: list[str], today: date) -> tup
     recorded = 0
     for symbol in symbols:
         try:
-            strip = await service.expiries(symbol)
-            listed = [date.fromisoformat(e["expiry"]) for e in strip.get("expiries", [])]
-            expiry = pick_expiry(listed, today, *DTE_RANGE)
-            if expiry is None:
+            reading = await reference_reading(service, symbol, today)
+            if reading is None:
                 continue
-            chain: Chain = await service.chain(symbol, expiry)
-            iv = atm_iv_of(chain.rows, chain.spot)
-            if iv is None or iv <= 0:
-                continue
+            iv, expiry = reading
             await iv_store.record(symbol, today, iv, (expiry - today).days)
             recorded += 1
         except Exception:

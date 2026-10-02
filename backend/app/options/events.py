@@ -204,15 +204,38 @@ async def _iv_rank_block(iv_store, underlying: str, atm_iv: float | None, dte: i
 
 def _realized_block(bars: list | None, atm_iv: float | None) -> dict:
     """Is the IV high right now, answered without any stored history: the
-    chain's ATM IV over the stock's 20-session realised vol. Unlike the
-    rank this exists from the first day, and for any expiry -- it says what
-    *this* chain charges against what the stock has been moving."""
+    ATM IV over the stock's 20-session realised vol. Unlike the rank this
+    exists from the first day. `atm_iv` is the reading being judged: the
+    chain on screen, or the reference expiry when that chain is too near."""
     realized = realized_vol([close for _, close in sorted(closes_by_day(bars).items())]) if bars else None
     premium = iv_premium(atm_iv, realized)
     return {
         "realized_vol_20d": None if realized is None else round(realized, 4),
         "iv_over_realized": None if premium is None else round(premium, 2),
     }
+
+
+async def _reference(service, underlying: str, atm_iv: float | None, dte: int | None, today: date) -> dict | None:
+    """The reading "is IV high" is judged on when the chain on screen is
+    outside the comparable band. A 0-DTE chain late in the day prices the
+    close, not the stock's volatility: QQQ's read 12 % against a 15 %
+    realised on 2026-10-02 and was called premium cheap. Then the expiry
+    the history is kept on is read instead -- the one the recorder reads,
+    so the rank compares like with like. None when the chain on screen is
+    fine as it is, or nothing better can be had."""
+    if service is None or atm_iv is None or dte is None or COMPARABLE_DTE[0] <= dte <= COMPARABLE_DTE[1]:
+        return None
+    try:
+        from app.options.iv_recorder import reference_reading
+
+        reading = await reference_reading(service, underlying, today)
+    except Exception:
+        logger.exception("Reference IV lookup failed for %s", underlying)
+        return None
+    if reading is None:
+        return None
+    iv, expiry = reading
+    return {"atm_iv": round(iv, 4), "expiry": expiry.isoformat(), "dte": (expiry - today).days}
 
 
 async def gather_events(
@@ -222,6 +245,7 @@ async def gather_events(
     macro_calendar=None,
     iv_store=None,
     clients=None,
+    service=None,
     atm_iv: float | None = None,
     dte: int | None = None,
     today: date | None = None,
@@ -230,14 +254,24 @@ async def gather_events(
     current at-the-money IV as the caller sees it (the frontend has the
     chain on screen; asking the broker for it again here would be a second
     chain fetch for one number), `dte` the days to that chain's expiry --
-    given, today's reading is recorded for the rank's history."""
+    given, today's reading is recorded for the rank's history. Outside the
+    comparable band the rank and the realised-vol ratio are judged on a
+    reference expiry read through `service` instead (see _reference); the
+    chain's own `atm_iv` is still reported as it is."""
     underlying = underlying.upper()
     today = today or datetime.now(timezone.utc).astimezone(ET).date()
     wants_bars = earnings_calendar is not None or atm_iv is not None
     bars, bars_note = await _daily_bars(clients, underlying) if wants_bars else (None, None)
     earnings = await _earnings_block(earnings_calendar, bars, bars_note, underlying, today)
     macro = await _macro_block(macro_calendar)
-    iv = {**await _iv_rank_block(iv_store, underlying, atm_iv, dte, today), **_realized_block(bars, atm_iv)}
+    reference = await _reference(service, underlying, atm_iv, dte, today)
+    judged_iv, judged_dte = (reference["atm_iv"], reference["dte"]) if reference else (atm_iv, dte)
+    iv = {
+        **await _iv_rank_block(iv_store, underlying, judged_iv, judged_dte, today),
+        **_realized_block(bars, judged_iv),
+        "atm_iv": None if atm_iv is None else round(atm_iv, 4),
+        "reference": reference,
+    }
     return {
         "underlying": underlying,
         "today": today.isoformat(),

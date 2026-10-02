@@ -776,6 +776,9 @@ export interface OptionEventsResponse {
     samples: number;
     realized_vol_20d: number | null;
     iv_over_realized: number | null;
+    /** Set when the chain on screen is outside 20-90 DTE: the 30-60 day
+     * expiry the rank and the ratio above were judged on instead. */
+    reference: { atm_iv: number; expiry: string; dte: number } | null;
   };
   sources: { earnings: boolean; macro: boolean; iv_rank: boolean };
 }

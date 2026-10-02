@@ -431,12 +431,28 @@ async def option_events(
     app.options.events. Needs no broker account: nothing here is priced."""
     from app.options.events import gather_events
 
+    settings = getattr(request.app.state, "settings", None)
+    clients = getattr(request.app.state, "alpaca_clients", None)
+    # Market data only -- the operator's client and the shared chain cache,
+    # no broker -- for the reference expiry read when the chain on screen
+    # is too near to judge by.
+    market = (
+        OptionsService(
+            clients,
+            settings,
+            engine=getattr(request.app.state, "scanner_engine", None),
+            chain_cache=getattr(request.app.state, "options_chain_cache", None),
+        )
+        if clients is not None and settings is not None and settings.has_credentials
+        else None
+    )
     return await gather_events(
         underlying.upper(),
         earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
         macro_calendar=getattr(request.app.state, "macro_calendar", None),
         iv_store=getattr(request.app.state, "iv_history_store", None),
-        clients=getattr(request.app.state, "alpaca_clients", None),
+        clients=clients,
+        service=market,
         atm_iv=atm_iv,
         dte=dte,
     )

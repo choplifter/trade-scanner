@@ -111,14 +111,17 @@ export function ivPremiumTone(ratio: number | null | undefined): IvTone | null {
 
 export function ivPremiumSentence(iv: OptionEventsResponse["iv"]): string | null {
   const ratio = iv.iv_over_realized;
-  if (ratio == null || iv.atm_iv == null || iv.realized_vol_20d == null) return null;
+  // Judged on the reference expiry when the chain on screen was too near.
+  const judged = iv.reference?.atm_iv ?? iv.atm_iv;
+  if (ratio == null || judged == null || iv.realized_vol_20d == null) return null;
   const tone = ivPremiumTone(ratio);
   const gloss = tone === "rich" ? "premium rich" : tone === "cheap" ? "premium cheap" : "premium fair";
-  return `IV ${ratio.toFixed(2)}× realised · ${gloss} (${(iv.atm_iv * 100).toFixed(0)} % vs ${(iv.realized_vol_20d * 100).toFixed(0)} % over 20 sessions)`;
+  const where = iv.reference ? ` on ${formatExpiry(iv.reference.expiry)} (${iv.reference.dte} d)` : "";
+  return `IV ${ratio.toFixed(2)}× realised · ${gloss} (${(judged * 100).toFixed(0)} %${where} vs ${(iv.realized_vol_20d * 100).toFixed(0)} % over 20 sessions)`;
 }
 
 export const IV_PREMIUM_TITLE =
-  "The chain's at-the-money IV over the stock's realised volatility of the last 20 sessions. Above 1.20 the market charges noticeably more than the stock has been moving (premium rich, credit shapes collect more); under 0.95 less (premium cheap, debit shapes cost less). Implied normally sits a little above realised. After a quiet stretch with an event ahead -- earnings marked in the strip -- a high ratio may be fair rather than rich.";
+  "At-the-money IV over the stock's realised volatility of the last 20 sessions. Read on the chain shown when it is 20-90 days out; nearer or further, on the 30-60 day expiry instead, because a chain about to expire prices the next few hours rather than the stock. Above 1.20 the market charges noticeably more than the stock has been moving (premium rich, credit shapes collect more); under 0.95 less (premium cheap, debit shapes cost less). Implied normally sits a little above realised. After a quiet stretch with an event ahead -- earnings marked in the strip -- a high ratio may be fair rather than rich.";
 
 export function ivRankSentence(iv: OptionEventsResponse["iv"]): string {
   if (iv.rank) {
