@@ -53,9 +53,20 @@ CREATE TABLE IF NOT EXISTS option_iv_history (
     atm_iv REAL NOT NULL,
     dte INTEGER NOT NULL,
     recorded_at TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'recorder',
     PRIMARY KEY (symbol, session_date)
 );
 """
+
+# Where a row came from. 'recorder' is our own ATM reading (the IV recorder,
+# or a chain someone opened); 'barchart' a day seeded from Barchart's daily
+# IV history (scripts/import_barchart_iv.py), so a rank exists without a
+# year of waiting. Kept apart so a seeded history can be told from ours and
+# removed again -- Barchart's IV is a 30-day figure, ours the ATM of a
+# 30-60 day expiry, and on 67 shared days in Sept/Oct 2026 theirs read a
+# median 0.976 of ours: close enough for a rank, not the same measurement.
+SOURCE_RECORDER = "recorder"
+SOURCE_BARCHART = "barchart"
 
 
 @dataclass(frozen=True)
@@ -105,6 +116,11 @@ class IvHistoryStore:
     def _init_schema_sync(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # Tables created before `source` existed: every row in them is
+            # ours, which is what the default says.
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(option_iv_history)")}
+            if "source" not in columns:
+                conn.execute(f"ALTER TABLE option_iv_history ADD COLUMN source TEXT NOT NULL DEFAULT '{SOURCE_RECORDER}'")
 
     async def init_schema(self) -> None:
         await asyncio.to_thread(self._init_schema_sync)
@@ -113,14 +129,39 @@ class IvHistoryStore:
         with self._connect() as conn:
             # Last write of the day wins. A reading taken near the close is
             # the more representative one, and the alternative -- keeping the
-            # first -- would pin the series to the open.
+            # first -- would pin the series to the open. Our own reading
+            # also replaces a seeded one for the same day.
             conn.execute(
-                "INSERT INTO option_iv_history (symbol, session_date, atm_iv, dte, recorded_at) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "INSERT INTO option_iv_history (symbol, session_date, atm_iv, dte, recorded_at, source) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(symbol, session_date) DO UPDATE SET "
-                "atm_iv = excluded.atm_iv, dte = excluded.dte, recorded_at = excluded.recorded_at",
-                (symbol.upper(), session_date.isoformat(), atm_iv, dte, datetime.now(UTC).isoformat()),
+                "atm_iv = excluded.atm_iv, dte = excluded.dte, recorded_at = excluded.recorded_at, source = excluded.source",
+                (symbol.upper(), session_date.isoformat(), atm_iv, dte, datetime.now(UTC).isoformat(), SOURCE_RECORDER),
             )
+
+    def seed_sync(self, symbol: str, readings: list[tuple[date, float]], *, source: str, dte: int) -> int:
+        """Fill days this symbol has no usable reading for, from another
+        source. Our own reading for a day stays -- unless it came from
+        outside the comparable band, which the rank never reads: a day
+        someone opened a 1-DTE chain is a day with no reading, not one to
+        keep a seed out of (on 2026-10-03 that was 25 of SPY's last 30
+        sessions). Returns how many rows went in or were replaced.
+        Synchronous -- a one-off import, not a request."""
+        if not COMPARABLE_DTE[0] <= dte <= COMPARABLE_DTE[1]:
+            raise ValueError(f"dte {dte} is outside the comparable band {COMPARABLE_DTE}")
+        now = datetime.now(UTC).isoformat()
+        rows = [(symbol.upper(), day.isoformat(), iv, dte, now, source) for day, iv in readings if iv and iv > 0]
+        with self._connect() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                "INSERT INTO option_iv_history (symbol, session_date, atm_iv, dte, recorded_at, source) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(symbol, session_date) DO UPDATE SET "
+                "atm_iv = excluded.atm_iv, dte = excluded.dte, recorded_at = excluded.recorded_at, source = excluded.source "
+                f"WHERE option_iv_history.dte NOT BETWEEN {COMPARABLE_DTE[0]} AND {COMPARABLE_DTE[1]}",
+                rows,
+            )
+            return conn.total_changes - before
 
     async def record(self, symbol: str, session_date: date, atm_iv: float, dte: int) -> None:
         """Best-effort by design: this is a side-effect of serving something
