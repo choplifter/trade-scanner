@@ -24,6 +24,12 @@ export function useOptionEvents(symbol: string | null, atmIv: number | null, dte
   // does not refetch (the rank is the same reading against the same history).
   const dteRef = useRef<number | null>(dte);
   dteRef.current = dte;
+  // The reading itself goes out unrounded: the key above only decides when
+  // to refetch, and what is sent is recorded into the IV history -- rounded,
+  // every widget-written row was a whole vol point off by up to half a
+  // point (on IEF at 8.5 %, six percent of the reading).
+  const ivRef = useRef<number | null>(atmIv);
+  ivRef.current = atmIv;
 
   useEffect(() => {
     if (!symbol) {
@@ -32,7 +38,7 @@ export function useOptionEvents(symbol: string | null, atmIv: number | null, dte
     }
     const seq = ++seqRef.current;
     setState((s) => ({ events: s.events?.underlying === symbol ? s.events : null, loading: true, error: null }));
-    optionEvents(symbol, ivKey === "" ? null : Number(ivKey), dteRef.current)
+    optionEvents(symbol, ivKey === "" ? null : ivRef.current, dteRef.current)
       .then((events) => {
         if (seq === seqRef.current) setState({ events, loading: false, error: null });
       })

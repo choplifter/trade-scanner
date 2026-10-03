@@ -21,7 +21,7 @@ import {
   type ShortTargetGroup,
   type Strategy,
 } from "../../types/options";
-import { atmIv } from "../../utils/atmIv";
+import { atmIv, chainOf } from "../../utils/atmIv";
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import type { ParsedOcc } from "../../utils/occ";
 import { formatDateTime } from "../../utils/time";
@@ -180,7 +180,10 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   const { chain, expiries, expiry, setExpiry, loading: chainLoading } = chainState;
   // What the expiries are held through (earnings, FOMC, CPI) and where the
   // chain's ATM IV sits in its history; the strip and the Optimizer show it.
-  const eventsState = useOptionEvents(symbol, atmIv(chain), expiries.find((e) => e.expiry === chain?.expiry)?.dte ?? null);
+  // Only this symbol's chain: what the events call sends is recorded into
+  // the IV history (see chainOf).
+  const ownChain = chainOf(symbol, chain);
+  const eventsState = useOptionEvents(symbol, atmIv(ownChain), expiries.find((e) => e.expiry === ownChain?.expiry)?.dte ?? null);
   const events = eventsState.events && eventsState.events.underlying === symbol ? eventsState.events : null;
   // Positioning behind a commodity ETF; null for everything else.
   const cot = useCot(symbol);
