@@ -27,6 +27,14 @@ from app.options.iv_history_store import SOURCE_BARCHART, IvHistoryStore
 # the comparable band the rank reads.
 BARCHART_DTE = 30
 
+# Symbols whose Barchart IV is not the measurement ours is. LQD: Barchart
+# read 13.9 % on 2026-10-02 where the chain's at-the-money prices give
+# 9.7 % (Alpaca's call/put mean, an IV solved from the mids, and the
+# straddle all agree), most likely because the put skew is steep and
+# nearly all of LQD's open interest sits in hedging puts. Seeded, our
+# reading against Barchart's year put the rank at 51 % for Barchart's 90 %.
+EXCLUDED = {"LQD"}
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -39,6 +47,9 @@ def main() -> None:
     for name in sorted(os.listdir(args.dir)):
         symbol = symbol_from_filename(name)
         # A browser's "(1)" duplicate of the same export: one is enough.
+        if symbol in EXCLUDED:
+            print(f"{symbol:6s} skipped: excluded (see EXCLUDED)")
+            continue
         if symbol and symbol not in files:
             files[symbol] = os.path.join(args.dir, name)
     if not files:
