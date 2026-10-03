@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.ai.options_context import _chain_block, pick_expiries
 from app.options.chain import ExpiryInfo
+from app.options.distribution import Distribution
 from app.options.models import STRATEGY_LABELS, Strategy
 from app.options.optimizer import (
     CONDOR_SHORT_DELTA,
@@ -271,6 +272,7 @@ def _repriced(
     sigma: float | None = None,
     years: float | None = None,
     cross_total: float = 0.0,
+    dist=None,
 ) -> tuple[list[float], float, float | None, list[PayoffLeg], float] | None:
     """The card's P/L points, risk and chance from the previewed legs and
     limit -- the same arithmetic as the cheap pass, on the numbers the
@@ -296,7 +298,7 @@ def _repriced(
         # Net of the cross, like the rest of the card: a position that has
         # to make back what it paid to get in is not ahead at zero.
         chance = chance_of_profit(
-            legs, net, horizon, spread.spot, sigma, years, spread.qty, threshold=cross_total
+            legs, net, horizon, spread.spot, sigma, years, spread.qty, threshold=cross_total, dist=dist
         )
     return points, risk, chance, legs, net
 
@@ -364,6 +366,16 @@ async def optimize_structures(
     # with it the one-sigma implied move to the horizon.
     years = years_between(now, horizon)
     sigma = atm_sigma(rows_by_expiry.get(expiries[0], []), spot)
+    # The distribution the chance is read under: that expiry's smile, scaled
+    # to the horizon. Exact when the horizon is the expiry; before it, an
+    # approximation -- the smile of a later date standing in for the
+    # horizon's, which is not quoted. Fitted once here, read by every
+    # candidate.
+    dist = (
+        Distribution.from_chain(rows_by_expiry.get(expiries[0], []), spot, sigma, years)
+        if sigma and years > 0
+        else None
+    )
     implied_move = round(spot * sigma * math.sqrt(years), 2) if sigma and years > 0 else None
     # After the implied move, because a target named in implied moves is
     # only a price once this horizon's own move is known.
@@ -402,7 +414,7 @@ async def optimize_structures(
     candidates: list[Candidate] = []
     for raw in raws:
         priced = price_candidate(
-            raw, rows_by_expiry, spot, target, horizon_moment, sigma=cheap_sigma, years=cheap_years
+            raw, rows_by_expiry, spot, target, horizon_moment, sigma=cheap_sigma, years=cheap_years, dist=dist
         )
         if isinstance(priced, str):
             skipped.add(priced)
@@ -451,7 +463,7 @@ async def optimize_structures(
             # Priced before the P/L, because the chance has to clear it too.
             cross_total = 0.0 if spread.net_natural is None else abs(spread.net_natural - spread.net_mid) * 100 * qty
             repriced = _repriced(
-                cand, spread, target, horizon_moment, sigma=sigma, years=years, cross_total=cross_total
+                cand, spread, target, horizon_moment, sigma=sigma, years=years, cross_total=cross_total, dist=dist
             )
             if repriced is None:
                 rejected.append(

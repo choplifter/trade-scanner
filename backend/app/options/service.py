@@ -35,6 +35,7 @@ from app.options.models import (
     options_level_required,
     resolve_legs,
 )
+from app.options.distribution import Distribution
 from app.options.optimizer import chance_of_profit, position_pnl
 from app.services.market_clock import ET, current_session
 from app.options.occ import try_parse_occ
@@ -714,9 +715,12 @@ class OptionsService:
             unpaid = 0.0
             if net_natural is not None:
                 unpaid = max(0.0, net_natural - price if direction == "debit" else price - net_natural)
+            # Under the chain's own smile, skew included, when it carries
+            # enough strikes to fit one (app.options.distribution).
             chance = chance_of_profit(
                 payoff_legs, price if direction == "debit" else -price, horizon, chain.spot, sigma, years, ticket.qty,
                 threshold=unpaid * 100 * ticket.qty,
+                dist=Distribution.from_chain(chain.rows, chain.spot, sigma, years),
             )
             barrier = nearest_breakeven(breakevens, chain.spot)
             if barrier is not None:

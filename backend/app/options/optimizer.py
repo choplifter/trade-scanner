@@ -532,13 +532,20 @@ def chance_of_profit(
     years: float,
     qty: int = 1,
     threshold: float = 0.0,
+    dist=None,
 ) -> float | None:
     """The probability that the position shows a profit on the horizon
-    date, under the distribution the option market itself implies: the
-    underlying's log-return to the horizon is normal with standard
-    deviation sigma*sqrt(T) (sigma the at-the-money implied volatility)
-    and no drift beyond the lognormal correction -- the same assumption
-    every "chance of profit" figure rests on, OptionStrat's included.
+    date, under the distribution the option market itself implies.
+
+    With `dist` (an app.options.distribution.Distribution fitted to the
+    chain's smile) that is the distribution the strikes' own IVs price,
+    skew and all. Without one, or when the chain was too thin to fit, it
+    is the at-the-money lognormal: the log-return normal with standard
+    deviation sigma*sqrt(T) and no drift beyond the lognormal correction
+    -- the assumption Barchart's loss probability turned out to rest on
+    too (on 784 of its condors, 2026-10-03). `sigma` and `years` are
+    needed either way: they place the grid.
+
     The probability mass where the P/L is above `threshold` (see
     profit_mass for how it is read off) -- dollars the position
     has to clear before it is ahead, which is where the cost of crossing
@@ -552,11 +559,14 @@ def chance_of_profit(
         sigma * math.sqrt(years),
         threshold,
         [leg.strike for leg in legs if leg.kind != "stock"],
+        cdf=dist.cdf if dist is not None and dist.skewed else None,
     )
     return None if total is None else round(min(1.0, max(0.0, total)), 4)
 
 
-def profit_mass(pnl_at, spot: float, width: float, threshold: float, kinks: list[float]) -> float | None:
+def profit_mass(
+    pnl_at, spot: float, width: float, threshold: float, kinks: list[float], *, cdf=None
+) -> float | None:
     """The probability that `pnl_at(price)` ends above `threshold`, with the
     log-return to the horizon normal at standard deviation `width` (and the
     lognormal drift correction). None when `pnl_at` is.
@@ -567,7 +577,12 @@ def profit_mass(pnl_at, spot: float, width: float, threshold: float, kinks: list
     strikes, so with the strikes (`kinks`) on the grid that is exact; before
     expiry it is smooth and the interpolation is good to well under a
     hundredth of a point. Beyond +/- CHANCE_SIGMA_REACH the P/L is taken to
-    keep the sign it has at the edge, so the tails count too."""
+    keep the sign it has at the edge, so the tails count too.
+
+    `cdf` (price -> P(S_T <= price)) replaces the lognormal with another
+    distribution -- the chain's smile, see app.options.distribution. The
+    grid stays placed by the ATM `width`: it only has to find the sign
+    changes, and the tails beyond it are read off `cdf` at the edge."""
     mu = -0.5 * width * width
     reach = CHANCE_SIGMA_REACH * width
     step = 2 * reach / (CHANCE_GRID_POINTS - 1)
@@ -580,8 +595,18 @@ def profit_mass(pnl_at, spot: float, width: float, threshold: float, kinks: list
             return None
         points.append((x, pnl - threshold))
 
-    def cdf(x: float) -> float:
-        return _norm_cdf((x - mu) / width)
+    if cdf is None:
+
+        def at(x: float) -> float:
+            return _norm_cdf((x - mu) / width)
+
+    else:
+        price_cdf = cdf
+
+        def at(x: float) -> float:
+            return price_cdf(spot * math.exp(x))
+
+    cdf = at
 
     total = 0.0
     if points[0][1] > 0:
@@ -691,10 +716,12 @@ def price_candidate(
     qty: int = 1,
     sigma: float | None = None,
     years: float | None = None,
+    dist=None,
 ) -> Candidate | str:
     """A priced candidate, or the reason it cannot be one. With `sigma`
     (the at-the-money IV) and `years` to the horizon the candidate also
-    carries its chance of profit."""
+    carries its chance of profit -- under `dist`, the chain's smile, when
+    one was fitted (see chance_of_profit)."""
     mids: list[float] = []
     payoff_legs: list[PayoffLeg] = []
     for leg in raw.legs:
@@ -735,7 +762,7 @@ def price_candidate(
 
     chance = None
     if sigma is not None and years is not None and years > 0:
-        chance = chance_of_profit(payoff_legs, signed, horizon, spot, sigma, years, qty)
+        chance = chance_of_profit(payoff_legs, signed, horizon, spot, sigma, years, qty, dist=dist)
 
     return Candidate(
         strategy=raw.strategy,

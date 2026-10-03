@@ -43,6 +43,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.options.chain import Chain, StrikeRow
+from app.options.distribution import Distribution
 from app.options.chain_fetch import CHAIN_DAYS_AHEAD, STRIKE_PCT_RANGE
 from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl, profit_mass
 from app.options.payoff import PayoffLeg
@@ -1034,10 +1035,16 @@ async def _priced(
             target, reach = req.wing_width_for(chain.spot)
             wing = pick_wing(chain.rows, kind, leg["strike"], chain.spot, target=target, reach=reach)
             setattr(row, attr, vertical_of(leg, wing))
-    row.outcome = _outcome_for(row, req, chain)
+    # The chain's smile, fitted once for the row: every chance below is
+    # read under it (app.options.distribution).
+    years_left = max((row.expiry - datetime.now(timezone.utc).date()).days, 0) / 365 if row.expiry else 0.0
+    dist = (
+        Distribution.from_chain(chain.rows, chain.spot, row.atm_iv, years_left) if row.atm_iv and years_left > 0 else None
+    )
+    row.outcome = _outcome_for(row, req, chain, dist)
     if req.strategy in SPREAD_STRATEGIES and row.expiry:
-        row.put_outcome = _side_outcome(row.put_spread, "put", chain, row.expiry)
-        row.call_outcome = _side_outcome(row.call_spread, "call", chain, row.expiry)
+        row.put_outcome = _side_outcome(row.put_spread, "put", chain, row.expiry, dist)
+        row.call_outcome = _side_outcome(row.call_spread, "call", chain, row.expiry, dist)
     if req.strategy == "calendar":
         # The slope needs a second expiry, so this is the one strategy that
         # costs two chain fetches a symbol. Roughly twice the front's DTE,
@@ -1132,7 +1139,7 @@ def preselect(universe: dict, req: ScreenRequest) -> Preselection:
     return Preselection(symbols=selected, considered=len(universe or {}), reasons=reasons)
 
 
-def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
+def _outcome_for(row: Row, req: ScreenRequest, chain: Chain, dist=None) -> dict | None:
     """The structure this screen would write, valued. Built from the legs
     the row already picked, so the numbers belong to the strikes shown and
     not to some other version of the trade."""
@@ -1163,10 +1170,12 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
         # structure, so there is nothing here to value.
         return None
     years = max((row.expiry - datetime.now(timezone.utc).date()).days, 0) / 365 if row.expiry else 0.0
-    return structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry, cross=cross) if row.expiry else None
+    if not row.expiry:
+        return None
+    return structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry, cross=cross, dist=dist)
 
 
-def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date) -> dict | None:
+def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date, dist=None) -> dict | None:
     """One vertical valued under the volatility its own strikes trade at.
 
     Not half of `_outcome_for`. That one builds a single terminal
@@ -1195,7 +1204,11 @@ def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date) 
         {"kind": kind, "strike": vertical["long_strike"], "side": "buy", "iv": _leg_iv(chain, kind, vertical["long_strike"])},
     ]
     years = max((expiry - datetime.now(timezone.utc).date()).days, 0) / 365
-    return structure_outcome(legs, vertical["credit"], chain.spot, short_iv, years, expiry, cross=vertical.get("cross", 0.0))
+    # The expected value under this corner's own IV, as above; the chance
+    # under the whole smile, like every other chance in the app.
+    return structure_outcome(
+        legs, vertical["credit"], chain.spot, short_iv, years, expiry, cross=vertical.get("cross", 0.0), dist=dist
+    )
 
 
 def _leg_iv(chain: Chain, kind: str, strike: float) -> float | None:
@@ -1300,6 +1313,7 @@ def structure_outcome(
     expiry: date,
     *,
     cross: float = 0.0,
+    dist=None,
 ) -> dict | None:
     """Max profit, max loss, the chance of each, and the **expected value**
     of the structure at expiry under the option market's own implied
@@ -1323,6 +1337,15 @@ def structure_outcome(
     mid. Only the chance moves; the expected value and the extremes stay
     at mid, like the Optimizer's P/L points. None when there is no
     volatility to build a distribution from.
+
+    `dist`, the chain's smile (app.options.distribution), moves the win
+    and loss probabilities onto the distribution the strikes themselves
+    price, skew included. The expected value deliberately stays on the
+    ATM lognormal: under the smile's own distribution every structure
+    priced at its mids is worth about zero by construction, so an
+    expectation taken there would say nothing. What it says on the ATM
+    distribution is how the strikes are priced against the money -- the
+    question it was built to answer.
     """
     if sigma is None or sigma <= 0 or years <= 0 or spot <= 0 or not legs:
         return None
@@ -1359,7 +1382,12 @@ def structure_outcome(
     # (see optimizer.profit_mass) -- the same reading the Optimizer and the
     # ticket give.
     win = profit_mass(
-        lambda price: position_pnl(payoff, net, price, at, 1), spot, width, cross * 100, [leg.strike for leg in payoff]
+        lambda price: position_pnl(payoff, net, price, at, 1),
+        spot,
+        width,
+        cross * 100,
+        [leg.strike for leg in payoff],
+        cdf=dist.cdf if dist is not None and dist.skewed else None,
     )
     if win is None:
         return None
