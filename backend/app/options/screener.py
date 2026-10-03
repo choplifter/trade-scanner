@@ -196,6 +196,12 @@ REALISED_SESSIONS = 20
 # options pays at all -- so "rich" has to mean more than "positive".
 RICH_IV_RATIO = 1.20
 CHEAP_IV_RATIO = 0.95
+# And against its own past year: where today's IV sits in its 52-week
+# range, the bands the IV-rank light uses everywhere else (ivTone in the
+# frontend's eventMarks.ts). A row without the history for a rank is not
+# judged on it -- unknown, not failed.
+RICH_IV_RANK = 60.0
+CHEAP_IV_RANK = 30.0
 # How many symbols one run may price. Each costs three calls (contracts,
 # snapshots, day bars) and about 0.4 s, so the cap is what keeps a screen
 # off the broker's rate limit rather than an opinion about breadth.
@@ -868,6 +874,28 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
             + f" against RV {row.realised_vol:.0%} = {ratio:.2f}x; {want}",
         )
     )
+
+    rank = row.iv_rank
+    if req.bias == "buy_premium":
+        passed = None if rank is None else rank <= CHEAP_IV_RANK
+        want = f"wanted at or under {CHEAP_IV_RANK:.0f} % (implied cheap against its own year)"
+    elif req.bias == "sell_premium":
+        passed = None if rank is None else rank >= RICH_IV_RANK
+        want = f"wanted {RICH_IV_RANK:.0f} %+ (implied rich against its own year)"
+    else:
+        passed = None
+        want = "reported, not judged"
+    out.append(
+        Criterion(
+            "iv_rank",
+            "IV rank",
+            rank,
+            passed,
+            f"no rank yet: {row.iv_rank_samples} sessions recorded, 20 needed"
+            if rank is None
+            else f"today's IV at {rank:.0f} % of its 52-week range ({row.iv_rank_samples} sessions); {want}",
+        )
+    )
     return out
 
 
@@ -1291,12 +1319,15 @@ async def screen_underlyings(
             "equity": equity,
             "rich_iv_ratio": RICH_IV_RATIO,
             "cheap_iv_ratio": CHEAP_IV_RATIO,
+            "rich_iv_rank": RICH_IV_RANK,
+            "cheap_iv_rank": CHEAP_IV_RANK,
         },
         "rows": [r.to_dict() for r in ranked],
         "disclaimer": (
             "Contract volume is not read (a day bar per contract); open interest and quoted size stand in. "
-            "IV percentile appears once a symbol has 20 recorded sessions; until then the measure is implied "
-            "against realised volatility. Criteria describe a chain -- they are not a view on the underlying."
+            "IV rank is judged where a symbol has 20 recorded sessions (a year, for those seeded from Barchart); "
+            "where it has fewer the rank is left out rather than failed, and implied against realised volatility "
+            "carries the judgement. Criteria describe a chain -- they are not a view on the underlying."
         ),
     }
 

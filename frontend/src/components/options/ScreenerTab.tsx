@@ -17,7 +17,7 @@ import type {
 import { formatMoney, formatPrice } from "../../utils/format";
 import { formatExpiry } from "../../utils/occ";
 import { ScreenerHelp } from "./ScreenerHelp";
-import { CHEAP_IV_RATIO, RICH_IV_RATIO } from "./eventMarks";
+import { CHEAP_IV_RATIO, ivTone, RICH_IV_RATIO } from "./eventMarks";
 import { requestOptimizer } from "./optimizerIntent";
 import { requestTicket } from "./ticketIntent";
 
@@ -685,7 +685,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       {row.iv_rv_ratio == null ? "—" : `${row.iv_rv_ratio.toFixed(2)}×`}
                       {row.ref_iv != null && <span className="screen-ref"> {row.ref_dte}d</span>}
                     </td>
-                    <td title={row.iv_rank == null ? `${row.iv_rank_samples} sessions recorded, 20 needed` : undefined}>
+                    <td
+                      className={ivTone(row.iv_rank) === "rich" ? "delta-up" : ivTone(row.iv_rank) === "cheap" ? "delta-down" : undefined}
+                      title={
+                        row.iv_rank == null
+                          ? `${row.iv_rank_samples} sessions recorded, 20 needed`
+                          : `Today's IV at ${row.iv_rank.toFixed(0)} % of its 52-week range (${row.iv_rank_samples} sessions). From 60 % rich against its own year (green), up to 30 % cheap (red) -- coloured like IV/RV, on the IV-rank bands used everywhere else.`
+                      }
+                    >
                       {row.iv_rank == null ? "—" : `${row.iv_rank.toFixed(0)} %`}
                     </td>
                     <td title={row.open_interest == null ? "Not reported for this expiry right now" : undefined}>

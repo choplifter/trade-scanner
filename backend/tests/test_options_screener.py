@@ -141,7 +141,7 @@ class _Calendar:
         return type("E", (), {"report_date": day})() if day else None
 
 
-def _run(service, req, calendar=None, closes=None):
+def _run(service, req, calendar=None, closes=None, iv_store=None):
     async def bars(clients, symbols, lookback_days=45):
         return {s: [type("B", (), {"close": c})() for c in (closes or {}).get(s, [])] for s in symbols}
 
@@ -150,7 +150,9 @@ def _run(service, req, calendar=None, closes=None):
     original = bars_module.get_daily_bars_multi
     bars_module.get_daily_bars_multi = bars
     try:
-        return asyncio.run(screen_underlyings(service, object(), req, today=TODAY, earnings_calendar=calendar))
+        return asyncio.run(
+            screen_underlyings(service, object(), req, today=TODAY, earnings_calendar=calendar, iv_store=iv_store)
+        )
     finally:
         bars_module.get_daily_bars_multi = original
 
@@ -224,6 +226,46 @@ def test_no_reference_expiry_falls_back_to_the_screened_chain():
 
     assert row["ref_expiry"] is None
     assert row["iv_rv_ratio"] == pytest.approx(0.12 / row["realised_vol"], rel=1e-3)
+
+
+class _RankStore:
+    """A rank per symbol, or none (too little history)."""
+
+    def __init__(self, ranks: dict[str, float | None]):
+        self.ranks = ranks
+
+    async def rank(self, symbol, current):
+        from app.options.iv_history_store import IvRank
+
+        pct = self.ranks.get(symbol)
+        if pct is None:
+            return None, 7
+        return IvRank(percent=pct, samples=250, low=0.1, high=0.5), 250
+
+
+def _rank_criterion(row: dict) -> dict:
+    return next(c for c in row["criteria"] if c["key"] == "iv_rank")
+
+
+def test_the_iv_rank_is_judged_where_there_is_one_and_left_out_where_there_is_not():
+    service = _Service({"HIGH": _chain(iv=0.40), "LOW": _chain(iv=0.40), "NEW": _chain(iv=0.40)})
+    store = _RankStore({"HIGH": 78.0, "LOW": 12.0, "NEW": None})
+    closes = {s: _closes(0.01) for s in ("HIGH", "LOW", "NEW")}
+
+    sell = {r["symbol"]: r for r in _run(service, ScreenRequest(symbols=["HIGH", "LOW", "NEW"]), closes=closes, iv_store=store)["rows"]}
+    assert _rank_criterion(sell["HIGH"])["passed"] is True
+    assert _rank_criterion(sell["LOW"])["passed"] is False
+    # No history is not a failed check: the row is scored on one criterion fewer.
+    assert _rank_criterion(sell["NEW"])["passed"] is None and "7 sessions" in _rank_criterion(sell["NEW"])["detail"]
+    assert sell["NEW"]["scored"] == sell["HIGH"]["scored"] - 1
+    # Otherwise equal, the rich one now ranks ahead of the cheap one.
+    order = [r["symbol"] for r in _run(service, ScreenRequest(symbols=["HIGH", "LOW", "NEW"]), closes=closes, iv_store=store)["rows"]]
+    assert order.index("HIGH") < order.index("LOW")
+
+    buy = {r["symbol"]: r for r in _run(
+        service, ScreenRequest(symbols=["HIGH", "LOW"], strategy="long_option"), closes=closes, iv_store=store
+    )["rows"]}
+    assert _rank_criterion(buy["LOW"])["passed"] is True and _rank_criterion(buy["HIGH"])["passed"] is False
 
 
 def test_a_buy_side_strategy_turns_the_verdict_and_the_order_around():

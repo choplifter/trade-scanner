@@ -1008,6 +1008,8 @@ export interface ScreenResponse {
     early_earnings_fraction: number;
     rich_iv_ratio: number;
     cheap_iv_ratio: number;
+    rich_iv_rank?: number;
+    cheap_iv_rank?: number;
   };
   rows: ScreenRow[];
   disclaimer: string;

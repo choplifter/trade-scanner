@@ -49,6 +49,13 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             above realised. Above 1.20 counts as rich here. Below 1.00 you are selling something cheap, which is the
             wrong side of the trade whatever the credit looks like.
           </dd>
+          <dt>2b · IV rank — expensive against its own year?</dt>
+          <dd>
+            Where today&apos;s implied volatility sits between its lowest and highest of the past 52 weeks. A different
+            question from IV / RV: a quiet stock can be rich on IV / RV and still cheap against its own year. From 60 %
+            it passes a premium-selling screen (green), up to 30 % a premium-buying one (red). A symbol with fewer than
+            20 recorded sessions has no rank yet and is not judged on it — left out, not failed.
+          </dd>
           <dt>3 · EV — the one number that combines the others</dt>
           <dd>
             Every outcome weighted by its probability, in dollars per contract, integrated over the option market's
