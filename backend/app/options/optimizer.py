@@ -88,12 +88,13 @@ FLY_WING_WIDTHS = (1, 2, 3, 4)
 FLY_BODIES = 3  # strikes nearest the target considered as a body
 STRANGLE_WIDTHS = (1, 2, 3)
 TARGET_POINTS = 5
-# The price grid the chance of profit integrates over: +/- 4 sigma of the
-# lognormal move to the horizon, in 201 steps.
-# The integration grid. 121 points over +/-4 sigma agrees with 201 to four
-# decimals on the structures here (a vertical's mass sits in a handful of
-# steps around its breakeven), and the pass prices thousands of candidates
-# when the slider asks for chances. 81 and below start to wander.
+# The price grid the chance of profit is read on: +/- 4 sigma of the
+# lognormal move to the horizon, 121 points, plus every leg's strike (see
+# profit_mass). The grid only has to find where the P/L changes sign; the
+# probability itself is taken from the normal CDF at the interpolated
+# breakeven, not counted step by step -- counted, one step was ~70 cents
+# on a $100 stock at 45 days, so a 20-cent cost moved the chance by
+# nothing or by a whole step (2-3 points) at random.
 CHANCE_GRID_POINTS = 121
 CHANCE_SIGMA_REACH = 4.0
 
@@ -538,35 +539,63 @@ def chance_of_profit(
     deviation sigma*sqrt(T) (sigma the at-the-money implied volatility)
     and no drift beyond the lognormal correction -- the same assumption
     every "chance of profit" figure rests on, OptionStrat's included.
-    Integrates the P/L over a price grid +/- 4 sigma and adds up the
-    probability mass where it is above `threshold` -- dollars the position
+    The probability mass where the P/L is above `threshold` (see
+    profit_mass for how it is read off) -- dollars the position
     has to clear before it is ahead, which is where the cost of crossing
     the market goes. A model number: it says how likely the implied
     distribution makes a profit, not how likely a profit is."""
     if sigma <= 0 or years <= 0 or spot <= 0:
         return None
-    width = sigma * math.sqrt(years)
+    total = profit_mass(
+        lambda price: position_pnl(legs, net_price, price, horizon, qty),
+        spot,
+        sigma * math.sqrt(years),
+        threshold,
+        [leg.strike for leg in legs if leg.kind != "stock"],
+    )
+    return None if total is None else round(min(1.0, max(0.0, total)), 4)
+
+
+def profit_mass(pnl_at, spot: float, width: float, threshold: float, kinks: list[float]) -> float | None:
+    """The probability that `pnl_at(price)` ends above `threshold`, with the
+    log-return to the horizon normal at standard deviation `width` (and the
+    lognormal drift correction). None when `pnl_at` is.
+
+    The grid locates the sign changes; between two points either side of
+    one, the breakeven is interpolated linearly *in price* and the mass up
+    to it read off the CDF. At expiry the P/L is linear in price between
+    strikes, so with the strikes (`kinks`) on the grid that is exact; before
+    expiry it is smooth and the interpolation is good to well under a
+    hundredth of a point. Beyond +/- CHANCE_SIGMA_REACH the P/L is taken to
+    keep the sign it has at the edge, so the tails count too."""
     mu = -0.5 * width * width
-    lo = -CHANCE_SIGMA_REACH * width
-    hi = CHANCE_SIGMA_REACH * width
-    n = CHANCE_GRID_POINTS
-    step = (hi - lo) / (n - 1)
-    total = 0.0
-    for i in range(n):
-        x = lo + i * step
-        # Probability mass of this step of log-return.
-        a = _norm_cdf((x - step / 2 - mu) / width)
-        b = _norm_cdf((x + step / 2 - mu) / width)
-        mass = b - a
-        if mass <= 0:
-            continue
-        price = spot * math.exp(x)
-        pnl = position_pnl(legs, net_price, price, horizon, qty)
+    reach = CHANCE_SIGMA_REACH * width
+    step = 2 * reach / (CHANCE_GRID_POINTS - 1)
+    xs = {-reach + i * step for i in range(CHANCE_GRID_POINTS)}
+    xs.update(math.log(k / spot) for k in kinks if k > 0 and -reach < math.log(k / spot) < reach)
+    points: list[tuple[float, float]] = []
+    for x in sorted(xs):
+        pnl = pnl_at(spot * math.exp(x))
         if pnl is None:
             return None
-        if pnl > threshold:
-            total += mass
-    return round(min(1.0, max(0.0, total)), 4)
+        points.append((x, pnl - threshold))
+
+    def cdf(x: float) -> float:
+        return _norm_cdf((x - mu) / width)
+
+    total = 0.0
+    if points[0][1] > 0:
+        total += cdf(points[0][0])
+    if points[-1][1] > 0:
+        total += 1.0 - cdf(points[-1][0])
+    for (xa, fa), (xb, fb) in zip(points, points[1:]):
+        if fa > 0 and fb > 0:
+            total += cdf(xb) - cdf(xa)
+        elif fa > 0 or fb > 0:
+            sa, sb = spot * math.exp(xa), spot * math.exp(xb)
+            xr = math.log((sa + (sb - sa) * fa / (fa - fb)) / spot)
+            total += cdf(xr) - cdf(xa) if fa > 0 else cdf(xb) - cdf(xr)
+    return total
 
 
 # The scenario grid on a result card: where the underlying might sit, in

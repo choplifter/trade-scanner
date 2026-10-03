@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.options.chain import Chain, StrikeRow
 from app.options.chain_fetch import CHAIN_DAYS_AHEAD, STRIKE_PCT_RANGE
-from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl
+from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl, profit_mass
 from app.options.payoff import PayoffLeg
 from app.services.market_clock import ET
 from app.trading.errors import OrderRejected
@@ -1338,7 +1338,6 @@ def structure_outcome(
     lo, hi = -CHANCE_SIGMA_REACH * width, CHANCE_SIGMA_REACH * width
     step = (hi - lo) / (CHANCE_GRID_POINTS - 1)
     expected = 0.0
-    win = 0.0
     mass_total = 0.0
     best: float | None = None
     worst: float | None = None
@@ -1352,19 +1351,26 @@ def structure_outcome(
             return None
         expected += mass * pnl
         mass_total += mass
-        if pnl > cross * 100:
-            win += mass
         best = pnl if best is None else max(best, pnl)
         worst = pnl if worst is None else min(worst, pnl)
     if mass_total <= 0:
         return None
+    # The chance from the breakevens themselves, not counted step by step
+    # (see optimizer.profit_mass) -- the same reading the Optimizer and the
+    # ticket give.
+    win = profit_mass(
+        lambda price: position_pnl(payoff, net, price, at, 1), spot, width, cross * 100, [leg.strike for leg in payoff]
+    )
+    if win is None:
+        return None
+    win = min(1.0, max(0.0, win))
     return {
         # Normalised by the mass actually covered: +/-4 sigma leaves a
         # sliver outside, and dividing by it keeps "expected" an average
         # rather than a number quietly shrunk by the tails it missed.
         "expected_value": round(expected / mass_total, 2),
-        "win_probability": round(win / mass_total, 4),
-        "loss_probability": round(1 - win / mass_total, 4),
+        "win_probability": round(win, 4),
+        "loss_probability": round(1 - win, 4),
         "max_profit": None if best is None else round(best, 2),
         "max_loss": None if worst is None else round(worst, 2),
         "risk_reward": None

@@ -455,13 +455,14 @@ def test_the_chance_of_profit_has_to_clear_the_cross_and_nothing_else_moves():
         {"kind": "put", "strike": 90.0, "side": "buy", "iv": 0.30},
     ]
     free = structure_outcome(legs, credit=1.50, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
-    charged = structure_outcome(legs, credit=1.50, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY, cross=0.80)
-    # Same as taking in 80 cents less and charging nothing. (More than one
-    # grid step: at 121 points over +/-4 sigma a step is ~70 cents here.)
-    natural = structure_outcome(legs, credit=0.70, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
+    charged = structure_outcome(legs, credit=1.50, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY, cross=0.20)
+    # Same as taking in 20 cents less and charging nothing -- a cost well
+    # under one grid step (~70 cents here), which the chance used to miss
+    # entirely when it counted steps.
+    natural = structure_outcome(legs, credit=1.30, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
 
-    assert charged["win_probability"] < free["win_probability"]
-    assert charged["win_probability"] == pytest.approx(natural["win_probability"], abs=0.002)
+    assert free["win_probability"] - charged["win_probability"] > 0.005
+    assert charged["win_probability"] == pytest.approx(natural["win_probability"], abs=1e-4)
     assert charged["expected_value"] == free["expected_value"] and charged["max_profit"] == free["max_profit"]
 
 

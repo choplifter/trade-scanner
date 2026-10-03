@@ -6,6 +6,7 @@ rows priced by the same Black-Scholes the app uses, so the mids are
 consistent across strikes and a ranking assertion means something.
 """
 
+import math
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
@@ -226,6 +227,54 @@ def test_skipped_to_dict_is_sorted_and_complete():
 
 def _years_to(expiry: date) -> float:
     return _years(expiry)
+
+
+def _lognormal_above(price: float, years: float) -> float:
+    """P(S_T > price) under the same no-drift lognormal, in closed form."""
+    from app.options.optimizer import _norm_cdf
+
+    w = IV * math.sqrt(years)
+    return 1 - _norm_cdf((math.log(price / SPOT) + 0.5 * w * w) / w)
+
+
+def test_at_expiry_the_chance_is_the_closed_form_not_a_count_of_grid_steps():
+    """A short put at expiry wins above strike - credit: the chance is
+    P(S_T > breakeven) exactly. Counted step by step it was off by up to
+    two points, and a few cents of credit either moved it a whole step or
+    not at all."""
+    years = _years_to(NEAR)
+    put = PayoffLeg(kind="put", strike=95.0, side="sell", expiry=NEAR, iv=IV)
+    for credit in (1.00, 1.07, 1.20, 1.35):
+        got = chance_of_profit([put], -credit, _horizon(NEAR), SPOT, IV, years)
+        assert got == pytest.approx(_lognormal_above(95.0 - credit, years), abs=1e-4)
+    # A cost to clear is the same as a smaller credit, to the cent.
+    charged = chance_of_profit([put], -1.20, _horizon(NEAR), SPOT, IV, years, threshold=20.0)
+    assert charged == pytest.approx(chance_of_profit([put], -1.00, _horizon(NEAR), SPOT, IV, years), abs=1e-4)
+
+
+def test_before_expiry_the_breakeven_is_interpolated_to_a_fine_grids_answer():
+    """Valued mid-life (Black-Scholes, smooth): against a brute-force count
+    on a grid a hundred times finer."""
+    from app.options.optimizer import _norm_cdf, position_pnl
+
+    horizon = datetime(2026, 9, 15, 16, 0, tzinfo=ET)
+    years = (horizon - NOW).total_seconds() / (365 * 86400)
+    legs = [
+        PayoffLeg(kind="call", strike=100.0, side="buy", expiry=NEAR, iv=IV),
+        PayoffLeg(kind="call", strike=106.0, side="sell", expiry=NEAR, iv=IV),
+    ]
+    net = 2.10
+    got = chance_of_profit(legs, net, horizon, SPOT, IV, years)
+
+    w = IV * math.sqrt(years)
+    mu, n = -0.5 * w * w, 12001
+    step = 8 * w / (n - 1)
+    brute = 0.0
+    for i in range(n):
+        x = -4 * w + i * step
+        if position_pnl(legs, net, SPOT * math.exp(x), horizon, 1) > 0:
+            brute += _norm_cdf((x + step / 2 - mu) / w) - _norm_cdf((x - step / 2 - mu) / w)
+    assert got == pytest.approx(brute, abs=5e-4)
 
 
 def test_chance_of_profit_is_a_probability_that_orders_shapes_sensibly():
