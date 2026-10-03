@@ -707,8 +707,16 @@ class OptionsService:
                 for leg in legs
             ]
             horizon = self._source.now().replace(year=payoff.expiry.year, month=payoff.expiry.month, day=payoff.expiry.day)
+            # Net of the cross, as in the Optimizer and the Screener: the
+            # chance assumes a fill at the natural. Only the part of that
+            # gap the limit has not already paid is charged -- a limit at
+            # the natural owes nothing more, one at mid owes all of it.
+            unpaid = 0.0
+            if net_natural is not None:
+                unpaid = max(0.0, net_natural - price if direction == "debit" else price - net_natural)
             chance = chance_of_profit(
-                payoff_legs, price if direction == "debit" else -price, horizon, chain.spot, sigma, years, ticket.qty
+                payoff_legs, price if direction == "debit" else -price, horizon, chain.spot, sigma, years, ticket.qty,
+                threshold=unpaid * 100 * ticket.qty,
             )
             barrier = nearest_breakeven(breakevens, chain.spot)
             if barrier is not None:

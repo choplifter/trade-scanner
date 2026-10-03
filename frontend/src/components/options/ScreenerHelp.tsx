@@ -58,8 +58,10 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
           </dd>
           <dt>4 · R/R and Loss prob — the shape, not the verdict</dt>
           <dd>
-            Risk against reward, and the share of the distribution under which the structure loses. Read them
-            together or not at all: 29 : 1 at a 4 % chance of loss is a worse proposition than 3 : 1 at 25 %. Neither
+            Risk against reward, and the share of the distribution under which the structure is not ahead once
+            every leg is filled at the natural instead of the mid — so a structure that ends a few cents up but
+            not by what crossing the quotes cost counts as a loss here, as in the Optimizer and the ticket. Read
+            them together or not at all: 29 : 1 at a 4 % chance of loss is a worse proposition than 3 : 1 at 25 %. Neither
             says anything on its own, which is why EV exists.
           </dd>
           <dt>5 · Earnings</dt>

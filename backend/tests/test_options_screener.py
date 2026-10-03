@@ -21,6 +21,7 @@ from app.options.screener import (
     realised_vol,
     screen_underlyings,
     spread_fraction,
+    vertical_of,
 )
 
 TODAY = date(2026, 9, 29)
@@ -442,6 +443,34 @@ def test_a_fatter_credit_for_the_same_risk_lifts_the_expected_value():
     fat = structure_outcome(legs, credit=1.50, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
     assert fat["expected_value"] > thin["expected_value"]
     assert fat["win_probability"] >= thin["win_probability"], "a wider breakeven wins more often"
+
+
+def test_the_chance_of_profit_has_to_clear_the_cross_and_nothing_else_moves():
+    """Priced at mid, a structure filled at the natural is not ahead at zero
+    -- as in the Optimizer. The expected value and the extremes stay at mid."""
+    from app.options.screener import structure_outcome
+
+    legs = [
+        {"kind": "put", "strike": 95.0, "side": "sell", "iv": 0.30},
+        {"kind": "put", "strike": 90.0, "side": "buy", "iv": 0.30},
+    ]
+    free = structure_outcome(legs, credit=1.50, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
+    charged = structure_outcome(legs, credit=1.50, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY, cross=0.80)
+    # Same as taking in 80 cents less and charging nothing. (More than one
+    # grid step: at 121 points over +/-4 sigma a step is ~70 cents here.)
+    natural = structure_outcome(legs, credit=0.70, spot=100.0, sigma=0.30, years=45 / 365, expiry=EXPIRY)
+
+    assert charged["win_probability"] < free["win_probability"]
+    assert charged["win_probability"] == pytest.approx(natural["win_probability"], abs=0.002)
+    assert charged["expected_value"] == free["expected_value"] and charged["max_profit"] == free["max_profit"]
+
+
+def test_a_vertical_carries_what_crossing_both_legs_costs():
+    short = {"strike": 95.0, "mid": 2.0, "bid": 1.9, "ask": 2.1}
+    wing = {"strike": 90.0, "mid": 0.8, "bid": 0.7, "ask": 0.9, "width": 5.0, "open_interest": 100, "spread_fraction": 0.25}
+    assert vertical_of(short, wing)["cross"] == pytest.approx(0.20)
+    # An unquoted side is not charged as a cost.
+    assert vertical_of(short, {**wing, "bid": None})["cross"] == pytest.approx(0.10)
 
 
 def test_no_volatility_means_no_expected_value_rather_than_a_guess():

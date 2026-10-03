@@ -602,6 +602,15 @@ def pick_wing(
     }
 
 
+def _half_spread(leg: dict) -> float:
+    """Per share, mid to natural on one leg. Zero when one side is not
+    quoted: an unknown is not charged as a cost."""
+    bid, ask = leg.get("bid"), leg.get("ask")
+    if bid is None or ask is None or ask < bid:
+        return 0.0
+    return round((ask - bid) / 2, 4)
+
+
 def vertical_of(short: dict | None, wing: dict | None) -> dict | None:
     """(credit, width, credit/width) for a short leg and its wing, or None
     when either is missing a price. The ratio is what says whether the
@@ -617,6 +626,9 @@ def vertical_of(short: dict | None, wing: dict | None) -> dict | None:
         "long_strike": wing["strike"],
         "width": width,
         "credit": credit,
+        # Per share, what taking both legs at the natural costs against
+        # their mids -- what the chance of profit has to clear.
+        "cross": _half_spread(short) + _half_spread(wing),
         "credit_to_width": round(credit / width, 4),
         "wing_open_interest": wing["open_interest"],
         "wing_spread_fraction": wing["spread_fraction"],
@@ -1126,6 +1138,7 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
     not to some other version of the trade."""
     legs: list[dict] = []
     credit = 0.0
+    cross = 0.0
     if req.strategy in ("cash_secured_put", "covered_call"):
         leg = row.short_put if req.strategy == "cash_secured_put" else row.short_call
         if leg is None or leg.get("mid") is None:
@@ -1133,6 +1146,7 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
         kind = "put" if req.strategy == "cash_secured_put" else "call"
         legs = [{"kind": kind, "strike": leg["strike"], "side": "sell", "iv": _leg_iv(chain, kind, leg["strike"])}]
         credit = leg["mid"]
+        cross = _half_spread(leg)
     elif req.strategy in SPREAD_STRATEGIES:
         pairs = [row.put_spread, row.call_spread] if req.strategy == "iron_condor" else [row.put_spread]
         if any(p is None for p in pairs):
@@ -1141,6 +1155,7 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
             legs.append({"kind": kind, "strike": pair["short_strike"], "side": "sell", "iv": _leg_iv(chain, kind, pair["short_strike"])})
             legs.append({"kind": kind, "strike": pair["long_strike"], "side": "buy", "iv": _leg_iv(chain, kind, pair["long_strike"])})
             credit += pair["credit"]
+            cross += pair.get("cross", 0.0)
         if req.strategy == "debit_spread":
             credit = -abs(credit)
     else:
@@ -1148,7 +1163,7 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain) -> dict | None:
         # structure, so there is nothing here to value.
         return None
     years = max((row.expiry - datetime.now(timezone.utc).date()).days, 0) / 365 if row.expiry else 0.0
-    return structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry) if row.expiry else None
+    return structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry, cross=cross) if row.expiry else None
 
 
 def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date) -> dict | None:
@@ -1180,7 +1195,7 @@ def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date) 
         {"kind": kind, "strike": vertical["long_strike"], "side": "buy", "iv": _leg_iv(chain, kind, vertical["long_strike"])},
     ]
     years = max((expiry - datetime.now(timezone.utc).date()).days, 0) / 365
-    return structure_outcome(legs, vertical["credit"], chain.spot, short_iv, years, expiry)
+    return structure_outcome(legs, vertical["credit"], chain.spot, short_iv, years, expiry, cross=vertical.get("cross", 0.0))
 
 
 def _leg_iv(chain: Chain, kind: str, strike: float) -> float | None:
@@ -1283,6 +1298,8 @@ def structure_outcome(
     sigma: float | None,
     years: float,
     expiry: date,
+    *,
+    cross: float = 0.0,
 ) -> dict | None:
     """Max profit, max loss, the chance of each, and the **expected value**
     of the structure at expiry under the option market's own implied
@@ -1299,8 +1316,13 @@ def structure_outcome(
     and the same lognormal the Optimizer's chance of profit uses.
 
     `legs` are the screener's own leg dicts (strike, kind, side); `credit`
-    is per share, positive for a structure that takes one in. None when
-    there is no volatility to build a distribution from.
+    is per share, positive for a structure that takes one in. `cross` is
+    per share too: what filling every leg at the natural costs against the
+    mids. A win has to clear it, as in the Optimizer's chance of profit --
+    a structure priced at mid is not ahead at zero when nobody fills at
+    mid. Only the chance moves; the expected value and the extremes stay
+    at mid, like the Optimizer's P/L points. None when there is no
+    volatility to build a distribution from.
     """
     if sigma is None or sigma <= 0 or years <= 0 or spot <= 0 or not legs:
         return None
@@ -1330,7 +1352,7 @@ def structure_outcome(
             return None
         expected += mass * pnl
         mass_total += mass
-        if pnl > 0:
+        if pnl > cross * 100:
             win += mass
         best = pnl if best is None else max(best, pnl)
         worst = pnl if worst is None else min(worst, pnl)

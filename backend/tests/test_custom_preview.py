@@ -162,6 +162,25 @@ def test_the_probabilities_come_back_and_bracket_sensibly(service):
     assert spread.touch > 1 - spread.chance - 0.05
 
 
+def test_the_chance_is_net_of_the_cross_so_a_limit_at_mid_reads_like_one_at_the_natural(service):
+    """The chance assumes a fill at the natural. A limit at mid has the whole
+    mid-to-natural gap still to pay and is charged it; one at the natural
+    has paid it already and is not charged twice -- so both read the same,
+    and neither reads the rosier number a mid fill would give."""
+    def preview(limit):
+        return asyncio.run(service.preview(SpreadTicket(
+            underlying="XYZ", strategy="bull_put", expiry=EXPIRY, qty=1, long_strike=90, short_strike=95, limit_price=limit,
+        )))
+
+    probe = preview(None)
+    assert probe.net_natural is not None and probe.net_natural < probe.net_mid, "a credit's natural takes in less"
+    at_mid, at_natural = preview(round(probe.net_mid, 2)), preview(round(probe.net_natural, 2))
+
+    assert at_mid.chance == pytest.approx(at_natural.chance, abs=0.002)
+    # A limit better than mid is charged more than the gap to mid, and wins less.
+    assert preview(round(probe.net_mid + 0.20, 2)).chance <= at_mid.chance
+
+
 def test_a_ratio_leaves_a_bare_short_and_the_named_shapes_still_work(service):
     ratio = asyncio.run(
         service.preview(_built(
