@@ -497,7 +497,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           ?
         </button>
       </div>
-      <ScreenerHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <ScreenerHelp open={helpOpen} onClose={() => setHelpOpen(false)} strategy={strategy} />
 
       <div className="opt-preference screen-filters">
         <label title="Days to expiry. The screen takes the listed expiry nearest the middle of this window; past 60 days it asks for the full expiry board.">

@@ -71,7 +71,7 @@ import {
   type BuilderLeg,
 } from "./builderLegs";
 
-type Tab = "chain" | "spreads" | "idea" | "optimizer" | "screener" | "playbooks";
+export type OptionsTab = "chain" | "spreads" | "idea" | "optimizer" | "screener" | "playbooks";
 
 interface OptionsWidgetProps {
   symbol: string | null;
@@ -108,7 +108,7 @@ function ordinal(n: number): string {
 
 export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: OptionsWidgetProps) {
   const enabled = true;
-  const [tab, setTab] = useState<Tab>("chain");
+  const [tab, setTab] = useState<OptionsTab>("chain");
   // The Idea tab's request lives here so "Load into ticket" (which shows
   // the Chain tab) does not throw away an answer that took minutes.
   const ideas = useOptionsIdeas();
@@ -597,7 +597,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             ?
           </button>
         </div>
-        <OptionsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+        <OptionsHelp open={helpOpen} onClose={() => setHelpOpen(false)} tab={tab} strategy={strategy} />
         <RollTicket
           target={rollTarget}
           mode={mode}

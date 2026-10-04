@@ -1,10 +1,23 @@
+import type { ScreenStrategy } from "../../types/options";
 import { Modal } from "../common/Modal";
 import { BookRefLine, NATENBERG } from "./bookRefs";
 
 interface ScreenerHelpProps {
   open: boolean;
   onClose: () => void;
+  /** The strategy being screened: only its criteria are explained. */
+  strategy: ScreenStrategy;
 }
+
+const LABELS: Record<ScreenStrategy, string> = {
+  cash_secured_put: "Cash-secured put",
+  covered_call: "Covered call",
+  credit_spread: "Credit spread",
+  iron_condor: "Iron condor",
+  debit_spread: "Debit spread",
+  long_option: "Long option",
+  calendar: "Calendar",
+};
 
 /** How to read a screen, in the order the numbers should be read rather
  * than the order they sit in the table. Written against what the screener
@@ -13,9 +26,18 @@ interface ScreenerHelpProps {
  * fill at, an open interest the feed never reported, a credit that looks
  * fat because the report inside the expiry has not happened yet. Keep this
  * and the criteria in step when one changes. */
-export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
+export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
+  // The same split as the backend's STRATEGY_BIAS and SPREAD_STRATEGIES.
+  const sells =
+    strategy === "cash_secured_put" ||
+    strategy === "covered_call" ||
+    strategy === "credit_spread" ||
+    strategy === "iron_condor";
+  const buys = strategy === "debit_spread" || strategy === "long_option";
+  const calendar = strategy === "calendar";
+  const winged = strategy === "credit_spread" || strategy === "iron_condor" || strategy === "debit_spread";
   return (
-    <Modal open={open} title="Finding something tradable" onClose={onClose} className="modal-panel-wide">
+    <Modal open={open} title={`Screening: ${LABELS[strategy]}`} onClose={onClose} className="modal-panel-wide">
       <div className="options-help">
         <p className="options-help-intro">
           Most runs produce nothing worth placing, and that is the screen working rather than failing. If implied
@@ -28,34 +50,86 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
         <h3>Read the columns in this order</h3>
         <dl>
           <dt>1 · Quote width — can it be filled at all?</dt>
-          <dd>
-            <strong>Where it is:</strong> the <strong>Worst leg</strong> column holds the widest of them all, which
-            is the one that decides whether the package fills — sort by it ascending and what can actually be traded
-            comes to the top. The individual numbers are the pair of percentages in the <strong>Put side</strong> and{" "}
-            <strong>Call side</strong> columns. <code>295/305 · 10w · Δ0.16 · 23/92 % · 19 %</code> reads as: buy 295
-            against the short 305, ten wide, the short at 0.16 delta, crossing the short's quote costs 23 % of its mid
-            and crossing the wing's costs 92 %, and 19 % of the width comes back as credit. Either percentage turns red
-            past the <strong>Quote ≤</strong> limit you set above the table.
-            <br />
-            This decides whether the rest of the row means anything. Credit, expectancy and risk-reward are computed
-            from <em>mid</em> prices, so on a leg quoted 0.21 / 1.31 the mid is a number no one is offering. A row that
-            fails it is not a worse opportunity than one that passes — it is an opportunity whose numbers are fiction.
-            Read nothing else until this passes. Watch the second number especially: the wing sits furthest out of the
-            money and is routinely the wider of the two, and it is the leg that stops a package filling at the mid.
-          </dd>
-          <dt>2 · IV / RV — is the premium actually expensive?</dt>
-          <dd>
-            Implied volatility against what the underlying has really done over the last twenty sessions. This is the
-            only place a durable edge in selling premium can come from: the variance risk premium, implied sitting
-            above realised. Above 1.20 counts as rich here. Below 1.00 you are selling something cheap, which is the
-            wrong side of the trade whatever the credit looks like.
-            <BookRefLine refs={[NATENBERG.historicalVol, NATENBERG.ivAsPredictor]} />
-          </dd>
+          {winged ? (
+            <dd>
+              <strong>Where it is:</strong> the <strong>Worst leg</strong> column holds the widest of them all, which
+              is the one that decides whether the package fills — sort by it ascending and what can actually be traded
+              comes to the top. The individual numbers are the pair of percentages in the{" "}
+              {strategy === "iron_condor" ? (
+                <>
+                  <strong>Put side</strong> and <strong>Call side</strong> columns
+                </>
+              ) : (
+                <>
+                  <strong>Put side</strong> column (a vertical is screened on its put side)
+                </>
+              )}
+              . <code>295/305 · 10w · Δ0.16 · 23/92 % · 19 %</code> reads as: buy 295
+              against the short 305, ten wide, the short at 0.16 delta, crossing the short's quote costs 23 % of its mid
+              and crossing the wing's costs 92 %, and 19 % of the width comes back as credit. Either percentage turns red
+              past the <strong>Quote ≤</strong> limit you set above the table.
+              <br />
+              This decides whether the rest of the row means anything. Credit, expectancy and risk-reward are computed
+              from <em>mid</em> prices, so on a leg quoted 0.21 / 1.31 the mid is a number no one is offering. A row that
+              fails it is not a worse opportunity than one that passes — it is an opportunity whose numbers are fiction.
+              Read nothing else until this passes. Watch the second number especially: the wing sits furthest out of the
+              money and is routinely the wider of the two, and it is the leg that stops a package filling at the mid.
+            </dd>
+          ) : (
+            <dd>
+              <strong>Where it is:</strong> the <strong>Worst leg</strong> column, with the leg's own percentage in the{" "}
+              <strong>{strategy === "covered_call" ? "Call side" : "Put side"}</strong> column: what crossing its quote
+              costs against its mid, red past the <strong>Quote ≤</strong> limit you set above the table.
+              <br />
+              This decides whether the rest of the row means anything. Every other number is computed from the{" "}
+              <em>mid</em>, so on a leg quoted 0.21 / 1.31 the mid is a price no one is offering. Read nothing else until
+              this passes.
+            </dd>
+          )}
+          {sells && (
+            <>
+              <dt>2 · IV / RV — is the premium actually expensive?</dt>
+              <dd>
+                Implied volatility against what the underlying has really done over the last twenty sessions. This is the
+                only place a durable edge in selling premium can come from: the variance risk premium, implied sitting
+                above realised. Above 1.20 counts as rich here. Below 1.00 you are selling something cheap, which is the
+                wrong side of the trade whatever the credit looks like.
+                <BookRefLine refs={[NATENBERG.historicalVol, NATENBERG.ivAsPredictor]} />
+              </dd>
+            </>
+          )}
+          {buys && (
+            <>
+              <dt>2 · IV / RV — is the premium actually cheap?</dt>
+              <dd>
+                Implied volatility against what the underlying has really done over the last twenty sessions. Implied
+                usually sits above realised — that is what sellers are paid for — so a buyer wants the rare reading where
+                it does not: at or under 0.95 passes here. Above it you pay the seller's premium on top of the move.
+                <BookRefLine refs={[NATENBERG.historicalVol, NATENBERG.ivAsPredictor]} />
+              </dd>
+            </>
+          )}
+          {calendar && (
+            <>
+              <dt>2 · Front over back — is there a slope to sell?</dt>
+              <dd>
+                The front expiry's at-the-money IV against the back one's. A calendar sells the front and buys the back,
+                so it wants the front priced higher: 1.03 or more passes. IV / RV is reported but not judged — the front
+                it is read on is rich by design.
+                <BookRefLine refs={[NATENBERG.calendar, NATENBERG.forwardVol]} />
+              </dd>
+            </>
+          )}
           <dt>2b · IV rank — expensive against its own year?</dt>
           <dd>
             Where today&apos;s implied volatility sits between its lowest and highest of the past 52 weeks. A different
-            question from IV / RV: a quiet stock can be rich on IV / RV and still cheap against its own year. From 60 %
-            it passes a premium-selling screen (green), up to 30 % a premium-buying one (red). A symbol with fewer than
+            question from IV / RV: a quiet stock can be rich on IV / RV and still cheap against its own year.{" "}
+            {sells
+              ? "From 60 % it passes this premium-selling screen (green)."
+              : calendar
+                ? "Up to 30 % passes: a calendar is long vega and gains when implied volatility rises from a low level."
+                : "Up to 30 % passes this premium-buying screen."}{" "}
+            A symbol with fewer than
             20 recorded sessions has no rank yet and is not judged on it — left out, not failed.
             <BookRefLine refs={[NATENBERG.ivAsPredictor]} />
           </dd>
@@ -77,25 +151,37 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             <BookRefLine refs={[NATENBERG.probability, NATENBERG.impliedDistributions]} />
           </dd>
           <dt>5 · Earnings</dt>
-          <dd>
-            A report inside the expiry is why the premium is fat, and it collapses with the report. Early policy lets
-            one through in the first third of the position's life — the volatility drops while the strikes are still
-            far away and weeks of decay follow. Avoid fails any report inside. If a row is rich on IV/RV and holds a
-            report, you are being paid for the event, not for the premium.
-            <BookRefLine refs={[NATENBERG.gaps]} />
-          </dd>
+          {sells ? (
+            <dd>
+              A report inside the expiry is why the premium is fat, and it collapses with the report. Early policy lets
+              one through in the first third of the position's life — the volatility drops while the strikes are still
+              far away and weeks of decay follow. Avoid fails any report inside. If a row is rich on IV/RV and holds a
+              report, you are being paid for the event, not for the premium.
+              <BookRefLine refs={[NATENBERG.gaps]} />
+            </dd>
+          ) : (
+            <dd>
+              Avoid by default: a report inside the expiry fails the row. Bought before a print, the structure pays for
+              the event in its implied volatility and then watches that volatility collapse once the news is out.
+              <BookRefLine refs={[NATENBERG.gaps]} />
+            </dd>
+          )}
         </dl>
 
         <h3>When nothing passes, these are the levers</h3>
         <dl>
-          <dt>Wing</dt>
-          <dd>
-            The width of the bought wing, in points, and the whole risk of the vertical. A one-point wing on a
-            78-dollar ETF is 22.50 of maximum profit against 78 of risk, where eight legs of commission decide the
-            sign; widening it raises both the credit and the risk and usually moves the expectancy. Blank aims at 3 %
-            of spot. Worth trying two or three widths on the same symbol — the same chain can be a trade at one and
-            not at another.
-          </dd>
+          {winged && (
+            <>
+              <dt>Wing</dt>
+              <dd>
+                The width of the bought wing, in points, and the whole risk of the vertical. A one-point wing on a
+                78-dollar ETF is 22.50 of maximum profit against 78 of risk, where eight legs of commission decide the
+                sign; widening it raises both the credit and the risk and usually moves the expectancy. Blank aims at 3 %
+                of spot. Worth trying two or three widths on the same symbol — the same chain can be a trade at one and
+                not at another.
+              </dd>
+            </>
+          )}
           <dt>Δ (short delta)</dt>
           <dd>
             How far out the short strikes sit. Nearer the money brings more credit and a higher chance of being
@@ -127,12 +213,16 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             column you would normally use to tell a real wall from three contracts is simply unavailable. Contract
             volume beside it still works and is the fallback.
           </dd>
-          <dt>EV, R/R or the spreads read "—"</dt>
-          <dd>
-            No structure could be built. Usually the wing: no listed strike far enough out, quoted on both sides, for
-            the width being asked. Widening the wing or moving the delta band sometimes finds one; often the chain
-            genuinely has nothing there.
-          </dd>
+          {winged && (
+            <>
+              <dt>EV, R/R or the spreads read "—"</dt>
+              <dd>
+                No structure could be built. Usually the wing: no listed strike far enough out, quoted on both sides, for
+                the width being asked. Widening the wing or moving the delta band sometimes finds one; often the chain
+                genuinely has nothing there.
+              </dd>
+            </>
+          )}
         </dl>
 
         <h3>Before placing anything</h3>
