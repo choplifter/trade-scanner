@@ -241,3 +241,24 @@ def test_the_dividend_calendar_reads_declared_cash_dividends_inside_the_window()
     got = asyncio.run(cal.upcoming("XOM"))
     assert [(d.ex_date, d.cash) for d in got] == [(today + timedelta(days=40), 1.03)]
     assert asyncio.run(cal.upcoming("ZERO")) == []
+
+
+# --- pin risk ----------------------------------------------------------------
+
+
+def test_a_short_strike_the_stock_sits_on_at_expiry_is_flagged():
+    from app.options.position_risk import pin_risks
+
+    today = NOW.date()
+    on_it = RiskLeg("call", 100.0, today, -1, 0.20)
+    out = pin_risks([on_it], 100.3, NOW)
+    assert len(out) == 1 and "Pin risk" in out[0] and "0.30 above" in out[0]
+
+
+def test_pin_risk_needs_expiry_day_a_short_leg_and_closeness():
+    from app.options.position_risk import pin_risks
+
+    today = NOW.date()
+    assert pin_risks([RiskLeg("call", 100.0, EXPIRY, -1, 0.2)], 100.0, NOW) == [], "not expiring today"
+    assert pin_risks([RiskLeg("call", 100.0, today, 1, 0.2)], 100.0, NOW) == [], "a long leg is the holder's choice"
+    assert pin_risks([RiskLeg("put", 90.0, today, -1, 0.2)], 100.0, NOW) == [], "ten dollars away"

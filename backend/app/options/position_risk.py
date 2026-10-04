@@ -228,6 +228,43 @@ def assignment_risks(
     return out
 
 
+# How close to a short strike the underlying must close on expiry day for
+# the outcome to be in doubt: half a percent of spot, or one day's move at
+# the leg's own IV if that is wider -- an exercise decision is taken until
+# 17:30 ET, on whatever the stock does after the bell.
+PIN_MIN_FRACTION = 0.005
+TRADING_DAYS_PER_YEAR = 252
+
+
+def pin_risks(legs: list[RiskLeg], spot: float, now: datetime) -> list[str]:
+    """Expiry-day warnings for short legs the underlying sits on
+    (Natenberg ch. 23, "Expiration Straddles"): whether such a leg is
+    assigned is not known until after the close, so the position on
+    Monday may hold shares nobody chose to hold. One line per leg."""
+    from app.services.market_clock import ET
+
+    today = now.astimezone(ET).date() if now.tzinfo else now.date()
+    out: list[str] = []
+    for leg in legs:
+        if leg.kind not in ("call", "put") or leg.qty >= 0 or leg.expiry != today:
+            continue
+        sigma = leg.iv if leg.iv and leg.iv > 0 else 0.0
+        band = max(PIN_MIN_FRACTION * spot, spot * sigma / math.sqrt(TRADING_DAYS_PER_YEAR))
+        gap = spot - leg.strike
+        if abs(gap) > band:
+            continue
+        side = "above" if gap > 0 else "below" if gap < 0 else "at"
+        where = "at" if side == "at" else f"{abs(gap):.2f} {side}"
+        out.append(
+            f"Pin risk on the short {leg.strike:g} {leg.kind}: the underlying is {where} the strike on expiry "
+            f"day. Whether it is assigned is decided after the close (exercise runs until 17:30 ET), so you may "
+            f"find {100 * abs(leg.qty):.0f} shares long or short on the next session with the hedging leg gone. "
+            "Close it before the bell; Alpaca liquidates what the account cannot cover from 15:30 ET "
+            "(15:45 for SPY, QQQ and other broad ETFs)."
+        )
+    return out
+
+
 class DividendCalendar:
     """Upcoming ex-dividend dates, market-wide, kept for the day: one query
     for the next DIVIDEND_LOOKAHEAD_DAYS. Cash dividends only; a stock
@@ -403,10 +440,10 @@ async def spread_risks(source, groups: list, dividends: "DividendCalendar | None
                 )
             )
         greeks = position_greeks(legs + ([RiskLeg("stock", 0.0, None, g.shares)] if g.shares else []), spot, now)
-        warnings: list[str] = []
+        warnings: list[str] = pin_risks(legs, spot, now)
         if dividends is not None and not replay:
             try:
-                warnings = assignment_risks(legs, spot, now, await dividends.upcoming(g.underlying))
+                warnings += assignment_risks(legs, spot, now, await dividends.upcoming(g.underlying))
             except Exception:
                 logger.exception("Assignment check failed for %s", g.underlying)
         out[g.id] = {

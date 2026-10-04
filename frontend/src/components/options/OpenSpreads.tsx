@@ -60,6 +60,13 @@ interface PendingClose {
   working: WorkingClose[];
 }
 
+/** What a held structure's warnings are about, for the row's badge. */
+function riskLabel(warnings: string[]): string {
+  const pin = warnings.some((w) => w.startsWith("Pin risk"));
+  const early = warnings.some((w) => !w.startsWith("Pin risk"));
+  return pin && early ? "pin · assignment" : pin ? "pin" : "assignment";
+}
+
 function rejectionMessage(err: unknown): string {
   return err instanceof OrderRejectedError ? err.detail.message : err instanceof Error ? err.message : String(err);
 }
@@ -395,7 +402,7 @@ export function OpenSpreads({
                   {(group.warnings?.length ?? 0) > 0 && (
                     <span className="spread-broken" title={group.warnings!.join("\n\n")}>
                       {" "}
-                      ⚠ assignment
+                      ⚠ {riskLabel(group.warnings!)}
                     </span>
                   )}
                 </td>
@@ -467,7 +474,11 @@ export function OpenSpreads({
                       </p>
                     )}
                     {(group.warnings ?? []).map((w) => (
-                      <p key={w} className="order-rejection" title={withBook(w, NATENBERG.earlyExerciseCalls, NATENBERG.earlyExercisePuts)}>
+                      <p key={w} className="order-rejection" title={
+                          w.startsWith("Pin risk")
+                            ? withBook(w, NATENBERG.pinRisk)
+                            : withBook(w, NATENBERG.earlyExerciseCalls, NATENBERG.earlyExercisePuts)
+                        }>
                         {w}
                       </p>
                     ))}

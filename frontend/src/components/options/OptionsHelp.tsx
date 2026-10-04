@@ -575,8 +575,17 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
                 ahead of an ex-dividend date is taken the day before the ex-date once the dividend is worth more than
                 its remaining time value — you are then short the shares and owe the dividend. A short put deep in the
                 money is exercised once its time value is smaller than the interest the strike's cash would earn until
-                expiry (reckoned at 4 %). Ex-dates come from Alpaca's corporate announcements for the next 90 days.
+                expiry (reckoned at 4 %). Ex-dates are Alpaca's declared dividends for the next 90 days; one not yet
+                declared raises nothing.
                 <BookRefLine refs={[NATENBERG.earlyExerciseCalls, NATENBERG.earlyExercisePuts]} />
+              </dd>
+              <dt>Pin risk</dt>
+              <dd>
+                On expiry day, a short leg whose strike the underlying sits on (within half a percent, or a day's move
+                at its IV): whether it is assigned is decided after the close, so the next session may open with
+                shares nobody chose and the covering leg gone. The fix is to close it before the bell, for the few
+                cents it still costs.
+                <BookRefLine refs={[NATENBERG.pinRisk]} />
               </dd>
               <dt>Collateral · ceilings</dt>
               <dd>
@@ -681,12 +690,13 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
                 and its own margin.
                 <BookRefLine refs={[NATENBERG.vega]} />
               </dd>
-              <dt>⚠ assignment</dt>
+              <dt>⚠ assignment · ⚠ pin</dt>
               <dd>
-                A short leg at risk of early exercise: an in-the-money call ahead of an ex-dividend date worth more than
-                its time value, or a deep put whose time value is below the carry on its strike. The open row says which
-                leg and why; closing or rolling it before the ex-date avoids the assignment.
-                <BookRefLine refs={[NATENBERG.earlyExerciseCalls, NATENBERG.earlyExercisePuts]} />
+                A short leg at risk of early exercise (an in-the-money call ahead of an ex-dividend date worth more than
+                its time value, or a deep put whose time value is below the carry on its strike), or, on expiry day, a
+                short strike the stock sits on. The open row says which leg and why; closing or rolling it in time
+                avoids the surprise.
+                <BookRefLine refs={[NATENBERG.earlyExerciseCalls, NATENBERG.pinRisk]} />
               </dd>
               <dt>Close</dt>
               <dd>Previews the closing package at the current market, then sends it as one order (typed LIVE on Live).</dd>

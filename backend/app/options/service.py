@@ -45,6 +45,7 @@ from app.options.position_risk import (
     RiskLeg,
     assignment_risks,
     breakeven_vol,
+    pin_risks,
     position_greeks,
     realised_vol_today,
 )
@@ -762,6 +763,7 @@ class OptionsService:
             breakeven_vol(risk_legs, chain.spot, now, price if direction == "debit" else -price, sigma) if sigma else None
         )
         realised = None if replay else await realised_vol_today(self._clients, ticket.underlying)
+        warnings.extend(pin_risks(risk_legs, chain.spot, now))
         if self.dividends is not None and not replay:
             try:
                 upcoming = await self.dividends.upcoming(ticket.underlying)
