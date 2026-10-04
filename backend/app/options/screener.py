@@ -359,6 +359,9 @@ class Row:
     spot: float | None = None
     atm_iv: float | None = None
     realised_vol: float | None = None
+    # The volatility expected over the expiry's life (iv_context.
+    # forecast_vol) -- what the breakeven volatility is held against.
+    forecast_vol: float | None = None
     # Set when the screened expiry is outside the comparable 20-90 DTE band:
     # the 30-60 day expiry the IV is judged on instead (see _judged_iv).
     ref_expiry: date | None = None
@@ -442,6 +445,7 @@ class Row:
             "spot": None if self.spot is None else round(self.spot, 2),
             "atm_iv": None if self.atm_iv is None else round(self.atm_iv, 4),
             "realised_vol": None if self.realised_vol is None else round(self.realised_vol, 4),
+            "forecast_vol": None if self.forecast_vol is None else round(self.forecast_vol, 4),
             "ref_expiry": self.ref_expiry.isoformat() if self.ref_expiry else None,
             "ref_dte": self.ref_dte,
             "ref_iv": None if self.ref_iv is None else round(self.ref_iv, 4),
@@ -1040,6 +1044,10 @@ async def _priced(
     # Sized before the fetch from the closes already in hand: see
     # chain_width_for for the band the default could not reach.
     row.realised_vol = realised_vol(closes)
+    from app.options.iv_context import forecast_vol
+
+    forecast = forecast_vol(closes, row.dte)
+    row.forecast_vol = forecast.forecast if forecast is not None else None
     try:
         width = chain_width_for(row.realised_vol, row.dte, _reach_fraction(req, row.spot))
         chain: Chain = await service.chain(symbol, expiry, width)

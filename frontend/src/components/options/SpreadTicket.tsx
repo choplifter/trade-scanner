@@ -903,6 +903,7 @@ export function SpreadTicket({
           {spread.breakeven_vol != null && (
             <VolMargin
               breakevenVol={spread.breakeven_vol}
+              forecast={spread.vol_forecast ?? null}
               realisedVol={spread.realised_vol ?? null}
               vega={spread.greeks?.vega ?? null}
             />

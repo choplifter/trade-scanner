@@ -1,4 +1,4 @@
-import type { OptionsAccountResponse, PositionGreeks, SpreadTotals } from "../../types/options";
+import type { OptionsAccountResponse, PositionGreeks, SpreadTotals, VolForecast } from "../../types/options";
 import { formatMoney } from "../../utils/format";
 import { NATENBERG, withBook } from "./bookRefs";
 
@@ -43,35 +43,59 @@ export function GreeksLine({ greeks }: { greeks: PositionGreeks }) {
 
 /** Natenberg's margin for error: the volatility the price implies (the
  * level at which the model values the package at the limit) against the
- * one the stock has been realising. A seller (vega below zero) wants the
- * realised one below the breakeven, a buyer above it; the gap is how wrong
- * that forecast can be before the trade has no edge. */
+ * volatility expected over the position's life -- the 20-session reading
+ * blended toward the past year's (ch. 20, mean reversion). A seller (vega
+ * below zero) wants the forecast below the breakeven, a buyer above it;
+ * the gap is how wrong that forecast can be before the trade has no edge. */
 export function VolMargin({
   breakevenVol,
+  forecast,
   realisedVol,
   vega,
 }: {
   breakevenVol: number;
+  forecast: VolForecast | null;
   realisedVol: number | null;
   vega: number | null;
 }) {
   const seller = vega == null ? null : vega < 0;
+  const expected = forecast?.forecast ?? realisedVol;
   const margin =
-    realisedVol == null || seller == null ? null : (seller ? breakevenVol - realisedVol : realisedVol - breakevenVol) * 100;
+    expected == null || seller == null ? null : (seller ? breakevenVol - expected : expected - breakevenVol) * 100;
+  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+  const blend =
+    forecast && forecast.long_run != null
+      ? ` The forecast blends the 20-session reading (${pct(forecast.recent)}) with the past year's (${pct(forecast.long_run)}), ${Math.round(forecast.weight_recent * 100)} % on the recent one: volatility drifts back to its long-run level, and the longer the option runs the more of that drift it lives through.`
+      : forecast
+        ? " Less than half a year of closes: the forecast is the 20-session reading alone."
+        : "";
   const title = withBook(
-    `The volatility at which the model values this package at its limit: ${(breakevenVol * 100).toFixed(1)} % at the money. ` +
+    `The volatility at which the model values this package at its limit: ${pct(breakevenVol)} at the money. ` +
       (seller == null
-        ? "No greeks, so no side to judge the realised volatility from."
+        ? "No greeks, so no side to judge the forecast from."
         : seller
-          ? "Selling volatility, the trade has an edge while the stock moves less than that; the margin is how far the realised volatility (20 sessions) may rise before it is gone."
-          : "Buying volatility, the trade has an edge while the stock moves more than that; the margin is how far the realised volatility (20 sessions) may fall before it is gone.") +
-      " A better limit moves the breakeven your way; crossing the spread moves it against you. Realised volatility is a record, not a forecast.",
+          ? "Selling volatility, the trade has an edge while the stock moves less than that; the margin is how far the volatility may come out above the forecast before it is gone."
+          : "Buying volatility, the trade has an edge while the stock moves more than that; the margin is how far the volatility may come out below the forecast before it is gone.") +
+      blend +
+      " A better limit moves the breakeven your way; crossing the spread moves it against you. A forecast, not a promise.",
     NATENBERG.marginForError,
+    NATENBERG.volForecasting,
   );
   return (
     <span className="vol-margin" title={title}>
-      Breakeven vol {(breakevenVol * 100).toFixed(1)}%
-      {realisedVol != null && <> · realised {(realisedVol * 100).toFixed(1)}%</>}
+      Breakeven vol {pct(breakevenVol)}
+      {expected != null && (
+        <>
+          {" · "}
+          {forecast ? "forecast" : "realised"} {pct(expected)}
+          {forecast && forecast.long_run != null && (
+            <span className="vol-margin-detail">
+              {" "}
+              (20d {pct(forecast.recent)}, 1y {pct(forecast.long_run)})
+            </span>
+          )}
+        </>
+      )}
       {margin != null && (
         <>
           {" · margin "}

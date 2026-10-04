@@ -558,16 +558,17 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
                 passes and loses when volatility rises, before the stock has moved at all.
                 <BookRefLine refs={[NATENBERG.greeks, NATENBERG.positionAnalysis]} />
               </dd>
-              <dt>Breakeven vol · realised · margin</dt>
+              <dt>Breakeven vol · forecast · margin</dt>
               <dd>
                 The at-the-money volatility at which the model values the package at your limit, every leg's IV moved
-                by the same factor so the smile keeps its shape. Against it the stock's realised volatility over 20
-                sessions, and the gap as the <em>margin for error</em>: selling volatility (vega below zero), the trade
-                has an edge while the stock moves less than the breakeven; buying, while it moves more. A better limit
-                moves the breakeven your way, the natural against you. Green margin means the realised record is on
-                your side, red that the price does not pay for the movement the stock has been showing. Not shown in a
-                replay, where today's realised volatility would be look-ahead.
-                <BookRefLine refs={[NATENBERG.marginForError]} />
+                by the same factor so the smile keeps its shape. Against it the volatility to expect over the
+                position's life, and the gap as the <em>margin for error</em>: selling volatility (vega below zero), the
+                trade has an edge while the stock moves less than the breakeven; buying, while it moves more. The
+                forecast blends the last 20 sessions with the past year in variance, the recent reading weighted by
+                e<sup>−sessions/60</sup>: volatility drifts back to its long-run level, so a 0DTE leans on the last
+                month, a 45-day option about half and half, a LEAPS on the year. A better limit moves the breakeven
+                your way, the natural against you. Not shown in a replay, where today's closes would be look-ahead.
+                <BookRefLine refs={[NATENBERG.marginForError, NATENBERG.volForecasting]} />
               </dd>
               <dt>Early assignment</dt>
               <dd>

@@ -217,7 +217,10 @@ const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
 function BreakevenVolCell({ row, buyer }: { row: ScreenRow; buyer: boolean }) {
   const be = row.outcome?.breakeven_vol ?? null;
   if (be == null) return <td>—</td>;
-  const margin = row.realised_vol == null ? null : (buyer ? row.realised_vol - be : be - row.realised_vol) * 100;
+  // Against the volatility expected over the expiry's life; the bare
+  // 20-session reading when there is no year of closes to blend with.
+  const expected = row.forecast_vol ?? row.realised_vol;
+  const margin = expected == null ? null : (buyer ? expected - be : be - expected) * 100;
   return (
     <td className={margin == null ? undefined : margin >= 0 ? "delta-up" : "delta-down"}>
       {(be * 100).toFixed(1)}%{margin == null ? "" : ` (${margin >= 0 ? "+" : ""}${margin.toFixed(1)})`}
@@ -636,8 +639,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     <Th
                       label="BE vol"
                       title={withBook(
-                        "Breakeven volatility: the at-the-money level at which the model values the structure at its mid credit (or debit). In brackets its distance from the realised volatility (RV) -- the margin for error: how far the stock's movement may rise (for a credit) or fall (for a debit) before the price no longer pays for it. Green while the realised volatility is on the right side.",
+                        "Breakeven volatility: the at-the-money level at which the model values the structure at its mid credit (or debit). In brackets its distance from the volatility expected over the expiry's life (the 20-session reading blended toward the past year's, more so the longer the expiry) -- the margin for error: how far the stock's movement may come out above (for a credit) or below (for a debit) that forecast before the price no longer pays for it. Green while the forecast is on the right side.",
                         NATENBERG.marginForError,
+                        NATENBERG.volForecasting,
                       )}
                       sort={sort}
                       onSort={onSort}

@@ -360,34 +360,37 @@ class DividendCalendar:
         return out
 
 
-# The 20-session realised vol each underlying was last read at, per day:
-# a ticket previews on every change of strike or limit, and the daily bars
-# behind the number change once a session.
-_REALISED_CACHE: dict[tuple[str, date], float | None] = {}
+# Each underlying's daily closes, per day: a ticket previews on every
+# change of strike or limit, and the closes behind the forecast change
+# once a session.
+_CLOSES_CACHE: dict[tuple[str, date], list[float]] = {}
+# A year of sessions for the long-run level, with room for holidays.
+_CLOSES_LOOKBACK_DAYS = 400
 
 
-async def realised_vol_today(clients, symbol: str) -> float | None:
-    """The underlying's 20-session close-to-close volatility -- the
-    forecast a breakeven volatility is held against, the same estimator
-    the events strip and the Screener use. None without data."""
+async def vol_forecast_today(clients, symbol: str, dte: int):
+    """The underlying's volatility forecast for an option of `dte` days
+    (iv_context.forecast_vol): the 20-session reading blended toward the
+    past year's, the more so the longer the option runs. None without
+    data."""
     if clients is None:
         return None
     key = (symbol.upper(), datetime.now(timezone.utc).date())
-    if key in _REALISED_CACHE:
-        return _REALISED_CACHE[key]
-    from app.market_data.bars import get_daily_bars_multi
-    from app.options.events import closes_by_day
-    from app.options.iv_context import realized_vol
+    closes = _CLOSES_CACHE.get(key)
+    if closes is None:
+        from app.market_data.bars import get_daily_bars_multi
+        from app.options.events import closes_by_day
 
-    try:
-        bars = await get_daily_bars_multi(clients, [key[0]], lookback_days=60)
-    except Exception:
-        logger.exception("Daily bars for realised vol failed for %s", symbol)
-        return None
-    closes = [close for _, close in sorted(closes_by_day(bars.get(key[0], [])).items())]
-    value = realized_vol(closes) if closes else None
-    _REALISED_CACHE[key] = value
-    return value
+        try:
+            bars = await get_daily_bars_multi(clients, [key[0]], lookback_days=_CLOSES_LOOKBACK_DAYS)
+        except Exception:
+            logger.exception("Daily bars for the vol forecast failed for %s", symbol)
+            return None
+        closes = [close for _, close in sorted(closes_by_day(bars.get(key[0], [])).items())]
+        _CLOSES_CACHE[key] = closes
+    from app.options.iv_context import forecast_vol
+
+    return forecast_vol(closes, dte) if closes else None
 
 
 async def spread_risks(source, groups: list, dividends: "DividendCalendar | None") -> tuple[dict[str, dict], dict | None]:

@@ -48,6 +48,7 @@ export const NATENBERG = {
   earlyExercisePuts: ref(16, "Early Exercise of American Options", "Early Exercise of Put Options on Stock", 612),
   coveredWrites: ref(17, "Hedging with Options", undefined, 648),
   historicalVol: ref(20, "Volatility Revisited", "Historical Volatility", 773),
+  volForecasting: ref(20, "Volatility Revisited", "Volatility Forecasting", 794),
   ivAsPredictor: ref(20, "Volatility Revisited", "Implied Volatility as a Predictor of Future Volatility", 799),
   forwardVol: ref(20, "Volatility Revisited", "Forward Volatility", 823),
   positionAnalysis: ref(21, "Position Analysis", undefined, 835),

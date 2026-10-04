@@ -47,7 +47,7 @@ from app.options.position_risk import (
     breakeven_vol,
     pin_risks,
     position_greeks,
-    realised_vol_today,
+    vol_forecast_today,
 )
 from app.options.positions import SpreadGroup, group_spreads
 from app.options.quote_source import LiveQuoteSource, QuoteSource
@@ -762,7 +762,7 @@ class OptionsService:
         be_vol = (
             breakeven_vol(risk_legs, chain.spot, now, price if direction == "debit" else -price, sigma) if sigma else None
         )
-        realised = None if replay else await realised_vol_today(self._clients, ticket.underlying)
+        vol = None if replay else await vol_forecast_today(self._clients, ticket.underlying, max(dte, 0))
         warnings.extend(pin_risks(risk_legs, chain.spot, now))
         if self.dividends is not None and not replay:
             try:
@@ -805,7 +805,8 @@ class OptionsService:
             greeks=greeks.to_dict() if greeks is not None else None,
             breakeven_vol=round(be_vol, 4) if be_vol is not None else None,
             atm_iv=round(sigma, 4) if sigma else None,
-            realised_vol=round(realised, 4) if realised is not None else None,
+            realised_vol=round(vol.recent, 4) if vol is not None else None,
+            vol_forecast=vol.to_dict() if vol is not None else None,
         )
 
     def _payoff(

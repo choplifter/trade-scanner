@@ -295,3 +295,61 @@ def cone_reading(implied: float | None, closes: Sequence[float], dte: int | None
         median=ordered[len(ordered) // 2],
         high=ordered[-1],
     )
+
+
+# How fast volatility is taken to return to its long-run level: the
+# weight on the recent reading falls by 1/e every this many sessions of
+# the option's remaining life. A choice, not a fit -- about two months,
+# within the one-to-three-month half-lives usually reported for equity
+# volatility -- and named so it can be argued with.
+VOL_REVERSION_SESSIONS = 60
+# The long-run level is the past year's realised volatility; with less
+# than half a year of returns there is no long run to revert to.
+LONG_RUN_MIN_RETURNS = 126
+
+
+@dataclass(frozen=True)
+class VolForecast:
+    """A volatility forecast for the life of an option, and what it was
+    blended from."""
+
+    forecast: float
+    recent: float
+    long_run: float | None
+    weight_recent: float
+
+    def to_dict(self) -> dict:
+        return {
+            "forecast": round(self.forecast, 4),
+            "recent": round(self.recent, 4),
+            "long_run": round(self.long_run, 4) if self.long_run is not None else None,
+            "weight_recent": round(self.weight_recent, 3),
+        }
+
+
+def forecast_vol(closes: Sequence[float], dte: int | None) -> VolForecast | None:
+    """The volatility to expect over the next `dte` calendar days.
+
+    Natenberg (ch. 20, "Volatility Forecasting") treats volatility as mean
+    reverting: whatever it has been lately, it drifts back toward its own
+    long-run level, and the longer the option has to run the more of that
+    drift it lives through. So the 20-session reading and the past year's
+    are blended in variance, the recent one weighted by
+    exp(-sessions / VOL_REVERSION_SESSIONS): a 0DTE leans almost wholly on
+    the last month, a 45-day option about half and half, a LEAPS on the
+    year. Without a year of closes the recent reading stands alone."""
+    recent = realized_vol(closes)
+    if recent is None:
+        return None
+    usable = [c for c in closes if c and c > 0]
+    long_run = (
+        realized_vol(usable, window=TRADING_DAYS, min_returns=LONG_RUN_MIN_RETURNS)
+        if len(usable) > LONG_RUN_MIN_RETURNS
+        else None
+    )
+    if long_run is None:
+        return VolForecast(forecast=recent, recent=recent, long_run=None, weight_recent=1.0)
+    sessions = max(0.0, (dte or 0) * TRADING_DAYS / 365.0)
+    weight = math.exp(-sessions / VOL_REVERSION_SESSIONS)
+    variance = weight * recent * recent + (1 - weight) * long_run * long_run
+    return VolForecast(forecast=math.sqrt(variance), recent=recent, long_run=long_run, weight_recent=weight)

@@ -584,6 +584,10 @@ class ResolvedSpread(BaseModel):
     breakeven_vol: float | None = None
     atm_iv: float | None = None
     realised_vol: float | None = None
+    # The volatility expected over the position's life (iv_context.
+    # forecast_vol): {forecast, recent, long_run, weight_recent}. What the
+    # breakeven volatility is held against.
+    vol_forecast: dict | None = None
 
 
 class CloseLeg(BaseModel):

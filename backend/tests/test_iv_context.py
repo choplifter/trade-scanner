@@ -381,3 +381,36 @@ def test_no_cone_without_the_history_or_the_expiry():
     assert cone_reading(0.3, short, 45) is None, "40 sessions hold too few 31-session spells to rank among"
     long = _path([0.01 * (-1) ** i for i in range(260)])
     assert cone_reading(None, long, 45) is None and cone_reading(0.3, long, None) is None
+
+
+# --- volatility forecast ------------------------------------------------------
+
+
+def _closes_with(daily_moves: list[float]) -> list[float]:
+    out = [100.0]
+    for move in daily_moves:
+        out.append(out[-1] * math.exp(move))
+    return out
+
+
+def test_the_forecast_leans_on_the_recent_reading_short_and_on_the_year_long():
+    from app.options.iv_context import forecast_vol
+
+    # A quiet year (0.5 % a day) ending in a loud month (2 % a day).
+    closes = _closes_with([0.005 * (-1) ** i for i in range(232)] + [0.02 * (-1) ** i for i in range(20)])
+    near = forecast_vol(closes, 1)
+    mid = forecast_vol(closes, 45)
+    far = forecast_vol(closes, 400)
+    assert near.recent > near.long_run
+    assert near.forecast > mid.forecast > far.forecast, "the longer the option, the more it reverts"
+    assert abs(near.forecast - near.recent) / near.recent < 0.05
+    assert abs(far.forecast - far.long_run) / far.long_run < 0.1
+
+
+def test_without_a_year_of_closes_the_recent_reading_stands_alone():
+    from app.options.iv_context import forecast_vol
+
+    closes = _closes_with([0.01 * (-1) ** i for i in range(40)])
+    f = forecast_vol(closes, 45)
+    assert f.long_run is None and f.forecast == f.recent and f.weight_recent == 1.0
+    assert forecast_vol([100.0], 45) is None

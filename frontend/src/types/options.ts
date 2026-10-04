@@ -341,6 +341,17 @@ export interface ResolvedSpread {
   atm_iv?: number | null;
   /** 20-session close-to-close; null in a replay (it would be look-ahead). */
   realised_vol?: number | null;
+  /** The volatility expected over the position's life: the 20-session
+   * reading blended toward the past year's (backend iv_context.forecast_vol). */
+  vol_forecast?: VolForecast | null;
+}
+
+export interface VolForecast {
+  forecast: number;
+  recent: number;
+  long_run: number | null;
+  /** The recent reading's share of the blend (in variance). */
+  weight_recent: number;
 }
 
 export interface SpreadPreview {
@@ -979,6 +990,9 @@ export interface ScreenRow {
   spot: number | null;
   atm_iv: number | null;
   realised_vol: number | null;
+  /** The volatility expected over the expiry's life (20-session blended
+   * toward the past year's). */
+  forecast_vol?: number | null;
   /** Set when the screened expiry is outside 20-90 DTE: the 30-60 day
    * expiry iv_rv_ratio and iv_rank were judged on instead. */
   ref_expiry: string | null;

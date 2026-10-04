@@ -153,13 +153,15 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
               <dt>3b · BE vol — the margin for error</dt>
               <dd>
                 The at-the-money volatility at which the model values the structure at its mid{" "}
-                {buys ? "debit" : "credit"}, and in brackets its distance from the realised volatility (RV).{" "}
+                {buys ? "debit" : "credit"}, and in brackets its distance from the volatility expected over the
+                expiry's life: the 20-session reading blended toward the past year's, the more so the longer the
+                expiry (volatility reverts to its own level).{" "}
                 {buys
-                  ? "A debit has an edge while the stock moves more than the breakeven: the bracket is how far its movement may fall before the price stops paying for it."
-                  : "A credit has an edge while the stock moves less than the breakeven: the bracket is how far its movement may rise before the credit stops paying for it."}{" "}
-                Green while the realised record is on your side. A record, not a forecast; and built from mids, so the
-                fill you actually get moves the breakeven against you.
-                <BookRefLine refs={[NATENBERG.marginForError]} />
+                  ? "A debit has an edge while the stock moves more than the breakeven: the bracket is how far its movement may come out below the forecast before the price stops paying for it."
+                  : "A credit has an edge while the stock moves less than the breakeven: the bracket is how far its movement may come out above the forecast before the credit stops paying for it."}{" "}
+                Green while the forecast is on your side. Built from mids, so the fill you actually get moves the
+                breakeven against you.
+                <BookRefLine refs={[NATENBERG.marginForError, NATENBERG.volForecasting]} />
               </dd>
             </>
           )}

@@ -6424,3 +6424,7 @@ td.chain-side.chain-stale {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+.vol-margin-detail {
+  color: var(--text-muted);
+}
