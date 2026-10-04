@@ -320,3 +320,28 @@ def test_rank_without_a_current_reading_asks_nothing_of_the_store(tmp_path):
     store = _store(tmp_path)
 
     assert asyncio.run(store.rank("AMD", None)) == (None, 0)
+
+
+def test_a_steady_trend_is_volatility_not_calm():
+    """Measured from zero: a stock rising 1 % a day moves 16 % a year as an
+    option sees it. A mean-corrected deviation called it motionless."""
+    trend = [100.0 * 1.01**i for i in range(25)]
+    assert realized_vol(trend) == pytest.approx(math.log(1.01) * math.sqrt(252), rel=1e-9)
+
+
+def test_the_atm_iv_is_read_from_bid_quotes_only():
+    from app.options.chain import Chain, LegQuote, StrikeRow
+    from app.options.iv_context import atm_iv
+
+    def q(kind, iv, bid):
+        return LegQuote(symbol="X", strike=100.0, kind=kind, expiry=date(2026, 11, 20), bid=bid, ask=1.1, mid=1.0,
+                        last=1.0, bid_size=1, ask_size=1, delta=0.5, gamma=0.0, theta=0.0, iv=iv, open_interest=1, tradable=True)
+
+    # The nearest strike's call is unbid (an IV solved from the ask alone);
+    # only its bid put counts, and an all-unbid strike is passed over.
+    rows = [
+        StrikeRow(strike=100.0, call=q("call", 0.90, 0.0), put=q("put", 0.30, 0.95)),
+        StrikeRow(strike=101.0, call=q("call", 0.80, None), put=q("put", 0.85, 0.0)),
+    ]
+    chain = Chain(underlying="X", expiry=date(2026, 11, 20), spot=100.6, feed="opra", as_of=None, rows=rows)
+    assert atm_iv(chain) == pytest.approx(0.30)

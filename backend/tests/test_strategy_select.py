@@ -90,7 +90,17 @@ def test_iv_rank_moves_premium_sellers_and_buyers_opposite_ways():
     assert _scores(iv_rank_pct=72.0)["iron_condor"] == 1
     assert _scores(iv_rank_pct=72.0)["bull_put"] == 1
     cheap = _scores(iv_rank_pct=12.0)
-    assert cheap["call_butterfly"] == 1 and cheap["bull_call"] == 1 and cheap["iron_condor"] == -1
+    assert cheap["bull_call"] == 1 and cheap["iron_condor"] == -1
+
+
+def test_a_butterfly_sides_with_the_premium_sellers():
+    """Paid for, but short volatility: short gamma, long theta, short vega
+    -- a short straddle with the risk capped. It was scored with the
+    buyers when IV was low, which is the wrong side of the trade."""
+    assert _scores(iv_rank_pct=72.0)["call_butterfly"] == 1
+    assert _scores(iv_rank_pct=12.0)["put_butterfly"] == -1
+    assert _scores(iv_over_realized=1.8)["call_butterfly"] == 1
+    assert _scores(iv_over_realized=0.7)["call_butterfly"] == -1
 
 
 def test_implied_over_realised_works_on_day_one_without_any_rank():

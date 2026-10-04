@@ -253,13 +253,19 @@ def _signed_limit(spread) -> float:
 def atm_sigma(rows: list[dict], spot: float) -> float | None:
     """The at-the-money implied volatility of one expiry's condensed rows:
     the mean of the call and put IV at the strike nearest the spot that
-    has both, else whichever side is quoted there. None when the rows
-    carry no IV at all."""
-    quoted = [r for r in rows if (r.get("call") or {}).get("iv") or (r.get("put") or {}).get("iv")]
+    has both, else whichever side is quoted there -- bid quotes only, as
+    screener.bid_iv explains. None when no bid quote carries an IV."""
+
+    def iv(q: dict | None) -> float | None:
+        if not q or not q.get("iv") or q["iv"] <= 0 or not q.get("bid") or q["bid"] <= 0:
+            return None
+        return q["iv"]
+
+    quoted = [r for r in rows if iv(r.get("call")) or iv(r.get("put"))]
     if not quoted:
         return None
     row = min(quoted, key=lambda r: abs(r["strike"] - spot))
-    ivs = [q["iv"] for q in (row.get("call"), row.get("put")) if q and q.get("iv")]
+    ivs = [v for v in (iv(row.get("call")), iv(row.get("put"))) if v]
     return sum(ivs) / len(ivs) if ivs else None
 
 

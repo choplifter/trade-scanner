@@ -44,6 +44,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.options.chain import Chain, StrikeRow
 from app.options.distribution import Distribution
+from app.options.iv_context import bid_iv
 from app.options.chain_fetch import CHAIN_DAYS_AHEAD, STRIKE_PCT_RANGE
 from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl, profit_mass
 from app.options.payoff import PayoffLeg
@@ -52,7 +53,7 @@ from app.trading.errors import OrderRejected
 
 logger = logging.getLogger(__name__)
 
-Bias = Literal["sell_premium", "buy_premium", "neutral"]
+Bias = Literal["sell_premium", "buy_premium", "long_vega", "neutral"]
 
 # What to do about a report inside the expiry. Not a boolean, because
 # *when* it falls decides everything for a short premium structure:
@@ -109,9 +110,14 @@ STRATEGY_BIAS: dict[str, Bias] = {
     "iron_condor": "sell_premium",
     "debit_spread": "buy_premium",
     "long_option": "buy_premium",
-    # A calendar sells the front and buys the back: what it wants is not a
-    # level of implied volatility but a *slope* between two expiries.
-    "calendar": "neutral",
+    # A calendar sells the front and buys the back. It wants a slope between
+    # the two (its own criterion, term_ratio) -- and, being long vega and
+    # short gamma, a low level against the symbol's own year: it gains
+    # when implied volatility rises and the stock sits still (Natenberg,
+    # Option Volatility and Pricing, 2nd ed., ch. 11 "Calendar Spread").
+    # So the IV rank is judged as for a buyer; IV/RV is reported and not
+    # judged, because the front it is read on is rich by design.
+    "calendar": "long_vega",
 }
 
 # Strategies whose shape needs a wing beyond the short strike.
@@ -468,20 +474,16 @@ def _number_or_none(value) -> float | None:
 
 def realised_vol(closes: list[float], sessions: int = REALISED_SESSIONS) -> float | None:
     """Annualised close-to-close volatility of the last `sessions` returns,
-    or None with too few closes. The same units as an implied volatility,
-    so the two can be divided."""
-    usable = [c for c in closes if c and c > 0]
-    if len(usable) < sessions + 1:
-        return None
-    window = usable[-(sessions + 1) :]
-    returns = [math.log(b / a) for a, b in zip(window, window[1:])]
-    mean = sum(returns) / len(returns)
-    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
-    return math.sqrt(variance) * math.sqrt(252)
+    or None short of a full window -- the screen judges every row on the
+    same span. The one estimator the app uses (iv_context.realized_vol),
+    so the Screener's IV/RV and the strip's agree."""
+    from app.options.iv_context import realized_vol
+
+    return realized_vol(closes, window=sessions, min_returns=sessions)
 
 
 def atm_row(rows: list[StrikeRow], spot: float) -> StrikeRow | None:
-    quoted = [r for r in rows if (r.call and r.call.iv) or (r.put and r.put.iv)]
+    quoted = [r for r in rows if bid_iv(r.call) or bid_iv(r.put)]
     return min(quoted, key=lambda r: abs(r.strike - spot)) if quoted else None
 
 
@@ -489,7 +491,7 @@ def atm_iv_of(rows: list[StrikeRow], spot: float) -> float | None:
     row = atm_row(rows, spot)
     if row is None:
         return None
-    ivs = [q.iv for q in (row.call, row.put) if q is not None and q.iv]
+    ivs = [iv for iv in (bid_iv(row.call), bid_iv(row.put)) if iv]
     return sum(ivs) / len(ivs) if ivs else None
 
 
@@ -876,7 +878,7 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
     )
 
     rank = row.iv_rank
-    if req.bias == "buy_premium":
+    if req.bias in ("buy_premium", "long_vega"):
         passed = None if rank is None else rank <= CHEAP_IV_RANK
         want = f"wanted at or under {CHEAP_IV_RANK:.0f} % (implied cheap against its own year)"
     elif req.bias == "sell_premium":

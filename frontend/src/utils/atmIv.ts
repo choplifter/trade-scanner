@@ -1,16 +1,23 @@
 import type { ChainResponse } from "../types/options";
 
+/** A side's IV, only if someone bids for the contract: an unbid quote's IV
+ * is solved from an ask or an old print. Mirrors backend iv_context.bid_iv. */
+function bidIv(q: { iv?: number | null; bid?: number | null } | null | undefined): number | null {
+  return q && (q.iv ?? 0) > 0 && (q.bid ?? 0) > 0 ? (q.iv as number) : null;
+}
+
 /** The at-the-money implied volatility of a chain: the mean of call and put
- * IV at the strike nearest the spot, or whichever side is quoted there.
- * Null when the chain carries no IV (a replayed chain before its solver
- * ran, an expiry on its last day). Mirrors backend optimize.atm_sigma. */
+ * IV at the strike nearest the spot, or whichever side is quoted there --
+ * bid quotes only. Null when the chain carries no such IV (a replayed chain
+ * before its solver ran, an expiry on its last day). Mirrors backend
+ * optimize.atm_sigma; what it returns is recorded into the IV history. */
 export function atmIv(chain: ChainResponse | null): number | null {
   if (!chain || chain.rows.length === 0) return null;
-  const quoted = chain.rows.filter((r) => (r.call?.iv ?? 0) > 0 || (r.put?.iv ?? 0) > 0);
+  const quoted = chain.rows.filter((r) => bidIv(r.call) != null || bidIv(r.put) != null);
   if (quoted.length === 0) return null;
   let best = quoted[0];
   for (const r of quoted) if (Math.abs(r.strike - chain.spot) < Math.abs(best.strike - chain.spot)) best = r;
-  const ivs = [best.call?.iv, best.put?.iv].filter((v): v is number => v != null && v > 0);
+  const ivs = [bidIv(best.call), bidIv(best.put)].filter((v): v is number => v != null);
   return ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : null;
 }
 

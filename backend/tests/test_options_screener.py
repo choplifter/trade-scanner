@@ -3,6 +3,7 @@ run over a fake chain. No network -- the chain is built by hand, so the
 numbers in the assertions are the ones a reader can check."""
 
 import asyncio
+import math
 from dataclasses import replace
 from datetime import date, timedelta
 
@@ -64,9 +65,10 @@ def _chain(spot=100.0, *, spread=0.02, iv=0.30, oi=5_000) -> Chain:
 
 def test_realised_vol_needs_a_full_window_and_annualises():
     assert realised_vol([100.0] * 10) is None, "ten closes is not twenty sessions of returns"
-    # A steady 1 % a day: daily deviation ~0, so the measure is ~0.
+    # A steady 1 % a day is a move, and an option pays on moves: measured
+    # from zero it is ~16 %, not the 0 a mean-corrected deviation reported.
     steady = [100.0 * (1.01**i) for i in range(30)]
-    assert realised_vol(steady) == pytest.approx(0.0, abs=1e-9)
+    assert realised_vol(steady) == pytest.approx(math.log(1.01) * math.sqrt(252), rel=1e-9)
     # Alternating +/-1 %: daily deviation ~1 %, annualised ~16 %.
     zigzag = [100.0 * (1.01 if i % 2 else 0.99) ** 1 for i in range(30)]
     closes = [100.0]
@@ -1232,3 +1234,18 @@ def test_a_side_the_chain_cannot_price_answers_with_nothing():
     # A strike that is not in the chain has no volatility to value it with.
     missing = {"short_strike": 999.0, "long_strike": 990.0, "credit": 1.0}
     assert _side_outcome(missing, "put", _skewed_chain(), EXPIRY) is None
+
+
+def test_a_calendar_wants_implied_vol_low_against_its_own_year():
+    """Long vega, short gamma: a calendar gains when IV rises and the stock
+    sits still, so it is judged on the IV rank as a buyer would be. Its
+    IV/RV is read on the front it sells, rich by design, and not judged."""
+    back_expiry = TODAY + timedelta(days=110)
+    service = _TwoExpiryService(_chain(iv=0.35), _chain(iv=0.25), back_expiry)
+    for rank, expected in ((12.0, True), (80.0, False)):
+        body = _run(service, ScreenRequest(symbols=["A"], strategy="calendar"), closes={"A": _closes(0.01)},
+                    iv_store=_RankStore({"A": rank}))
+        row = body["rows"][0]
+        assert body["bias"] == "long_vega"
+        assert _criterion(row, "iv_rank")["passed"] is expected
+        assert "reported, not judged" in _criterion(row, "iv_vs_rv")["detail"]

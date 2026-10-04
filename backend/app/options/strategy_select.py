@@ -63,6 +63,10 @@ FAMILY_GROUPS: dict[str, Group] = {
 _SHORT_PREMIUM = ("iron_condor", "iron_butterfly", "bull_put", "bear_call")
 _LONG_VOL = ("long_straddle", "long_strangle")
 _DEBIT_VERTICALS = ("bull_call", "bear_put")
+# A long butterfly is paid for but sells volatility: short gamma, long
+# theta, short vega -- a short straddle with the risk capped (Natenberg,
+# Option Volatility and Pricing, 2nd ed., ch. 11 "Butterfly"). So it goes
+# with the premium sellers on every volatility rule, not with the buyers.
 _BUTTERFLIES = ("call_butterfly", "put_butterfly")
 _LONG_OPTIONS = ("long_call", "long_put")
 
@@ -221,8 +225,9 @@ def score_families(signals: Signals) -> list[FamilyScore]:
         if signals.iv_rank_pct >= IV_RANK_RICH:
             add(("iron_condor",), 1, f"implied vol is high for this symbol: {stated}")
             add(("bull_put", "bear_call"), 1, f"implied vol is high for this symbol: {stated}")
+            add(_BUTTERFLIES, 1, f"a butterfly sells volatility, and it is high for this symbol: {stated}")
         elif signals.iv_rank_pct <= IV_RANK_CHEAP:
-            add(_BUTTERFLIES, 1, f"implied vol is low for this symbol: {stated}")
+            add(_BUTTERFLIES, -1, f"a butterfly sells volatility, and it is low for this symbol: {stated}")
             add(_DEBIT_VERTICALS, 1, f"implied vol is low for this symbol: {stated}")
             add(_LONG_OPTIONS, 1, f"implied vol is low for this symbol: {stated}")
             add(("iron_condor",), -1, f"less premium than usual to sell: {stated}")
@@ -231,8 +236,10 @@ def score_families(signals: Signals) -> list[FamilyScore]:
         stated = f"implied vol {signals.iv_over_realized:.2f}x the 20-day realised"
         if signals.iv_over_realized >= IV_OVER_REALIZED_RICH:
             add(_SHORT_PREMIUM, 1, f"the market charges more than the stock has been moving: {stated}")
+            add(_BUTTERFLIES, 1, f"a butterfly sells volatility the market charges more for than the stock has moved: {stated}")
         elif signals.iv_over_realized <= IV_OVER_REALIZED_CHEAP:
             add(_LONG_VOL, 1, f"the market charges less than the stock has been moving: {stated}")
+            add(_BUTTERFLIES, -1, f"a butterfly sells volatility the market charges little for: {stated}")
 
     if signals.gex_regime is not None:
         if signals.near_flip:

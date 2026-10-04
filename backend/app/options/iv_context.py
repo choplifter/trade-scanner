@@ -70,15 +70,23 @@ class ExpiryIv:
         }
 
 
+def bid_iv(quote) -> float | None:
+    """A quote's IV only if someone bids for the contract. An unbid quote's
+    IV is solved from an ask, or a print hours old -- a figure no trade
+    supports (Natenberg, Option Volatility and Pricing, 2nd ed., ch. 20
+    "Implied Volatility as a Predictor of Future Volatility", on inputs
+    that are not simultaneous). The ATM IV feeds the IV history, the rank
+    and every chance, so it is read from bid quotes only."""
+    if quote is None or not quote.iv or quote.iv <= 0 or not quote.bid or quote.bid <= 0:
+        return None
+    return quote.iv
+
+
 def _nearest_row(chain: Chain):
     """The strike row closest to spot that quotes an IV on at least one
     side. Not simply the nearest strike: on a wide-striked name the very
     nearest one can be the one Alpaca failed to solve."""
-    usable = [
-        row
-        for row in chain.rows
-        if (row.call is not None and row.call.iv) or (row.put is not None and row.put.iv)
-    ]
+    usable = [row for row in chain.rows if bid_iv(row.call) or bid_iv(row.put)]
     if not usable:
         return None
     return min(usable, key=lambda row: abs(row.strike - chain.spot))
@@ -94,7 +102,7 @@ def atm_iv(chain: Chain) -> float | None:
     row = _nearest_row(chain)
     if row is None:
         return None
-    ivs = [q.iv for q in (row.call, row.put) if q is not None and q.iv]
+    ivs = [iv for iv in (bid_iv(row.call), bid_iv(row.put)) if iv]
     return sum(ivs) / len(ivs) if ivs else None
 
 
@@ -171,22 +179,24 @@ def term_structure(chains: Iterable[Chain], today: date) -> list[ExpiryIv]:
     return sorted(rows, key=lambda row: row.expiry)
 
 
-def realized_vol(closes: Sequence[float], *, window: int = REALIZED_VOL_WINDOW) -> float | None:
+def realized_vol(
+    closes: Sequence[float], *, window: int = REALIZED_VOL_WINDOW, min_returns: int = 2
+) -> float | None:
     """Annualised close-to-close volatility over the last `window` returns.
 
-    Log returns and the sample standard deviation -- the textbook estimator,
-    not a bespoke one, so the ratio against implied vol below means what a
-    reader expects it to mean. None when there are too few clean closes;
-    a short history is not a low volatility."""
+    Log returns, measured from zero rather than from their own mean -- the
+    convention for volatility as an option sees it (Natenberg, Option
+    Volatility and Pricing, 2nd ed., ch. 20 "Historical Volatility"). A
+    mean-corrected deviation calls a stock that rose 1 % every day for a
+    month motionless, and an option on it anything but cheap; the option
+    pays on the move, not on the move's wobble. None when there are fewer
+    than `min_returns` clean returns; a short history is not a low
+    volatility."""
     usable = [c for c in closes if c and c > 0]
-    if len(usable) < 3:
+    returns = [math.log(b / a) for a, b in zip(usable, usable[1:])][-window:]
+    if len(returns) < max(min_returns, 2):
         return None
-    returns = [math.log(b / a) for a, b in zip(usable, usable[1:])]
-    returns = returns[-window:]
-    if len(returns) < 2:
-        return None
-    mean = sum(returns) / len(returns)
-    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    variance = sum(r * r for r in returns) / len(returns)
     return math.sqrt(variance) * math.sqrt(TRADING_DAYS)
 
 
