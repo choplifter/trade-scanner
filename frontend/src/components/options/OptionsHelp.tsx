@@ -694,6 +694,21 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
                 and its own margin.
                 <BookRefLine refs={[NATENBERG.vega]} />
               </dd>
+              <dt>Adjusting a condor or credit spread</dt>
+              <dd>
+                Open the row: its short legs with their deltas, and a side marked <em>tested</em> once its short leg
+                reaches 0.30 delta or the stock trades through it (a common management line, not a rule from the
+                book). For a tested side, prefilled tickets: <strong>roll out</strong> (same strikes, the next
+                expiry — time for the stock to come back, usually for a credit), <strong>roll away</strong> (same
+                expiry, the short moved to about 16 delta — less delta against you, usually for a debit),{" "}
+                <strong>out &amp; away</strong> (both), <strong>bring the other side closer</strong> (the untested
+                short to about 30 delta — more credit and a neutral delta, but risk on both sides if the stock turns
+                back), and <strong>close the tested side</strong>. Each opens the roll ticket or the close dialog to
+                review; nothing is sent from the button. Natenberg's test for any adjustment: does it reduce the risk
+                that worries you most, and does the volatility view behind the trade still hold? If not, closing is
+                the adjustment.
+                <BookRefLine refs={[NATENBERG.adjustments]} />
+              </dd>
               <dt>⚠ assignment · ⚠ pin</dt>
               <dd>
                 A short leg at risk of early exercise (an in-the-money call ahead of an ex-dividend date worth more than
@@ -706,8 +721,8 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
               <dd>Previews the closing package at the current market, then sends it as one order (typed LIVE on Live).</dd>
               <dt>Roll…</dt>
               <dd>
-                On a single short leg (a cash-secured put, the call of a covered call): close it and open its replacement
-                on another expiry or strike as one ticket. The new strike defaults to the same strike while it is still
+                On a single leg (a cash-secured put, the call of a covered call, a long call), one side of a condor or a
+                vertical, or a butterfly: close it and open its replacement on another expiry or strike as one ticket. The new strike defaults to the same strike while it is still
                 out of the money, else the strike nearest 0.30 delta on the new expiry; the net per package is what the
                 roll pays or brings, and the new leg is judged with the old leg's collateral already released, so a put
                 rolled to the same strike needs no new cash. In Simulation the book fills the roll as one package — both

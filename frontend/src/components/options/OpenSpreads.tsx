@@ -13,6 +13,7 @@ import {
   type CloseSpreadRequest,
   type OptionOrderType,
   type OptionsAccountResponse,
+  type OptionKind,
   type SpreadGroup,
   type SpreadTotals,
   type TriggerCreateRequest,
@@ -26,7 +27,7 @@ import { LiveConfirmField } from "../trading/LiveConfirmField";
 import { NATENBERG, withBook } from "./bookRefs";
 import { PayoffChart } from "./PayoffChart";
 import { GreeksLine, MarginBar } from "./PositionRisk";
-import { rollableLeg } from "./RollTicket";
+import { rollableLeg, type RollTarget } from "./RollTicket";
 import { OrderTypeToggle } from "./SpreadTicket";
 import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 
@@ -45,7 +46,7 @@ interface OpenSpreadsProps {
   onCancelTrigger: (id: string) => Promise<void>;
   onSelectSymbol?: (symbol: string) => void;
   /** Opens the roll ticket on a group with a single short leg. */
-  onRoll?: (group: SpreadGroup) => void;
+  onRoll?: (group: SpreadGroup, preset?: Omit<RollTarget, "group">) => void;
 }
 
 interface PendingClose {
@@ -154,6 +155,96 @@ function GroupPayoff({ group }: { group: SpreadGroup }) {
           payoff={payoff}
           expiryLabel={group.long_expiry ? `at short expiry ${formatExpiry(payoff.expiry)}` : "at expiry"}
         />
+      )}
+    </div>
+  );
+}
+
+/** One side of a condor as a group of its own, for closing it alone. */
+function sideGroup(group: SpreadGroup, side: OptionKind): SpreadGroup {
+  const legs = group.legs.filter((leg) => leg.kind === side);
+  return {
+    ...group,
+    id: `${group.id}:${side}`,
+    strategy: side === "put" ? "bull_put" : "bear_call",
+    legs,
+    market_value: legs.reduce((sum, leg) => sum + leg.market_value, 0),
+    unrealized_pl: legs.reduce((sum, leg) => sum + leg.unrealized_pl, 0),
+  };
+}
+
+// Where an adjustment moves a short leg: away to a 16-delta strike (about
+// one standard deviation), closer to a 30-delta one.
+const AWAY_DELTA = 0.16;
+const CLOSER_DELTA = 0.3;
+
+/** The standard ways to manage a written structure, as prefilled roll
+ * tickets: the tested side out in time (same strikes, later expiry),
+ * away (same expiry, further out), out and away, the untested side of a
+ * condor brought closer, or the tested side closed. Each opens the roll
+ * ticket or the close dialog for review; nothing is sent from here. */
+function AdjustBlock({
+  group,
+  onRoll,
+  onCloseSide,
+}: {
+  group: SpreadGroup;
+  onRoll?: (group: SpreadGroup, preset?: Omit<RollTarget, "group">) => void;
+  onCloseSide: (side: OptionKind) => void;
+}) {
+  const adjust = group.adjust!;
+  const shortOf = (side: OptionKind) => group.legs.find((leg) => leg.kind === side && leg.qty < 0) ?? null;
+  const status = (["put", "call"] as const)
+    .filter((side) => adjust.sides[side])
+    .map((side) => {
+      const s = adjust.sides[side]!;
+      return `${side} ${s.strike}${s.delta != null ? ` Δ${s.delta.toFixed(2)}` : ""}${s.tested ? " (tested)" : ""}`;
+    })
+    .join(" · ");
+  const tested = adjust.tested;
+  const testedShort = tested ? shortOf(tested) : null;
+  const other: OptionKind | null = tested === "put" ? "call" : tested === "call" ? "put" : null;
+  const otherShort = other && adjust.sides[other] ? shortOf(other) : null;
+  const roll = (leg: { symbol: string } | null, preset: Omit<RollTarget, "group" | "legSymbol">) => {
+    if (leg && onRoll) onRoll(group, { legSymbol: leg.symbol, ...preset });
+  };
+  return (
+    <div className="adjust-block">
+      <p
+        className="spread-risk-line"
+        title={withBook(
+          `A side counts as tested once its short leg reaches ${adjust.threshold.toFixed(2)} delta or the stock trades through it -- a common management line, not a rule. Each button opens a prefilled ticket to review; nothing is sent from here.`,
+          NATENBERG.adjustments,
+        )}
+      >
+        Short legs: {status}
+        {!tested && " — no side tested"}
+      </p>
+      {tested && testedShort && (
+        <div className="adjust-actions">
+          <button type="button" className="row-action" onClick={() => roll(testedShort, { presetStrike: testedShort.strike })}
+            title="Same strikes, the next expiry: more time for the stock to come back, usually for a credit. The risk stays where it is.">
+            Roll {tested} side out
+          </button>
+          <button type="button" className="row-action" onClick={() => roll(testedShort, { presetExpiry: group.expiry, presetDelta: AWAY_DELTA })}
+            title="Same expiry, the short leg moved out to about 16 delta: less delta against you, usually for a debit, and a narrower profit zone.">
+            Roll {tested} side away
+          </button>
+          <button type="button" className="row-action" onClick={() => roll(testedShort, { presetDelta: AWAY_DELTA })}
+            title="The next expiry and about 16 delta at once: the time pays for the distance.">
+            Out &amp; away
+          </button>
+          {otherShort && other && (
+            <button type="button" className="row-action" onClick={() => roll(otherShort, { presetExpiry: group.expiry, presetDelta: CLOSER_DELTA })}
+              title="The untested side rolled in to about 30 delta: more credit and a more neutral delta -- and risk on both sides if the stock turns back.">
+              Bring {other} side closer
+            </button>
+          )}
+          <button type="button" className="row-action" onClick={() => onCloseSide(tested)}
+            title="Buy the tested side back and keep the other: the loss on that side is taken, the rest runs on.">
+            Close {tested} side
+          </button>
+        </div>
       )}
     </div>
   );
@@ -399,6 +490,15 @@ export function OpenSpreads({
                 <td>
                   {strategyLabel(group)}
                   {group.broken && <span className="spread-broken"> broken</span>}
+                  {group.adjust?.tested && (
+                    <span
+                      className="spread-broken"
+                      title={`The short ${group.adjust.tested} is at ${group.adjust.sides[group.adjust.tested]?.delta?.toFixed(2) ?? "?"} delta or the stock is through it (tested from ${group.adjust.threshold.toFixed(2)}). Open the row for the adjustments.`}
+                    >
+                      {" "}
+                      ⚠ {group.adjust.tested} side tested
+                    </span>
+                  )}
                   {(group.warnings?.length ?? 0) > 0 && (
                     <span className="spread-broken" title={group.warnings!.join("\n\n")}>
                       {" "}
@@ -482,6 +582,13 @@ export function OpenSpreads({
                         {w}
                       </p>
                     ))}
+                    {group.adjust && (
+                      <AdjustBlock
+                        group={group}
+                        onRoll={onRoll}
+                        onCloseSide={(side) => openClose(sideGroup(group, side))}
+                      />
+                    )}
                     <ul className="spread-legs">
                       {group.legs.map((leg) => (
                         <li

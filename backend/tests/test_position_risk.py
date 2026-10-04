@@ -300,3 +300,30 @@ def test_under_put_skew_a_short_condor_leans_further_short_than_the_flat_delta()
     skewed = skew_delta(legs, SPOT, NOW, slopes)
     assert skewed < flat, "falling IV as the stock rises costs the short vega on the way up"
     assert skew_delta(legs, SPOT, NOW, {}) == flat, "no smile, no correction"
+
+
+# --- adjustments --------------------------------------------------------------
+
+
+def test_a_condor_with_the_stock_near_its_short_call_has_the_call_side_tested():
+    from app.options.position_risk import adjustment_state
+
+    state = adjustment_state("iron_condor", _condor(0.20), 108.0, NOW)
+    assert state["tested"] == "call"
+    assert state["sides"]["call"]["delta"] > state["sides"]["put"]["delta"]
+    assert state["sides"]["put"]["tested"] is False
+
+
+def test_a_centred_condor_is_not_tested_and_other_shapes_are_not_managed_this_way():
+    from app.options.position_risk import adjustment_state
+
+    assert adjustment_state("iron_condor", _condor(0.20), SPOT, NOW)["tested"] is None
+    assert adjustment_state("long_call", [RiskLeg("call", 100.0, EXPIRY, 1, 0.2)], SPOT, NOW) is None
+
+
+def test_a_stock_through_the_short_strike_is_tested_whatever_the_delta():
+    from app.options.position_risk import adjustment_state
+
+    legs = [RiskLeg("put", 95.0, EXPIRY, -1, None), RiskLeg("put", 90.0, EXPIRY, 1, None)]
+    state = adjustment_state("bull_put", legs, 94.0, NOW)
+    assert state["tested"] == "put" and state["sides"]["put"]["delta"] is None

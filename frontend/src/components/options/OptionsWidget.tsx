@@ -642,7 +642,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
               onArm={spreads.armTrigger}
               onCancelTrigger={spreads.cancelTrigger}
               onSelectSymbol={onSelectSymbol}
-              onRoll={(group) => setRollTarget({ group })}
+              onRoll={(group, preset) => setRollTarget({ group, ...preset })}
             />
           </>
         ) : tab === "idea" ? (

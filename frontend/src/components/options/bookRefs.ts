@@ -40,6 +40,7 @@ export const NATENBERG = {
   calendar: ref(11, "Volatility Spreads", "Calendar Spread", 387),
   diagonal: ref(11, "Volatility Spreads", "Diagonal Spreads", 412),
   choosingStrategy: ref(11, "Volatility Spreads", "Choosing an Appropriate Strategy", 421),
+  adjustments: ref(11, "Volatility Spreads", "Adjustments", 432),
   verticals: ref(12, "Bull and Bear Spreads", undefined, 438),
   volatilityRisk: ref(13, "Risk Considerations", "Volatility Risk", 476),
   marginForError: ref(13, "Risk Considerations", "How Much Margin for Error?", 498),

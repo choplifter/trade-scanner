@@ -404,6 +404,23 @@ export interface SpreadGroup {
   warnings?: string[];
   /** What it ties up: wing less credit, a put's strike, 0 for a debit. */
   collateral?: number;
+  /** For a condor or credit vertical: its short legs and the side under
+   * pressure (backend position_risk.adjustment_state). */
+  adjust?: AdjustState | null;
+}
+
+export interface AdjustSide {
+  strike: number;
+  /** |delta| of the short leg; null when it could not be computed. */
+  delta: number | null;
+  tested: boolean;
+}
+
+export interface AdjustState {
+  sides: Partial<Record<OptionKind, AdjustSide>>;
+  tested: OptionKind | null;
+  /** The |delta| from which a side counts as tested. */
+  threshold: number;
 }
 
 /** A position's greeks -- backend app/options/position_risk.py. delta and

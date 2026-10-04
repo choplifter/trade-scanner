@@ -6428,3 +6428,13 @@ td.chain-side.chain-stale {
 .vol-margin-detail {
   color: var(--text-muted);
 }
+
+.adjust-block {
+  margin: 4px 0 8px;
+}
+
+.adjust-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

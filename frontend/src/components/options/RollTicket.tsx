@@ -20,6 +20,9 @@ export interface RollTarget {
   legSymbol?: string;
   presetExpiry?: string;
   presetStrike?: number;
+  /** Pick the new lead strike nearest this |delta| on the new expiry --
+   * an adjustment rolling a side away (smaller) or closer (larger). */
+  presetDelta?: number;
 }
 
 interface RollTicketProps {
@@ -181,13 +184,13 @@ const LONG_ROLL_DELTA = 0.8;
  * on the new expiry's chain -- the wheel's usual re-pick. A long leg: the
  * same strike when listed, else the one nearest 0.80 delta -- a LEAPS
  * rolled out stays deep in the money. */
-function defaultStrike(leg: SpreadPositionLeg, chain: ChainResponse): number | null {
+function defaultStrike(leg: SpreadPositionLeg, chain: ChainResponse, presetDelta?: number): number | null {
   const rows = quoted(chain.rows, leg.kind);
   if (rows.length === 0) return null;
   const long = leg.qty > 0;
   const otm = leg.kind === "put" ? leg.strike < chain.spot : leg.strike > chain.spot;
-  if ((long || otm) && rows.some((r) => r.strike === leg.strike)) return leg.strike;
-  const wanted = long ? LONG_ROLL_DELTA : ROLL_DELTA;
+  if (presetDelta == null && (long || otm) && rows.some((r) => r.strike === leg.strike)) return leg.strike;
+  const wanted = presetDelta ?? (long ? LONG_ROLL_DELTA : ROLL_DELTA);
   const withDelta = rows.filter((r) => (leg.kind === "put" ? r.put?.delta : r.call?.delta) != null);
   if (withDelta.length) {
     return withDelta.reduce((best, r) => {
@@ -285,7 +288,7 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group?.id, target?.legSymbol, target?.presetExpiry, target?.presetStrike]);
+  }, [group?.id, target?.legSymbol, target?.presetExpiry, target?.presetStrike, target?.presetDelta]);
 
   // A side switched inside the ticket starts from that side's own width.
   // Only on a real switch: on the first render the reset effect above has
@@ -318,7 +321,7 @@ export function RollTicket({ target, mode, onRolled, onClose }: RollTicketProps)
       .then((res) => {
         if (cancelled) return;
         setChain(res);
-        setStrike((cur) => (cur != null && res.rows.some((r) => r.strike === cur) ? cur : defaultStrike(leg, res)));
+        setStrike((cur) => (cur != null && res.rows.some((r) => r.strike === cur) ? cur : defaultStrike(leg, res, target?.presetDelta)));
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(errorText(err));

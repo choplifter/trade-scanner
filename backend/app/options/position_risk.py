@@ -445,6 +445,43 @@ async def vol_forecast_today(clients, symbol: str, dte: int):
     return forecast_vol(closes, dte) if closes else None
 
 
+# When a side of a written structure counts as tested: its short leg at
+# this delta or beyond, or the stock through the strike. The common
+# management line -- a 16-delta short that has doubled -- not a rule from
+# the book, which leaves the trigger to the trader's own risk limits.
+TESTED_DELTA = 0.30
+ADJUSTABLE = frozenset({"iron_condor", "bull_put", "bear_call"})
+
+
+def adjustment_state(strategy: str, legs: list[RiskLeg], spot: float, now: datetime) -> dict | None:
+    """For a written structure: each short leg's strike and delta, and the
+    side under pressure -- what the Open spreads row offers adjustments
+    from (roll the tested side out or away, bring the other side closer,
+    close the tested side). None for shapes not managed that way."""
+    if strategy not in ADJUSTABLE:
+        return None
+    sides: dict[str, dict] = {}
+    for leg in legs:
+        if leg.kind not in ("call", "put") or leg.qty >= 0 or leg.expiry is None:
+            continue
+        years = years_between(now, leg.expiry)
+        sigma = _sigma_for(leg, spot, years) if years > 0 else 0.0
+        delta = bs_greeks(leg.kind, spot, leg.strike, years, sigma or 0.0)[0] if sigma is not None else None
+        through = spot > leg.strike if leg.kind == "call" else spot < leg.strike
+        sides[leg.kind] = {
+            "strike": leg.strike,
+            "delta": round(abs(delta), 3) if delta is not None else None,
+            "tested": through or (delta is not None and abs(delta) >= TESTED_DELTA),
+        }
+    if not sides:
+        return None
+    tested = [k for k, v in sides.items() if v["tested"]]
+    # Both sides cannot be through at once; both past the delta line on a
+    # narrow condor can, and then the nearer one is the one to act on.
+    worst = max(tested, key=lambda k: sides[k]["delta"] or 1.0) if tested else None
+    return {"sides": sides, "tested": worst, "threshold": TESTED_DELTA}
+
+
 async def spread_risks(source, groups: list, dividends: "DividendCalendar | None") -> tuple[dict[str, dict], dict | None]:
     """Per held structure ({group id: {greeks, warnings}}) and the account's
     sum of the greeks across every structure that has them -- the "position
@@ -505,6 +542,7 @@ async def spread_risks(source, groups: list, dividends: "DividendCalendar | None
             "greeks": greeks.to_dict() if greeks is not None else None,
             "warnings": warnings,
             "collateral": collateral_for(g),
+            "adjust": adjustment_state(g.strategy, legs, spot, now),
         }
         if greeks is not None:
             theta += greeks.theta
