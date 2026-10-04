@@ -131,8 +131,23 @@ class Chain:
             "as_of": self.as_of.isoformat(),
             "strike_low": self.strike_low,
             "strike_high": self.strike_high,
-            "rows": [row.to_dict() for row in self.rows],
+            "rows": [self._with_vega(row.to_dict()) for row in self.rows],
         }
+
+    def _with_vega(self, row: dict) -> dict:
+        """Each quote's vega (per share, per vol point), computed from its
+        IV: the feed carries none, and the chain's greek column offers it
+        beside delta, gamma and theta."""
+        from app.options.payoff import years_between
+        from app.options.position_risk import bs_vega
+
+        years = years_between(self.as_of, self.expiry) if self.as_of is not None else 0.0
+        for side in ("call", "put"):
+            quote = row.get(side)
+            if quote is not None:
+                iv = quote.get("iv")
+                quote["vega"] = round(bs_vega(self.spot, quote["strike"], years, iv), 4) if iv and years > 0 else None
+        return row
 
 
 @dataclass(frozen=True)

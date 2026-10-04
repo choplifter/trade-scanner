@@ -207,8 +207,23 @@ const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
   "R/R": (r) => r.outcome?.risk_reward ?? null,
   "Loss prob": (r) => r.outcome?.loss_probability ?? null,
   EV: (r) => r.outcome?.expected_value ?? null,
+  "BE vol": (r) => r.outcome?.breakeven_vol ?? null,
   "Risk %": (r) => r.risk_share,
 };
+
+/** The structure's breakeven volatility and its margin over the realised
+ * one -- a credit wants the stock to move less than the price implies, a
+ * debit more. */
+function BreakevenVolCell({ row, buyer }: { row: ScreenRow; buyer: boolean }) {
+  const be = row.outcome?.breakeven_vol ?? null;
+  if (be == null) return <td>—</td>;
+  const margin = row.realised_vol == null ? null : (buyer ? row.realised_vol - be : be - row.realised_vol) * 100;
+  return (
+    <td className={margin == null ? undefined : margin >= 0 ? "delta-up" : "delta-down"}>
+      {(be * 100).toFixed(1)}%{margin == null ? "" : ` (${margin >= 0 ? "+" : ""}${margin.toFixed(1)})`}
+    </td>
+  );
+}
 
 function sortRows(rows: ScreenRow[], by: string | null, desc: boolean): ScreenRow[] {
   const read = by ? SORTS[by] : undefined;
@@ -619,6 +634,15 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       onSort={onSort}
                     />
                     <Th
+                      label="BE vol"
+                      title={withBook(
+                        "Breakeven volatility: the at-the-money level at which the model values the structure at its mid credit (or debit). In brackets its distance from the realised volatility (RV) -- the margin for error: how far the stock's movement may rise (for a credit) or fall (for a debit) before the price no longer pays for it. Green while the realised volatility is on the right side.",
+                        NATENBERG.marginForError,
+                      )}
+                      sort={sort}
+                      onSort={onSort}
+                    />
+                    <Th
                       label="Risk %"
                       title="The max loss against your account's equity -- the size decision, as opposed to R/R, which is the structure's own shape. The criterion fails past 2 %."
                       sort={sort}
@@ -734,6 +758,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                         <td className={row.outcome ? (row.outcome.expected_value > 0 ? "delta-up" : "delta-down") : undefined}>
                           {row.outcome ? formatMoney(row.outcome.expected_value) : "—"}
                         </td>
+                        <BreakevenVolCell row={row} buyer={result.strategy === "debit_spread"} />
                         <td className={row.risk_share != null && row.risk_share > 0.02 ? "delta-down" : undefined}>
                           {row.risk_share == null ? "—" : pct(row.risk_share, 1)}
                         </td>
@@ -786,7 +811,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   </tr>
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={19}>
+                      <td colSpan={20}>
                         <Criteria row={row} />
                       </td>
                     </tr>

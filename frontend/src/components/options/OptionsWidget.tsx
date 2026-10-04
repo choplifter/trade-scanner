@@ -632,6 +632,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
             <OpenSpreads
               spreads={spreads.spreads}
               triggers={spreads.triggers}
+              totals={spreads.totals}
               account={spreads.account}
               mode={mode}
               symbol={symbol}

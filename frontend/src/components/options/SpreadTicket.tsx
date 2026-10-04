@@ -38,6 +38,7 @@ import type { TradingRejection } from "../../types/trading";
 import { symbolDragProps } from "../../utils/dragSymbol";
 import { formatExpiry, formatLeg, formatStrike } from "../../utils/occ";
 import { formatMoney } from "../../utils/format";
+import { GreeksLine, VolMargin } from "./PositionRisk";
 import { getSettings, updateSettings } from "../../api/settings";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
@@ -897,6 +898,14 @@ export function SpreadTicket({
                 </span>
               )}
             </span>
+          )}
+          {spread.greeks && <GreeksLine greeks={spread.greeks} />}
+          {spread.breakeven_vol != null && (
+            <VolMargin
+              breakevenVol={spread.breakeven_vol}
+              realisedVol={spread.realised_vol ?? null}
+              vega={spread.greeks?.vega ?? null}
+            />
           )}
           <span>
             {income ? "Cover" : single ? "Premium" : "Collateral"}{" "}

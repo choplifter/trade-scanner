@@ -40,6 +40,14 @@ from app.options.optimizer import chance_of_profit, position_pnl
 from app.services.market_clock import ET, current_session
 from app.options.occ import try_parse_occ
 from app.options.payoff import PayoffLeg, payoff_curve
+from app.options.position_risk import (
+    DividendCalendar,
+    RiskLeg,
+    assignment_risks,
+    breakeven_vol,
+    position_greeks,
+    realised_vol_today,
+)
 from app.options.positions import SpreadGroup, group_spreads
 from app.options.quote_source import LiveQuoteSource, QuoteSource
 from app.options.pricing import (
@@ -303,6 +311,9 @@ class OptionsService:
         self._account: Account = account
         self._chain_cache = chain_cache or ChainCache(clients, self._live_spot)
         self._source: QuoteSource = source or LiveQuoteSource(clients, self._chain_cache, self._live_spot)
+        # Upcoming ex-dividend dates (app.options.position_risk), set by the
+        # routers from app.state; None leaves the assignment check out.
+        self.dividends: DividendCalendar | None = None
 
     @property
     def source(self) -> QuoteSource:
@@ -726,6 +737,39 @@ class OptionsService:
             if barrier is not None:
                 touch = chance_of_touch(chain.spot, barrier, sigma, years)
 
+        # What the position is exposed to beyond its payoff (see
+        # app.options.position_risk): its greeks, the volatility its price
+        # implies against what the stock has realised, and the short legs
+        # an early exercise could take away. Realised vol and dividends are
+        # today's -- in a replay they would be look-ahead, so left out.
+        now = self._source.now()
+        replay = getattr(self._source, "as_of", None) is not None
+        risk_legs = [
+            RiskLeg(
+                kind=leg.kind,
+                strike=leg.strike,
+                expiry=leg.expiry,
+                qty=(1 if leg.side == "buy" else -1) * leg.ratio_qty,
+                iv=leg.iv,
+                mid=leg.mid,
+            )
+            for leg in legs
+        ]
+        greeks = position_greeks(
+            [RiskLeg(l.kind, l.strike, l.expiry, l.qty * ticket.qty, l.iv, l.mid) for l in risk_legs], chain.spot, now
+        )
+        be_vol = (
+            breakeven_vol(risk_legs, chain.spot, now, price if direction == "debit" else -price, sigma) if sigma else None
+        )
+        realised = None if replay else await realised_vol_today(self._clients, ticket.underlying)
+        if self.dividends is not None and not replay:
+            try:
+                upcoming = await self.dividends.upcoming(ticket.underlying)
+            except Exception:
+                logger.exception("Dividend lookup failed for %s", ticket.underlying)
+                upcoming = []
+            warnings.extend(assignment_risks(risk_legs, chain.spot, now, upcoming))
+
         return ResolvedSpread(
             underlying=ticket.underlying.upper(),
             strategy=ticket.strategy,
@@ -756,6 +800,10 @@ class OptionsService:
             client_order_id=ticket.client_order_id,
             coverage=coverage,
             payoff=payoff,
+            greeks=greeks.to_dict() if greeks is not None else None,
+            breakeven_vol=round(be_vol, 4) if be_vol is not None else None,
+            atm_iv=round(sigma, 4) if sigma else None,
+            realised_vol=round(realised, 4) if realised is not None else None,
         )
 
     def _payoff(

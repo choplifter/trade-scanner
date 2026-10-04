@@ -34,7 +34,7 @@ export type VwapAnchor = "session" | "premarket";
  * windows are market concepts and stay computed in New York time. */
 export type TimeZoneMode = "local" | "market";
 /** Which greek the option chain's greek column shows; the header cycles it. */
-export type ChainGreek = "delta" | "gamma" | "theta";
+export type ChainGreek = "delta" | "gamma" | "theta" | "vega";
 export const MARKET_TIME_ZONE = "America/New_York";
 export type DefaultChartType = "candles" | "line";
 export type MovingAverageType = "ema" | "sma";
@@ -239,7 +239,7 @@ function load(raw = getStored(STORAGE_KEY)): AppSettings {
       optionsShortTargets: parseShortTargets(parsed.optionsShortTargets),
       optionsLimitMode: oneOf(parsed.optionsLimitMode, ["mid", "natural"] as const, DEFAULT_SETTINGS.optionsLimitMode),
       timeZone: oneOf(parsed.timeZone, ["local", "market"] as const, DEFAULT_SETTINGS.timeZone),
-      chainGreek: oneOf(parsed.chainGreek, ["delta", "gamma", "theta"] as const, DEFAULT_SETTINGS.chainGreek),
+      chainGreek: oneOf(parsed.chainGreek, ["delta", "gamma", "theta", "vega"] as const, DEFAULT_SETTINGS.chainGreek),
       riskView: oneOf(parsed.riskView, ["chart", "table"] as const, DEFAULT_SETTINGS.riskView),
       fillSound: typeof parsed.fillSound === "boolean" ? parsed.fillSound : DEFAULT_SETTINGS.fillSound,
       deltaLines: (DELTA_LINE_CHOICES as readonly number[]).includes(parsed.deltaLines as number)

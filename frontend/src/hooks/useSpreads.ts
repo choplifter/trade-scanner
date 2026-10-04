@@ -10,6 +10,7 @@ import type {
   OptionsAccountResponse,
   OrderResponse,
   SpreadGroup,
+  SpreadTotals,
   TriggerCreateRequest,
   UnderlyingTrigger,
 } from "../types/options";
@@ -25,6 +26,8 @@ export interface SpreadsState {
   account: OptionsAccountResponse | null;
   spreads: SpreadGroup[];
   triggers: UnderlyingTrigger[];
+  /** Greeks and collateral summed over the held structures. */
+  totals: SpreadTotals | null;
   loading: boolean;
   error: string | null;
   /** No Alpaca key pair for this account (backend "broker_not_connected"). */
@@ -39,7 +42,15 @@ export interface SpreadsActions {
   cancelTrigger: (id: string) => Promise<void>;
 }
 
-const EMPTY: SpreadsState = { account: null, spreads: [], triggers: [], loading: true, error: null, brokerMissing: false };
+const EMPTY: SpreadsState = {
+  account: null,
+  spreads: [],
+  triggers: [],
+  totals: null,
+  loading: true,
+  error: null,
+  brokerMissing: false,
+};
 
 /** Open spreads, their triggers and the options account, polled while the
  * Options widget is mounted and refetched on every replay tick (the
@@ -67,6 +78,7 @@ export function useSpreads(enabled: boolean): SpreadsState & SpreadsActions {
         account,
         spreads: spreads.spreads,
         triggers: spreads.triggers,
+        totals: spreads.totals ?? null,
         loading: false,
         error: null,
         brokerMissing: false,

@@ -148,6 +148,21 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             else: it is built from mids, so a positive EV on a wide quote is not money.
             <BookRefLine refs={[NATENBERG.impliedDistributions, NATENBERG.goodSpread]} />
           </dd>
+          {(winged || sells) && (
+            <>
+              <dt>3b · BE vol — the margin for error</dt>
+              <dd>
+                The at-the-money volatility at which the model values the structure at its mid{" "}
+                {buys ? "debit" : "credit"}, and in brackets its distance from the realised volatility (RV).{" "}
+                {buys
+                  ? "A debit has an edge while the stock moves more than the breakeven: the bracket is how far its movement may fall before the price stops paying for it."
+                  : "A credit has an edge while the stock moves less than the breakeven: the bracket is how far its movement may rise before the credit stops paying for it."}{" "}
+                Green while the realised record is on your side. A record, not a forecast; and built from mids, so the
+                fill you actually get moves the breakeven against you.
+                <BookRefLine refs={[NATENBERG.marginForError]} />
+              </dd>
+            </>
+          )}
           <dt>4 · R/R and Loss prob — the shape, not the verdict</dt>
           <dd>
             Risk against reward, and the share of the distribution — the one the chain's strikes price, skew included — under which the structure is not ahead once

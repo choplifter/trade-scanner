@@ -575,6 +575,15 @@ class ResolvedSpread(BaseModel):
     client_order_id: str | None = None
     coverage: Coverage | None = None
     payoff: Payoff | None = None
+    # The position's greeks for the whole order -- delta and gamma in
+    # shares, theta $/day, vega $/vol point (app.options.position_risk).
+    greeks: dict | None = None
+    # The at-the-money volatility at which the model values the package at
+    # limit_price, against the chain's ATM IV and the stock's 20-session
+    # realised vol: Natenberg's margin for error.
+    breakeven_vol: float | None = None
+    atm_iv: float | None = None
+    realised_vol: float | None = None
 
 
 class CloseLeg(BaseModel):

@@ -197,14 +197,16 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
                 receives at once. In a replay these are Bid* and Ask*: derived from the last print, because no historical
                 quotes exist.
               </dd>
-              <dt>Δ / Γ / Θ</dt>
+              <dt>Δ / Γ / Θ / V</dt>
               <dd>
                 One greek column per side; click its header to cycle. Delta: how much the option moves per 1 $ move of
                 the underlying, and roughly the market's odds of finishing in the money (0.50 at the money, 0.20 far out,
                 puts negative). Gamma: how much delta changes per 1 $, so how fast a position turns near the money and
-                near expiry. Theta: value lost per day at a standing price, per share, negative for a bought option. The
-                cell tooltip always shows all three.
-                <BookRefLine refs={[NATENBERG.greeks]} />
+                near expiry. Theta: value lost per day at a standing price, per share, negative for a bought option.
+                Vega: value gained per share when implied volatility rises one point, largest at the money and far out
+                in time; computed here from the contract's IV, since the feed carries none. The cell tooltip always
+                shows all four.
+                <BookRefLine refs={[NATENBERG.greeks, NATENBERG.vega]} />
               </dd>
               <dt>IV</dt>
               <dd>
@@ -548,6 +550,34 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
                 At expiry, per position. Unlimited or unbounded means the grid has no edge in that direction (a long call
                 keeps rising with the underlying). The breakeven is where the expiry curve crosses zero.
               </dd>
+              <dt>Δ · Γ · Θ $/day · V $/pt</dt>
+              <dd>
+                The whole order's greeks, summed over its legs from each leg's IV: delta and gamma in share
+                equivalents, theta in dollars per calendar day at a standing price, vega in dollars per point of
+                implied volatility. A credit structure shows positive theta and negative vega — it earns while time
+                passes and loses when volatility rises, before the stock has moved at all.
+                <BookRefLine refs={[NATENBERG.greeks, NATENBERG.positionAnalysis]} />
+              </dd>
+              <dt>Breakeven vol · realised · margin</dt>
+              <dd>
+                The at-the-money volatility at which the model values the package at your limit, every leg's IV moved
+                by the same factor so the smile keeps its shape. Against it the stock's realised volatility over 20
+                sessions, and the gap as the <em>margin for error</em>: selling volatility (vega below zero), the trade
+                has an edge while the stock moves less than the breakeven; buying, while it moves more. A better limit
+                moves the breakeven your way, the natural against you. Green margin means the realised record is on
+                your side, red that the price does not pay for the movement the stock has been showing. Not shown in a
+                replay, where today's realised volatility would be look-ahead.
+                <BookRefLine refs={[NATENBERG.marginForError]} />
+              </dd>
+              <dt>Early assignment</dt>
+              <dd>
+                A warning under the ticket when a short leg could be exercised before expiry. A short call in the money
+                ahead of an ex-dividend date is taken the day before the ex-date once the dividend is worth more than
+                its remaining time value — you are then short the shares and owe the dividend. A short put deep in the
+                money is exercised once its time value is smaller than the interest the strike's cash would earn until
+                expiry (reckoned at 4 %). Ex-dates come from Alpaca's corporate announcements for the next 90 days.
+                <BookRefLine refs={[NATENBERG.earlyExerciseCalls, NATENBERG.earlyExercisePuts]} />
+              </dd>
               <dt>Collateral · ceilings</dt>
               <dd>
                 What the account reserves for the package (a credit spread's width less the credit, the strike's cash for
@@ -629,6 +659,15 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
 
             <h3>Open spreads</h3>
             <dl>
+              <dt>Margin bar</dt>
+              <dd>
+                Above the list: what the open structures tie up together (each credit spread's wider wing less its
+                credit, a cash-secured put's strike; debits and covered calls nothing beyond what was paid or held),
+                the options buying power still free, and the tied-up part as a share of equity. The bar fills with the
+                share of the options buying power in use and turns amber past 80 %. Beside it the book's theta and vega:
+                what all structures together earn per day and lose per point of implied volatility.
+                <BookRefLine refs={[NATENBERG.positionAnalysis]} />
+              </dd>
               <dt>Rows</dt>
               <dd>
                 Held contracts grouped into the structures they were opened as (an iron condor and a separate long put on
@@ -636,6 +675,19 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
               </dd>
               <dt>Mark</dt>
               <dd>The position's own price now: the mid of closing it, per share.</dd>
+              <dt>Θ / V</dt>
+              <dd>
+                The structure's theta ($ per day) and vega ($ per volatility point). Open the row for its delta, gamma
+                and its own margin.
+                <BookRefLine refs={[NATENBERG.vega]} />
+              </dd>
+              <dt>⚠ assignment</dt>
+              <dd>
+                A short leg at risk of early exercise: an in-the-money call ahead of an ex-dividend date worth more than
+                its time value, or a deep put whose time value is below the carry on its strike. The open row says which
+                leg and why; closing or rolling it before the ex-date avoids the assignment.
+                <BookRefLine refs={[NATENBERG.earlyExerciseCalls, NATENBERG.earlyExercisePuts]} />
+              </dd>
               <dt>Close</dt>
               <dd>Previews the closing package at the current market, then sends it as one order (typed LIVE on Live).</dd>
               <dt>Roll…</dt>

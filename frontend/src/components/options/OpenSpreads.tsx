@@ -14,6 +14,7 @@ import {
   type OptionOrderType,
   type OptionsAccountResponse,
   type SpreadGroup,
+  type SpreadTotals,
   type TriggerCreateRequest,
   type UnderlyingTrigger,
 } from "../../types/options";
@@ -22,7 +23,9 @@ import { formatExpiry, formatLeg, formatStrike } from "../../utils/occ";
 import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
+import { NATENBERG, withBook } from "./bookRefs";
 import { PayoffChart } from "./PayoffChart";
+import { GreeksLine, MarginBar } from "./PositionRisk";
 import { rollableLeg } from "./RollTicket";
 import { OrderTypeToggle } from "./SpreadTicket";
 import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
@@ -30,6 +33,8 @@ import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 interface OpenSpreadsProps {
   spreads: SpreadGroup[];
   triggers: UnderlyingTrigger[];
+  /** Greeks and collateral over the whole book, for the margin bar. */
+  totals: SpreadTotals | null;
   account: OptionsAccountResponse | null;
   mode: TradingMode;
   symbol: string | null;
@@ -157,6 +162,7 @@ function closeLegs(group: SpreadGroup) {
 export function OpenSpreads({
   spreads,
   triggers,
+  totals,
   account,
   mode,
   symbol,
@@ -333,6 +339,7 @@ export function OpenSpreads({
 
   return (
     <div className="open-spreads">
+      {totals && <MarginBar totals={totals} account={account} />}
       <table className="performance-table">
         <thead>
           <tr>
@@ -344,6 +351,14 @@ export function OpenSpreads({
             <th>Entry</th>
             <th>Value</th>
             <th>P&amp;L</th>
+            <th
+              title={withBook(
+                "The structure's theta ($ per day at a standing price) and vega ($ per point of implied volatility), from its legs' IVs. Open the row for delta, gamma and what it ties up.",
+                NATENBERG.vega,
+              )}
+            >
+              Θ / V
+            </th>
             <th>Triggers</th>
             <th />
           </tr>
@@ -377,12 +392,23 @@ export function OpenSpreads({
                 <td>
                   {strategyLabel(group)}
                   {group.broken && <span className="spread-broken"> broken</span>}
+                  {(group.warnings?.length ?? 0) > 0 && (
+                    <span className="spread-broken" title={group.warnings!.join("\n\n")}>
+                      {" "}
+                      ⚠ assignment
+                    </span>
+                  )}
                 </td>
                 <td>{strikesLabel(group)}</td>
                 <td>{group.qty}</td>
                 <td>{entryLabel(group)}</td>
                 <td>{money(group.market_value)}</td>
                 <td className={group.unrealized_pl >= 0 ? "delta-up" : "delta-down"}>{signed(group.unrealized_pl)}</td>
+                <td className="spread-greeks-cell">
+                  {group.greeks
+                    ? `${group.greeks.theta >= 0 ? "+" : ""}${group.greeks.theta.toFixed(0)} / ${group.greeks.vega >= 0 ? "+" : ""}${group.greeks.vega.toFixed(0)}`
+                    : "—"}
+                </td>
                 <td>
                   {active.length > 0
                     ? active.map((t) => (
@@ -429,7 +455,22 @@ export function OpenSpreads({
               </tr>,
               isOpen && (
                 <tr key={`${group.id}:detail`} className="spread-expand">
-                  <td colSpan={10}>
+                  <td colSpan={11}>
+                    {(group.greeks || group.collateral) && (
+                      <p className="spread-risk-line">
+                        {group.greeks && <GreeksLine greeks={group.greeks} />}
+                        {group.collateral ? (
+                          <span title="What this structure ties up: the wider wing less the credit, a cash-secured put's strike.">
+                            {group.greeks ? " · " : ""}margin {money(group.collateral)}
+                          </span>
+                        ) : null}
+                      </p>
+                    )}
+                    {(group.warnings ?? []).map((w) => (
+                      <p key={w} className="order-rejection" title={withBook(w, NATENBERG.earlyExerciseCalls, NATENBERG.earlyExercisePuts)}>
+                        {w}
+                      </p>
+                    ))}
                     <ul className="spread-legs">
                       {group.legs.map((leg) => (
                         <li

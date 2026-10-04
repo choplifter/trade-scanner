@@ -22,6 +22,7 @@ from app.options.optimize import OptimizeRequest, optimize_structures
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, RollRequest, SpreadTicket, TriggerCreate
 from app.options.occ import try_parse_occ
+from app.options.position_risk import spread_risks
 from app.routers.trading_options import IdeaRequest
 from app.routers.trading_sim import _replay_seam
 from app.trading.errors import TradingError
@@ -38,7 +39,7 @@ async def _service(request: Request, user: dict) -> SimOptionsService:
     settings = state.settings
     if not settings.has_credentials:
         raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
-    return make_sim_options_service(
+    service = make_sim_options_service(
         state.alpaca_clients,
         settings,
         sim_store=state.sim_store,
@@ -49,6 +50,8 @@ async def _service(request: Request, user: dict) -> SimOptionsService:
         chain_cache=getattr(state, "options_chain_cache", None),
         engine=getattr(state, "scanner_engine", None),
     )
+    service.dividends = getattr(state, "dividend_calendar", None)
+    return service
 
 
 def _limits(request: Request) -> dict:
@@ -196,14 +199,20 @@ async def cancel_order(order_id: str, request: Request, user: dict = Depends(get
 async def spreads(request: Request, user: dict = Depends(get_current_user)) -> dict:
     store = getattr(request.app.state, "options_trigger_store", None)
     try:
-        groups = await (await _service(request, user)).spreads()
+        service = await _service(request, user)
+        groups = await service.spreads()
         triggers = await store.list_for_user(user["id"], SIM_ACCOUNT) if store is not None else []
     except HTTPException:
         raise
     except Exception:
         logger.exception("Sim open spreads fetch failed")
         raise HTTPException(status_code=502, detail="Failed to read the simulated spreads")
-    return {"spreads": [g.to_dict() for g in groups], "triggers": triggers}
+    risks, totals = await spread_risks(service.source, groups, service.dividends)
+    return {
+        "spreads": [{**g.to_dict(), **risks.get(g.id, {"greeks": None, "warnings": [], "collateral": 0.0})} for g in groups],
+        "triggers": triggers,
+        "totals": totals,
+    }
 
 
 @router.post("/spreads/close/preview")

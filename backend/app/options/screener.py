@@ -1217,7 +1217,22 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain, dist=None) -> dict 
     years = max((row.expiry - datetime.now(timezone.utc).date()).days, 0) / 365 if row.expiry else 0.0
     if not row.expiry:
         return None
-    return structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry, cross=cross, dist=dist)
+    outcome = structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry, cross=cross, dist=dist)
+    if outcome is not None:
+        # The volatility the price implies, against which the realised
+        # one is the margin for error (app.options.position_risk).
+        from app.options.position_risk import RiskLeg, breakeven_vol
+
+        risk_legs = [
+            RiskLeg(leg["kind"], leg["strike"], row.expiry, -1 if leg["side"] == "sell" else 1, leg["iv"]) for leg in legs
+        ]
+        be = (
+            breakeven_vol(risk_legs, chain.spot, datetime.now(timezone.utc), -credit, row.atm_iv)
+            if row.atm_iv
+            else None
+        )
+        outcome["breakeven_vol"] = round(be, 4) if be is not None else None
+    return outcome
 
 
 def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date, dist=None) -> dict | None:

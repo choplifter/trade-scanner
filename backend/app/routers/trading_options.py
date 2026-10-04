@@ -18,6 +18,7 @@ from app.options.optimize import OptimizeRequest, compare_horizons, optimize_str
 from app.auth.dependency import get_current_user
 from app.options.models import CloseSpreadRequest, PayoffRequest, RollRequest, SpreadTicket, TriggerCreate
 from app.options.screener import ScreenRequest, screen_underlyings
+from app.options.position_risk import spread_risks
 from app.options.service import OptionsService, market_order_refusal
 from app.routers.trading import _account, _confirm
 from app.services.market_clock import ET
@@ -54,7 +55,7 @@ async def _service(request: Request, user: dict = Depends(get_current_user)) -> 
         live_available = (await resolver.availability(user))["live"]
     elif account == "live" and not settings.has_live_credentials:
         raise HTTPException(status_code=503, detail="Live account not configured")
-    return OptionsService(
+    service = OptionsService(
         request.app.state.alpaca_clients,
         settings,
         engine=getattr(request.app.state, "scanner_engine", None),
@@ -63,6 +64,8 @@ async def _service(request: Request, user: dict = Depends(get_current_user)) -> 
         broker=broker,
         live_available=live_available,
     )
+    service.dividends = getattr(request.app.state, "dividend_calendar", None)
+    return service
 
 
 def _limits(request: Request) -> dict:
@@ -242,7 +245,12 @@ async def spreads(request: Request, service: OptionsService = Depends(_service),
     except Exception:
         logger.exception("Open spreads fetch failed")
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
-    return {"spreads": [g.to_dict() for g in groups], "triggers": triggers}
+    risks, totals = await spread_risks(service.source, groups, service.dividends)
+    return {
+        "spreads": [{**g.to_dict(), **risks.get(g.id, {"greeks": None, "warnings": [], "collateral": 0.0})} for g in groups],
+        "triggers": triggers,
+        "totals": totals,
+    }
 
 
 @router.post("/spreads/close/preview")

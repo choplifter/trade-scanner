@@ -24,7 +24,7 @@ from app.core.config import Settings
 from app.options.chain_fetch import ChainCache
 from app.options.models import STRATEGY_LABELS, CloseLeg, CloseSpreadRequest, ResolvedSpread, RollRequest, SpreadTicket
 from app.options.occ import try_parse_occ
-from app.options.positions import SpreadGroup, group_spreads
+from app.options.positions import SpreadGroup, collateral_for, group_spreads
 from app.options.pricing import alpaca_limit
 from app.options.quote_source import LiveQuoteSource, QuoteSource, ReplayQuoteSource
 from app.options.service import OptionsService
@@ -95,30 +95,6 @@ def public_option_order(row: dict) -> dict:
     }
 
 
-def collateral_for(group: SpreadGroup) -> float:
-    """What the book holds against an open credit package: the wider wing
-    less the credit for a spread, the strike for a cash-secured put,
-    nothing for a covered call or a debit (already paid)."""
-    if group.qty <= 0 or group.net_entry >= 0 or group.strategy == "covered_call":
-        return 0.0
-    credit = -group.net_entry
-    legs = group.legs
-    if len(legs) == 1:
-        leg = legs[0]
-        if leg.kind == "put" and leg.qty < 0:
-            return round(leg.strike * CONTRACT_MULTIPLIER * group.qty, 2)
-        return 0.0
-    puts = sorted(leg.strike for leg in legs if leg.kind == "put")
-    calls = sorted(leg.strike for leg in legs if leg.kind == "call")
-    if len(legs) == 2 and (len(puts) == 2 or len(calls) == 2):
-        strikes = puts or calls
-        width = strikes[-1] - strikes[0]
-    elif len(puts) >= 2 and len(calls) >= 2:
-        width = max(puts[-1] - puts[0], calls[-1] - calls[0])
-    else:
-        strikes = sorted(leg.strike for leg in legs)
-        width = strikes[-1] - strikes[0]
-    return round(max(0.0, width - credit) * CONTRACT_MULTIPLIER * group.qty, 2)
 
 
 class SimOptionsService(OptionsService):

@@ -8,23 +8,27 @@ import { symbolDragProps } from "../../utils/dragSymbol";
 import { updateSettings, type ChainGreek } from "../../api/settings";
 import { useSettings } from "../../hooks/useSettings";
 
-/** The greek column cycles Δ -> Γ -> Θ on a header click; the choice is
+/** The greek column cycles Δ -> Γ -> Θ -> V on a header click; the choice is
  * kept in the settings so every chain shows the same one. One column
  * rather than three: the table is already thirteen columns beside a
- * ticket, and the cell tooltip carries all three regardless. */
+ * ticket, and the cell tooltip carries all four regardless. */
 const GREEKS: { key: ChainGreek; label: string; title: string; digits: number }[] = [
   { key: "delta", label: "Δ", title: "Delta: option move per 1 $ of the underlying, and roughly the odds of expiring in the money. Click for gamma.", digits: 2 },
   { key: "gamma", label: "Γ", title: "Gamma: how much delta changes per 1 $ of the underlying -- how fast a position turns. Click for theta.", digits: 3 },
-  { key: "theta", label: "Θ", title: "Theta: value lost per day at a standing price, per share -- negative for a bought option. Click for delta.", digits: 2 },
+  { key: "theta", label: "Θ", title: "Theta: value lost per day at a standing price, per share -- negative for a bought option. Click for vega.", digits: 2 },
+  { key: "vega", label: "V", title: "Vega: value gained per share when implied volatility rises one point -- largest at the money and far out in time. Click for delta.", digits: 3 },
 ];
 
 function greekValue(quote: LegQuote | null, greek: ChainGreek): number | null {
   if (!quote) return null;
-  return greek === "delta" ? quote.delta : greek === "gamma" ? (quote.gamma ?? null) : (quote.theta ?? null);
+  if (greek === "delta") return quote.delta;
+  if (greek === "gamma") return quote.gamma ?? null;
+  if (greek === "theta") return quote.theta ?? null;
+  return quote.vega ?? null;
 }
 
 function greeksNote(quote: LegQuote): string {
-  return ` -- Δ ${num(quote.delta, 2)} · Γ ${num(quote.gamma ?? null, 3)} · Θ ${num(quote.theta ?? null, 2)}`;
+  return ` -- Δ ${num(quote.delta, 2)} · Γ ${num(quote.gamma ?? null, 3)} · Θ ${num(quote.theta ?? null, 2)} · V ${num(quote.vega ?? null, 3)}`;
 }
 
 /** `body` is a butterfly's doubled short. */

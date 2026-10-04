@@ -158,6 +158,12 @@ async def lifespan(app: FastAPI):
     # The coming weeks' FOMC/CPI/NFP/PCE/GDP dates for the expiry strip and
     # the Optimizer -- same key, same posture (app.market_data.macro_calendar).
     app.state.macro_calendar = MacroCalendar(settings.fmp_api_key)
+    # Upcoming ex-dividend dates for the early-assignment warnings
+    # (app.options.position_risk): Alpaca's corporate announcements, one
+    # market-wide query a day, on the operator's keys like the split check.
+    from app.options.position_risk import DividendCalendar
+
+    app.state.dividend_calendar = DividendCalendar(clients)
     # Who reports on a given day, for the Earnings screen -- the calendar
     # by date rather than by symbol (app.market_data.earnings_screen).
     app.state.earnings_day_calendar = EarningsDayCalendar(settings.fmp_api_key)

@@ -227,6 +227,9 @@ export interface LegQuote {
   delta: number | null;
   gamma: number | null;
   theta: number | null;
+  /** Per share per volatility point, computed from the IV by the backend
+   * (the feed carries none). Present on chain rows only. */
+  vega?: number | null;
   iv: number | null;
   open_interest: number;
   tradable: boolean;
@@ -330,6 +333,14 @@ export interface ResolvedSpread {
   client_order_id: string | null;
   coverage: Coverage | null;
   payoff: Payoff | null;
+  /** For the whole order -- backend app/options/position_risk.py. */
+  greeks?: PositionGreeks | null;
+  /** The ATM-level volatility at which the model values the package at
+   * limit_price; held against realised_vol it is the margin for error. */
+  breakeven_vol?: number | null;
+  atm_iv?: number | null;
+  /** 20-session close-to-close; null in a replay (it would be look-ahead). */
+  realised_vol?: number | null;
 }
 
 export interface SpreadPreview {
@@ -376,6 +387,21 @@ export interface SpreadGroup {
   long_expiry: string | null;
   /** Shares backing a covered call. */
   shares: number;
+  /** The structure's greeks from its legs' IVs; null without them. */
+  greeks?: PositionGreeks | null;
+  /** Early-assignment warnings for its short legs. */
+  warnings?: string[];
+  /** What it ties up: wing less credit, a put's strike, 0 for a debit. */
+  collateral?: number;
+}
+
+/** A position's greeks -- backend app/options/position_risk.py. delta and
+ * gamma in share equivalents, theta in $ per day, vega in $ per vol point. */
+export interface PositionGreeks {
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
 }
 
 export interface PayoffRequest {
@@ -415,6 +441,19 @@ export interface UnderlyingTrigger {
 export interface SpreadsResponse {
   spreads: SpreadGroup[];
   triggers: UnderlyingTrigger[];
+  /** Summed over the structures that have greeks (`structures` of `of`). */
+  totals?: SpreadTotals | null;
+}
+
+/** Summed over the held structures -- backend position_risk.spread_risks. */
+export interface SpreadTotals {
+  theta: number;
+  vega: number;
+  /** How many structures had greeks, of how many held. */
+  structures: number;
+  of: number;
+  /** What the structures tie up together. */
+  collateral: number;
 }
 
 export interface CloseLeg {
@@ -928,6 +967,9 @@ export interface ScreenOutcome {
   max_profit: number | null;
   max_loss: number | null;
   risk_reward: number | null;
+  /** The ATM-level volatility at which the model values the structure at
+   * its credit (debit): Natenberg's margin for error against realised. */
+  breakeven_vol?: number | null;
 }
 
 export interface ScreenRow {

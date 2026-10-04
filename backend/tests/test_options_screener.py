@@ -540,6 +540,19 @@ def test_the_screen_carries_the_outcome_and_judges_it():
     assert "of the distribution wins" in ev["detail"]
 
 
+def test_a_credit_structure_carries_the_volatility_its_price_implies():
+    body = _run(
+        _Service({"A": _chain(iv=0.40)}),
+        ScreenRequest(symbols=["A"], strategy="credit_spread"),
+        closes={"A": _closes(0.01)},
+    )
+    # Carried on the outcome; whether it reprices the package is
+    # test_position_risk's job -- this fixture's quotes come from deltas,
+    # not from a pricing model, so the level itself means nothing here.
+    be = body["rows"][0]["outcome"]["breakeven_vol"]
+    assert be is not None and be > 0
+
+
 def test_a_long_option_screen_values_nothing_because_it_names_no_structure():
     body = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"], strategy="long_option"), closes={"A": _closes(0.01)})
     assert body["rows"][0]["outcome"] is None

@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from alpaca.data.enums import DataFeed, OptionsFeed
+from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.data.historical.news import NewsClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.screener import ScreenerClient
@@ -88,6 +89,13 @@ class AlpacaClients:
             secret_key=settings.alpaca_api_secret_key,
         ))
         self.screener = with_timeout(ScreenerClient(
+            api_key=settings.alpaca_api_key_id,
+            secret_key=settings.alpaca_api_secret_key,
+        ))
+        # Corporate actions as market data (dividends with their ex-dates,
+        # declared ones ahead of time) -- far fuller than the trading API's
+        # announcements, which carry a few dozen symbols at a time.
+        self.corporate_actions = with_timeout(CorporateActionsClient(
             api_key=settings.alpaca_api_key_id,
             secret_key=settings.alpaca_api_secret_key,
         ))

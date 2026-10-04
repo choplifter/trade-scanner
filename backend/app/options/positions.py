@@ -105,6 +105,37 @@ class SpreadGroup:
         }
 
 
+_MULTIPLIER = 100
+
+
+def collateral_for(group: SpreadGroup) -> float:
+    """What an open credit package ties up: the wider wing less the credit
+    for a spread, the strike for a cash-secured put, nothing for a covered
+    call or a debit (already paid). The simulated book reserves exactly
+    this; at Alpaca it is the standard requirement for these shapes, so
+    the margin readout over Open spreads uses it for every account."""
+    if group.qty <= 0 or group.net_entry >= 0 or group.strategy == "covered_call":
+        return 0.0
+    credit = -group.net_entry
+    legs = group.legs
+    if len(legs) == 1:
+        leg = legs[0]
+        if leg.kind == "put" and leg.qty < 0:
+            return round(leg.strike * _MULTIPLIER * group.qty, 2)
+        return 0.0
+    puts = sorted(leg.strike for leg in legs if leg.kind == "put")
+    calls = sorted(leg.strike for leg in legs if leg.kind == "call")
+    if len(legs) == 2 and (len(puts) == 2 or len(calls) == 2):
+        strikes = puts or calls
+        width = strikes[-1] - strikes[0]
+    elif len(puts) >= 2 and len(calls) >= 2:
+        width = max(puts[-1] - puts[0], calls[-1] - calls[0])
+    else:
+        strikes = sorted(leg.strike for leg in legs)
+        width = strikes[-1] - strikes[0]
+    return round(max(0.0, width - credit) * _MULTIPLIER * group.qty, 2)
+
+
 def classify(legs: list[SpreadPositionLeg]) -> tuple[str, int, bool]:
     """(strategy, structures held, broken) for legs of ONE expiry, in
     ascending (strike, kind) order."""
