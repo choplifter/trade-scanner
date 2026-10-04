@@ -18,7 +18,7 @@ import type {
 import { formatMoney, formatPrice } from "../../utils/format";
 import { formatExpiry } from "../../utils/occ";
 import { ScreenerHelp } from "./ScreenerHelp";
-import { CHEAP_IV_RATIO, ivTone, RICH_IV_RATIO } from "./eventMarks";
+import { CHEAP_IV_RATIO, CONE_TITLE, ivTone, RICH_IV_RATIO } from "./eventMarks";
 import { requestOptimizer } from "./optimizerIntent";
 import { requestTicket } from "./ticketIntent";
 
@@ -198,6 +198,7 @@ const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
   RV: (r) => r.realised_vol,
   "IV/RV": (r) => r.iv_rv_ratio,
   "IV rank": (r) => r.iv_rank,
+  Cone: (r) => r.cone_pct,
   OI: (r) => r.open_interest,
   "Vol/OI": (r) => r.volume_oi_ratio,
   Expiry: (r) => r.dte,
@@ -588,6 +589,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 <Th label="RV" title="Close-to-close volatility of the last 20 sessions, annualised." sort={sort} onSort={onSort} />
                 <Th label="IV/RV" title="Implied over realised. Above 1.2 the premium is rich, below 0.95 it is cheap." sort={sort} onSort={onSort} />
                 <Th label="IV rank" title="Where today's IV sits in this symbol's own recorded range. Needs 20 sessions." sort={sort} onSort={onSort} />
+                <Th label="Cone" title={CONE_TITLE} sort={sort} onSort={onSort} />
                 <Th label="OI" title="Open interest across the fetched strikes of that expiry." sort={sort} onSort={onSort} />
                 <Th
                   label="Vol/OI"
@@ -696,6 +698,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     >
                       {row.iv_rank == null ? "—" : `${row.iv_rank.toFixed(0)} %`}
                     </td>
+                    <td title={row.cone_pct == null ? "Less than a year of closes" : `Above ${row.cone_pct.toFixed(0)} % of ${row.cone_window}-session spells this year`}>
+                      {row.cone_pct == null ? "—" : `${row.cone_pct.toFixed(0)} %`}
+                    </td>
                     <td title={row.open_interest == null ? "Not reported for this expiry right now" : undefined}>
                       {row.open_interest == null ? "—" : row.open_interest.toLocaleString()}
                     </td>
@@ -781,7 +786,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   </tr>
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={18}>
+                      <td colSpan={19}>
                         <Criteria row={row} />
                       </td>
                     </tr>

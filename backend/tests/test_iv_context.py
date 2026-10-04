@@ -345,3 +345,39 @@ def test_the_atm_iv_is_read_from_bid_quotes_only():
     ]
     chain = Chain(underlying="X", expiry=date(2026, 11, 20), spot=100.6, feed="opra", as_of=None, rows=rows)
     assert atm_iv(chain) == pytest.approx(0.30)
+
+
+# --- volatility cone ---------------------------------------------------------
+
+
+def _path(daily_moves: list[float], start: float = 100.0) -> list[float]:
+    out = [start]
+    for m in daily_moves:
+        out.append(out[-1] * math.exp(m))
+    return out
+
+
+def test_the_cone_ranks_todays_iv_among_the_spells_the_stock_realised():
+    from app.options.iv_context import cone_reading, cone_window
+
+    # A quiet half year (0.5 % a day) then a wild one (2 % a day), alternating
+    # in sign: 30-session spells realise ~8 % in the first half, ~32 % in the
+    # second, and a mix where they straddle the change.
+    closes = _path([0.005 * (-1) ** i for i in range(130)] + [0.02 * (-1) ** i for i in range(130)])
+    assert cone_window(45) == 31
+
+    calm, middle, wild = (cone_reading(iv, closes, 45) for iv in (0.05, 0.20, 0.40))
+    assert calm.percentile == 0.0 and wild.percentile == 100.0
+    assert 0.0 < middle.percentile < 100.0
+    assert calm.low == pytest.approx(0.005 * math.sqrt(252), rel=1e-6)
+    assert calm.high == pytest.approx(0.02 * math.sqrt(252), rel=1e-6)
+    assert calm.spells == 230  # one per session from the first full spell, within the year
+
+
+def test_no_cone_without_the_history_or_the_expiry():
+    from app.options.iv_context import cone_reading
+
+    short = _path([0.01] * 40)
+    assert cone_reading(0.3, short, 45) is None, "40 sessions hold too few 31-session spells to rank among"
+    long = _path([0.01 * (-1) ** i for i in range(260)])
+    assert cone_reading(None, long, 45) is None and cone_reading(0.3, long, None) is None

@@ -30,7 +30,7 @@ import type { LoadableStructure } from "../../types/options";
 import { AiIdeaTab } from "./AiIdeaTab";
 import { ExpiryAxis } from "./ExpiryAxis";
 import { OptimizerTab } from "./OptimizerTab";
-import { earningsSentence, eventMarks, IV_PREMIUM_TITLE, ivPremiumSentence, ivPremiumTone, ivRankSentence, ivTone, macroInWindow, macroSentence, vixSentence } from "./eventMarks";
+import { CONE_TITLE, coneSentence, earningsSentence, eventMarks, IV_PREMIUM_TITLE, ivPremiumSentence, ivPremiumTone, ivRankSentence, ivTone, macroInWindow, macroSentence, vixSentence } from "./eventMarks";
 import { useMarketConditions } from "../../hooks/useMarketConditions";
 import { subscribeOptimizerIntent, type OptimizerIntent } from "./optimizerIntent";
 import { ChainTable } from "./ChainTable";
@@ -731,6 +731,11 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                 {events.iv.atm_iv != null && (
                   <span className={`expiry-event ivrank ${ivTone(events.iv.rank?.percent) ?? "none"}`} title={withBook("Where today's at-the-money IV sits between the lowest and highest recorded over the past year of sessions. Above 60 % premium is rich against its own history, below 30 % cheap. A comparison with the past, not a forecast.", NATENBERG.ivAsPredictor)}>
                     <span className="opt-ivrank-dot" aria-hidden="true" /> {ivRankSentence(events.iv)}
+                  </span>
+                )}
+                {coneSentence(events.iv) && (
+                  <span className="expiry-event ivrank none" title={CONE_TITLE}>
+                    <span className="opt-ivrank-dot" aria-hidden="true" /> {coneSentence(events.iv)}
                   </span>
                 )}
                 {ivPremiumSentence(events.iv) && (

@@ -257,7 +257,7 @@ def test_gather_events_says_what_is_missing_instead_of_guessing():
     payload = asyncio.run(gather_events("AMD", today=TODAY))
 
     assert payload["earnings"] is None and payload["macro"] == []
-    assert payload["iv"] == {"atm_iv": None, "rank": None, "samples": 0, "realized_vol_20d": None, "iv_over_realized": None, "reference": None}
+    assert payload["iv"] == {"atm_iv": None, "rank": None, "samples": 0, "realized_vol_20d": None, "iv_over_realized": None, "reference": None, "cone": None}
     assert payload["sources"] == {"earnings": False, "macro": False, "iv_rank": False}
 
     # Dates but no bars client: the next report is known, the history is not.

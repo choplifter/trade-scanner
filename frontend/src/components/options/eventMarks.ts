@@ -127,6 +127,22 @@ export const IV_PREMIUM_TITLE = withBook(
   NATENBERG.ivAsPredictor,
 );
 
+/** Where the IV sits in the stock's volatility cone, said plainly: how
+ * often the stock has really moved as much as the option prices. Not a
+ * verdict -- implied normally sits above realised, so the upper half of the
+ * cone is ordinary. Null without a cone. */
+export function coneSentence(iv: OptionEventsResponse["iv"]): string | null {
+  const c = iv.cone;
+  if (!c) return null;
+  const pct = (v: number) => `${(v * 100).toFixed(0)} %`;
+  return `IV above ${c.percentile.toFixed(0)} % of ${c.window}-session spells this year (realised ${pct(c.low)}–${pct(c.high)}, median ${pct(c.median)})`;
+}
+
+export const CONE_TITLE = withBook(
+  "The volatility cone: every spell as long as the option has left to run, over the past year, and how much the stock really moved in each. The figure is the share of those spells that realised less than today's implied volatility -- how often the stock has actually moved as much as the option now prices. Needs only daily closes, so every symbol has one. Not a verdict on its own: implied normally sits above realised (the volatility risk premium), so a reading in the upper half is ordinary; near 100 % the option prices a move the stock has rarely made, near 0 % one it routinely beats.",
+  NATENBERG.historicalVol,
+);
+
 export function ivRankSentence(iv: OptionEventsResponse["iv"]): string {
   if (iv.rank) {
     const tone = ivTone(iv.rank.percent);

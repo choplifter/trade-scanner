@@ -208,3 +208,90 @@ def iv_premium(implied: float | None, realized: float | None) -> float | None:
     if implied is None or realized is None or realized <= 0:
         return None
     return implied / realized
+
+
+# --- volatility cone -----------------------------------------------------------
+#
+# Where today's implied volatility sits among the volatilities the stock has
+# actually realised over spells as long as the option has left to run
+# (Natenberg, Option Volatility and Pricing, 2nd ed., ch. 20 "Historical
+# Volatility": the volatility cone). Unlike the IV rank it needs no stored
+# implied history -- only daily closes, which every symbol has -- so it
+# exists for every name from the first look.
+#
+# Read it for what it is: implied normally sits above realised (the variance
+# risk premium), so an IV in the upper half of its cone is ordinary, not
+# rich. It says how often the stock has really moved as much as the option
+# now prices, not whether that price is high for this option.
+
+# The spells measured: one year of sessions, the span the IV rank covers.
+CONE_LOOKBACK_SESSIONS = 252
+# Spell length bounds, in sessions: a two-week floor (shorter spells are
+# mostly noise) and a half-year ceiling (longer ones leave too few spells
+# in a year to rank among).
+CONE_MIN_WINDOW = 10
+CONE_MAX_WINDOW = 126
+CONE_MIN_SPELLS = 60
+
+
+@dataclass(frozen=True)
+class ConeReading:
+    """Today's IV placed among the realised vols of past spells."""
+
+    percentile: float  # share of spells that realised less than today's IV, 0-100
+    window: int  # spell length in sessions
+    spells: int
+    low: float
+    median: float
+    high: float
+
+    def to_dict(self) -> dict:
+        return {
+            "percentile": round(self.percentile, 1),
+            "window": self.window,
+            "spells": self.spells,
+            "low": round(self.low, 4),
+            "median": round(self.median, 4),
+            "high": round(self.high, 4),
+        }
+
+
+def cone_window(dte: int) -> int:
+    """Sessions in `dte` calendar days, within the cone's bounds."""
+    return max(CONE_MIN_WINDOW, min(CONE_MAX_WINDOW, round(dte * TRADING_DAYS / 365)))
+
+
+def vol_cone(closes: Sequence[float], window: int, *, lookback: int = CONE_LOOKBACK_SESSIONS) -> list[float]:
+    """The annualised realised vol of every `window`-session spell ending in
+    the last `lookback` sessions, measured from zero like realized_vol.
+    Overlapping spells, one per session -- the usual construction."""
+    usable = [c for c in closes if c and c > 0]
+    squares = [math.log(b / a) ** 2 for a, b in zip(usable, usable[1:])]
+    if len(squares) < window:
+        return []
+    running = [0.0]
+    for sq in squares:
+        running.append(running[-1] + sq)
+    ends = range(max(window, len(squares) - lookback + 1), len(squares) + 1)
+    return [math.sqrt((running[end] - running[end - window]) / window * TRADING_DAYS) for end in ends]
+
+
+def cone_reading(implied: float | None, closes: Sequence[float], dte: int | None) -> ConeReading | None:
+    """`implied` against the cone for an option `dte` days out. None
+    without an IV, an expiry, or enough history for CONE_MIN_SPELLS spells."""
+    if implied is None or implied <= 0 or dte is None or dte <= 0:
+        return None
+    window = cone_window(dte)
+    spells = vol_cone(closes, window)
+    if len(spells) < CONE_MIN_SPELLS:
+        return None
+    ordered = sorted(spells)
+    below = sum(1 for v in ordered if v < implied)
+    return ConeReading(
+        percentile=100.0 * below / len(ordered),
+        window=window,
+        spells=len(ordered),
+        low=ordered[0],
+        median=ordered[len(ordered) // 2],
+        high=ordered[-1],
+    )

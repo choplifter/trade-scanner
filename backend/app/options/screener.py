@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.options.chain import Chain, StrikeRow
 from app.options.distribution import Distribution
-from app.options.iv_context import bid_iv
+from app.options.iv_context import bid_iv, cone_reading
 from app.options.chain_fetch import CHAIN_DAYS_AHEAD, STRIKE_PCT_RANGE
 from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl, profit_mass
 from app.options.payoff import PayoffLeg
@@ -208,6 +208,10 @@ CHEAP_IV_RATIO = 0.95
 # judged on it -- unknown, not failed.
 RICH_IV_RANK = 60.0
 CHEAP_IV_RANK = 30.0
+# Daily bars fetched per screen, in calendar days: a year of cone spells
+# (252 sessions) plus the longest spell before the first of them (126) --
+# 378 sessions, about 550 calendar days.
+CONE_BARS_LOOKBACK_DAYS = 560
 # How many symbols one run may price. Each costs three calls (contracts,
 # snapshots, day bars) and about 0.4 s, so the cap is what keeps a screen
 # off the broker's rate limit rather than an opinion about breadth.
@@ -363,6 +367,10 @@ class Row:
     iv_rv_ratio: float | None = None
     iv_rank: float | None = None
     iv_rank_samples: int = 0
+    # Where the judged IV sits among the realised vols of past spells as
+    # long as the expiry (0-100), and the spell length in sessions.
+    cone_pct: float | None = None
+    cone_window: int | None = None
     # None when the expiry reports none at all -- not knowable, as
     # opposed to zero. See where it is summed.
     open_interest: int | None = None
@@ -440,6 +448,8 @@ class Row:
             "iv_rv_ratio": None if self.iv_rv_ratio is None else round(self.iv_rv_ratio, 3),
             "iv_rank": self.iv_rank,
             "iv_rank_samples": self.iv_rank_samples,
+            "cone_pct": self.cone_pct,
+            "cone_window": self.cone_window,
             "open_interest": self.open_interest,
             "option_volume": self.option_volume,
             "volume_oi_ratio": None if self.volume_oi_ratio is None else round(self.volume_oi_ratio, 3),
@@ -1055,6 +1065,11 @@ async def _priced(
     judged = await _judged_iv(service, symbol, row, listed, today)
     if judged and row.realised_vol:
         row.iv_rv_ratio = judged / row.realised_vol
+    # The same reading in the stock's volatility cone: reported, not judged
+    # (implied normally sits high in it -- see iv_context's cone notes).
+    cone = cone_reading(judged, closes, row.ref_dte if row.ref_iv is not None else row.dte)
+    if cone is not None:
+        row.cone_pct, row.cone_window = round(cone.percentile, 1), cone.window
     band = (req.short_delta_min, req.short_delta_max)
     row.short_put = pick_short(chain.rows, "put", band)
     row.short_call = pick_short(chain.rows, "call", band)
@@ -1289,8 +1304,10 @@ async def screen_underlyings(
 
     closes: dict[str, list[float]] = {}
     try:
-        # Calendar days, so a 20-session window survives weekends and holidays.
-        bars = await get_daily_bars_multi(clients, symbols, lookback_days=45)
+        # Calendar days. A year and a month: the 20-session realised vol
+        # needs a few weeks, the volatility cone (iv_context.cone_reading) a
+        # year of spells -- one batched call either way.
+        bars = await get_daily_bars_multi(clients, symbols, lookback_days=CONE_BARS_LOOKBACK_DAYS)
         closes = {sym.upper(): [float(b.close) for b in rows] for sym, rows in bars.items()}
     except Exception:
         logger.warning("Screener: daily bars failed, realised vol unavailable", exc_info=True)

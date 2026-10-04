@@ -1249,3 +1249,15 @@ def test_a_calendar_wants_implied_vol_low_against_its_own_year():
         assert body["bias"] == "long_vega"
         assert _criterion(row, "iv_rank")["passed"] is expected
         assert "reported, not judged" in _criterion(row, "iv_vs_rv")["detail"]
+
+
+def test_a_row_carries_its_iv_in_the_volatility_cone_when_there_is_a_year_of_closes():
+    service = _Service({"X": _chain(iv=0.30), "NEW": _chain(iv=0.30)})
+    body = _run(service, ScreenRequest(symbols=["X", "NEW"]), closes={"X": _closes(0.01, n=300), "NEW": _closes(0.01)})
+    rows = {r["symbol"]: r for r in body["rows"]}
+    # A steady 1 %-a-day tape realises ~16 % in every spell: 30 % IV sits above all of them.
+    assert rows["X"]["cone_pct"] == 100.0 and rows["X"]["cone_window"] == 31
+    # Forty closes is not a year of spells: no cone, rather than one ranked among a handful.
+    assert rows["NEW"]["cone_pct"] is None
+    # Reported, not judged: no criterion reads it.
+    assert all(c["key"] != "cone" for c in rows["X"]["criteria"])

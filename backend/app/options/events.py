@@ -24,7 +24,7 @@ from datetime import date, datetime, timezone
 
 from app.services.market_clock import ET
 
-from app.options.iv_context import iv_premium, realized_vol
+from app.options.iv_context import cone_reading, iv_premium, realized_vol
 from app.options.iv_history_store import COMPARABLE_DTE
 
 logger = logging.getLogger(__name__)
@@ -202,16 +202,21 @@ async def _iv_rank_block(iv_store, underlying: str, atm_iv: float | None, dte: i
     return block
 
 
-def _realized_block(bars: list | None, atm_iv: float | None) -> dict:
+def _realized_block(bars: list | None, atm_iv: float | None, dte: int | None = None) -> dict:
     """Is the IV high right now, answered without any stored history: the
     ATM IV over the stock's 20-session realised vol. Unlike the rank this
     exists from the first day. `atm_iv` is the reading being judged: the
     chain on screen, or the reference expiry when that chain is too near."""
-    realized = realized_vol([close for _, close in sorted(closes_by_day(bars).items())]) if bars else None
+    closes = [close for _, close in sorted(closes_by_day(bars).items())] if bars else []
+    realized = realized_vol(closes) if closes else None
     premium = iv_premium(atm_iv, realized)
+    # The same reading placed in the stock's volatility cone for spells as
+    # long as the expiry it was read on (see iv_context.cone_reading).
+    cone = cone_reading(atm_iv, closes, dte) if closes else None
     return {
         "realized_vol_20d": None if realized is None else round(realized, 4),
         "iv_over_realized": None if premium is None else round(premium, 2),
+        "cone": None if cone is None else cone.to_dict(),
     }
 
 
@@ -268,7 +273,7 @@ async def gather_events(
     judged_iv, judged_dte = (reference["atm_iv"], reference["dte"]) if reference else (atm_iv, dte)
     iv = {
         **await _iv_rank_block(iv_store, underlying, judged_iv, judged_dte, today),
-        **_realized_block(bars, judged_iv),
+        **_realized_block(bars, judged_iv, judged_dte),
         "atm_iv": None if atm_iv is None else round(atm_iv, 4),
         "reference": reference,
     }

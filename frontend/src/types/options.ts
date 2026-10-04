@@ -779,6 +779,9 @@ export interface OptionEventsResponse {
     /** Set when the chain on screen is outside 20-90 DTE: the 30-60 day
      * expiry the rank and the ratio above were judged on instead. */
     reference: { atm_iv: number; expiry: string; dte: number } | null;
+    /** The judged IV in the stock's volatility cone: the share of past
+     * spells (as long as the expiry, over a year) that realised less. */
+    cone: { percentile: number; window: number; spells: number; low: number; median: number; high: number } | null;
   };
   sources: { earnings: boolean; macro: boolean; iv_rank: boolean };
 }
@@ -942,6 +945,9 @@ export interface ScreenRow {
   iv_rv_ratio: number | null;
   iv_rank: number | null;
   iv_rank_samples: number;
+  /** The judged IV in the volatility cone (0-100) and the spell length in sessions. */
+  cone_pct: number | null;
+  cone_window: number | null;
   /** Null when the expiry reported none at all -- Alpaca leaves the field
    * unset for stretches of the session, which is "not knowable" and not a
    * chain with nothing open in it. */
