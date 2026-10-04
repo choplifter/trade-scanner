@@ -23,3 +23,6 @@ frontend/tsconfig.tsbuildinfo
 
 # Claude Code local state (machine-specific, not meant to be shared)
 .claude/
+
+# Reference books and other PDFs dropped in for reading -- copyrighted, not part of the repo
+*.pdf
