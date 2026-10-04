@@ -239,6 +239,34 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
               by clicking the chain. None of this is advice: it describes the shape, not whether to trade it.
             </p>
 
+            {strategy === "custom" && (
+              <dl>
+                <dt>Template…</dt>
+                <dd>
+                  Starts the builder from a shape; every leg stays editable. <strong>Ratio 1×2</strong> (calls or
+                  puts): buy one near the money, sell two further out — little or no debit, profits in a modest move,
+                  and one short uncovered beyond. <strong>Christmas tree</strong>: buy one call, sell one at about 35
+                  and one at about 20 delta — a ratio with its shorts spread out. <strong>Time butterfly</strong>: at
+                  one strike, buy this expiry, sell two of the next, buy one of the one after — a bet on how implied
+                  volatility is spread over time. These three leave a short uncovered by Alpaca's rule, so they are
+                  Simulation shapes; the ticket says so.
+                  <BookRefLine refs={[NATENBERG.ratioSpread, NATENBERG.christmasTree, NATENBERG.timeButterfly]} />
+                </dd>
+                <dt>Protective put · Collar · against shares</dt>
+                <dd>
+                  Hedges for shares you hold, one contract per 100. A <strong>protective put</strong> (about 30 delta)
+                  stops the shares' loss at its strike for the premium; a <strong>collar</strong> adds a call sold
+                  above (about 25 delta each) that pays for most of the put and gives up the gain above it. Both
+                  switch <em>against shares</em> on: the held shares cover the short call, the coverage line shows
+                  them, and the risk chart carries them, so it draws the hedged position rather than the options
+                  alone. At Alpaca a package with a share-covered call goes out leg by leg — the bought legs first —
+                  because a multi-leg order counts only its own legs as cover; if a later leg is refused, the result
+                  says the package is incomplete.
+                  <BookRefLine refs={[NATENBERG.protective, NATENBERG.collars]} />
+                </dd>
+              </dl>
+            )}
+
             {shows("long_call", "long_put", "long_straddle", "long_strangle") && (
               <>
                 <h3>Long (level 2)</h3>

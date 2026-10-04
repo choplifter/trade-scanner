@@ -259,10 +259,16 @@ class SpreadTicket(BaseModel):
     limit_price: float | None = Field(default=None, gt=0)
     order_type: OrderType = "limit"
     client_order_id: str | None = Field(default=None, max_length=128)
+    # A built package written against shares the account holds -- a collar,
+    # a protective put: 100 shares per contract cover a short call, and the
+    # risk chart carries the shares (OptionsService.preview).
+    with_shares: bool = False
 
     @model_validator(mode="after")
     def check_shape(self) -> "SpreadTicket":
         label = STRATEGY_LABELS[self.strategy]
+        if self.with_shares and self.strategy != "custom":
+            raise ValueError(f"{label}: only a built package is written against shares")
         vertical = (self.long_strike, self.short_strike)
         condor = (
             self.put_long_strike,

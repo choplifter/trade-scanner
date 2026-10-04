@@ -55,6 +55,8 @@ import {
 } from "./legPicker";
 import { PayoffChart } from "./PayoffChart";
 import {
+  BUILDER_TEMPLATES,
+  type BuilderTemplate,
   MAX_BUILDER_LEGS,
   MAX_BUILDER_RATIO,
   builderLabel,
@@ -107,6 +109,10 @@ interface SpreadTicketProps {
   onShortTarget?: (target: ShortTarget) => void;
   /** The builder's legs (strategy "custom"); empty for every other shape. */
   builder: BuilderLeg[];
+  /** The built package is written against held shares (collar, protective put). */
+  withShares: boolean;
+  onWithShares: (on: boolean) => void;
+  onTemplate: (template: BuilderTemplate) => void;
   onAddLeg: () => void;
   onUpdateLeg: (id: string, patch: Partial<Omit<BuilderLeg, "id">>) => void;
   onRemoveLeg: (id: string) => void;
@@ -361,6 +367,9 @@ export function SpreadTicket({
   onLongExpiry,
   onPicking,
   builder,
+  withShares,
+  onWithShares,
+  onTemplate,
   onAddLeg,
   onUpdateLeg,
   onRemoveLeg,
@@ -420,7 +429,7 @@ export function SpreadTicket({
       return;
     }
     const ticket = building
-      ? builderTicket(symbol, expiry, qtyNum, builder)
+      ? builderTicket(symbol, expiry, qtyNum, builder, withShares)
       : ticketFor(symbol, strategy, expiry, qtyNum, legs!, ctx);
     const limitNum = Number(limit);
     if (market) ticket.order_type = "market";
@@ -473,12 +482,15 @@ export function SpreadTicket({
 
   // A preview still on its way back from the other order type prices the
   // wrong order; don't submit off it.
+  const spread = preview && (preview.spread.order_type ?? "limit") === orderType ? preview.spread : null;
   // Alpaca supports no uncovered short option at any level, and takes a
   // multi-leg order only if every leg is covered inside it. The simulated
-  // book is our own and still takes one.
-  const bareLegs = building ? nakedLegs(builder, expiry) : [];
+  // book is our own and still takes one. Against shares, a short call may
+  // be covered by stock this side cannot see; the backend counts the
+  // shares, so its verdict decides.
+  const bareLegs =
+    building && !(withShares && spread != null && !spread.naked) ? nakedLegs(builder, expiry) : [];
   const nakedRefused = bareLegs.length > 0 && mode !== "simulation";
-  const spread = preview && (preview.spread.order_type ?? "limit") === orderType ? preview.spread : null;
   const covered = !spread?.coverage || spread.coverage.ok;
   const canSubmit = Boolean(spread && preview?.can_submit) && covered && !nakedRefused && !submitting && !pricing;
   const badge = modeBadge(mode);
@@ -503,13 +515,18 @@ export function SpreadTicket({
     setSubmitting(true);
     try {
       const ticket = building
-        ? builderTicket(symbol, expiry, spread.qty, builder)
+        ? builderTicket(symbol, expiry, spread.qty, builder, withShares)
         : ticketFor(symbol, strategy, expiry, spread.qty, legs!, ctx);
       if (spread.order_type === "market") ticket.order_type = "market";
       else ticket.limit_price = spread.limit_price;
       ticket.client_order_id = clientOrderIdRef.current ?? undefined;
       const result = await submitSpread(ticket, mode === "live" ? liveTyped.trim() : undefined);
-      setPlaced(result.order?.id ?? "submitted");
+      const legError = (result.order as { leg_error?: string | null } | undefined)?.leg_error;
+      setPlaced(
+        legError
+          ? `${result.order?.id ?? "first leg"} -- but the next leg was refused: ${legError}. The package is incomplete; check Open spreads.`
+          : (result.order?.id ?? "submitted"),
+      );
       setRejection(null);
       setError(null);
       setConfirming(false);
@@ -585,6 +602,31 @@ export function SpreadTicket({
           <button type="button" className="row-action" onClick={onAddLeg} disabled={!chain || builder.length >= MAX_BUILDER_LEGS}>
             Add leg
           </button>
+        )}
+        {building && (
+          <select
+            className="builder-template"
+            value=""
+            disabled={!chain}
+            onChange={(e) => {
+              if (e.target.value) onTemplate(e.target.value as BuilderTemplate);
+            }}
+            title="Start from a shape: every leg stays editable afterwards."
+          >
+            <option value="">Template…</option>
+            {BUILDER_TEMPLATES.map((t) => (
+              <option key={t.key} value={t.key} title={t.title}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        )}
+        {building && (
+          <label
+            title="Written against shares you hold: 100 per contract cover a short call (a collar), and the risk chart carries the shares. At Alpaca such a package is sent leg by leg -- bought legs first -- since a multi-leg order counts only its own legs as cover."
+          >
+            <input type="checkbox" checked={withShares} onChange={(e) => onWithShares(e.target.checked)} /> against shares
+          </label>
         )}
         {showWidth && (
           <label>

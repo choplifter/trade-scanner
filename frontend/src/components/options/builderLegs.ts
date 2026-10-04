@@ -139,12 +139,14 @@ export function builderTicket(
   expiry: string,
   qty: number,
   legs: BuilderLeg[],
+  withShares = false,
 ): SpreadTicketRequest {
   return {
     underlying: symbol,
     strategy: "custom",
     expiry,
     qty,
+    ...(withShares ? { with_shares: true } : {}),
     legs: legs.map((leg) => ({
       kind: leg.kind,
       strike: leg.strike,
@@ -153,6 +155,122 @@ export function builderTicket(
       ...(leg.expiry && leg.expiry !== expiry ? { expiry: leg.expiry } : {}),
     })),
   };
+}
+
+/** The shapes the builder can start from -- Natenberg's ratio spread,
+ * Christmas tree and time butterfly (ch. 11), and the two share hedges
+ * (ch. 17). Each is a starting arrangement; every leg stays editable. */
+export type BuilderTemplate =
+  | "call_ratio"
+  | "put_ratio"
+  | "christmas_tree"
+  | "time_butterfly"
+  | "protective_put"
+  | "collar";
+
+export const BUILDER_TEMPLATES: { key: BuilderTemplate; label: string; title: string }[] = [
+  {
+    key: "call_ratio",
+    label: "Call ratio 1×2",
+    title:
+      "Buy one call near the money, sell two further out (about 25 delta). Little or no debit, profits in a modest rise, and the second short call is uncovered above: Alpaca takes no uncovered short, so this is a Simulation shape.",
+  },
+  {
+    key: "put_ratio",
+    label: "Put ratio 1×2",
+    title: "The same below: buy one put near the money, sell two further out. Uncovered on the way down; Simulation only.",
+  },
+  {
+    key: "christmas_tree",
+    label: "Christmas tree",
+    title:
+      "Buy one call near the money, sell one at about 35 and one at about 20 delta: a ratio spread with its short strikes spread out. Short volatility, profits in a measured rise; one short is uncovered, Simulation only.",
+  },
+  {
+    key: "time_butterfly",
+    label: "Time butterfly",
+    title:
+      "At one strike near the money: buy this expiry, sell two of the next, buy one of the one after -- a short calendar and a long one together. A bet on how implied volatility is spread over time; the middle short outlives the near long, so Alpaca counts one short as uncovered: Simulation only.",
+  },
+  {
+    key: "protective_put",
+    label: "Protective put",
+    title:
+      "Buy a put about 30 delta below the price against shares you hold, one contract per 100: the shares' loss stops at the strike, for the premium. The risk chart carries the shares.",
+  },
+  {
+    key: "collar",
+    label: "Collar",
+    title:
+      "Against shares you hold: buy a put about 25 delta below, sell a call about 25 delta above. The call pays for most of the put; the shares are protected below the put and given up above the call. At Alpaca it is sent leg by leg, the put first.",
+  },
+];
+
+/** The quoted strike whose |delta| is nearest `target`, else the one about
+ * as far from spot as that delta would suggest (`fallbackPct`). */
+function strikeNearDelta(chain: ChainResponse, kind: OptionKind, target: number, fallbackPct: number): number | null {
+  const rows = quoted(chain.rows, kind);
+  if (rows.length === 0) return null;
+  const withDelta = rows.filter((r) => (kind === "put" ? r.put?.delta : r.call?.delta) != null);
+  if (withDelta.length) {
+    const d = (r: (typeof rows)[number]) => Math.abs((kind === "put" ? r.put!.delta! : r.call!.delta!) as number);
+    return withDelta.reduce((best, r) => (Math.abs(d(r) - target) < Math.abs(d(best) - target) ? r : best)).strike;
+  }
+  const aim = kind === "call" ? chain.spot * (1 + fallbackPct) : chain.spot * (1 - fallbackPct);
+  return rows.reduce((best, r) => (Math.abs(r.strike - aim) < Math.abs(best.strike - aim) ? r : best)).strike;
+}
+
+/** The legs a template starts from on `chain`, and whether it is written
+ * against shares. Null when the chain cannot place it (no quotes; for the
+ * time butterfly, fewer than two later expiries). `laterExpiries` are the
+ * listed expiries after the ticket's, nearest first. */
+export function templateLegs(
+  template: BuilderTemplate,
+  chain: ChainResponse,
+  laterExpiries: string[],
+): { legs: BuilderLeg[]; withShares: boolean } | null {
+  const near = (kind: OptionKind, delta: number, pct: number) => strikeNearDelta(chain, kind, delta, pct);
+  const withRatio = (leg: BuilderLeg, ratio: number): BuilderLeg => ({ ...leg, ratio });
+  switch (template) {
+    case "call_ratio":
+    case "put_ratio": {
+      const kind: OptionKind = template === "call_ratio" ? "call" : "put";
+      const long = near(kind, 0.5, 0);
+      const short = near(kind, 0.25, 0.05);
+      if (long == null || short == null || long === short) return null;
+      return { legs: [makeLeg(kind, long, "buy"), withRatio(makeLeg(kind, short, "sell"), 2)], withShares: false };
+    }
+    case "christmas_tree": {
+      const a = near("call", 0.5, 0);
+      const b = near("call", 0.35, 0.03);
+      const c = near("call", 0.2, 0.06);
+      if (a == null || b == null || c == null || new Set([a, b, c]).size < 3) return null;
+      return { legs: [makeLeg("call", a, "buy"), makeLeg("call", b, "sell"), makeLeg("call", c, "sell")], withShares: false };
+    }
+    case "time_butterfly": {
+      const strike = atmStrike(chain, "call");
+      if (strike == null || laterExpiries.length < 2) return null;
+      return {
+        legs: [
+          makeLeg("call", strike, "buy"),
+          withRatio(makeLeg("call", strike, "sell", laterExpiries[0]), 2),
+          makeLeg("call", strike, "buy", laterExpiries[1]),
+        ],
+        withShares: false,
+      };
+    }
+    case "protective_put": {
+      const put = near("put", 0.3, 0.04);
+      if (put == null) return null;
+      return { legs: [makeLeg("put", put, "buy")], withShares: true };
+    }
+    case "collar": {
+      const put = near("put", 0.25, 0.05);
+      const call = near("call", 0.25, 0.05);
+      if (put == null || call == null) return null;
+      return { legs: [makeLeg("put", put, "buy"), makeLeg("call", call, "sell")], withShares: true };
+    }
+  }
 }
 
 /** What the level badge asks, mirroring the backend's level_for_legs.

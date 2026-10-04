@@ -239,3 +239,100 @@ def test_a_position_large_against_the_account_says_so(service):
     warning = next((w for w in big.warnings if "of the account" in w), None)
     assert warning is not None
     assert "Position risk" in warning and "the size decision" in warning
+
+
+def _hold_shares(service, qty: int) -> None:
+    asyncio.run(
+        service._sim_store.upsert_position(
+            3,
+            {
+                "symbol": "XYZ", "side": "long", "qty": qty, "avg_entry_price": SPOT, "opened_at": NOW.isoformat(),
+                "entry_order_id": "seed", "initial_stop": None, "exit_qty": 0, "exit_value": 0.0,
+                "exit_order_ids": [], "fill_count": 1,
+            },
+        )
+    )
+
+
+def _collar(qty: int = 1, with_shares: bool = True) -> SpreadTicket:
+    return SpreadTicket(
+        underlying="XYZ", strategy="custom", expiry=EXPIRY, qty=qty, with_shares=with_shares,
+        legs=[TicketLeg(kind="put", strike=95, side="buy"), TicketLeg(kind="call", strike=105, side="sell")],
+    )
+
+
+def test_a_collar_against_held_shares_is_covered_and_its_chart_carries_them(service):
+    _hold_shares(service, 200)
+    spread = asyncio.run(service.preview(_collar(qty=2)))
+    assert spread.naked is False, "200 shares cover two short calls"
+    assert spread.coverage is not None and spread.coverage.ok and spread.coverage.need == 200
+    assert not any("Uncovered short leg" in w for w in spread.warnings)
+    # Shares plus a put below and a call above: both tails are capped.
+    assert spread.max_loss is not None and spread.max_profit is not None
+    assert abs(spread.max_loss) < 2 * 100 * 10, "at most the distance to the put, plus or minus the net"
+
+
+def test_without_the_shares_the_collar_call_is_bare_and_says_so(service):
+    _hold_shares(service, 100)
+    spread = asyncio.run(service.preview(_collar(qty=2)))
+    assert spread.naked is True, "100 shares cover one of the two calls"
+    assert spread.coverage is not None and not spread.coverage.ok
+    assert any("needs 200 shares" in w for w in spread.warnings)
+
+
+def test_with_shares_is_only_for_a_built_package():
+    with pytest.raises(ValueError):
+        SpreadTicket(underlying="XYZ", strategy="bull_put", expiry=EXPIRY, qty=1, short_strike=95, long_strike=90, with_shares=True)
+
+
+class _Broker:
+    def __init__(self, refuse_after: int | None = None):
+        self.requests = []
+        self.refuse_after = refuse_after
+
+    def submit_order(self, request):
+        if self.refuse_after is not None and len(self.requests) >= self.refuse_after:
+            raise RuntimeError("refused")
+        self.requests.append(request)
+        return {"id": f"o{len(self.requests)}", "symbol": request.symbol, "side": str(request.side)}
+
+
+def _broker_service(broker):
+    from app.options.service import OptionsService
+
+    return OptionsService(
+        None,  # type: ignore[arg-type]
+        Settings(alpaca_api_key_id="k", alpaca_api_secret_key="s"),
+        source=_Source(),
+        broker=broker,
+    )
+
+
+def test_at_the_broker_a_collar_goes_leg_by_leg_the_protection_first(service):
+    _hold_shares(service, 100)
+    resolved = asyncio.run(service.preview(_collar()))
+    broker = _Broker()
+    result = asyncio.run(_broker_service(broker)._submit_legs_one_by_one(resolved))
+    assert [r.symbol for r in broker.requests] == [
+        format_occ("XYZ", EXPIRY, "put", 95.0),
+        format_occ("XYZ", EXPIRY, "call", 105.0),
+    ], "the bought put before the sold call"
+    assert result["leg_error"] is None and len(result["leg_orders"]) == 2
+
+
+def test_a_leg_refused_after_another_was_placed_is_reported_not_hidden(service):
+    _hold_shares(service, 100)
+    resolved = asyncio.run(service.preview(_collar()))
+    result = asyncio.run(_broker_service(_Broker(refuse_after=1))._submit_legs_one_by_one(resolved))
+    assert len(result["leg_orders"]) == 1 and "refused" in result["leg_error"]
+
+
+def test_against_shares_the_greeks_carry_the_shares(service):
+    _hold_shares(service, 100)
+    put_only = SpreadTicket(
+        underlying="XYZ", strategy="custom", expiry=EXPIRY, qty=1, legs=[TicketLeg(kind="put", strike=95, side="buy")]
+    )
+    hedged = put_only.model_copy(update={"with_shares": True})
+    bare = asyncio.run(service.preview(put_only)).greeks
+    with_stock = asyncio.run(service.preview(hedged)).greeks
+    assert bare["delta"] < 0 and with_stock["delta"] == pytest.approx(bare["delta"] + 100, abs=0.01)

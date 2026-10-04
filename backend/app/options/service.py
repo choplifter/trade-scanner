@@ -584,8 +584,36 @@ class OptionsService:
         # the closed forms have no name to key on. Priced first so the
         # buying-power check has a collateral to work with.
         bare = naked_shorts(ticket.leg_specs_full()) if built else []
+        # Written against held shares (a collar): 100 shares per contract
+        # cover a short call the package itself leaves bare.
+        share_cover: Coverage | None = None
+        if built and ticket.with_shares:
+            shares = await self._shares_held(ticket.underlying)
+            spare = shares // 100
+            still_bare = []
+            for leg in bare:
+                need = leg.ratio * ticket.qty
+                if leg.kind == "call" and spare >= need:
+                    spare -= need
+                else:
+                    still_bare.append(leg)
+            bare = still_bare
+            need = 100 * ticket.qty
+            share_cover = Coverage(kind="shares", have=shares, need=need, ok=shares >= need)
+            if not share_cover.ok:
+                warnings.append(
+                    f"Written against shares: needs {need} shares of {ticket.underlying.upper()} "
+                    f"({ticket.qty} contract{'s' if ticket.qty != 1 else ''}), {shares} held."
+                )
         built_payoff = (
-            self._payoff(legs, ticket.qty, price if direction == "debit" else -price, chain.spot, ticket.strategy)
+            self._payoff(
+                legs,
+                ticket.qty,
+                price if direction == "debit" else -price,
+                chain.spot,
+                ticket.strategy,
+                with_stock=ticket.with_shares,
+            )
             if built
             else None
         )
@@ -618,7 +646,7 @@ class OptionsService:
         # What an income strategy is written against. Reported here, enforced
         # at submit: the broker would refuse an uncovered write anyway, but
         # a clear number beats its message.
-        coverage: Coverage | None = None
+        coverage: Coverage | None = share_cover
         if ticket.strategy == "covered_call":
             shares = await self._shares_held(ticket.underlying)
             need = 100 * ticket.qty
@@ -759,14 +787,17 @@ class OptionsService:
             for leg in legs
         ]
         order_legs = [RiskLeg(l.kind, l.strike, l.expiry, l.qty * ticket.qty, l.iv, l.mid) for l in risk_legs]
-        greeks = position_greeks(order_legs, chain.spot, now)
+        # Written against shares, the shares are part of the position: a
+        # protective put is long delta, not short.
+        share_legs = [RiskLeg("stock", 0.0, None, 100 * ticket.qty)] if ticket.with_shares else []
+        greeks = position_greeks(order_legs + share_legs, chain.spot, now)
         slopes = {
             (l.kind, l.strike, l.expiry): slope
             for l in order_legs
             if l.expiry in chains
             and (slope := smile_slope(chains[l.expiry].rows, l.strike, chain.spot)) is not None
         }
-        skewed = skew_delta(order_legs, chain.spot, now, slopes) if greeks is not None else None
+        skewed = skew_delta(order_legs + share_legs, chain.spot, now, slopes) if greeks is not None else None
         be_vol = (
             breakeven_vol(risk_legs, chain.spot, now, price if direction == "debit" else -price, sigma) if sigma else None
         )
@@ -822,7 +853,13 @@ class OptionsService:
         )
 
     def _payoff(
-        self, legs: list[SpreadLeg], qty: int, net_entry: float, spot: float, strategy: str | None = None
+        self,
+        legs: list[SpreadLeg],
+        qty: int,
+        net_entry: float,
+        spot: float,
+        strategy: str | None = None,
+        with_stock: bool = False,
     ) -> Payoff | None:
         """The risk chart for `legs` (a covered call gets its share leg at
         the spot). None when the curve cannot be built.
@@ -837,7 +874,7 @@ class OptionsService:
             PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
             for leg in legs
         ]
-        if strategy == "covered_call":
+        if strategy == "covered_call" or with_stock:
             payoff_legs.append(PayoffLeg(kind="stock", strike=spot, side="buy"))
         try:
             return Payoff(**payoff_curve(payoff_legs, qty, net_entry, spot, self._source.now(), mark=mark))
@@ -1053,6 +1090,10 @@ class OptionsService:
         refusal = market_order_refusal(resolved.order_type, self._account)
         if refusal:
             raise OrderRejected(refusal, field="order_type")
+        if ticket.with_shares and len(resolved.legs) > 1 and any(
+            leg.side == "sell" and leg.kind == "call" for leg in resolved.legs
+        ):
+            return await self._submit_legs_one_by_one(resolved)
         if len(resolved.legs) == 1:
             request = build_single_leg_request(
                 resolved.legs[0], resolved.qty, resolved.limit_price, resolved.client_order_id, resolved.order_type
@@ -1081,6 +1122,43 @@ class OptionsService:
             resolved.client_order_id,
         )
         return _plain(order)
+
+    async def _submit_legs_one_by_one(self, resolved: ResolvedSpread) -> dict:
+        """A package written against shares, leg by leg. Alpaca takes a
+        multi-leg order only when its legs cover each other; shares outside
+        the order do not count, so a collar's short call is refused there and
+        accepted on its own as a covered call. The bought legs go first --
+        the protection before the obligation -- each at its own mid (or at
+        market). A leg refused after another was placed is reported, not
+        undone: the result says which, as a roll's second order does."""
+        ordered = sorted(resolved.legs, key=lambda leg: 0 if leg.side == "buy" else 1)
+        placed: list[dict] = []
+        for i, leg in enumerate(ordered):
+            limit = round(leg.mid, 2) if leg.mid else round(resolved.limit_price, 2)
+            client_id = f"{resolved.client_order_id}-{i}" if resolved.client_order_id else None
+            request = build_single_leg_request(
+                leg, resolved.qty * leg.ratio_qty, limit, client_id, resolved.order_type
+            )
+            try:
+                order = await asyncio.to_thread(self._trading.submit_order, request)
+            except Exception as exc:
+                if not placed:
+                    rejection = rejection_from_api_error(exc)
+                    if rejection is not None:
+                        raise rejection from exc
+                    raise
+                logger.exception("Leg-by-leg submit: %s refused after %d placed", leg.symbol, len(placed))
+                return {**placed[0], "leg_orders": placed, "leg_error": f"{leg.symbol}: {exc}"}
+            placed.append(_plain(order))
+        logger.info(
+            "Submitted %s %s x%d leg by leg (%d orders) account=%s",
+            resolved.strategy,
+            resolved.underlying,
+            resolved.qty,
+            len(placed),
+            self._account,
+        )
+        return {**placed[0], "leg_orders": placed, "leg_error": None}
 
     async def close_spread(
         self, req: CloseSpreadRequest, confirm: str | None = None, *, marketable: bool = False

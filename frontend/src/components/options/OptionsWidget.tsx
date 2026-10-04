@@ -69,6 +69,7 @@ import {
   toggleLeg,
   updateLeg,
   type BuilderLeg,
+  templateLegs,
 } from "./builderLegs";
 
 export type OptionsTab = "chain" | "spreads" | "idea" | "optimizer" | "screener" | "playbooks";
@@ -153,6 +154,8 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // The builder keeps its own list: legPicker's shapes all know their own
   // arrangement, and a free package has none (see builderLegs.ts).
   const [builder, setBuilder] = useState<BuilderLeg[]>([]);
+  // The built package is written against held shares (a collar).
+  const [builderShares, setBuilderShares] = useState(false);
   const building = strategy === "custom";
   // Calendar/diagonal: the kind traded and which expiry a chain click sets.
   const [timeKind, setTimeKind] = useState<OptionKind>("call");
@@ -280,6 +283,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // not, since a leg carries its own and the ticket's is only the default.
   useEffect(() => {
     setBuilder([]);
+    setBuilderShares(false);
   }, [symbol]);
 
   // Following the chart's contract happens in three steps as the data
@@ -844,6 +848,16 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   legs={legs}
                   onResetLegs={resetLegs}
                   builder={builder}
+                  withShares={builderShares}
+                  onWithShares={setBuilderShares}
+                  onTemplate={(template) => {
+                    if (!chain) return;
+                    const later = expiries.filter((e) => e.expiry > chain.expiry).map((e) => e.expiry);
+                    const made = templateLegs(template, chain, later);
+                    if (!made) return;
+                    setBuilder(made.legs);
+                    setBuilderShares(made.withShares);
+                  }}
                   onAddLeg={addBuilderLeg}
                   onUpdateLeg={(id, patch) => setBuilder((current) => updateLeg(current, id, patch))}
                   onRemoveLeg={(id) => setBuilder((current) => removeLeg(current, id))}

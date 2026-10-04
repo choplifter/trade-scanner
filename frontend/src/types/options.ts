@@ -277,6 +277,9 @@ export interface SpreadTicketRequest {
   /** "market" sends no price; limit_price is then ignored. Default limit. */
   order_type?: OptionOrderType;
   client_order_id?: string;
+  /** A built package written against held shares (a collar, a protective
+   * put): the shares cover a short call and appear in the risk chart. */
+  with_shares?: boolean;
 }
 
 export interface SpreadLeg {
