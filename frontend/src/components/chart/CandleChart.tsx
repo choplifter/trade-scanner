@@ -475,8 +475,9 @@ const DEFAULT_SERIES_STYLE = { width: 2, dash: LineStyle.Solid };
 // grey, so they read as scale rather than as another indicator.
 const GUIDE_COLOR = "#8a8f99";
 /** A sub-series whose own name already says what it is, so the indicator
- * it belongs to adds nothing to the chart label. */
-const SELF_NAMED_SERIES = /^(EMA|SMA|WMA|VWMA|HMA|RSI)\b/;
+ * it belongs to adds nothing to the chart label -- a delta line's
+ * "16Δ 45d put" among them. */
+const SELF_NAMED_SERIES = /^((EMA|SMA|WMA|VWMA|HMA|RSI)\b|\d+Δ )/;
 // Oscillators (RSI) overlay the bottom fifth of the price pane on a scale
 // of their own, rather than getting a pane: a new pane takes its height out
 // of the candles', so switching RSI on used to squeeze the whole chart.

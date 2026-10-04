@@ -8,7 +8,7 @@ Same error convention as app.routers.trading: a TradingError is a 422 with
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -20,6 +20,7 @@ from app.options.models import CloseSpreadRequest, PayoffRequest, RollRequest, S
 from app.options.screener import ScreenRequest, screen_underlyings
 from app.options.service import OptionsService, market_order_refusal
 from app.routers.trading import _account, _confirm
+from app.services.market_clock import ET
 from app.trading.errors import BrokerNotConnected, TradingError
 from app.trading.guards import can_submit, limits_for
 
@@ -456,6 +457,41 @@ async def option_events(
         atm_iv=atm_iv,
         dte=dte,
     )
+
+
+@router.get("/delta-levels/{underlying}")
+async def delta_levels(
+    underlying: str,
+    request: Request,
+    delta: float = Query(default=0.16, ge=0.05, le=0.45),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """The put and call strike nearest `delta` on the 30-60 day expiry,
+    for the chart's delta lines -- see app.options.delta_levels. Market
+    data only, like /events: no broker account needed."""
+    from app.options.delta_levels import delta_levels as read_levels
+
+    settings = getattr(request.app.state, "settings", None)
+    clients = getattr(request.app.state, "alpaca_clients", None)
+    if clients is None or settings is None or not settings.has_credentials:
+        raise HTTPException(status_code=503, detail="Alpaca credentials not configured")
+    market = OptionsService(
+        clients,
+        settings,
+        engine=getattr(request.app.state, "scanner_engine", None),
+        chain_cache=getattr(request.app.state, "options_chain_cache", None),
+    )
+    today = datetime.now(timezone.utc).astimezone(ET).date()
+    try:
+        levels = await read_levels(market, underlying.upper(), today, delta)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except Exception:
+        logger.exception("Delta levels failed for %s", underlying)
+        raise HTTPException(status_code=502, detail="Failed to load the delta levels")
+    if levels is None:
+        raise HTTPException(status_code=404, detail=f"No {underlying.upper()} expiry 30-60 days out")
+    return levels
 
 
 @router.get("/screen/latest")

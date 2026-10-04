@@ -102,6 +102,8 @@ export interface AppSettings {
   /** A short chime when a position or an option package changes size --
    * a fill. Off makes the app silent. */
   fillSound: boolean;
+  /** The |delta| the chart's delta lines mark on the 30-60 day expiry. */
+  deltaLines: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -127,6 +129,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   chainGreek: "delta",
   riskView: "chart",
   fillSound: true,
+  deltaLines: 0.16,
   movingAverages: DEFAULT_MOVING_AVERAGES.map((line) => ({ ...line })),
 };
 
@@ -173,6 +176,10 @@ function parseShortTargets(value: unknown): Record<ShortTargetGroup, ShortTarget
   }
   return out;
 }
+
+/** What the delta-lines setting offers: 16 is one standard deviation, the
+ * rest the common short-strike distances either side of it. */
+export const DELTA_LINE_CHOICES = [0.1, 0.16, 0.2, 0.25, 0.3] as const;
 
 export const TICKET_MIN_WIDTH = 280;
 export const TICKET_MAX_WIDTH = 1000;
@@ -235,6 +242,9 @@ function load(raw = getStored(STORAGE_KEY)): AppSettings {
       chainGreek: oneOf(parsed.chainGreek, ["delta", "gamma", "theta"] as const, DEFAULT_SETTINGS.chainGreek),
       riskView: oneOf(parsed.riskView, ["chart", "table"] as const, DEFAULT_SETTINGS.riskView),
       fillSound: typeof parsed.fillSound === "boolean" ? parsed.fillSound : DEFAULT_SETTINGS.fillSound,
+      deltaLines: (DELTA_LINE_CHOICES as readonly number[]).includes(parsed.deltaLines as number)
+        ? (parsed.deltaLines as number)
+        : DEFAULT_SETTINGS.deltaLines,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

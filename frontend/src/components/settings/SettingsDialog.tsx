@@ -12,6 +12,7 @@ import {
 } from "../../api/chartTheme";
 import { playFillChime } from "../../api/fillSound";
 import {
+  DELTA_LINE_CHOICES,
   getCustomPalette,
   isDark,
   MA_LENGTH_MAX,
@@ -386,6 +387,16 @@ export function SettingsDialog({
                   { key: "premarket", label: "Premarket" },
                 ]}
                 onChange={(v) => set("vwapAnchor", v)}
+              />
+            </Row>
+            <Row
+              label="Delta lines"
+              hint="Where the put and the call of this delta sit on the 30-60 day expiry. 16 is about one standard deviation — a textbook condor's short strikes."
+            >
+              <Segmented
+                value={String(settings.deltaLines)}
+                options={DELTA_LINE_CHOICES.map((d) => ({ key: String(d), label: `${Math.round(d * 100)}Δ` }))}
+                onChange={(v) => set("deltaLines", Number(v))}
               />
             </Row>
           </div>

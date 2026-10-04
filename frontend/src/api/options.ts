@@ -12,6 +12,7 @@ import type {
   ChainResponse,
   ClosePreview,
   CloseSpreadRequest,
+  DeltaLevelsResponse,
   ExpiriesResponse,
   HorizonsResponse,
   LegQuote,
@@ -234,4 +235,13 @@ export function optionEvents(underlying: string, atmIv: number | null, dte: numb
   if (dte != null && dte > 0) params.set("dte", String(dte));
   const query = params.toString();
   return getJson<OptionEventsResponse>(`/trading/options/events/${encodeURIComponent(underlying)}${query ? `?${query}` : ""}`);
+}
+
+/** The put and call strike nearest `delta` on the 30-60 day expiry -- the
+ * chart's delta lines, backend app/options/delta_levels.py. Market data
+ * only, so not routed through tradingPath (same as optionEvents). */
+export function deltaLevels(underlying: string, delta: number): Promise<DeltaLevelsResponse> {
+  return getJson<DeltaLevelsResponse>(
+    `/trading/options/delta-levels/${encodeURIComponent(underlying)}?delta=${encodeURIComponent(String(delta))}`,
+  );
 }

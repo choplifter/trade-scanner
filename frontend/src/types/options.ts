@@ -1020,3 +1020,22 @@ export interface ScreenResponse {
   rows: ScreenRow[];
   disclaimer: string;
 }
+
+/** One side of the chart's delta lines: the listed strike and its delta. */
+export interface DeltaLevelSide {
+  strike: number;
+  delta: number;
+}
+
+/** GET /trading/options/delta-levels/{underlying} -- backend
+ * app/options/delta_levels.py. */
+export interface DeltaLevelsResponse {
+  symbol: string;
+  expiry: string;
+  dte: number;
+  /** The |delta| asked for. */
+  delta: number;
+  spot: number;
+  put: DeltaLevelSide | null;
+  call: DeltaLevelSide | null;
+}

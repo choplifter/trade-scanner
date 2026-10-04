@@ -12,6 +12,7 @@ import { deriveMarkers } from "../../utils/moveMarkers";
 import { applyMovingAverages } from "../../utils/movingAverages";
 import { useTradingContext } from "../../context/TradingContext";
 import { useSpreadLevels } from "../../hooks/useSpreadLevels";
+import { DELTA_LINES_NAME, useDeltaLevels } from "../../hooks/useDeltaLevels";
 import { useTradingMode } from "../../hooks/useTradingMode";
 import { useChartFeed } from "../../hooks/useChartFeed";
 import {
@@ -70,7 +71,7 @@ const PREMIUM_LEVELS_SEEDED_KEY = "chart:premiumLevelsSeeded";
 // switched on once, then it is theirs to turn off -- an unseeded name would
 // simply never draw, and nothing on screen would say why.
 const GEX_LEVELS_SEEDED_KEY = "chart:gexLevelsSeeded";
-const GEX_LEVEL_NAMES = ["Near GEX", "EM band"] as const;
+const GEX_LEVEL_NAMES = ["Near GEX", "EM band", DELTA_LINES_NAME] as const;
 
 type TradeLevelKey = "entry" | "stop" | "target";
 const ALL_TRADE_LEVEL_KEYS: TradeLevelKey[] = ["entry", "stop", "target"];
@@ -375,6 +376,9 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // from the same reading -- each its own entry in the Levels checklist.
   const nearGexLevels = nearGexLevelsFrom(gexReading);
   const expectedMoveLevels = expectedMoveLevelsFrom(gexReading);
+  // Where the chosen delta sits on the 30-60 day expiry (Settings → Chart),
+  // to hold a condor's short strikes against the walls above.
+  const deltaLevels = useDeltaLevels(contract ? null : symbol, appSettings.deltaLines);
   // The Options widget's strikes and armed underlying bounds, drawn like
   // the GEX walls (see useSpreadLevels).
   const spreadLevels = useSpreadLevels(symbol);
@@ -721,11 +725,28 @@ export function ChartWidget({ symbol, focus, onClearFocus, onSelectSymbol, pinne
   // up with the candles at any timeframe.
   const premiumSeries = usePremiumSeries(contract, displayed.bars);
   const indicatorsWithGex = useMemo(() => {
-    const extra = [gexLevels, nearGexLevels, expectedMoveLevels, spreadLevels, ...premium.levels, premiumSeries].filter(
+    const extra = [
+      gexLevels,
+      nearGexLevels,
+      expectedMoveLevels,
+      deltaLevels,
+      spreadLevels,
+      ...premium.levels,
+      premiumSeries,
+    ].filter(
       (i): i is NonNullable<typeof i> => i !== null,
     );
     return extra.length > 0 ? [...displayed.indicators, ...extra] : displayed.indicators;
-  }, [displayed.indicators, gexLevels, nearGexLevels, expectedMoveLevels, spreadLevels, premium.levels, premiumSeries]);
+  }, [
+    displayed.indicators,
+    gexLevels,
+    nearGexLevels,
+    expectedMoveLevels,
+    deltaLevels,
+    spreadLevels,
+    premium.levels,
+    premiumSeries,
+  ]);
   // Memoized rather than filtered inline at the prop: CandleChart's
   // indicators effect tears down and rebuilds every price line whenever
   // this reference changes, and this component re-renders on every trade
