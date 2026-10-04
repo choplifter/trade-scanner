@@ -555,8 +555,11 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
                 The whole order's greeks, summed over its legs from each leg's IV: delta and gamma in share
                 equivalents, theta in dollars per calendar day at a standing price, vega in dollars per point of
                 implied volatility. A credit structure shows positive theta and negative vega — it earns while time
-                passes and loses when volatility rises, before the stock has moved at all.
-                <BookRefLine refs={[NATENBERG.greeks, NATENBERG.positionAnalysis]} />
+                passes and loses when volatility rises, before the stock has moved at all. Beside the delta, in
+                brackets, the <em>skew delta</em>: the same delta with the chain's smile moving along with the stock.
+                Under the usual put skew implied volatility falls as the stock rises, so a short-vega position leans
+                further short than the flat number says; shown when the two differ by half a share or more.
+                <BookRefLine refs={[NATENBERG.greeks, NATENBERG.positionAnalysis, NATENBERG.skewedRisk]} />
               </dd>
               <dt>Breakeven vol · forecast · margin</dt>
               <dd>

@@ -20,6 +20,18 @@ export function GreeksLine({ greeks }: { greeks: PositionGreeks }) {
       >
         Δ {signed(greeks.delta, 0)}
       </span>
+      {greeks.skew_delta != null && Math.abs(greeks.skew_delta - greeks.delta) >= 0.5 && (
+        <span
+          className="vol-margin-detail"
+          title={withBook(
+            "The delta with the smile moving along with the stock: as the underlying rises, every strike sits lower relative to it and takes the implied volatility the smile has there, so each leg's value changes by its vega times that shift as well. Under the usual put skew implied volatility falls as the stock rises, which leaves a short-vega position shorter than the flat model says. Read off this chain's own smile.",
+            NATENBERG.skewedRisk,
+          )}
+        >
+          {" "}
+          (skew {signed(greeks.skew_delta, 0)})
+        </span>
+      )}
       {" · "}
       <span title="Gamma: how much that delta changes per 1 $ move -- negative means the position turns against the move.">
         Γ {signed(greeks.gamma, 2)}

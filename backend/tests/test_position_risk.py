@@ -262,3 +262,41 @@ def test_pin_risk_needs_expiry_day_a_short_leg_and_closeness():
     assert pin_risks([RiskLeg("call", 100.0, EXPIRY, -1, 0.2)], 100.0, NOW) == [], "not expiring today"
     assert pin_risks([RiskLeg("call", 100.0, today, 1, 0.2)], 100.0, NOW) == [], "a long leg is the holder's choice"
     assert pin_risks([RiskLeg("put", 90.0, today, -1, 0.2)], 100.0, NOW) == [], "ten dollars away"
+
+
+# --- skewed delta -------------------------------------------------------------
+
+
+def _skew_rows(slope: float = -0.002):
+    from app.options.chain import StrikeRow
+
+    rows = []
+    for k in range(80, 121, 5):
+        iv = 0.20 + slope * (k - 100)
+        quote = lambda kind: LegQuote(  # noqa: E731
+            symbol=f"{kind}{k}", strike=k, kind=kind, expiry=EXPIRY, bid=1, ask=1.1, mid=1.05, last=1,
+            bid_size=1, ask_size=1, delta=None, gamma=None, theta=None, iv=iv, open_interest=1, tradable=True,
+        )
+        rows.append(StrikeRow(strike=float(k), call=quote("call"), put=quote("put")))
+    return rows
+
+
+def test_the_smile_slope_is_read_across_the_neighbouring_strikes():
+    from app.options.position_risk import smile_slope
+
+    rows = _skew_rows(-0.002)
+    assert abs(smile_slope(rows, 92.5, SPOT) - (-0.002)) < 1e-9
+    assert abs(smile_slope(rows, 120.0, SPOT) - (-0.002)) < 1e-9, "one-sided at the edge"
+    assert smile_slope(rows[:1], 80.0, SPOT) is None
+
+
+def test_under_put_skew_a_short_condor_leans_further_short_than_the_flat_delta():
+    from app.options.position_risk import skew_delta, smile_slope
+
+    rows = _skew_rows(-0.002)
+    legs = _condor(0.20)
+    slopes = {(l.kind, l.strike, l.expiry): smile_slope(rows, l.strike, SPOT) for l in legs}
+    flat = position_greeks(legs, SPOT, NOW).delta
+    skewed = skew_delta(legs, SPOT, NOW, slopes)
+    assert skewed < flat, "falling IV as the stock rises costs the short vega on the way up"
+    assert skew_delta(legs, SPOT, NOW, {}) == flat, "no smile, no correction"

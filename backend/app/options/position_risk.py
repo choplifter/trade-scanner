@@ -123,6 +123,58 @@ def position_greeks(legs: list[RiskLeg], spot: float, now: datetime) -> Position
     return PositionGreeks(delta=delta, gamma=gamma, theta=theta, vega=vega)
 
 
+def smile_slope(rows: list, strike: float, spot: float) -> float | None:
+    """dIV/dK at `strike`: the chain's smile read off its out-of-the-money
+    quotes (puts below spot, calls above -- the side that trades and whose
+    IV is not distorted by early-exercise value), by central difference
+    across the nearest quoted strikes either side. None without two."""
+    points: list[tuple[float, float]] = []
+    for row in rows:
+        quote = row.put if row.strike < spot else row.call
+        if quote is None or not quote.iv or quote.iv <= 0:
+            quote = row.call if row.strike < spot else row.put
+        if quote is not None and quote.iv and quote.iv > 0:
+            points.append((row.strike, quote.iv))
+    points.sort()
+    below = [p for p in points if p[0] < strike]
+    above = [p for p in points if p[0] > strike]
+    if below and above:
+        (k1, v1), (k2, v2) = below[-1], above[0]
+    elif len(below) >= 2:
+        (k1, v1), (k2, v2) = below[-2], below[-1]
+    elif len(above) >= 2:
+        (k1, v1), (k2, v2) = above[0], above[1]
+    else:
+        return None
+    return (v2 - v1) / (k2 - k1) if k2 != k1 else None
+
+
+def skew_delta(legs: list[RiskLeg], spot: float, now: datetime, slopes: dict[tuple[str, float, date], float]) -> float | None:
+    """The position's delta with the smile moving along with the stock
+    (Natenberg ch. 24, "Skewed Risk Measures"): when the underlying rises
+    by 1 $, an option's strike sits 1 $ lower relative to it, so its IV
+    moves by -dIV/dK -- and its value by vega times that, on top of the
+    Black-Scholes delta. With the usual put skew this makes a short put
+    and a short call both lean further short than the flat model says.
+    `slopes` holds dIV/dK per (kind, strike, expiry); a leg without one
+    counts with its flat delta. None when the flat greeks are unknown."""
+    flat = position_greeks(legs, spot, now)
+    if flat is None:
+        return None
+    extra = 0.0
+    for leg in legs:
+        if leg.kind == "stock" or leg.expiry is None:
+            continue
+        slope = slopes.get((leg.kind, leg.strike, leg.expiry))
+        years = years_between(now, leg.expiry)
+        sigma = _sigma_for(leg, spot, years) if years > 0 else 0.0
+        if slope is None or not sigma:
+            continue
+        vega_per_unit = bs_vega(spot, leg.strike, years, sigma) * 100.0
+        extra += leg.qty * CONTRACT_MULTIPLIER * vega_per_unit * (-slope)
+    return flat.delta + extra
+
+
 def _package_value(legs: list[RiskLeg], spot: float, now: datetime, scale: float) -> float:
     total = 0.0
     for leg in legs:

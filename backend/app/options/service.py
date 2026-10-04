@@ -47,6 +47,8 @@ from app.options.position_risk import (
     breakeven_vol,
     pin_risks,
     position_greeks,
+    skew_delta,
+    smile_slope,
     vol_forecast_today,
 )
 from app.options.positions import SpreadGroup, group_spreads
@@ -756,9 +758,15 @@ class OptionsService:
             )
             for leg in legs
         ]
-        greeks = position_greeks(
-            [RiskLeg(l.kind, l.strike, l.expiry, l.qty * ticket.qty, l.iv, l.mid) for l in risk_legs], chain.spot, now
-        )
+        order_legs = [RiskLeg(l.kind, l.strike, l.expiry, l.qty * ticket.qty, l.iv, l.mid) for l in risk_legs]
+        greeks = position_greeks(order_legs, chain.spot, now)
+        slopes = {
+            (l.kind, l.strike, l.expiry): slope
+            for l in order_legs
+            if l.expiry in chains
+            and (slope := smile_slope(chains[l.expiry].rows, l.strike, chain.spot)) is not None
+        }
+        skewed = skew_delta(order_legs, chain.spot, now, slopes) if greeks is not None else None
         be_vol = (
             breakeven_vol(risk_legs, chain.spot, now, price if direction == "debit" else -price, sigma) if sigma else None
         )
@@ -802,7 +810,11 @@ class OptionsService:
             client_order_id=ticket.client_order_id,
             coverage=coverage,
             payoff=payoff,
-            greeks=greeks.to_dict() if greeks is not None else None,
+            greeks=(
+                {**greeks.to_dict(), "skew_delta": round(skewed, 2) if skewed is not None else None}
+                if greeks is not None
+                else None
+            ),
             breakeven_vol=round(be_vol, 4) if be_vol is not None else None,
             atm_iv=round(sigma, 4) if sigma else None,
             realised_vol=round(vol.recent, 4) if vol is not None else None,

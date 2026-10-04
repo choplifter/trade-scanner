@@ -413,6 +413,9 @@ export interface PositionGreeks {
   gamma: number;
   theta: number;
   vega: number;
+  /** The delta with the chain's smile moving along with the stock (ticket
+   * only; the held structures carry no chain to read the smile from). */
+  skew_delta?: number | null;
 }
 
 export interface PayoffRequest {

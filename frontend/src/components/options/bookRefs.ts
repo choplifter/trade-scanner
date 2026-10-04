@@ -56,6 +56,7 @@ export const NATENBERG = {
   gaps: ref(23, "Models and the Real World", "Trading Is Continuous", 953),
   pinRisk: ref(23, "Models and the Real World", "Expiration Straddles", 962),
   skew: ref(24, "Volatility Skews", "Modeling the Skew", 987),
+  skewedRisk: ref(24, "Volatility Skews", "Skewed Risk Measures", 1009),
   impliedDistributions: ref(24, "Volatility Skews", "Implied Distributions", 1024),
 } satisfies Record<string, BookRef>;
 
