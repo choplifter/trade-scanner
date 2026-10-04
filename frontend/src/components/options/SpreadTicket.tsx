@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { NATENBERG, withBook } from "./bookRefs";
 
 import { OrderRejectedError } from "../../api/http";
 import { previewSpread, submitSpread } from "../../api/options";
@@ -883,7 +884,7 @@ export function SpreadTicket({
           {(spread.chance != null || spread.touch != null) && (
             <span>
               {spread.chance != null && (
-                <span title="The chance of any profit at expiry under the distribution the chain's own strikes price -- skew included: put skew makes a crash likelier and a modest dip less likely than the at-the-money IV alone says. Assuming a fill at the natural: a limit better than the natural is charged the part of the gap it has not paid, so a limit at mid reads the same as one at the natural. A model number, not a forecast.">
+                <span title={withBook("The chance of any profit at expiry under the distribution the chain's own strikes price -- skew included: put skew makes a crash likelier and a modest dip less likely than the at-the-money IV alone says. Assuming a fill at the natural: a limit better than the natural is charged the part of the gap it has not paid, so a limit at mid reads the same as one at the natural. A model number, not a forecast.", NATENBERG.probability, NATENBERG.impliedDistributions)}>
                   {(spread.chance * 100).toFixed(0)}% chance of profit
                 </span>
               )}

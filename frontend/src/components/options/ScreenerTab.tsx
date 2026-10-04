@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { NATENBERG, withBook } from "./bookRefs";
 
 import { OrderRejectedError } from "../../api/http";
 import { latestScreen, screenUnderlyings } from "../../api/options";
@@ -678,8 +679,8 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       className={row.iv_rv_ratio == null ? undefined : row.iv_rv_ratio >= RICH_IV_RATIO ? "delta-up" : row.iv_rv_ratio <= CHEAP_IV_RATIO ? "delta-down" : undefined}
                       title={
                         row.ref_iv != null && row.ref_expiry
-                          ? `Judged on ${formatExpiry(row.ref_expiry)} (${row.ref_dte} d), IV ${pct(row.ref_iv)}: the ${row.dte}-day chain screened is outside the 20-90 day band, and a chain that near prices the next few sessions rather than the stock. The IV rank is read on the same expiry.`
-                          : undefined
+                          ? withBook(`Judged on ${formatExpiry(row.ref_expiry)} (${row.ref_dte} d), IV ${pct(row.ref_iv)}: the ${row.dte}-day chain screened is outside the 20-90 day band, and a chain that near prices the next few sessions rather than the stock. The IV rank is read on the same expiry.`, NATENBERG.historicalVol, NATENBERG.ivAsPredictor)
+                          : withBook("At-the-money IV over the stock's realised volatility of the last 20 sessions. From 1.20 rich (green), up to 0.95 cheap (red).", NATENBERG.historicalVol, NATENBERG.ivAsPredictor)
                       }
                     >
                       {row.iv_rv_ratio == null ? "—" : `${row.iv_rv_ratio.toFixed(2)}×`}
@@ -690,7 +691,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       title={
                         row.iv_rank == null
                           ? `${row.iv_rank_samples} sessions recorded, 20 needed`
-                          : `Today's IV at ${row.iv_rank.toFixed(0)} % of its 52-week range (${row.iv_rank_samples} sessions). From 60 % rich against its own year (green), up to 30 % cheap (red) -- coloured like IV/RV, on the IV-rank bands used everywhere else.`
+                          : withBook(`Today's IV at ${row.iv_rank.toFixed(0)} % of its 52-week range (${row.iv_rank_samples} sessions). From 60 % rich against its own year (green), up to 30 % cheap (red) -- coloured like IV/RV, on the IV-rank bands used everywhere else.`, NATENBERG.ivAsPredictor)
                       }
                     >
                       {row.iv_rank == null ? "—" : `${row.iv_rank.toFixed(0)} %`}

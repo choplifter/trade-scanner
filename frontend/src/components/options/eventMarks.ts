@@ -1,4 +1,5 @@
 import type { EarningsEvents, ExpiryInfo, MacroEventOut, OptionEventsResponse } from "../../types/options";
+import { NATENBERG, withBook } from "./bookRefs";
 import { formatExpiry, weekdayOf } from "../../utils/occ";
 
 /** What an expiry is the first to be held through: the earnings report,
@@ -120,8 +121,11 @@ export function ivPremiumSentence(iv: OptionEventsResponse["iv"]): string | null
   return `IV ${ratio.toFixed(2)}× realised · ${gloss} (${(judged * 100).toFixed(0)} %${where} vs ${(iv.realized_vol_20d * 100).toFixed(0)} % over 20 sessions)`;
 }
 
-export const IV_PREMIUM_TITLE =
-  "At-the-money IV over the stock's realised volatility of the last 20 sessions. Read on the chain shown when it is 20-90 days out; nearer or further, on the 30-60 day expiry instead, because a chain about to expire prices the next few hours rather than the stock. Above 1.20 the market charges noticeably more than the stock has been moving (premium rich, credit shapes collect more); under 0.95 less (premium cheap, debit shapes cost less). Implied normally sits a little above realised. After a quiet stretch with an event ahead -- earnings marked in the strip -- a high ratio may be fair rather than rich.";
+export const IV_PREMIUM_TITLE = withBook(
+  "At-the-money IV over the stock's realised volatility of the last 20 sessions. Read on the chain shown when it is 20-90 days out; nearer or further, on the 30-60 day expiry instead, because a chain about to expire prices the next few hours rather than the stock. Above 1.20 the market charges noticeably more than the stock has been moving (premium rich, short-vol shapes collect more); under 0.95 less (premium cheap, debit shapes cost less). Implied normally sits a little above realised. After a quiet stretch with an event ahead -- earnings marked in the strip -- a high ratio may be fair rather than rich.",
+  NATENBERG.historicalVol,
+  NATENBERG.ivAsPredictor,
+);
 
 export function ivRankSentence(iv: OptionEventsResponse["iv"]): string {
   if (iv.rank) {

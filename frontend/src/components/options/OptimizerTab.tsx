@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { NATENBERG, withBook } from "./bookRefs";
 
 import { getChain } from "../../api/options";
 import type { OptimizerState } from "../../hooks/useOptionsOptimizer";
@@ -135,7 +136,9 @@ const OUTLOOK_STRATEGIES: Record<Outlook, Strategy[]> = {
 
 /** What the IV-rank light offers: the shapes that sell premium when it is
  * rich, the shapes that buy it when it is cheap. */
-const CREDIT_STRATEGIES: Strategy[] = ["bull_put", "bear_call", "iron_condor", "iron_butterfly"];
+// The shapes that sell volatility -- credit ones, and the long butterflies,
+// which are paid for but short vega (Natenberg ch. 11, "Butterfly").
+const CREDIT_STRATEGIES: Strategy[] = ["bull_put", "bear_call", "iron_condor", "iron_butterfly", "call_butterfly", "put_butterfly"];
 const DEBIT_STRATEGIES: Strategy[] = ["long_call", "long_put", "bull_call", "bear_put", "long_straddle", "long_strangle", "calendar"];
 
 /** Diagonals are not enumerated (see backend optimizer.py). */
@@ -758,9 +761,9 @@ export function OptimizerTab({
             className={`opt-ivrank ${tone ?? "none"}`}
             title={
               ivRank || !premiumLine
-                ? `${ivRankSentence(symbolEvents.iv)}. Where today's at-the-money IV sits between the lowest and highest recorded over the past year of sessions: above 60 % premium is rich against its own history and credit shapes collect more, below 30 % it is cheap and debit shapes cost less. A comparison with the past, not a forecast.${premiumLine ? `
+                ? withBook(`${ivRankSentence(symbolEvents.iv)}. Where today's at-the-money IV sits between the lowest and highest recorded over the past year of sessions: above 60 % premium is rich against its own history and short-vol shapes collect more, below 30 % it is cheap and debit shapes cost less. A comparison with the past, not a forecast.${premiumLine ? `
 
-${premiumLine}.` : ""}`
+${premiumLine}.` : ""}`, NATENBERG.ivAsPredictor)
                 : `${premiumLine}. ${IV_PREMIUM_TITLE}
 
 ${ivRankSentence(symbolEvents.iv)}.`
@@ -769,12 +772,12 @@ ${ivRankSentence(symbolEvents.iv)}.`
             <span className="opt-ivrank-dot" aria-hidden="true" />
             {ivRank ? `IV rank ${ivRank.percent.toFixed(0)} %` : ivRatio != null ? `IV ${ivRatio.toFixed(2)}× realised` : "IV rank n/a"}
             {tone === "rich" && (
-              <button type="button" className="row-action" onClick={() => setFamilies(new Set(CREDIT_STRATEGIES))} title="Search the shapes that sell premium: bull put, bear call, iron condor, iron fly">
-                credit shapes
+              <button type="button" className="row-action" onClick={() => setFamilies(new Set(CREDIT_STRATEGIES))} title={withBook("Search the shapes that sell volatility: bull put, bear call, iron condor, iron fly -- and the call and put butterflies, which cost a debit but are short volatility all the same: a short straddle with the risk capped.", NATENBERG.butterfly, NATENBERG.choosingStrategy)}>
+                short-vol shapes
               </button>
             )}
             {tone === "cheap" && (
-              <button type="button" className="row-action" onClick={() => setFamilies(new Set(DEBIT_STRATEGIES))} title="Search the shapes that buy premium: long call/put, debit spreads, straddle, strangle, calendar">
+              <button type="button" className="row-action" onClick={() => setFamilies(new Set(DEBIT_STRATEGIES))} title={withBook("Search the shapes that buy premium: long call/put, debit spreads, straddle, strangle, calendar.", NATENBERG.choosingStrategy)}>
                 debit shapes
               </button>
             )}

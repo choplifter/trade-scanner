@@ -1,4 +1,5 @@
 import { Modal } from "../common/Modal";
+import { BookRefLine, NATENBERG } from "./bookRefs";
 
 interface ScreenerHelpProps {
   open: boolean;
@@ -48,6 +49,7 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             only place a durable edge in selling premium can come from: the variance risk premium, implied sitting
             above realised. Above 1.20 counts as rich here. Below 1.00 you are selling something cheap, which is the
             wrong side of the trade whatever the credit looks like.
+            <BookRefLine refs={[NATENBERG.historicalVol, NATENBERG.ivAsPredictor]} />
           </dd>
           <dt>2b · IV rank — expensive against its own year?</dt>
           <dd>
@@ -55,6 +57,7 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             question from IV / RV: a quiet stock can be rich on IV / RV and still cheap against its own year. From 60 %
             it passes a premium-selling screen (green), up to 30 % a premium-buying one (red). A symbol with fewer than
             20 recorded sessions has no rank yet and is not judged on it — left out, not failed.
+            <BookRefLine refs={[NATENBERG.ivAsPredictor]} />
           </dd>
           <dt>3 · EV — the one number that combines the others</dt>
           <dd>
@@ -62,6 +65,7 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             own implied distribution. A structure can pay a large credit, lose rarely, and still be negative here —
             which is exactly what a list sorted by credit or by win rate hides. Carries the same caveat as everything
             else: it is built from mids, so a positive EV on a wide quote is not money.
+            <BookRefLine refs={[NATENBERG.impliedDistributions, NATENBERG.goodSpread]} />
           </dd>
           <dt>4 · R/R and Loss prob — the shape, not the verdict</dt>
           <dd>
@@ -70,6 +74,7 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             not by what crossing the quotes cost counts as a loss here, as in the Optimizer and the ticket. Read
             them together or not at all: 29 : 1 at a 4 % chance of loss is a worse proposition than 3 : 1 at 25 %. Neither
             says anything on its own, which is why EV exists.
+            <BookRefLine refs={[NATENBERG.probability, NATENBERG.impliedDistributions]} />
           </dd>
           <dt>5 · Earnings</dt>
           <dd>
@@ -77,6 +82,7 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             one through in the first third of the position's life — the volatility drops while the strikes are still
             far away and weeks of decay follow. Avoid fails any report inside. If a row is rich on IV/RV and holds a
             report, you are being paid for the event, not for the premium.
+            <BookRefLine refs={[NATENBERG.gaps]} />
           </dd>
         </dl>
 
@@ -95,12 +101,14 @@ export function ScreenerHelp({ open, onClose }: ScreenerHelpProps) {
             How far out the short strikes sit. Nearer the money brings more credit and a higher chance of being
             touched; further out is the opposite, and past a point the strikes stop being quoted at all, which shows
             up as the quote-width criterion failing rather than as a worse price.
+            <BookRefLine refs={[NATENBERG.delta]} />
           </dd>
           <dt>DTE</dt>
           <dd>
             The window the expiry is picked from. The screen prefers the monthly expiry inside it — the primary
             series, where open interest accumulates and quotes are tightest. A window with no monthly in it falls back
             to whatever is listed, which is usually a weekly and usually thinner.
+            <BookRefLine refs={[NATENBERG.scalingForTime]} />
           </dd>
           <dt>Universe / Watchlist</dt>
           <dd>

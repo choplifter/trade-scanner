@@ -6322,3 +6322,12 @@ td.chain-side.chain-stale {
   width: 56px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Where a help entry's idea is laid out in Natenberg (components/options/bookRefs.ts). */
+.book-ref {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted, #6b6b6b);
+  font-size: 11px;
+  font-style: italic;
+}

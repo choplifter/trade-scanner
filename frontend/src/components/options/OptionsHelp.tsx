@@ -1,4 +1,5 @@
 import { Modal } from "../common/Modal";
+import { BookRefLine, NATENBERG } from "./bookRefs";
 
 interface OptionsHelpProps {
   open: boolean;
@@ -129,11 +130,13 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             puts negative). Gamma: how much delta changes per 1 $, so how fast a position turns near the money and
             near expiry. Theta: value lost per day at a standing price, per share, negative for a bought option. The
             cell tooltip always shows all three.
+            <BookRefLine refs={[NATENBERG.greeks]} />
           </dd>
           <dt>IV</dt>
           <dd>
             Implied volatility, the annualised move the price implies. Higher IV means dearer options. Compare across
             strikes (skew) and expiries (term structure) rather than reading one number alone.
+            <BookRefLine refs={[NATENBERG.ivAsPredictor, NATENBERG.interpretingVol]} />
           </dd>
           <dt>OI</dt>
           <dd>
@@ -181,12 +184,14 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             the market's expected move to expiry (see the EM lines on the chart), so buying one is a bet the
             realised move beats what is priced. Bought before an event, sold after it: implied vol collapses once
             the news is out, and a straddle bought at high IV can lose even when the underlying moves.
+            <BookRefLine refs={[NATENBERG.straddle]} />
           </dd>
           <dt>Strangle</dt>
           <dd>
             Buy a call above and a put below the spot. Cheaper than the straddle, needs a bigger move before either
             leg is in the money. Same logic, wider breakevens, lower cost. Short Δ sets how far out the auto-pick
             puts the two legs (0.25 by default); the ticket shows the corridor between them.
+            <BookRefLine refs={[NATENBERG.strangle]} />
           </dd>
         </dl>
 
@@ -198,11 +203,13 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             reached at or above the short strike; max loss is the debit, below the long strike. A cheaper, capped
             version of the long call: the sold leg pays for part of the bought one and caps the upside. Width in
             strikes sets how much of each. Breakeven is the long strike plus the debit.
+            <BookRefLine refs={[NATENBERG.verticals]} />
           </dd>
           <dt>Bear put</dt>
           <dd>
             Buy a put, sell a lower put. The mirror of the bull call for a move down: debit, capped profit at the
             width minus the debit below the short strike, loses the debit above the long strike.
+            <BookRefLine refs={[NATENBERG.verticals]} />
           </dd>
           <dt>Bull put</dt>
           <dd>
@@ -212,12 +219,14 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             (a put wall, a prior low), the long strike caps the damage. Short Δ (0.30 by default) sets how far
             out the short leg goes: smaller delta, further out, less credit, more room. The account reserves the
             width minus the credit as collateral.
+            <BookRefLine refs={[NATENBERG.verticals]} />
           </dd>
           <dt>Bear call</dt>
           <dd>
             Sell a call, buy a higher call. The mirror: credit kept if the underlying stays below the short strike,
             max loss width minus credit above the long strike. Placed above a call wall or a session high it is
             the bet the rally stalls there.
+            <BookRefLine refs={[NATENBERG.verticals]} />
           </dd>
         </dl>
 
@@ -231,6 +240,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             The corridor shown in the ticket is the range that has to hold. Short Δ (0.20 by default) sets the
             short strikes' distance, Width the wings. Positive-gamma days (see the GEX regime) suit it; a
             negative-gamma regime is where a condor gets run over.
+            <BookRefLine refs={[NATENBERG.condor]} />
           </dd>
           <dt>Iron fly</dt>
           <dd>
@@ -239,6 +249,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             maximum profit only if the underlying closes exactly at the body, breakevens at the body ± the
             credit. A bet on pinning at a strike, typically near a gamma wall on expiry day. Closing it buys the
             body back and sells the wings; in Simulation the Close dialog suggests the natural so it fills.
+            <BookRefLine refs={[NATENBERG.butterfly]} />
           </dd>
           <dt>Call fly</dt>
           <dd>
@@ -246,9 +257,13 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             small debit; that is the maximum loss. Maximum profit at the body at expiry: the wing width minus the
             debit, often several times the debit. Cheap because it needs the underlying near the body at the
             end, and worth little until close to expiry. Wings sets the distance from body to each wing.
+            <BookRefLine refs={[NATENBERG.butterfly]} />
           </dd>
           <dt>Put fly</dt>
-          <dd>The same shape in puts. Equivalent payoff; pick whichever side is quoted tighter or where the debit is smaller.</dd>
+          <dd>
+            The same shape in puts. Equivalent payoff; pick whichever side is quoted tighter or where the debit is smaller.
+            <BookRefLine refs={[NATENBERG.butterfly]} />
+          </dd>
         </dl>
 
         <h3>Time (level 3)</h3>
@@ -261,12 +276,14 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             far expiry's IV falls. The ticket's expiry is the sold leg's; Long expiry picks the bought one, and
             the Short/Long toggle says which expiry a chain click sets. Useful when the front expiry's IV stands
             well above the back's (an event priced into one week).
+            <BookRefLine refs={[NATENBERG.calendar, NATENBERG.forwardVol]} />
           </dd>
           <dt>Diagonal</dt>
           <dd>
             A calendar with different strikes: sell a nearer, further-out-of-the-money option, buy a later,
             closer one. Adds a directional lean to the time decay. The "poor man's covered call" is a diagonal:
             a long-dated deep call instead of shares, a short near call sold against it.
+            <BookRefLine refs={[NATENBERG.diagonal]} />
           </dd>
         </dl>
 
@@ -278,6 +295,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             above the strike the shares are called away at the strike, so the upside is capped there plus the
             premium. Downside is the shares' own. The ticket checks the shares are in the account (in Simulation,
             in the practice book) and says what is missing.
+            <BookRefLine refs={[NATENBERG.coveredWrites]} />
           </dd>
           <dt>Cash-sec. put</dt>
           <dd>
@@ -417,6 +435,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dd>
             Scales every leg's implied volatility, ±50 %. A vol drop after the open or a data release takes value from
             long premium even when the underlying goes your way; credit structures gain from it.
+            <BookRefLine refs={[NATENBERG.volatilityRisk]} />
           </dd>
           <dt>Hover</dt>
           <dd>The readout gives the three values at the hovered price. Drag the bottom edge to resize the chart.</dd>
@@ -438,6 +457,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dd>
             Constant IV per leg, no skew, no dividends, no rate. The curves show direction and size, not the fill you
             will get.
+            <BookRefLine refs={[NATENBERG.realWorld, NATENBERG.impliedDistributions]} />
           </dd>
         </dl>
 
@@ -480,6 +500,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             the spot, Very bullish two; Bearish and Very bearish mirror it; Neutral leaves the target at the spot and
             searches condors, flies and calendars; Directional expects a move either way and ranks straddles and
             strangles at both points at once. The target and the families stay editable afterwards.
+            <BookRefLine refs={[NATENBERG.choosingStrategy]} />
           </dd>
           <dt>Target · Expiry</dt>
           <dd>
@@ -505,9 +526,11 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
           <dt>IV rank light</dt>
           <dd>
             Beside the implied move: green means premium is rich against the symbol's own history (rank above 60 %)
-            and offers <em>credit shapes</em> — bull put, bear call, iron condor, iron fly; blue means cheap (below
-            30 %) and offers <em>debit shapes</em> — long call and put, debit spreads, straddle, strangle, calendar.
-            The buttons only tick the families; the search still runs on your target.
+            and offers <em>short-vol shapes</em> — bull put, bear call, iron condor, iron fly, and the call and put
+            butterflies, which cost a debit but sell volatility all the same; blue means cheap (below 30 %) and offers
+            <em>debit shapes</em> — long call and put, debit spreads, straddle, strangle, calendar. The buttons only
+            tick the families; the search still runs on your target.
+            <BookRefLine refs={[NATENBERG.ivAsPredictor, NATENBERG.butterfly]} />
           </dd>
           <dt>From the scanner</dt>
           <dd>
@@ -522,6 +545,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             return on risk (what they pay if the target is reached); at the right by chance of profit (how likely
             any profit is at all). In between, each structure's percentile on both scales is blended. Far
             out-of-the-money shapes win the left end, wide credit structures the right.
+            <BookRefLine refs={[NATENBERG.goodSpread]} />
           </dd>
           <dt>Budget · Max loss</dt>
           <dd>
@@ -558,6 +582,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             integrated over that distribution (each leg's IV held still). A model number, not a forecast — it says
             how much of the market's own distribution the structure covers, which is why a wide credit spread scores
             high and a far out-of-the-money call low, whatever you think of the target.
+            <BookRefLine refs={[NATENBERG.probability, NATENBERG.impliedDistributions]} />
           </dd>
           <dt>The small chart</dt>
           <dd>
@@ -695,6 +720,7 @@ export function OptionsHelp({ open, onClose }: OptionsHelpProps) {
             the badge's tooltip and in the GEX Plan. Symmetric by construction, skew is ignored. Use it to judge a
             breakeven: a long option whose breakeven lies outside the band needs a bigger day than the market is
             pricing.
+            <BookRefLine refs={[NATENBERG.volatilityAsStdDev]} />
           </dd>
           <dt>Levels menu</dt>
           <dd>
