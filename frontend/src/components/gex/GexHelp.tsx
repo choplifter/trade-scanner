@@ -9,7 +9,7 @@ import { Modal } from "../common/Modal";
  * threshold changes. */
 export function GexHelp({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Modal open={open} title="GEX — the gamma profile" onClose={onClose} className="modal-panel-wide">
+    <Modal open={open} title="GEX — the gamma profile" onClose={onClose} className="modal-panel-wide" modeless positionKey="help">
       <div className="options-help">
         <p className="options-help-intro">
           Where the open options on this symbol put dealers' hedging pressure, and the price levels that follow from

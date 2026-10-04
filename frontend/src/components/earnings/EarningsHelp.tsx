@@ -12,7 +12,7 @@ interface EarningsHelpProps {
  * keep the three in step when a threshold changes. */
 export function EarningsHelp({ open, onClose }: EarningsHelpProps) {
   return (
-    <Modal open={open} title="The Earnings screen" onClose={onClose} className="modal-panel-wide">
+    <Modal open={open} title="The Earnings screen" onClose={onClose} className="modal-panel-wide" modeless positionKey="help">
       <div className="options-help">
         <p className="options-help-intro">
           Who reports today and on the next session, sorted by how liquid they are, and — when you open a row — which

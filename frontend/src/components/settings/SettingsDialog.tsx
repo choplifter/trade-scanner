@@ -260,7 +260,7 @@ export function SettingsDialog({
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => update({ [key]: value } as Partial<AppSettings>);
 
   return (
-    <Modal open={open} title="Settings" onClose={onClose} className="modal-panel-wide">
+    <Modal open={open} title="Settings" onClose={onClose} className="modal-panel-wide" modeless positionKey="settings">
       <div className="settings-dialog">
         <div className="timeframe-selector settings-tabs">
           {TABS.filter((t) => t.key !== "users" || isAdmin).map((t) => (

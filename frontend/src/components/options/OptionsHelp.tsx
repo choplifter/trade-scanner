@@ -69,7 +69,14 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
     </>
   );
   return (
-    <Modal open={open} title={`Options · ${TAB_TITLES[tab]}`} onClose={onClose} className="modal-panel-wide">
+    <Modal
+      open={open}
+      title={`Options · ${TAB_TITLES[tab]}`}
+      onClose={onClose}
+      className="modal-panel-wide"
+      modeless
+      positionKey="help"
+    >
       <div className="options-help">
         {chain && (
           <p className="options-help-intro">

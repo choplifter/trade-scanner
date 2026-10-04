@@ -37,7 +37,14 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
   const calendar = strategy === "calendar";
   const winged = strategy === "credit_spread" || strategy === "iron_condor" || strategy === "debit_spread";
   return (
-    <Modal open={open} title={`Screening: ${LABELS[strategy]}`} onClose={onClose} className="modal-panel-wide">
+    <Modal
+      open={open}
+      title={`Screening: ${LABELS[strategy]}`}
+      onClose={onClose}
+      className="modal-panel-wide"
+      modeless
+      positionKey="help"
+    >
       <div className="options-help">
         <p className="options-help-intro">
           Most runs produce nothing worth placing, and that is the screen working rather than failing. If implied

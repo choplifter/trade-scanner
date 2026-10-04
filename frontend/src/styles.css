@@ -2598,6 +2598,33 @@ a.symbol-news-headline {
   letter-spacing: 0.04em;
 }
 
+/* A window without a backdrop (help pages, Settings): centred until
+   dragged, then placed by Modal's inline left/top. Under .modal-backdrop
+   and the Levels menu (1000) so a confirmation or a dropdown opened beside
+   it lands on top; over the fullscreen chart (900). */
+.modal-panel.modal-floating {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 950;
+}
+
+.modal-drag-handle {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
+.modal-drag-handle .modal-close {
+  cursor: pointer;
+}
+
+body.modal-dragging {
+  user-select: none;
+  cursor: move;
+}
+
 .modal-close {
   background: none;
   border: none;
