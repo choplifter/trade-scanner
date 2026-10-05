@@ -6438,3 +6438,34 @@ td.chain-side.chain-stale {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+.track-record {
+  padding: 8px 12px;
+  overflow: auto;
+}
+
+.track-record h3 {
+  margin: 8px 0 4px;
+  font-size: 13px;
+}
+
+.track-record h4 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.track-note {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.track-table td,
+.track-table th {
+  font-variant-numeric: tabular-nums;
+}
+
+.track-ci {
+  color: var(--text-muted);
+}

@@ -65,6 +65,7 @@ async def _service(request: Request, user: dict = Depends(get_current_user)) -> 
         live_available=live_available,
     )
     service.dividends = getattr(request.app.state, "dividend_calendar", None)
+    service.predictions = getattr(request.app.state, "prediction_store", None)
     return service
 
 
@@ -502,6 +503,73 @@ async def delta_levels(
     return levels
 
 
+async def _track_record_body(request: Request) -> dict:
+    from app.options.track_record import forward_items, historical_report, report, resolve_due
+
+    state = request.app.state
+    store = getattr(state, "prediction_store", None)
+    clients = getattr(state, "alpaca_clients", None)
+    settings = getattr(state, "settings", None)
+    forward: dict = {"available": False}
+    if store is not None:
+        try:
+            await resolve_due(store, clients)
+            rows = await store.all()
+        except Exception:
+            logger.exception("Track record: forward read failed")
+            rows = []
+        items = forward_items(rows)
+        forward = {
+            "available": True,
+            "recorded": len(rows),
+            "open": sum(1 for r in rows if r["status"] == "open"),
+            "resolved": len(items),
+            "unresolvable": sum(1 for r in rows if r["status"] == "unresolvable"),
+            "next_expiry": min((r["expiry"] for r in rows if r["status"] == "open"), default=None),
+            "first_recorded": min((r["recorded_on"] for r in rows), default=None),
+            "by_source": {
+                source: report([i for i in items if i["source"] == source]) for source in ("screen", "ticket")
+            },
+            **report(items),
+            "recent": [
+                {
+                    k: r[k]
+                    for k in (
+                        "source", "account", "strategy", "underlying", "expiry", "price", "chance",
+                        "status", "settle", "pnl", "won", "recorded_on",
+                    )
+                }
+                for r in rows[:30]
+            ],
+        }
+    db_path = settings.scanner_history_db_path if settings is not None else None
+    try:
+        historical = await historical_report(db_path, clients) if db_path else {"available": False}
+    except Exception:
+        logger.exception("Track record: historical reconstruction failed")
+        historical = {"available": False, "reason": "the reconstruction failed; see the log"}
+    return {"forward": forward, "historical": historical}
+
+
+@router.get("/track-record")
+async def track_record(request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """Whether the predictions came true -- app.options.track_record. The
+    forward record (Screener rows and sent tickets, settled after expiry;
+    due ones are settled on the way in) and the historical reconstruction
+    from the stored IV, computed once a day. Market data only, like
+    /events."""
+    return await _track_record_body(request)
+
+
+@router.post("/track-record/refresh")
+async def track_record_refresh(request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """The same, with the historical reconstruction recomputed now."""
+    from app.options import track_record as tr
+
+    tr._HIST_CACHE.clear()
+    return await _track_record_body(request)
+
+
 @router.get("/screen/latest")
 async def latest_screen(request: Request, strategy: str = "credit_spread") -> dict:
     """The stored background run for one strategy, or `{"screen": null}`
@@ -525,7 +593,7 @@ async def screen(body: ScreenRequest, request: Request, service: OptionsService 
     watchlist, the scanner's movers), not a universe. Read-only: nothing is
     priced into a ticket and nothing is ordered."""
     try:
-        return await screen_underlyings(
+        result = await screen_underlyings(
             service,
             request.app.state.alpaca_clients,
             body,
@@ -542,8 +610,13 @@ async def screen(body: ScreenRequest, request: Request, service: OptionsService 
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Options screen failed for %d symbols", len(body.symbols))
+        logger.exception("Options screen failed for %d symbols", len(body.symbols or []))
         raise HTTPException(status_code=502, detail="Failed to screen these underlyings")
+    # Each valued row, kept to be settled after its expiry.
+    from app.options.screen_job import record_screen
+
+    await record_screen(getattr(request.app.state, "prediction_store", None), body.strategy, result.get("rows") or [])
+    return result
 
 
 class IdeaRequest(BaseModel):

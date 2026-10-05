@@ -56,6 +56,7 @@ import { IvCurve } from "./IvCurve";
 import { subscribeTicketIntent, type TicketIntent } from "./ticketIntent";
 import { useCampaigns } from "../../hooks/useCampaigns";
 import { OptionsHelp } from "./OptionsHelp";
+import { TrackRecordTab } from "./TrackRecordTab";
 import { ScreenerTab } from "./ScreenerTab";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
@@ -72,7 +73,7 @@ import {
   templateLegs,
 } from "./builderLegs";
 
-export type OptionsTab = "chain" | "spreads" | "idea" | "optimizer" | "screener" | "playbooks";
+export type OptionsTab = "chain" | "spreads" | "idea" | "optimizer" | "screener" | "playbooks" | "record";
 
 interface OptionsWidgetProps {
   symbol: string | null;
@@ -577,6 +578,15 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           >
             Screener
           </button>
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={tab === "record"}
+            onClick={() => setTab("record")}
+            title="Whether the predictions came true: Screener rows and your tickets settled after expiry, and the past year rebuilt from stored implied volatility"
+          >
+            Record
+          </button>
           {/* Simulation and Paper: the runner reconciles the simulated book's
             * orders, or the paper account's orders and activities. Not Live:
             * a campaign there would propose real orders on a real account. */}
@@ -665,6 +675,8 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           />
         ) : tab === "screener" ? (
           <ScreenerTab onSelectSymbol={onSelectSymbol} />
+        ) : tab === "record" ? (
+          <TrackRecordTab />
         ) : tab === "playbooks" ? (
           <PlaybooksTab
             symbol={symbol}

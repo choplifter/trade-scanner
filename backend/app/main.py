@@ -384,6 +384,13 @@ async def lifespan(app: FastAPI):
     screen_store = ScreenStore(settings.scanner_history_db_path)
     await screen_store.init_schema()
     app.state.screen_store = screen_store
+    # Every valued Screener row and every sent ticket, with what was
+    # predicted for it, settled after expiry (app.options.track_record).
+    from app.options.track_record import PredictionStore
+
+    prediction_store = PredictionStore(settings.scanner_history_db_path)
+    await prediction_store.init_schema()
+    app.state.prediction_store = prediction_store
 
     # One ATM IV per liquid symbol per session, so an IV rank can exist for
     # more than the handful of names someone happened to open a chain on

@@ -21,6 +21,7 @@ const TAB_TITLES: Record<OptionsTab, string> = {
   optimizer: "Optimizer",
   screener: "Screener",
   playbooks: "Playbooks",
+  record: "Record",
 };
 
 /** The shapes with a Width (or Wings) the auto-pick reads. */
@@ -1045,6 +1046,50 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
               </dd>
               <dt>Load into ticket</dt>
               <dd>Puts the structure's legs and expiry into the ticket; you still price and submit it yourself.</dd>
+            </dl>
+          </>
+        )}
+
+        {tab === "record" && (
+          <>
+            <h3>Record</h3>
+            <dl>
+              <dt>What is checked</dt>
+              <dd>
+                Whether a structure the dashboard gave a 70 % chance of profit actually ends in profit about 70 % of
+                the time — and whether a positive breakeven-vol margin actually goes with better results. Every
+                outcome is the structure <em>held to expiry</em> and filled at the natural, because that is what the
+                predicted chance describes; a trade managed early ends elsewhere.
+                <BookRefLine refs={[NATENBERG.probability, NATENBERG.ivAsPredictor]} />
+              </dd>
+              <dt>Your predictions, settled</dt>
+              <dd>
+                Every Screener row with a valued structure (once a day per structure, from the background pass and
+                from a run you start) and every ticket you send, kept with its predicted chance, touch, breakeven
+                volatility and forecast. After its expiry the underlying's close settles it. Exact, but it starts
+                empty: the first answers arrive with the first expiries. Replayed tickets are not recorded.
+              </dd>
+              <dt>The past year, rebuilt</dt>
+              <dd>
+                The same question asked of the stored implied-volatility history at once: on every fifth session a
+                45-day condor at 10, 16, 25 and 35 delta, priced flat at that day's at-the-money IV, settled at the
+                close 45 days later. No smile, no quotes, no bid/ask — it tests the implied volatility itself as a
+                forecaster of the move, which is the premium seller's whole question. Neighbouring samples share most
+                of their 45 days, so the ranges are narrower than they should be.
+              </dd>
+              <dt>predicted · actual · 95 % range</dt>
+              <dd>
+                The mean predicted chance, the share that won, and where the true rate plausibly lies given how many
+                there are (Wilson interval). Green: the range sits wholly above the prediction — the market
+                overstated the moves, the seller's edge. Red: wholly below. Grey: too few to tell apart.
+              </dd>
+              <dt>By breakeven-vol margin</dt>
+              <dd>
+                The ticket's margin for error, bucketed: breakeven volatility less the forecast, read for the seller.
+                If it is worth acting on, the rows above zero win more and earn more than those below. In the
+                reconstruction the breakeven is the IV itself, so the margin is IV less the forecast.
+                <BookRefLine refs={[NATENBERG.marginForError]} />
+              </dd>
             </dl>
           </>
         )}

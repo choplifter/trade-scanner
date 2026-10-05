@@ -1118,3 +1118,51 @@ export interface DeltaLevelsResponse {
   put: DeltaLevelSide | null;
   call: DeltaLevelSide | null;
 }
+
+/** One calibration line of the track record -- backend app/options/track_record.py. */
+export interface TrackSummary {
+  n: number;
+  /** Mean predicted chance of profit. */
+  predicted: number | null;
+  /** Share that won, held to expiry at the natural. */
+  actual: number | null;
+  /** 95 % Wilson interval of `actual`. */
+  ci: [number, number] | null;
+  avg_pnl: number | null;
+  avg_return_on_risk: number | null;
+}
+
+export interface TrackBucket extends TrackSummary {
+  range: [number, number];
+}
+
+export interface TrackReport {
+  overall: TrackSummary;
+  by_chance: TrackBucket[];
+  by_margin: TrackBucket[];
+  touch: { n: number; predicted: number; actual: number } | null;
+}
+
+export interface TrackRecent {
+  source: "screen" | "ticket";
+  account: string;
+  strategy: string;
+  underlying: string;
+  expiry: string;
+  price: number;
+  chance: number | null;
+  status: "open" | "resolved" | "unresolvable";
+  settle: number | null;
+  pnl: number | null;
+  won: number | null;
+  recorded_on: string;
+}
+
+export interface TrackRecordResponse {
+  forward: ({ available: true; recorded: number; open: number; resolved: number; unresolvable: number;
+    next_expiry: string | null; first_recorded: string | null; by_source: Record<"screen" | "ticket", TrackReport>;
+    recent: TrackRecent[] } & TrackReport) | { available: false };
+  historical: ({ available: true; symbols: number; from: string | null; to: string | null; dte: number;
+    step_sessions: number; by_delta: (TrackSummary & { short_delta: number })[] } & TrackReport)
+    | { available: false; reason?: string };
+}

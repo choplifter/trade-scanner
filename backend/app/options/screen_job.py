@@ -40,6 +40,17 @@ LIMIT = 60
 STRATEGIES = ("credit_spread", "cash_secured_put")
 
 
+async def record_screen(predictions, strategy: str, rows: list[dict]) -> int:
+    """Every row with a valued structure, as a prediction to settle after
+    its expiry (app.options.track_record) -- once a day per structure."""
+    if predictions is None:
+        return 0
+    from app.options.track_record import from_screen_row
+
+    made = [p for p in (from_screen_row(row, strategy) for row in rows) if p is not None]
+    return await predictions.record(made)
+
+
 def due(now_et: datetime, last_run: datetime | None, interval: float = SCREEN_INTERVAL_SECONDS) -> bool:
     """Whether a pass is due: inside the regular session, and either the
     first of the session or far enough after the last one."""
@@ -74,6 +85,7 @@ async def run_once(service_factory, clients, store, state, *, limit: int = LIMIT
         rows = body.get("rows") or []
         if rows:
             await store.save(strategy, body)
+            await record_screen(getattr(state, "prediction_store", None), strategy, rows)
         counts[strategy] = len(rows)
     return counts
 

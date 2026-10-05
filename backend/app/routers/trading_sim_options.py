@@ -51,6 +51,7 @@ async def _service(request: Request, user: dict) -> SimOptionsService:
         engine=getattr(state, "scanner_engine", None),
     )
     service.dividends = getattr(state, "dividend_calendar", None)
+    service.predictions = getattr(state, "prediction_store", None)
     return service
 
 

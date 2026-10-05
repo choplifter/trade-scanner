@@ -32,6 +32,7 @@ import type {
   SpreadPreview,
   SpreadTicketRequest,
   SpreadsResponse,
+  TrackRecordResponse,
   TriggerCreateRequest,
   UnderlyingTrigger,
 } from "../types/options";
@@ -244,4 +245,14 @@ export function deltaLevels(underlying: string, delta: number): Promise<DeltaLev
   return getJson<DeltaLevelsResponse>(
     `/trading/options/delta-levels/${encodeURIComponent(underlying)}?delta=${encodeURIComponent(String(delta))}`,
   );
+}
+
+/** Whether the predictions came true -- backend app/options/track_record.py.
+ * Market data only, not routed through tradingPath. */
+export function getTrackRecord(): Promise<TrackRecordResponse> {
+  return getJson<TrackRecordResponse>("/trading/options/track-record");
+}
+
+export function refreshTrackRecord(): Promise<TrackRecordResponse> {
+  return send<TrackRecordResponse>("POST", "/trading/options/track-record/refresh", undefined);
 }

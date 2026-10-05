@@ -282,7 +282,12 @@ class SimOptionsService(OptionsService):
             source=self._source.feed,
             as_of=self._as_of(),
         )
-        return public_option_order(order)
+        public = public_option_order(order)
+        # A replayed moment's prediction would be recorded under today's date
+        # and settled against a future it already knows: live only.
+        if self._as_of() is None:
+            await self._record_prediction(resolved, public)
+        return public
 
     async def preview_close(self, req: CloseSpreadRequest) -> dict:
         """As the base preview, but the suggested limit is the natural, not

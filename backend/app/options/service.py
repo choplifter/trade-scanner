@@ -317,6 +317,9 @@ class OptionsService:
         # Upcoming ex-dividend dates (app.options.position_risk), set by the
         # routers from app.state; None leaves the assignment check out.
         self.dividends: DividendCalendar | None = None
+        # Where a sent ticket's predictions are kept to be checked after
+        # expiry (app.options.track_record); set by the routers.
+        self.predictions = None
 
     @property
     def source(self) -> QuoteSource:
@@ -1109,6 +1112,7 @@ class OptionsService:
             if rejection is not None:
                 raise rejection from exc
             raise
+        await self._record_prediction(resolved, _plain(order))
         logger.info(
             "Submitted %s %s x%d on %s (%s %s %+.2f) account=%s client_order_id=%s",
             resolved.strategy,
@@ -1122,6 +1126,21 @@ class OptionsService:
             resolved.client_order_id,
         )
         return _plain(order)
+
+    async def _record_prediction(self, resolved: ResolvedSpread, order: dict | None) -> None:
+        """Keep what this ticket predicted, to be settled after expiry.
+        Never fails the order: the record is a side note to it."""
+        if self.predictions is None:
+            return
+        try:
+            from app.options.track_record import from_resolved_spread
+
+            ref = (order or {}).get("id") if isinstance(order, dict) else None
+            made = from_resolved_spread(resolved, self._account, str(ref) if ref else resolved.client_order_id)
+            if made is not None:
+                await self.predictions.record([made])
+        except Exception:
+            logger.exception("Recording the ticket's prediction failed")
 
     async def _submit_legs_one_by_one(self, resolved: ResolvedSpread) -> dict:
         """A package written against shares, leg by leg. Alpaca takes a
@@ -1158,6 +1177,7 @@ class OptionsService:
             len(placed),
             self._account,
         )
+        await self._record_prediction(resolved, placed[0])
         return {**placed[0], "leg_orders": placed, "leg_error": None}
 
     async def close_spread(
