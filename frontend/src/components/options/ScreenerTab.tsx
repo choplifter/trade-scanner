@@ -378,9 +378,39 @@ function SideCell({
 }
 
 
+// The tab is rebuilt whenever the widget switches away from it, and used to
+// come back on Iron condor / Universe every time -- a watchlist screen had to
+// be set up again after every glance at the chain. The two choices are kept
+// per browser; a blocked or empty storage just means the defaults.
+const STORE_STRATEGY = "screener.strategy";
+const STORE_UNIVERSE = "screener.universe";
+
+function stored(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function store(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Private window or blocked storage: the choice lasts for this visit only.
+  }
+}
+
 export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const { symbols } = useWatchlist();
-  const [strategy, setStrategy] = useState<ScreenStrategy>("iron_condor");
+  const [strategy, setStrategyState] = useState<ScreenStrategy>(() => {
+    const saved = stored(STORE_STRATEGY);
+    return STRATEGIES.some((b) => b.key === saved) ? (saved as ScreenStrategy) : "iron_condor";
+  });
+  const setStrategy = (next: ScreenStrategy) => {
+    setStrategyState(next);
+    store(STORE_STRATEGY, next);
+  };
   const [result, setResult] = useState<ScreenResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -389,7 +419,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   // universe by default: the watchlist answers "is this one worth it",
   // the universe answers "where is there anything worth it at all", and
   // the second is the question a screener exists for.
-  const [universe, setUniverse] = useState(true);
+  const [universe, setUniverseState] = useState(() => stored(STORE_UNIVERSE) !== "watchlist");
+  const toggleUniverse = () =>
+    setUniverseState((v) => {
+      store(STORE_UNIVERSE, v ? "watchlist" : "universe");
+      return !v;
+    });
   // The screen's own bounds. The backend has always taken them; until now
   // the tab sent none, so every run was the 30-60 day default -- and on
   // this market that was the difference between +1.54 and +14.10 of
@@ -489,7 +524,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           type="button"
           className="timeframe-button"
           aria-pressed={universe}
-          onClick={() => setUniverse((v) => !v)}
+          onClick={toggleUniverse}
           title="Screen the tradable universe instead of the watchlist. Stage one narrows it on price and dollar volume -- numbers the scanner's universe already carries, so that part is free -- and only the survivors cost a chain fetch."
         >
           {universe ? "Universe" : "Watchlist"}
