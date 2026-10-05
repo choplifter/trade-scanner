@@ -35,6 +35,10 @@ export type VwapAnchor = "session" | "premarket";
 export type TimeZoneMode = "local" | "market";
 /** Which greek the option chain's greek column shows; the header cycles it. */
 export type ChainGreek = "delta" | "gamma" | "theta" | "vega";
+/** How the option chain sets its numbers: "readable" weights them (the mid
+ * first, bid/ask and open interest quieter), marks each mid's spread and
+ * guides the eye along the rows; "classic" is every number alike. */
+export type ChainLayout = "readable" | "classic";
 export const MARKET_TIME_ZONE = "America/New_York";
 export type DefaultChartType = "candles" | "line";
 export type MovingAverageType = "ema" | "sma";
@@ -104,6 +108,7 @@ export interface AppSettings {
   fillSound: boolean;
   /** The |delta| the chart's delta lines mark on the 30-60 day expiry. */
   deltaLines: number;
+  chainLayout: ChainLayout;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -130,6 +135,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   riskView: "chart",
   fillSound: true,
   deltaLines: 0.16,
+  chainLayout: "readable",
   movingAverages: DEFAULT_MOVING_AVERAGES.map((line) => ({ ...line })),
 };
 
@@ -242,6 +248,7 @@ function load(raw = getStored(STORAGE_KEY)): AppSettings {
       chainGreek: oneOf(parsed.chainGreek, ["delta", "gamma", "theta", "vega"] as const, DEFAULT_SETTINGS.chainGreek),
       riskView: oneOf(parsed.riskView, ["chart", "table"] as const, DEFAULT_SETTINGS.riskView),
       fillSound: typeof parsed.fillSound === "boolean" ? parsed.fillSound : DEFAULT_SETTINGS.fillSound,
+      chainLayout: oneOf(parsed.chainLayout, ["readable", "classic"] as const, DEFAULT_SETTINGS.chainLayout),
       deltaLines: (DELTA_LINE_CHOICES as readonly number[]).includes(parsed.deltaLines as number)
         ? (parsed.deltaLines as number)
         : DEFAULT_SETTINGS.deltaLines,

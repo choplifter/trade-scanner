@@ -198,6 +198,17 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
                 receives at once. In a replay these are Bid* and Ask*: derived from the last print, because no historical
                 quotes exist.
               </dd>
+              <dt>Readable layout · the dot</dt>
+              <dd>
+                With Settings → Display → Chain layout on Readable (the default): the mid is set bold and carries
+                the row, bid and ask, open interest and volume step back, IV is shown without its percent sign and
+                delta without its leading zero. The dot after each mid grades its quote: green up to 10 % of the mid
+                between bid and ask (the Screener's bar), amber to 25 % (a mid limit may need patience), red beyond
+                (a mid limit is mostly a wish), a hollow ring for no two-sided quote. The whole row lights under the
+                pointer, round strikes are ruled, each strike shows its distance from the price (hover it for the
+                same in standard deviations to expiry), and the price line is drawn in the accent colour. Classic
+                shows every number alike.
+              </dd>
               <dt>Δ / Γ / Θ / V</dt>
               <dd>
                 One greek column per side; click its header to cycle. Delta: how much the option moves per 1 $ move of

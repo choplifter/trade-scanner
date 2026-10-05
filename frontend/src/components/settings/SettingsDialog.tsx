@@ -428,6 +428,19 @@ export function SettingsDialog({
                 onChange={(v) => set("timeZone", v)}
               />
             </Row>
+            <Row
+              label="Chain layout"
+              hint="Readable: the mid first and bid/ask, open interest and volume quieter, a dot for how wide each quote is, whole-row hover, round strikes ruled and each strike's distance from the price. Classic: every number alike."
+            >
+              <Segmented
+                value={settings.chainLayout}
+                options={[
+                  { key: "readable", label: "Readable" },
+                  { key: "classic", label: "Classic" },
+                ]}
+                onChange={(v) => set("chainLayout", v)}
+              />
+            </Row>
           </div>
         )}
 

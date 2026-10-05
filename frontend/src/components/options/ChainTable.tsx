@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DragEvent } from "react";
+import type { DragEvent, ReactNode } from "react";
 
 import type { ChainResponse, LegQuote, OptionKind, StrikeRow } from "../../types/options";
 import { formatStrike } from "../../utils/occ";
@@ -7,6 +7,7 @@ import { formatClock, timeZoneLabel } from "../../utils/time";
 import { symbolDragProps } from "../../utils/dragSymbol";
 import { updateSettings, type ChainGreek } from "../../api/settings";
 import { useSettings } from "../../hooks/useSettings";
+import { atmIv } from "../../utils/atmIv";
 
 /** The greek column cycles Δ -> Γ -> Θ -> V on a header click; the choice is
  * kept in the settings so every chain shows the same one. One column
@@ -87,6 +88,67 @@ function oi(value: number): string {
   return value >= 10_000 ? `${(value / 1000).toFixed(1)}k` : String(value);
 }
 
+// --- the readable layout -------------------------------------------------------
+
+/** What crossing a quote costs against its mid, as the Screener reads it:
+ * up to 10 % passes its quote-width criterion, past 25 % a mid limit is
+ * mostly a wish. Null without a two-sided quote. */
+export function spreadFraction(quote: LegQuote | null): number | null {
+  if (!quote || quote.bid == null || quote.ask == null || quote.bid <= 0 || quote.ask < quote.bid) return null;
+  const mid = (quote.bid + quote.ask) / 2;
+  return mid > 0 ? (quote.ask - quote.bid) / mid : null;
+}
+const SPREAD_TIGHT = 0.1;
+const SPREAD_WIDE = 0.25;
+
+export function spreadGrade(fraction: number | null): "tight" | "fair" | "wide" | "none" {
+  if (fraction == null) return "none";
+  if (fraction <= SPREAD_TIGHT) return "tight";
+  if (fraction <= SPREAD_WIDE) return "fair";
+  return "wide";
+}
+
+/** Fewer characters for the same number: IV without its percent sign (the
+ * header says it), delta without its leading zero, open interest in k from
+ * a thousand. */
+function readableIv(value: number | null): string {
+  return value == null ? "—" : (value * 100).toFixed(0);
+}
+
+function readableGreek(value: number | null, digits: number, key: ChainGreek): string {
+  if (value == null) return "—";
+  const text = value.toFixed(digits);
+  return key === "delta" ? text.replace(/^(-?)0\./, "$1.") : text;
+}
+
+function readableCount(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value);
+}
+
+/** The strike interval the eye should be ruled by: the chain's usual step
+ * times about five, rounded to a number people count in. */
+export function roundStep(strikes: number[]): number | null {
+  const diffs: number[] = [];
+  for (let i = 1; i < strikes.length; i++) {
+    const d = Math.round((strikes[i] - strikes[i - 1]) * 100) / 100;
+    if (d > 0) diffs.push(d);
+  }
+  if (diffs.length === 0) return null;
+  const counts = new Map<number, number>();
+  for (const d of diffs) counts.set(d, (counts.get(d) ?? 0) + 1);
+  const step = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
+  return [1, 2.5, 5, 10, 25, 50, 100, 250, 500].find((n) => n >= step * 4) ?? null;
+}
+
+/** "-2.1%" from spot, and the same distance in standard deviations to
+ * expiry when the chain carries an at-the-money IV. */
+function distance(strike: number, spot: number, sigmaToExpiry: number | null): { pct: string; sigma: string | null } {
+  const rel = strike / spot - 1;
+  const pctText = `${rel > 0 ? "+" : rel < 0 ? "−" : ""}${Math.abs(rel * 100).toFixed(1)}%`;
+  const sigma = sigmaToExpiry && sigmaToExpiry > 0 ? Math.log(strike / spot) / sigmaToExpiry : null;
+  return { pct: pctText, sigma: sigma == null ? null : `${sigma > 0 ? "+" : ""}${sigma.toFixed(2)}σ` };
+}
+
 /** A replayed print older than this at the replay clock is shown faded. */
 const STALE_MS = 30 * 60 * 1000;
 
@@ -105,6 +167,7 @@ function Side({
   oiUnreported,
   asOfMs,
   greek,
+  readable,
   onPick,
   onMoveLeg,
 }: {
@@ -122,6 +185,8 @@ function Side({
   oiUnreported: boolean;
   asOfMs: number;
   greek: { key: ChainGreek; digits: number };
+  /** The weighted layout (Settings → Display → Chain layout). */
+  readable: boolean;
   onPick: () => void;
   onMoveLeg?: (from: LegRef, to: LegRef) => void;
 }) {
@@ -141,27 +206,58 @@ function Side({
   ]
     .filter(Boolean)
     .join(" ");
-  const oiCell = replay || oiUnreported ? "—" : oi(quote?.open_interest ?? 0);
+  const count = readable ? readableCount : oi;
+  const oiCell = replay || oiUnreported ? "—" : count(quote?.open_interest ?? 0);
   // Volume is the session's own trades: a strike with open interest but no
   // volume is an old position nobody is touching today. Unknown (a replayed
   // day, or a chain built without day bars) reads as a dash, not as zero.
-  const volCell = replay || quote?.volume == null ? "—" : oi(quote.volume);
-  const greekCell = num(greekValue(quote, greek.key), greek.digits);
-  const cells =
-    kind === "call"
-      ? [oiCell, volCell, pct(quote?.iv ?? null), greekCell, num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2)]
-      : [num(quote?.bid ?? null, 2), num(quote?.mid ?? null, 2), num(quote?.ask ?? null, 2), greekCell, pct(quote?.iv ?? null), volCell, oiCell];
+  const volCell = replay || quote?.volume == null ? "—" : count(quote.volume);
+  const greekValueNow = greekValue(quote, greek.key);
+  const greekCell = readable ? readableGreek(greekValueNow, greek.digits, greek.key) : num(greekValueNow, greek.digits);
+  const ivCell = readable ? readableIv(quote?.iv ?? null) : pct(quote?.iv ?? null);
+  // The mid carries a dot for how wide its quote is -- not in a replay,
+  // where bid and ask are the last print plus a fixed slippage.
+  const fraction = readable && !replay ? spreadFraction(quote) : null;
+  const grade = readable && !replay && quote ? spreadGrade(fraction) : null;
+  const midCell: ReactNode = (
+    <>
+      {num(quote?.mid ?? null, 2)}
+      {grade && (
+        <span
+          className={`spread-dot spread-${grade}`}
+          aria-label={grade === "none" ? "no two-sided quote" : `${grade} spread`}
+        />
+      )}
+    </>
+  );
+  type Cell = { text: ReactNode; col: "meta" | "iv" | "greek" | "quote" | "mid"; title?: string };
+  const midTitle =
+    grade == null
+      ? undefined
+      : grade === "none"
+        ? "No two-sided quote: the mid is a last print or nothing"
+        : `Bid/ask ${((fraction ?? 0) * 100).toFixed(0)} % of the mid -- ${grade === "tight" ? "tight (up to 10 %, the Screener's bar)" : grade === "fair" ? "fair (10-25 %): a mid limit may need patience" : "wide (over 25 %): a mid limit is mostly a wish"}`;
+  const left: Cell[] = [
+    { text: oiCell, col: "meta" },
+    { text: volCell, col: "meta" },
+    { text: ivCell, col: "iv" },
+    { text: greekCell, col: "greek" },
+    { text: num(quote?.bid ?? null, 2), col: "quote" },
+    { text: midCell, col: "mid", title: midTitle },
+    { text: num(quote?.ask ?? null, 2), col: "quote" },
+  ];
+  const cells: Cell[] = kind === "call" ? left : [left[4], left[5], left[6], left[3], left[2], left[1], left[0]];
   const printNote = lastAt != null ? ` -- last print ${lastPrintLabel(lastAt)} ${timeZoneLabel()}${stale ? " (stale)" : ""}` : replay && quote ? " -- no print yet today" : "";
   return (
     <>
       {cells.map((cell, i) => (
         <td
           key={i}
-          className={`${cls}${dropping ? " chain-drop-target" : ""}`}
+          className={`${cls} chain-col-${cell.col}${dropping ? " chain-drop-target" : ""}`}
           onClick={pickable && quote ? onPick : undefined}
           title={
             quote
-              ? `${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""}${greeksNote(quote)}${printNote}${
+              ? `${cell.title ? `${cell.title}\n` : ""}${quote.symbol}${quote.tradable ? "" : " (not tradable)"}${role === "body" ? " -- body, sold x2" : ""}${greeksNote(quote)}${printNote}${
                   dragsLeg ? " -- drag onto another strike to move this leg" : " -- drag onto a chart for its premium chart"
                 }`
               : "no contract"
@@ -195,7 +291,7 @@ function Side({
               }
             : {})}
         >
-          {cell}
+          {cell.text}
         </td>
       ))}
     </>
@@ -217,7 +313,13 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
   );
   const asOfMs = Date.parse(chain.as_of);
   const [settings] = useSettings();
+  const readable = settings.chainLayout === "readable";
   const greek = GREEKS.find((g) => g.key === settings.chainGreek) ?? GREEKS[0];
+  const ruled = readable ? roundStep(chain.rows.map((r) => r.strike)) : null;
+  // One standard deviation to expiry, for the strike's distance in sigmas.
+  const ivNow = readable ? atmIv(chain) : null;
+  const yearsLeft = Math.max(0, (Date.parse(`${chain.expiry}T20:00:00Z`) - Date.parse(chain.as_of)) / (365 * 24 * 3600 * 1000));
+  const sigmaToExpiry = ivNow && yearsLeft > 0 ? ivNow * Math.sqrt(yearsLeft) : null;
   const cycleGreek = () => {
     const next = GREEKS[(GREEKS.indexOf(greek) + 1) % GREEKS.length];
     updateSettings({ chainGreek: next.key });
@@ -263,7 +365,7 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
 
   return (
     <div className="chain-scroll" ref={scrollRef}>
-      <table className="performance-table chain-table">
+      <table className={`performance-table chain-table${readable ? " chain-readable" : ""}`}>
         <thead>
           <tr>
             <th colSpan={7} className="chain-group">
@@ -277,7 +379,7 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
           <tr>
             <th title={oiTitle}>OI</th>
             <th title={volTitle}>Vol</th>
-            <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV</th>
+            <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV{readable ? " %" : ""}</th>
             {greekHeader}
             <th title={quoteTitle}>Bid{replay ? "*" : ""}</th>
             <th>{replay ? "Last" : "Mid"}</th>
@@ -287,7 +389,7 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
             <th>{replay ? "Last" : "Mid"}</th>
             <th title={quoteTitle}>Ask{replay ? "*" : ""}</th>
             {greekHeader}
-            <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV</th>
+            <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV{readable ? " %" : ""}</th>
             <th title={volTitle}>Vol</th>
             <th title={oiTitle}>OI</th>
           </tr>
@@ -299,7 +401,10 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
                 <td colSpan={15}>spot {chain.spot.toFixed(2)}</td>
               </tr>
             ) : (
-              <tr key={row.strike}>
+              <tr
+                key={row.strike}
+                className={ruled && Math.abs(row.strike / ruled - Math.round(row.strike / ruled)) < 1e-6 ? "chain-row-round" : undefined}
+              >
                 <Side
                   quote={row.call}
                   kind="call"
@@ -311,10 +416,26 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
                   replay={replay}
                   oiUnreported={oiUnreported}
                   asOfMs={asOfMs}
-                greek={greek}
+                  greek={greek}
+                  readable={readable}
                   onPick={() => onPick("call", row.strike)}
                 />
-                <td className="chain-strike">{formatStrike(row.strike)}</td>
+                {readable ? (
+                  (() => {
+                    const d = distance(row.strike, chain.spot, sigmaToExpiry);
+                    return (
+                      <td
+                        className="chain-strike"
+                        title={`${formatStrike(row.strike)}: ${d.pct} from the price${d.sigma ? `, ${d.sigma} to expiry at the at-the-money IV` : ""}`}
+                      >
+                        {formatStrike(row.strike)}
+                        <span className="chain-dist">{d.pct}</span>
+                      </td>
+                    );
+                  })()
+                ) : (
+                  <td className="chain-strike">{formatStrike(row.strike)}</td>
+                )}
                 <Side
                   quote={row.put}
                   kind="put"
@@ -326,7 +447,8 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
                   replay={replay}
                   oiUnreported={oiUnreported}
                   asOfMs={asOfMs}
-                greek={greek}
+                  greek={greek}
+                  readable={readable}
                   onPick={() => onPick("put", row.strike)}
                 />
               </tr>
