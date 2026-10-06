@@ -428,3 +428,22 @@ def test_more_families_than_seats_shows_one_of_each_it_can_fit():
     chosen, dropped = represent_each_family(items, lambda r: r["strategy"], top_k=2, per_strategy_cap=3)
 
     assert [r["strategy"] for r in chosen] == ["a", "b"] and dropped == 0
+
+
+def test_a_structure_priced_at_its_own_fair_value_has_an_ev_of_about_zero():
+    """Priced at Black-Scholes on the same flat volatility the expectation
+    is taken under, a spread is worth what it costs: the mean P/L is ~0,
+    and a cost still to pay comes straight off it."""
+    from app.options.optimizer import expected_value
+
+    years = _years_to(NEAR)
+    legs = [
+        PayoffLeg(kind="put", strike=95.0, side="sell", expiry=NEAR, iv=IV),
+        PayoffLeg(kind="put", strike=90.0, side="buy", expiry=NEAR, iv=IV),
+    ]
+    fair = bs_price("put", SPOT, 95.0, years, IV) - bs_price("put", SPOT, 90.0, years, IV)
+    ev = expected_value(legs, -fair, _horizon(NEAR), SPOT, IV, years)
+    assert ev == pytest.approx(0.0, abs=1.0), "a dollar of grid error on a $500 spread"
+    assert expected_value(legs, -fair, _horizon(NEAR), SPOT, IV, years, cost=12.0) == pytest.approx(ev - 12.0, abs=0.01)
+    # Selling it for less than it is worth is a negative expectation.
+    assert expected_value(legs, -(fair - 0.30), _horizon(NEAR), SPOT, IV, years) == pytest.approx(ev - 30.0, abs=1.0)

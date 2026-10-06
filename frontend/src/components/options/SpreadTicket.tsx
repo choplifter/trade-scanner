@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import type { OptionEventsResponse } from "../../types/options";
+import { KeyFigures, keyFigures } from "./KeyFigures";
 import { NATENBERG, withBook } from "./bookRefs";
 
 import { OrderRejectedError } from "../../api/http";
@@ -92,6 +94,8 @@ interface SpreadTicketProps {
   legs: Legs | null;
   onResetLegs: () => void;
   account: OptionsAccountResponse | null;
+  /** The symbol's events (IV/RV, earnings) for the key figures. */
+  events?: OptionEventsResponse | null;
   mode: TradingMode;
   onSubmitted: () => void;
   /** Clicking a leg in the summary loads that contract's premium chart. */
@@ -358,6 +362,7 @@ export function SpreadTicket({
   legs,
   onResetLegs,
   account,
+  events = null,
   mode,
   onSubmitted,
   onSelectSymbol,
@@ -919,6 +924,7 @@ export function SpreadTicket({
             {spread.spot.toFixed(2)} · {spread.dte}d
             {!market && <CrossHint spread={spread} limit={limit} />}
           </span>
+          <KeyFigures figures={keyFigures(spread, events, account?.equity ?? null, spread.direction === "credit")} />
           <span>
             Max profit {spread.max_profit == null ? "unlimited" : money(spread.max_profit)} · max loss{" "}
             {spread.max_loss == null ? "unbounded" : money(spread.max_loss)}

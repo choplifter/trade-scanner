@@ -36,7 +36,7 @@ from app.options.models import (
     resolve_legs,
 )
 from app.options.distribution import Distribution
-from app.options.optimizer import chance_of_profit, position_pnl
+from app.options.optimizer import chance_of_profit, expected_value, position_pnl
 from app.services.market_clock import ET, current_session
 from app.options.occ import try_parse_occ
 from app.options.payoff import PayoffLeg, payoff_curve
@@ -744,7 +744,7 @@ class OptionsService:
         # implies (see app.options.custom): the chance of any profit at
         # expiry, and the chance the market reaches the nearest breakeven
         # at all before then -- the one a seller manages against.
-        chance = touch = None
+        chance = touch = ev = None
         sigma = atm_iv(chain)
         years = max(0.0, (payoff.expiry - self._source.now().date()).days / 365.0) if payoff is not None else 0.0
         if payoff is not None and sigma and years > 0:
@@ -766,6 +766,10 @@ class OptionsService:
                 payoff_legs, price if direction == "debit" else -price, horizon, chain.spot, sigma, years, ticket.qty,
                 threshold=unpaid * 100 * ticket.qty,
                 dist=Distribution.from_chain(chain.rows, chain.spot, sigma, years),
+            )
+            ev = expected_value(
+                payoff_legs, price if direction == "debit" else -price, horizon, chain.spot, sigma, years, ticket.qty,
+                cost=unpaid * 100 * ticket.qty,
             )
             barrier = nearest_breakeven(breakevens, chain.spot)
             if barrier is not None:
@@ -829,6 +833,7 @@ class OptionsService:
             alpaca_limit_price=alpaca_limit(direction, price),
             order_type=ticket.order_type,
             chance=chance,
+            expected_value=ev,
             touch=touch,
             touch_at=nearest_breakeven(breakevens, chain.spot),
             naked=bool(bare),

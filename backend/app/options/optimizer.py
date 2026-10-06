@@ -564,6 +564,43 @@ def chance_of_profit(
     return None if total is None else round(min(1.0, max(0.0, total)), 4)
 
 
+def expected_value(
+    legs: list[PayoffLeg],
+    net_price: float,
+    horizon: datetime,
+    spot: float,
+    sigma: float,
+    years: float,
+    qty: int = 1,
+    cost: float = 0.0,
+) -> float | None:
+    """The mean P/L of the position on the horizon, in dollars, under the
+    at-the-money lognormal -- less `cost`, the dollars of crossing the market
+    still to pay. Deliberately not under the chain's smile: there, every
+    structure at its mids is worth about zero by construction, so the figure
+    would say nothing. On the ATM distribution it says how the strikes are
+    priced against the money (as the Screener's EV does). None without a
+    volatility or with a leg that cannot be valued."""
+    if sigma <= 0 or years <= 0 or spot <= 0:
+        return None
+    width = sigma * math.sqrt(years)
+    mu = -0.5 * width * width
+    reach = CHANCE_SIGMA_REACH * width
+    step = 2 * reach / (CHANCE_GRID_POINTS - 1)
+    total = mass_total = 0.0
+    for i in range(CHANCE_GRID_POINTS):
+        x = -reach + i * step
+        mass = _norm_cdf((x + step / 2 - mu) / width) - _norm_cdf((x - step / 2 - mu) / width)
+        if mass <= 0:
+            continue
+        pnl = position_pnl(legs, net_price, spot * math.exp(x), horizon, qty)
+        if pnl is None:
+            return None
+        total += mass * pnl
+        mass_total += mass
+    return None if mass_total <= 0 else round(total / mass_total - cost, 2)
+
+
 def profit_mass(
     pnl_at, spot: float, width: float, threshold: float, kinks: list[float], *, cdf=None
 ) -> float | None:

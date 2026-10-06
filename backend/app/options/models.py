@@ -564,6 +564,9 @@ class ResolvedSpread(BaseModel):
     chance: float | None = None
     touch: float | None = None
     touch_at: float | None = None
+    # The mean P/L at expiry in dollars for the whole order, on the ATM
+    # lognormal and net of the cross still unpaid (optimizer.expected_value).
+    expected_value: float | None = None
     # A short leg nothing covers: `collateral` is then an estimate of the
     # broker's margin rather than the most this can lose.
     naked: bool = False

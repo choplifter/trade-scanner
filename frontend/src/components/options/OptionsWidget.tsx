@@ -874,6 +874,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   onUpdateLeg={(id, patch) => setBuilder((current) => updateLeg(current, id, patch))}
                   onRemoveLeg={(id) => setBuilder((current) => removeLeg(current, id))}
                   account={spreads.account}
+                  events={events}
                   mode={mode}
                   onSubmitted={spreads.afterAction}
                   onSelectSymbol={onSelectSymbol}

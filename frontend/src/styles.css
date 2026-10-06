@@ -6614,3 +6614,31 @@ td.chain-side.chain-stale {
 .bc-import-table th {
   white-space: nowrap;
 }
+
+/* The five figures above a previewed structure (KeyFigures.tsx). */
+.key-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.key-figure {
+  padding: 1px 6px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.key-figure-label {
+  color: var(--text-muted, #8a8a8a);
+}
+
+.key-figure.good {
+  border-color: var(--delta-up);
+}
+
+.key-figure.bad {
+  border-color: var(--delta-down);
+}

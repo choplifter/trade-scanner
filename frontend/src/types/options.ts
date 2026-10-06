@@ -320,6 +320,9 @@ export interface ResolvedSpread {
   chance?: number | null;
   touch?: number | null;
   touch_at?: number | null;
+  /** Mean P/L at expiry in dollars for the whole order, on the ATM lognormal,
+   * net of the cross still unpaid (backend optimizer.expected_value). */
+  expected_value?: number | null;
   /** A short leg nothing covers: `collateral` is then the broker's
    * estimated margin rather than the most this can lose. */
   naked?: boolean;
