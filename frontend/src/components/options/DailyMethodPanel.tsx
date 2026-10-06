@@ -5,6 +5,7 @@ import type { CloseSpreadRequest, LoadableStructure, SpreadTicketRequest } from 
 import type { DailyMethodResult } from "../../types/playbooks";
 import { formatExpiry } from "../../utils/occ";
 import { NATENBERG, withBook } from "./bookRefs";
+import { requestTicket } from "./ticketIntent";
 
 interface DailyMethodPanelProps {
   account: "paper" | "sim";
@@ -75,7 +76,7 @@ export function DailyMethodPanel({ account, onLoad, onCloseSpread, onSelectSymbo
           <p className={`pb-daily-light ${m.status}`}>
             <strong>Market {m.status === "green" ? "green" : "red"}</strong>
             {m.reason ? ` — ${m.reason}` : ""} · SPY {m.spy_close?.toFixed(2)} vs 200-day {m.spy_sma200?.toFixed(2) ?? "—"} · SPY
-            IV {pct(m.spy_iv, 1)} (limit {pct(m.spy_iv_limit, 1)}) · open risk {money(result.open_risk)} of{" "}
+            IV {pct(m.spy_iv, 1)} (limit {pct(m.spy_iv_limit, 1)}) · risk held + proposed {money(result.open_risk)} of{" "}
             {money(result.risk_cap)} · equity {money(result.equity)} · {result.as_of}
           </p>
 
@@ -140,7 +141,17 @@ export function DailyMethodPanel({ account, onLoad, onCloseSpread, onSelectSymbo
                       <button
                         type="button"
                         className="row-action"
-                        onClick={() => onLoad({ strategy: "bull_put", ticket: e.ticket as unknown as SpreadTicketRequest })}
+                        onClick={() => {
+                          const structure: LoadableStructure = { strategy: "bull_put", ticket: e.ticket as unknown as SpreadTicketRequest };
+                          // onLoad only plants a ticket on the symbol the widget
+                          // already shows; for another one, switch to it and hand
+                          // the ticket over once its chain is in -- the Screener's
+                          // way (ticketIntent).
+                          if (!onLoad(structure)) {
+                            onSelectSymbol?.(e.symbol);
+                            requestTicket({ symbol: e.symbol, structure });
+                          }
+                        }}
                         title="Fills the ticket with this spread at the mid. Nothing is sent until you place it."
                       >
                         Load
