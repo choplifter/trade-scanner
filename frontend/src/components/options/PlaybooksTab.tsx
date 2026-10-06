@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DailyMethodPanel } from "./DailyMethodPanel";
 
 import { OrderRejectedError } from "../../api/http";
 import { previewCloseSpread } from "../../api/options";
@@ -729,6 +730,7 @@ export function PlaybooksTab({ symbol, mode, campaigns, spreads, intent, onInten
 
   return (
     <div className="idea-tab pb-tab">
+      <DailyMethodPanel account={account} onLoad={onLoad} onCloseSpread={onCloseSpread} onSelectSymbol={onSelectSymbol} />
       <div className="pb-start">
         {symbol ? (
           running ? (

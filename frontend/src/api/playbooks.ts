@@ -13,6 +13,7 @@ import type {
   CampaignAccount,
   CampaignCreate,
   CampaignPatch,
+  DailyMethodResult,
   PlaybookScriptsResponse,
 } from "../types/playbooks";
 import type { TradingRejection } from "../types/trading";
@@ -73,4 +74,10 @@ export function addCampaignNote(id: string, note: string): Promise<Campaign> {
  * (Black-Scholes) chains -- how the rules behave, not what they earned. */
 export function runPlaybookBacktest(body: BacktestRequest): Promise<BacktestResult> {
   return send<BacktestResult>("POST", `${BASE}/backtest`, body);
+}
+
+/** Today's proposals under the daily method -- market light, exits for held
+ * bull put spreads, entries across the watchlist. Proposes only. */
+export function runDailyMethod(account: "paper" | "sim"): Promise<DailyMethodResult> {
+  return send<DailyMethodResult>("POST", `${BASE}/daily-method`, { account });
 }

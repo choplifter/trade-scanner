@@ -230,3 +230,67 @@ export interface BacktestResult {
   summary: BacktestSummary;
   disclaimer: string;
 }
+
+/** POST /trading/options/playbooks/daily-method -- backend app/options/daily_method.py. */
+export interface DailyMethodEntry {
+  symbol: string;
+  group: string;
+  expiry: string;
+  dte: number;
+  spot: number;
+  iv: number;
+  realized_vol: number | null;
+  iv_rv: number | null;
+  iv_rank: number | null;
+  short_strike: number;
+  long_strike: number;
+  short_delta: number;
+  width: number;
+  credit_mid: number;
+  credit_natural: number;
+  contracts: number;
+  max_loss: number;
+  ticket: {
+    underlying: string;
+    strategy: "bull_put";
+    expiry: string;
+    qty: number;
+    long_strike: number;
+    short_strike: number;
+    limit_price: number;
+  };
+}
+
+export interface DailyMethodExit {
+  id: string;
+  symbol: string;
+  expiry: string;
+  dte: number;
+  qty: number;
+  strikes: [number, number];
+  credit: number;
+  pnl: number;
+  reason: string;
+  close: { legs: { symbol: string; qty: number }[]; qty: number };
+}
+
+export interface DailyMethodResult {
+  as_of: string;
+  account: "paper" | "sim";
+  equity: number;
+  open_risk: number;
+  risk_cap: number;
+  market: {
+    status: "green" | "red";
+    reason: string | null;
+    spy_close: number | null;
+    spy_sma200: number | null;
+    spy_iv: number | null;
+    spy_iv_mean20: number | null;
+    spy_iv_limit: number | null;
+    enough_history: boolean;
+  };
+  exits: DailyMethodExit[];
+  entries: DailyMethodEntry[];
+  skipped: { symbol: string; reason: string }[];
+}

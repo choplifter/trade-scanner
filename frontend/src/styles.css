@@ -6549,3 +6549,36 @@ td.chain-side.chain-stale {
   font-weight: 600;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
+
+/* The daily method's panel at the top of the Playbooks tab (DailyMethodPanel.tsx). */
+.pb-daily {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+
+.pb-daily h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+}
+
+.pb-daily-light {
+  margin: 6px 0;
+  padding: 4px 8px;
+  border-left: 3px solid var(--text-muted, #6b6b6b);
+  font-size: 12px;
+}
+
+.pb-daily-light.green {
+  border-left-color: var(--delta-up);
+}
+
+.pb-daily-light.red {
+  border-left-color: var(--delta-down);
+}
+
+.pb-daily-list {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+  font-size: 12px;
+}

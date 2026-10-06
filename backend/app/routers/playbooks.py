@@ -292,6 +292,107 @@ async def signal_backtest(body: SignalBacktestBody, request: Request, user: dict
     return out
 
 
+class DailyMethodBody(BaseModel):
+    """Which account to read positions and equity from, and the symbols to
+    consider (default: the user's watchlist)."""
+
+    account: Literal["paper", "sim"] = "paper"
+    symbols: list[str] | None = Field(default=None, max_length=60)
+
+
+# Closes behind today: the 200-day trend filter and a 20-session realised vol.
+DAILY_BARS_LOOKBACK_DAYS = 330
+
+
+@router.post("/daily-method")
+async def daily_method(body: DailyMethodBody, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """Today's proposals under the daily method (app.options.daily_method):
+    the market light, exits for held bull put spreads, and entries across
+    the watchlist. Proposes only -- nothing is placed."""
+    import asyncio
+
+    from app.market_data.bars import get_daily_bars_multi
+    from app.options.daily_method import evaluate, held_from_groups
+    from app.options.screener import atm_iv_of, pick_expiry
+    from app.playbooks.backtest import closes_by_session
+    from app.services.market_clock import ET
+
+    clients = getattr(request.app.state, "alpaca_clients", None)
+    iv_store = getattr(request.app.state, "iv_history_store", None)
+    if clients is None or iv_store is None:
+        raise HTTPException(status_code=503, detail="Market data or IV history not configured")
+    service = await _service_for(request, user, body.account)
+    symbols = body.symbols
+    if not symbols:
+        watchlist = getattr(request.app.state, "watchlist_store", None)
+        symbols = await watchlist.list_symbols(user["id"]) if watchlist is not None else []
+    symbols = list(dict.fromkeys(s.upper() for s in symbols))[:60]
+    if not symbols:
+        raise HTTPException(status_code=422, detail="No symbols: pass some, or add them to the watchlist")
+    today = datetime.now(UTC).astimezone(ET).date()
+    everything = sorted(set(symbols) | {"SPY"})
+
+    try:
+        bars = await get_daily_bars_multi(clients, everything, lookback_days=DAILY_BARS_LOOKBACK_DAYS)
+        closes = {s.upper(): [c for _, c in closes_by_session(rows)] for s, rows in bars.items()}
+        series = {s: await asyncio.to_thread(iv_store.series_sync, s) for s in everything}
+        account = await service.account()
+        groups = await service.spreads()
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except Exception:
+        logger.exception("Daily method data failed")
+        raise HTTPException(status_code=502, detail="Failed to load closes, IV history or the account")
+
+    chains, atm, chain_errors = {}, {}, {}
+    for symbol in everything:
+        try:
+            strip = await service.expiries(symbol)
+            listed = [date.fromisoformat(e["expiry"]) for e in strip.get("expiries", [])]
+            expiry = pick_expiry(listed, today, 30, 60)
+            if expiry is None:
+                chain_errors[symbol] = "no listed expiry 30-60 days out"
+                continue
+            chain = await service.chain(symbol, expiry)
+            chains[symbol] = chain
+            atm[symbol] = atm_iv_of(chain.rows, chain.spot)
+        except Exception as exc:  # one symbol failing must not stop the rest
+            chain_errors[symbol] = f"{type(exc).__name__}: {exc}"
+
+    history = {s: [v for d, v in sorted(series[s].items()) if d < today] for s in everything}
+    spy_ivs = history["SPY"] + ([atm["SPY"]] if atm.get("SPY") else [])
+    equity = float(account.get("equity") or 0.0)
+    if equity <= 0:
+        raise HTTPException(status_code=422, detail="The account reports no equity to size against")
+
+    outcome = evaluate(
+        today=today,
+        equity=equity,
+        symbols=symbols,
+        closes=closes,
+        iv_history=history,
+        chains=chains,
+        atm_iv=atm,
+        spy_closes=closes.get("SPY", []),
+        spy_ivs=spy_ivs,
+        held=held_from_groups(groups, today),
+    )
+    for symbol, why in chain_errors.items():
+        if symbol in symbols:
+            outcome.skip(symbol, f"chain unavailable: {why}")
+    return {
+        "as_of": today.isoformat(),
+        "account": body.account,
+        "equity": round(equity, 2),
+        "open_risk": outcome.open_risk,
+        "risk_cap": round(0.05 * equity, 2),
+        "market": outcome.market,
+        "exits": outcome.exits,
+        "entries": outcome.entries,
+        "skipped": outcome.skipped,
+    }
+
+
 class NoteBody(BaseModel):
     note: str = Field(min_length=1, max_length=500)
 
