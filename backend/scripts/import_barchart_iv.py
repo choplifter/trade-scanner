@@ -40,17 +40,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--dir", default=os.path.join(os.path.expanduser("~"), "Downloads"))
     parser.add_argument("--as-of", type=date.fromisoformat, default=None, help="last session in the files (default: newest row)")
+    parser.add_argument(
+        "--days", type=int, default=365, help="calendar days of history to keep (365: the rank's year; 730 for a 2Y export)"
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     files: dict[str, str] = {}
-    for name in sorted(os.listdir(args.dir)):
+    # Newest download per symbol: a later export (a 2Y one after a 1Y, or a
+    # browser's "(1)" duplicate) supersedes an earlier one.
+    for name in sorted(os.listdir(args.dir), key=lambda n: os.path.getmtime(os.path.join(args.dir, n))):
         symbol = symbol_from_filename(name)
-        # A browser's "(1)" duplicate of the same export: one is enough.
         if symbol in EXCLUDED:
             print(f"{symbol:6s} skipped: excluded (see EXCLUDED)")
             continue
-        if symbol and symbol not in files:
+        if symbol:
             files[symbol] = os.path.join(args.dir, name)
     if not files:
         print(f"No *_options-overview-history-*.csv in {args.dir}")
@@ -64,7 +68,7 @@ def main() -> None:
         with open(path, encoding="utf-8-sig") as fh:
             text = fh.read()
         as_of = args.as_of or newest_session(text)
-        readings = parse_history(text, as_of=as_of) if as_of else []
+        readings = parse_history(text, as_of=as_of, days=args.days) if as_of else []
         added = 0 if args.dry_run else store.seed_sync(symbol, readings, source=SOURCE_BARCHART, dte=BARCHART_DTE)
         total += added
         span = f"{readings[0][0]} to {readings[-1][0]}" if readings else "nothing in the window"

@@ -227,9 +227,10 @@ class SignalBacktestBody(BaseModel):
 
 
 # Closes behind the first priced session: the 200-day trend filter needs
-# ~290 calendar days before the IV history starts, which is about a year
-# back -- so roughly two years in all.
-SIGNAL_BARS_LOOKBACK_DAYS = 760
+# ~290 calendar days before the IV history starts. The fetch reaches back
+# that far behind the oldest IV reading of any symbol walked -- a year for
+# most, to 2018 for those seeded from Barchart's full export.
+SIGNAL_TREND_LEAD_DAYS = 300
 
 
 @router.post("/signal-backtest")
@@ -257,9 +258,13 @@ async def signal_backtest(body: SignalBacktestBody, request: Request, user: dict
     if not symbols:
         raise HTTPException(status_code=422, detail="No symbols: pass some, or add them to the watchlist")
     try:
-        bars = await get_daily_bars_multi(clients, symbols, lookback_days=SIGNAL_BARS_LOOKBACK_DAYS)
-        closes = {s.upper(): closes_by_session(rows) for s, rows in bars.items()}
         ivs = {s: await asyncio.to_thread(iv_store.series_sync, s) for s in symbols}
+        oldest = min((min(series) for series in ivs.values() if series), default=None)
+        from datetime import date as _date
+
+        lookback = ((_date.today() - oldest).days if oldest else 365) + SIGNAL_TREND_LEAD_DAYS
+        bars = await get_daily_bars_multi(clients, symbols, lookback_days=lookback)
+        closes = {s.upper(): closes_by_session(rows) for s, rows in bars.items()}
     except Exception:
         logger.exception("Signal backtest data failed")
         raise HTTPException(status_code=502, detail="Failed to load closes or IV history")
