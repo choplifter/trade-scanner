@@ -137,3 +137,9 @@ def test_held_spreads_are_read_from_the_accounts_bull_put_groups_only():
     held = held_from_groups(groups, TODAY)
     assert len(held) == 1 and held[0].short_strike == 48.0 and held[0].long_strike == 46.5
     assert held[0].credit == pytest.approx(0.40) and held[0].max_loss == pytest.approx((1.5 - 0.40) * 100 * 2)
+
+
+def test_premium_under_the_iv_floor_is_not_sold():
+    out = _evaluate(atm_iv={"XLF": 0.07, "SPY": 0.25, "QQQ": 0.25})
+    assert "XLF" not in [e["symbol"] for e in out.entries]
+    assert any(s["symbol"] == "XLF" and "floor" in s["reason"] for s in out.skipped)

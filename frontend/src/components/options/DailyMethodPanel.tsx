@@ -15,7 +15,7 @@ interface DailyMethodPanelProps {
 }
 
 const RULES = withBook(
-  "The daily method, run once after the close. Market light: red while SPY is below its 200-day average or its implied volatility runs more than 20 % above its 20-day mean -- no new premium sold then. Entries, richest first: implied rich (IV/RV at least 1.20 or IV rank at least 60 %), no position in the symbol or its group, a bull put spread about 45 days out with the short put near 0.30 delta and the long one about 3 % of spot below, sized so its maximum loss is at most 1 % of equity, all open risk together at most 5 %. Exits: half the credit earned, a loss of twice the credit, or 21 days left. It proposes; nothing is placed until you send the ticket. Backtested 2019-2026 on seven ETFs with synthetic prices at the real daily IV -- positive in both halves, small returns, no skew in the prices.",
+  "The daily method, run once after the close. Market light: red while SPY is below its 200-day average or its implied volatility runs more than 20 % above its 20-day mean -- no new premium sold then. Entries, richest first: implied rich (IV/RV at least 1.20 or IV rank at least 60 %), no position in the symbol or its group, a bull put spread about 45 days out with the short put near 0.30 delta and the long one about 3 % of spot below, sized so its maximum loss is at most 1 % of equity, all open risk together at most 5 %. Exits: half the credit earned, a loss of twice the credit, or 21 days left. It proposes; nothing is placed until you send the ticket. Below 10 % implied volatility nothing is sold: the premium cannot carry the bid/ask. Backtested 2019-2026 on seven ETFs with synthetic prices at the real daily IV and realistic costs: no robust edge -- experimental, paper only.",
   NATENBERG.ivAsPredictor,
   NATENBERG.verticals,
 );
@@ -70,6 +70,11 @@ export function DailyMethodPanel({ account, onLoad, onCloseSpread, onSelectSymbo
           {account === "paper" ? "paper account" : "simulated account"}
         </span>
       </div>
+      <p className="pb-daily-warning">
+        Experimental — paper trading only. Backtested 2019–2026 with realistic costs it lost in 2019–2022 (profit factor
+        0.86) and won 2023–2026 mostly on one symbol (GLD). It is running to see what real chains, skew and fills do, not
+        because it has shown an edge.
+      </p>
       {error && <p className="order-rejection">{error}</p>}
       {result && m && (
         <>

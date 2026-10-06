@@ -40,6 +40,7 @@ from app.options.signal_backtest import (
     CREDIT_STOP,
     CREDIT_TAKE,
     MAX_TOTAL_RISK,
+    MIN_IV,
     RISK_PER_TRADE,
     SHORT_DELTA,
     TIME_STOP_DTE,
@@ -212,6 +213,9 @@ def evaluate(
     for symbol, iv, rv, rank, past in readings:
         if iv is None:
             out.skip(symbol, "no at-the-money IV on a 30-60 day expiry")
+            continue
+        if iv < MIN_IV:
+            out.skip(symbol, f"IV {iv:.1%} under the {MIN_IV:.0%} floor: the premium cannot carry the bid/ask")
             continue
         verdict = regime(iv, rv, past)
         if verdict != "rich":

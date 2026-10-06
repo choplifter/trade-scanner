@@ -90,6 +90,11 @@ MIN_TICK = 0.02
 # the two legs' half-spreads. At 0.02 the backtest charged HYG-type
 # spreads less than half of that.
 MIN_LEG_SPREAD = 0.05
+# No premium sold below this implied volatility. At 7-10 % a 0.30-delta
+# vertical takes in 10-16 % of its width, and a nickel of bid/ask per leg
+# is a fifth or more of that (HYG and IEF; HYG over the year to
+# 2026-10-06 went from +267 to -225 once crossed at 0.05).
+MIN_IV = 0.10
 
 GROUPS = {
     "equity": {"SPY", "QQQ", "IWM", "DIA", "XLK", "SMH"},
@@ -432,6 +437,9 @@ def walk(
             kind = {"rich": "credit", "cheap": "debit"}.get(regime(iv, realized(past), iv_past) or "")
             if variant == "vol" and kind != "credit":
                 continue  # the control only ever sells rich premium
+            if kind == "credit" and iv < MIN_IV:
+                result.skip("implied volatility under the floor")
+                continue
             if kind == "credit" and off:
                 result.skip(off)
                 continue

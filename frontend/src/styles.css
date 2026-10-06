@@ -6582,3 +6582,11 @@ td.chain-side.chain-stale {
   padding-left: 18px;
   font-size: 12px;
 }
+
+.pb-daily-warning {
+  margin: 6px 0;
+  padding: 4px 8px;
+  border-left: 3px solid var(--warning, #c9a227);
+  font-size: 11px;
+  color: var(--text-muted, #9a9a9a);
+}
