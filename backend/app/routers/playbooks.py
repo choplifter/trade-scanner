@@ -11,7 +11,7 @@ Same conventions as the other trading routers: TradingError -> 422 with
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -222,8 +222,11 @@ class SignalBacktestBody(BaseModel):
     """Symbols to walk (default: the user's watchlist) and the methods."""
 
     symbols: list[str] | None = Field(default=None, max_length=60)
-    variants: list[Literal["trend", "band"]] = Field(default_factory=lambda: ["trend", "band"])
+    variants: list[Literal["trend", "band", "vol"]] = Field(default_factory=lambda: ["trend", "band", "vol"])
     starting_equity: float = Field(default=100_000.0, gt=0)
+    # Walk only these sessions: set rules on one stretch, check on another.
+    start: date | None = None
+    end: date | None = None
 
 
 # Closes behind the first priced session: the 200-day trend filter needs
@@ -260,9 +263,7 @@ async def signal_backtest(body: SignalBacktestBody, request: Request, user: dict
     try:
         ivs = {s: await asyncio.to_thread(iv_store.series_sync, s) for s in symbols}
         oldest = min((min(series) for series in ivs.values() if series), default=None)
-        from datetime import date as _date
-
-        lookback = ((_date.today() - oldest).days if oldest else 365) + SIGNAL_TREND_LEAD_DAYS
+        lookback = ((date.today() - oldest).days if oldest else 365) + SIGNAL_TREND_LEAD_DAYS
         bars = await get_daily_bars_multi(clients, symbols, lookback_days=lookback)
         closes = {s.upper(): closes_by_session(rows) for s, rows in bars.items()}
     except Exception:
@@ -278,8 +279,9 @@ async def signal_backtest(body: SignalBacktestBody, request: Request, user: dict
         "results": [],
     }
     for variant in body.variants:
-        result = walk(variant, closes, priced, starting_equity=body.starting_equity)
-        out["results"].append({**summarize(result, body.starting_equity), "curve": result.curve, "trades": result.trades})
+        result = walk(variant, closes, priced, starting_equity=body.starting_equity, start=body.start, end=body.end)
+        # "trade_log", not "trades": the summary's own "trades" is the count.
+        out["results"].append({**summarize(result, body.starting_equity), "curve": result.curve, "trade_log": result.trades})
     return out
 
 

@@ -95,3 +95,15 @@ def test_a_walk_on_a_rising_tape_keeps_inside_its_risk_caps():
             assert not (g1 == g2 and o2 < c1), "two positions open in one correlation group"
     assert all(t["max_loss"] <= RISK_PER_TRADE * 110_000 for t in result.trades)
     assert summary["max_drawdown_pct"] < 100 * MAX_TOTAL_RISK + 1
+
+
+def test_the_control_sells_rich_premium_without_a_signal_and_only_inside_its_dates():
+    closes, ivs = _tape(["SPY", "TLT", "GLD"])
+    days = sorted(ivs["SPY"])
+    start, end = days[20], days[80]
+    result = walk("vol", closes, ivs, start=start, end=end)
+    assert result.trades or result.curve
+    assert all(t["kind"] == "credit" and t["option"] == "put" for t in result.trades)
+    assert all(start.isoformat() <= d <= end.isoformat() for d, _ in result.curve)
+    assert not any(t["reason"] == "signal" for t in result.trades), "the control has no signal to exit on"
+    assert signal("vol", [100.0] * 30) == "bull" and signal_exit("vol", "bull", [100.0] * 30) is False

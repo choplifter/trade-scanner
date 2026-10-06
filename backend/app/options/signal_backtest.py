@@ -41,7 +41,10 @@ from typing import Literal
 
 from app.options.payoff import bs_price
 
-Variant = Literal["trend", "band"]
+# "vol" is the control: no price signal at all, a put spread sold whenever
+# implied volatility is rich. If the signals add nothing over it, they are
+# decoration on the volatility risk premium.
+Variant = Literal["trend", "band", "vol"]
 
 # Signals.
 TREND_SMA = 200
@@ -106,6 +109,8 @@ def _sma(values: list[float], n: int) -> float | None:
 
 def signal(variant: Variant, closes: list[float]) -> Literal["bull", "bear"] | None:
     """Today's entry signal from closes up to and including today."""
+    if variant == "vol":
+        return "bull" if len(closes) > RV_WINDOW else None
     if len(closes) < TREND_SMA + 1:
         return None
     price, trend = closes[-1], _sma(closes, TREND_SMA)
@@ -127,7 +132,10 @@ def signal(variant: Variant, closes: list[float]) -> Literal["bull", "bear"] | N
 
 
 def signal_exit(variant: Variant, direction: str, closes: list[float]) -> bool:
-    """Whether the signal that opened a position has run its course."""
+    """Whether the signal that opened a position has run its course. The
+    control has none: its positions leave on target, stop or time."""
+    if variant == "vol":
+        return False
     price = closes[-1]
     if variant == "trend":
         prior = closes[-DONCHIAN_EXIT - 1 : -1]
@@ -305,10 +313,17 @@ def walk(
     ivs: dict[str, dict[date, float]],
     *,
     starting_equity: float = 100_000.0,
+    start: date | None = None,
+    end: date | None = None,
 ) -> Result:
-    """Run one signal method over the sessions where IV is known."""
+    """Run one signal method over the sessions where IV is known, between
+    `start` and `end` when given -- so rules set on one stretch can be
+    checked on another they never saw."""
     result = Result(variant)
-    days = sorted({d for series in ivs.values() for d in series})
+    days = sorted(
+        d for d in {d for series in ivs.values() for d in series}
+        if (start is None or d >= start) and (end is None or d <= end)
+    )
     by_day = {s: dict(series) for s, series in closes.items()}
     history = {s: [c for _, c in series] for s, series in closes.items()}
     index = {s: {d: i for i, (d, _) in enumerate(series)} for s, series in closes.items()}
@@ -370,6 +385,8 @@ def walk(
                 continue
             iv_past = [v for d, v in sorted(ivs[symbol].items()) if d < today][-252:]
             kind = {"rich": "credit", "cheap": "debit"}.get(regime(iv, realized(past), iv_past) or "")
+            if variant == "vol" and kind != "credit":
+                continue  # the control only ever sells rich premium
             if kind is None:
                 result.skip("regime in between")
                 continue
