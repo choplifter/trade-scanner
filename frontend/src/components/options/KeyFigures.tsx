@@ -50,6 +50,18 @@ export function keyFigures(
     ),
   });
 
+  const evRv = spread.expected_value_rv ?? null;
+  out.push({
+    label: "EV (RV)",
+    value: evRv == null ? "—" : `${evRv >= 0 ? "+" : "−"}$${Math.abs(evRv).toFixed(0)}`,
+    tone: evRv == null ? "neutral" : evRv > 0 ? "good" : "bad",
+    title: withBook(
+      "The same expected value with the odds taken from how much the stock is expected to move -- its realised volatility, the last 20 sessions blended toward the past year by the time left -- instead of how much the options price in. The EV above is about zero for anything priced at its own IV; this one is where implied running above realised shows up as an edge, or does not. A forecast, not a promise: realised volatility changes.",
+      NATENBERG.historicalVol,
+      NATENBERG.impliedDistributions,
+    ),
+  });
+
   const loss = spread.max_loss;
   const share = loss != null && equity ? Math.abs(loss) / equity : null;
   out.push({

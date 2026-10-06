@@ -25,7 +25,7 @@ const DEPTHS = [
   { rows: 1000, chains: 100, label: "first 1000 rows (slow)" },
 ];
 
-type SortKey = "Symbol" | "Expiry" | "Net" | "Loss BC" | "Ours skew" | "EV";
+type SortKey = "Symbol" | "Expiry" | "Net" | "Loss BC" | "Ours skew" | "EV" | "EV (RV)";
 const SORTS: Record<SortKey, (r: BarchartScreenRow) => number | string | null> = {
   Symbol: (r) => r.symbol,
   Expiry: (r) => r.dte,
@@ -33,6 +33,7 @@ const SORTS: Record<SortKey, (r: BarchartScreenRow) => number | string | null> =
   "Loss BC": (r) => r.loss_prob,
   "Ours skew": (r) => r.ours?.loss_prob_skew ?? null,
   EV: (r) => r.ours?.expected_value ?? null,
+  "EV (RV)": (r) => r.ours?.expected_value_rv ?? null,
 };
 
 function strikes(row: BarchartScreenRow): string {
@@ -53,8 +54,9 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [depth, setDepth] = useState(0);
-  // Best expectation first by default; rows without a figure sink.
-  const [sort, setSort] = useState<{ by: SortKey; desc: boolean }>({ by: "EV", desc: true });
+  // Best expectation at realised vol first by default -- the figure a screen
+  // for implied over realised is after; rows without a figure sink.
+  const [sort, setSort] = useState<{ by: SortKey; desc: boolean }>({ by: "EV (RV)", desc: true });
   const onSort = (by: SortKey) => setSort((s) => (s.by === by ? { by, desc: !s.desc } : { by, desc: by !== "Symbol" }));
   const sorted = useMemo(() => {
     if (!result) return [];
@@ -178,7 +180,8 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
                     {th("Loss BC", SKEW_TITLE)}
                     <th scope="col" title={SKEW_TITLE}>Ours flat</th>
                     {th("Ours skew", SKEW_TITLE)}
-                    {th("EV", "Our expected value per contract at today's natural prices for the same strikes, on the at-the-money distribution.")}
+                    {th("EV", "Our expected value per contract at today's natural prices for the same strikes, on the at-the-money distribution. About zero for anything priced at its own IV.")}
+                    {th("EV (RV)", "The same at the stock's realised-vol forecast instead of its IV: what the condor earns on average if the stock moves as its history says. Positive where implied runs enough above realised to pay for the risk and the bid/ask.")}
                     <th scope="col">Earnings</th>
                     <th scope="col" title="Barchart's IV rank / ours (ours needs 20 recorded sessions).">IV rank</th>
                     <th scope="col" aria-label="Actions" />
@@ -209,6 +212,12 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
                         <td className={worse ? "delta-down" : undefined}>{pct(o?.loss_prob_skew)}</td>
                         <td className={o?.expected_value == null ? undefined : o.expected_value > 0 ? "delta-up" : "delta-down"}>
                           {o?.expected_value == null ? "—" : o.expected_value.toFixed(0)}
+                        </td>
+                        <td
+                          className={o?.expected_value_rv == null ? undefined : o.expected_value_rv > 0 ? "delta-up" : "delta-down"}
+                          title={o?.rv_forecast != null ? `Realised-vol forecast ${(o.rv_forecast * 100).toFixed(1)} %` : undefined}
+                        >
+                          {o?.expected_value_rv == null ? "—" : o.expected_value_rv.toFixed(0)}
                         </td>
                         <td className={o?.earnings_inside ? "delta-down" : undefined} title={o?.earnings_inside ? "Reports before this expiry" : undefined}>
                           {o?.earnings_date ? formatExpiry(o.earnings_date) : "—"}

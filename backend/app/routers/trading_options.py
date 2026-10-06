@@ -638,6 +638,7 @@ async def import_barchart_screen(body: BarchartImportBody, request: Request, ser
     today = datetime.now(ET).date()
     checked = await enrich(
         rows, service, today=today, limit=body.limit, max_chains=body.max_chains,
+        clients=getattr(request.app.state, "alpaca_clients", None),
         iv_store=getattr(request.app.state, "iv_history_store", None),
         earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
     )

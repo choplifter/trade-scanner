@@ -323,6 +323,9 @@ export interface ResolvedSpread {
   /** Mean P/L at expiry in dollars for the whole order, on the ATM lognormal,
    * net of the cross still unpaid (backend optimizer.expected_value). */
   expected_value?: number | null;
+  /** The same at the realised-vol forecast instead of the ATM IV: what the
+   * order earns on average if the stock moves as its history says. */
+  expected_value_rv?: number | null;
   /** A short leg nothing covers: `collateral` is then the broker's
    * estimated margin rather than the most this can lose. */
   naked?: boolean;
@@ -1205,6 +1208,9 @@ export interface BarchartScreenRow {
     loss_prob_skew?: number;
     skew_fitted?: boolean;
     expected_value?: number;
+    /** EV at the realised-vol forecast, and that forecast. */
+    expected_value_rv?: number;
+    rv_forecast?: number;
     earnings_date?: string | null;
     earnings_inside?: boolean;
     iv_rank?: number | null;

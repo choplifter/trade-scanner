@@ -567,6 +567,10 @@ class ResolvedSpread(BaseModel):
     # The mean P/L at expiry in dollars for the whole order, on the ATM
     # lognormal and net of the cross still unpaid (optimizer.expected_value).
     expected_value: float | None = None
+    # The same at the realised-vol forecast (vol_forecast.forecast) instead of
+    # the ATM IV: what the order earns on average if the stock moves as its
+    # own history says it will. None in a replay (the forecast would look ahead).
+    expected_value_rv: float | None = None
     # A short leg nothing covers: `collateral` is then an estimate of the
     # broker's margin rather than the most this can lose.
     naked: bool = False

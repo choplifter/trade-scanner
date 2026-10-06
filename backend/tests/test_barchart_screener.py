@@ -131,3 +131,52 @@ def test_our_figures_are_priced_at_todays_natural_for_the_same_strikes():
     assert natural_net(nvda, chain) == pytest.approx(0.42)
     chain.rows = rows[:3]
     assert natural_net(nvda, chain) is None, "a leg missing from today's chain"
+
+
+def test_ev_at_realised_vol_rewards_selling_into_a_quiet_tape(monkeypatch):
+    """The same condor at the same price: on a stock that has barely moved
+    the realised-vol EV is well above the one on a stock that swings --
+    the edge a screen for implied over realised is after."""
+    import asyncio
+    import math
+    from datetime import datetime, timedelta, timezone
+
+    import app.market_data.bars as bars_module
+    from app.options.barchart_screener import enrich
+    from app.options.chain import Chain, LegQuote, StrikeRow
+
+    expiry = date(2026, 11, 20)
+    today = date(2026, 10, 6)
+
+    def quote(kind, k, spot=230.0, iv=0.35):
+        return LegQuote(symbol=f"{kind}{k}", strike=k, kind=kind, expiry=expiry, bid=1.0, ask=1.05, mid=1.02, last=1.0,
+                        bid_size=1, ask_size=1, delta=None, gamma=None, theta=None, iv=iv, open_interest=10, tradable=True)
+
+    class Service:
+        async def chain(self, symbol, exp, width=0.10):
+            rows = [StrikeRow(strike=k, call=quote("call", k), put=quote("put", k)) for k in range(150, 330, 5)]
+            return Chain(underlying=symbol, expiry=exp, spot=230.0, feed="opra", as_of=None, rows=rows)
+
+    class Bar:
+        def __init__(self, ts, close):
+            self.timestamp, self.close = ts, close
+
+    def tape(daily):
+        start = datetime(2025, 9, 1, 4, tzinfo=timezone.utc)
+        out, price = [], 230.0
+        for i in range(300):
+            price *= math.exp(daily * (1 if i % 2 else -1))
+            out.append(Bar(start + timedelta(days=i), price))
+        return out
+
+    rows, _ = parse(CONDOR.split("MU,")[0])  # the NVDA condor alone
+    results = {}
+    for label, daily in (("quiet", 0.004), ("wild", 0.03)):
+        async def fake(clients, symbols, lookback_days=14, _d=daily):
+            return {s: tape(_d) for s in symbols}
+
+        monkeypatch.setattr(bars_module, "get_daily_bars_multi", fake)
+        out = asyncio.run(enrich(rows, Service(), today=today, limit=1, clients=object()))
+        results[label] = out[0]["ours"]
+    assert results["quiet"]["rv_forecast"] < results["wild"]["rv_forecast"]
+    assert results["quiet"]["expected_value_rv"] > results["wild"]["expected_value_rv"] + 50

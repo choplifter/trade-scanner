@@ -744,7 +744,11 @@ class OptionsService:
         # implies (see app.options.custom): the chance of any profit at
         # expiry, and the chance the market reaches the nearest breakeven
         # at all before then -- the one a seller manages against.
-        chance = touch = ev = None
+        chance = touch = ev = ev_rv = None
+        # What the EV under the realised-vol forecast needs once that
+        # forecast is in (below): the valued legs, the signed price, the
+        # horizon and the cross still unpaid -- the same ones as the EV.
+        ev_inputs = None
         sigma = atm_iv(chain)
         years = max(0.0, (payoff.expiry - self._source.now().date()).days / 365.0) if payoff is not None else 0.0
         if payoff is not None and sigma and years > 0:
@@ -771,6 +775,7 @@ class OptionsService:
                 payoff_legs, price if direction == "debit" else -price, horizon, chain.spot, sigma, years, ticket.qty,
                 cost=unpaid * 100 * ticket.qty,
             )
+            ev_inputs = (payoff_legs, price if direction == "debit" else -price, horizon, unpaid * 100 * ticket.qty)
             barrier = nearest_breakeven(breakevens, chain.spot)
             if barrier is not None:
                 touch = chance_of_touch(chain.spot, barrier, sigma, years)
@@ -809,6 +814,15 @@ class OptionsService:
             breakeven_vol(risk_legs, chain.spot, now, price if direction == "debit" else -price, sigma) if sigma else None
         )
         vol = None if replay else await vol_forecast_today(self._clients, ticket.underlying, max(dte, 0))
+        # The same expectation with the odds taken from how much the stock is
+        # expected to move -- the realised-vol forecast -- instead of how much
+        # the options price in. The ATM-IV EV is ~0 for any structure priced
+        # at its own IV; this one is where implied running above realised
+        # (Natenberg ch. 24, comparing one's own distribution with the
+        # implied one) shows up as an edge, or does not.
+        if ev_inputs is not None and vol is not None and vol.forecast > 0:
+            legs_v, signed_v, horizon_v, cost_v = ev_inputs
+            ev_rv = expected_value(legs_v, signed_v, horizon_v, chain.spot, vol.forecast, years, ticket.qty, cost=cost_v)
         warnings.extend(pin_risks(risk_legs, chain.spot, now))
         if self.dividends is not None and not replay:
             try:
@@ -834,6 +848,7 @@ class OptionsService:
             order_type=ticket.order_type,
             chance=chance,
             expected_value=ev,
+            expected_value_rv=ev_rv,
             touch=touch,
             touch_at=nearest_breakeven(breakevens, chain.spot),
             naked=bool(bare),

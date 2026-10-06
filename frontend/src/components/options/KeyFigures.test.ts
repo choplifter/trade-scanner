@@ -18,8 +18,8 @@ describe("keyFigures", () => {
   });
 
   it("colours EV, max loss against equity, earnings inside the life and the quote", () => {
-    const t = tones(keyFigures(spread(), events(1.0, "2026-11-12"), 100_000, true));
-    expect(t).toMatchObject({ EV: "good", "Max loss": "good", Earnings: "bad", Quote: "neutral" });
+    const t = tones(keyFigures(spread({ expected_value_rv: -3 }), events(1.0, "2026-11-12"), 100_000, true));
+    expect(t).toMatchObject({ EV: "good", "EV (RV)": "bad", "Max loss": "good", Earnings: "bad", Quote: "neutral" });
     const worse = tones(keyFigures(spread({ expected_value: -5, max_loss: -3000, net_natural: 0.6 }), events(1.0, "2026-12-01"), 100_000, true));
     expect(worse).toMatchObject({ EV: "bad", "Max loss": "bad", Earnings: "good", Quote: "bad" });
     expect(tones(keyFigures(spread({ max_loss: null }), null, 100_000, true))["Max loss"]).toBe("bad");

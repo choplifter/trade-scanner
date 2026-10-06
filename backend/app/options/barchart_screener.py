@@ -249,6 +249,7 @@ async def enrich(
     max_chains: int = MAX_CHAINS,
     iv_store=None,
     earnings_calendar=None,
+    clients=None,
 ) -> list[dict]:
     """The first `limit` rows as dicts, each with an "ours" block: the loss
     probability under the chain's smile and under the plain lognormal (what
@@ -263,6 +264,7 @@ async def enrich(
     import asyncio
 
     from app.options.distribution import Distribution
+    from app.options.iv_context import forecast_vol
     from app.options.iv_history_store import COMPARABLE_DTE
     from app.options.screener import atm_iv_of, structure_outcome
 
@@ -315,6 +317,20 @@ async def enrich(
                 rank = None
         per_chain[key] = (atm, years, dist, rank)
 
+    # Closes per symbol for the realised-vol forecast behind "EV (RV)": a
+    # year and a bit, one batched call. Without a market-data client the
+    # column is simply absent.
+    closes: dict[str, list[float]] = {}
+    if clients is not None and per_chain:
+        try:
+            from app.market_data.bars import get_daily_bars_multi
+            from app.playbooks.backtest import closes_by_session
+
+            bars = await get_daily_bars_multi(clients, sorted({k[0] for k in per_chain}), lookback_days=400)
+            closes = {s.upper(): [c for _, c in closes_by_session(rows)] for s, rows in bars.items()}
+        except Exception:
+            closes = {}
+
     earnings: dict[str, date | None] = {}
     if earnings_calendar is not None:
         for symbol in {k[0] for k in per_chain}:
@@ -358,6 +374,15 @@ async def enrich(
                     skew_fitted=bool(dist and dist.skewed),
                     expected_value=skewed["expected_value"],
                 )
+            # The same structure with the odds from the realised-vol forecast
+            # (iv_context.forecast_vol, blended toward the year by DTE): what
+            # it earns on average if the stock moves as its history says --
+            # the yardstick for a screen that selects implied over realised.
+            forecast = forecast_vol(closes.get(row.symbol, []), (row.expiry - today).days)
+            if forecast is not None and forecast.forecast > 0:
+                at_rv = structure_outcome(legs, net, chain.spot, forecast.forecast, years, row.expiry)
+                if at_rv:
+                    ours.update(expected_value_rv=at_rv["expected_value"], rv_forecast=round(forecast.forecast, 4))
         report = earnings.get(row.symbol)
         ours["earnings_date"] = report.isoformat() if report else None
         ours["earnings_inside"] = bool(report and report <= row.expiry)
