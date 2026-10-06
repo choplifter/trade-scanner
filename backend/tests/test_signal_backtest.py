@@ -107,3 +107,21 @@ def test_the_control_sells_rich_premium_without_a_signal_and_only_inside_its_dat
     assert all(start.isoformat() <= d <= end.isoformat() for d, _ in result.curve)
     assert not any(t["reason"] == "signal" for t in result.trades), "the control has no signal to exit on"
     assert signal("vol", [100.0] * 30) == "bull" and signal_exit("vol", "bull", [100.0] * 30) is False
+
+
+def test_the_market_filter_reads_spy_trend_and_volatility_spikes():
+    from app.options.signal_backtest import risk_off
+
+    up = _uptrend(260)
+    assert risk_off(up, [0.15] * 30) is None
+    assert "200-day" in risk_off(list(reversed(up)), [0.15] * 30)
+    assert "spiking" in risk_off(up, [0.15] * 25 + [0.20])
+
+
+def test_a_filtered_walk_sells_nothing_while_the_market_is_risk_off():
+    closes, ivs = _tape(["SPY", "TLT", "GLD"])
+    falling = list(reversed([c for _, c in closes["SPY"]]))
+    closes["SPY"] = [(d, c) for (d, _), c in zip(closes["SPY"], falling)]
+    filtered = walk("vol", closes, ivs, market_filter=True)
+    assert not filtered.trades and filtered.skipped.get("market below its 200-day average")
+    assert walk("vol", closes, ivs).trades, "unfiltered, the same tape trades"

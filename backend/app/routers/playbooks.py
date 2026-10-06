@@ -227,6 +227,9 @@ class SignalBacktestBody(BaseModel):
     # Walk only these sessions: set rules on one stretch, check on another.
     start: date | None = None
     end: date | None = None
+    # No new premium sold while SPY is below its 200-day average or its IV
+    # spikes (app.options.signal_backtest.risk_off).
+    market_filter: bool = False
 
 
 # Closes behind the first priced session: the 200-day trend filter needs
@@ -262,9 +265,10 @@ async def signal_backtest(body: SignalBacktestBody, request: Request, user: dict
         raise HTTPException(status_code=422, detail="No symbols: pass some, or add them to the watchlist")
     try:
         ivs = {s: await asyncio.to_thread(iv_store.series_sync, s) for s in symbols}
+        market_iv = ivs.get("SPY") or await asyncio.to_thread(iv_store.series_sync, "SPY")
         oldest = min((min(series) for series in ivs.values() if series), default=None)
         lookback = ((date.today() - oldest).days if oldest else 365) + SIGNAL_TREND_LEAD_DAYS
-        bars = await get_daily_bars_multi(clients, symbols, lookback_days=lookback)
+        bars = await get_daily_bars_multi(clients, sorted(set(symbols) | {"SPY"}), lookback_days=lookback)
         closes = {s.upper(): closes_by_session(rows) for s, rows in bars.items()}
     except Exception:
         logger.exception("Signal backtest data failed")
@@ -279,7 +283,10 @@ async def signal_backtest(body: SignalBacktestBody, request: Request, user: dict
         "results": [],
     }
     for variant in body.variants:
-        result = walk(variant, closes, priced, starting_equity=body.starting_equity, start=body.start, end=body.end)
+        result = walk(
+            variant, closes, priced, starting_equity=body.starting_equity, start=body.start, end=body.end,
+            market_filter=body.market_filter, market=(closes.get("SPY", []), market_iv),
+        )
         # "trade_log", not "trades": the summary's own "trades" is the count.
         out["results"].append({**summarize(result, body.starting_equity), "curve": result.curve, "trade_log": result.trades})
     return out

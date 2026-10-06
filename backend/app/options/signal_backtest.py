@@ -72,6 +72,14 @@ DEBIT_TAKE = 1.00  # close at +100 %
 DEBIT_STOP = 0.50  # close at -50 %
 
 # Risk.
+# Market filter: no new premium sold while the market is risk-off -- SPY
+# below its 200-day average (a bear market), or SPY's ATM IV more than
+# VOL_SPIKE above its own 20-day mean (a volatility spike; SPY's 30-day IV
+# and the VIX measure nearly the same thing). Open positions run on.
+MARKET_SYMBOL = "SPY"
+VOL_SPIKE = 1.20
+VOL_SPIKE_WINDOW = 20
+
 RISK_PER_TRADE = 0.01
 MAX_TOTAL_RISK = 0.05
 SPREAD_FRAC = 0.03
@@ -293,6 +301,19 @@ def _vertical(direction: str, kind: str, spot: float, iv: float, t: float, step:
     return option, short, long, entry, entry * 100
 
 
+def risk_off(spy_closes: list[float], spy_ivs: list[float]) -> str | None:
+    """Why the market is risk-off today, or None. `spy_closes` and
+    `spy_ivs` run up to and including today."""
+    trend = _sma(spy_closes, TREND_SMA)
+    if trend is not None and spy_closes[-1] < trend:
+        return "market below its 200-day average"
+    if len(spy_ivs) > VOL_SPIKE_WINDOW:
+        mean = sum(spy_ivs[-VOL_SPIKE_WINDOW - 1 : -1]) / VOL_SPIKE_WINDOW
+        if spy_ivs[-1] > VOL_SPIKE * mean:
+            return "market volatility spiking"
+    return None
+
+
 # --- the walk -----------------------------------------------------------------
 
 
@@ -315,6 +336,8 @@ def walk(
     starting_equity: float = 100_000.0,
     start: date | None = None,
     end: date | None = None,
+    market_filter: bool = False,
+    market: tuple[list[tuple[date, float]], dict[date, float]] | None = None,
 ) -> Result:
     """Run one signal method over the sessions where IV is known, between
     `start` and `end` when given -- so rules set on one stretch can be
@@ -329,6 +352,13 @@ def walk(
     index = {s: {d: i for i, (d, _) in enumerate(series)} for s, series in closes.items()}
     cash = starting_equity
     open_: list[Spread] = []
+    # The market filter reads SPY: its closes and IVs, passed in or taken
+    # from the walk's own data.
+    if market is None and MARKET_SYMBOL in closes:
+        market = (closes[MARKET_SYMBOL], ivs.get(MARKET_SYMBOL, {}))
+    m_closes = dict(market[0]) if market else {}
+    m_days = [d for d, _ in market[0]] if market else []
+    m_ivs = market[1] if market else {}
 
     for today in days:
         # Exits.
@@ -373,6 +403,11 @@ def walk(
 
         # Entries.
         equity = cash
+        off = None
+        if market_filter and today in m_closes:
+            upto = [m_closes[d] for d in m_days if d <= today]
+            iv_upto = [v for d, v in sorted(m_ivs.items()) if d <= today]
+            off = risk_off(upto, iv_upto)
         for symbol in sorted(ivs):
             iv = ivs[symbol].get(today)
             if iv is None or today not in index.get(symbol, {}):
@@ -387,6 +422,9 @@ def walk(
             kind = {"rich": "credit", "cheap": "debit"}.get(regime(iv, realized(past), iv_past) or "")
             if variant == "vol" and kind != "credit":
                 continue  # the control only ever sells rich premium
+            if kind == "credit" and off:
+                result.skip(off)
+                continue
             if kind is None:
                 result.skip("regime in between")
                 continue
