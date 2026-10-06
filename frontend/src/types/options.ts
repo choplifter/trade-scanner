@@ -1166,3 +1166,48 @@ export interface TrackRecordResponse {
     step_sessions: number; by_delta: (TrackSummary & { short_delta: number })[] } & TrackReport)
     | { available: false; reason?: string };
 }
+
+/** GET /trading/options/barchart-screens and POST .../import -- backend
+ * app/options/barchart_screener.py. Prices per share, at the natural. */
+export interface BarchartScreenFile {
+  name: string;
+  modified: number;
+  size: number;
+}
+
+export interface BarchartScreenRow {
+  symbol: string;
+  price: number | null;
+  expiry: string;
+  dte: number | null;
+  strategy: Strategy | null;
+  legs: { strike: number; kind: "put" | "call"; side: "buy" | "sell"; price: number | null }[];
+  net: number | null;
+  breakeven_up: number | null;
+  breakeven_down: number | null;
+  max_profit: number | null;
+  max_loss: number | null;
+  iv_rank: number | null;
+  loss_prob: number | null;
+  ticket: SpreadTicketRequest | null;
+  ours?: {
+    note?: string;
+    atm_iv?: number | null;
+    spot?: number;
+    loss_prob_flat?: number;
+    loss_prob_skew?: number;
+    skew_fitted?: boolean;
+    expected_value?: number;
+    earnings_date?: string | null;
+    earnings_inside?: boolean;
+    iv_rank?: number | null;
+  };
+}
+
+export interface BarchartImportResponse {
+  file: string;
+  rows_total: number;
+  checked: number;
+  rows: BarchartScreenRow[];
+  problems: string[];
+}

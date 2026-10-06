@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { BarchartImportPanel } from "./BarchartImportPanel";
 import { NATENBERG, withBook } from "./bookRefs";
 
 import { OrderRejectedError } from "../../api/http";
@@ -550,6 +551,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           ?
         </button>
       </div>
+      <BarchartImportPanel onSelectSymbol={onSelectSymbol} />
       <ScreenerHelp open={helpOpen} onClose={() => setHelpOpen(false)} strategy={strategy} />
 
       <div className="opt-preference screen-filters">

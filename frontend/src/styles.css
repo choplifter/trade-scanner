@@ -6590,3 +6590,27 @@ td.chain-side.chain-stale {
   font-size: 11px;
   color: var(--text-muted, #9a9a9a);
 }
+
+/* Barchart screener exports beside our numbers (BarchartImportPanel.tsx). */
+.bc-import {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #2a2a2a);
+}
+
+.bc-import-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.bc-import-controls select {
+  max-width: 100%;
+}
+
+.bc-import-table td,
+.bc-import-table th {
+  white-space: nowrap;
+}

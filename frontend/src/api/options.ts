@@ -9,6 +9,8 @@
 import { API_BASE, OrderRejectedError, checkUnauthorized, extractErrorMessage, getJson } from "./http";
 import { tradingPath } from "./tradingMode";
 import type {
+  BarchartImportResponse,
+  BarchartScreenFile,
   ChainResponse,
   ClosePreview,
   CloseSpreadRequest,
@@ -255,4 +257,15 @@ export function getTrackRecord(): Promise<TrackRecordResponse> {
 
 export function refreshTrackRecord(): Promise<TrackRecordResponse> {
   return send<TrackRecordResponse>("POST", "/trading/options/track-record/refresh", undefined);
+}
+
+/** Barchart option-screener exports in the import folder (~/Downloads). */
+export function listBarchartScreens(): Promise<{ directory: string; files: BarchartScreenFile[] }> {
+  return getJson<{ directory: string; files: BarchartScreenFile[] }>(tradingPath("/trading/options/barchart-screens"));
+}
+
+/** Read one export; its first `limit` rows come back checked against our
+ * chains (loss probability with and without the skew, EV, earnings, rank). */
+export function importBarchartScreen(name: string, limit = 40): Promise<BarchartImportResponse> {
+  return send<BarchartImportResponse>("POST", "/trading/options/barchart-screens/import", { name, limit });
 }

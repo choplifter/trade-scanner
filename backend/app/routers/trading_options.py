@@ -586,6 +586,61 @@ async def latest_screen(request: Request, strategy: str = "credit_spread") -> di
     }
 
 
+def _barchart_dir():
+    """Where Barchart's downloads land: BARCHART_IMPORT_DIR, else ~/Downloads."""
+    import os
+    from pathlib import Path
+
+    return Path(os.environ.get("BARCHART_IMPORT_DIR") or (Path.home() / "Downloads"))
+
+
+@router.get("/barchart-screens")
+async def barchart_screens(user: dict = Depends(get_current_user)) -> dict:
+    """Barchart option-screener exports waiting in the import folder, newest
+    first (app.options.barchart_screener)."""
+    from app.options.barchart_screener import list_exports
+
+    directory = _barchart_dir()
+    return {"directory": str(directory), "files": list_exports(directory)}
+
+
+class BarchartImportBody(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    # Rows checked against our own chains; the rest are returned as read.
+    limit: int = Field(default=40, ge=1, le=200)
+    # Rows returned at most -- an export can run to thousands.
+    max_rows: int = Field(default=300, ge=1, le=5000)
+
+
+@router.post("/barchart-screens/import")
+async def import_barchart_screen(body: BarchartImportBody, request: Request, service: OptionsService = Depends(_service)) -> dict:
+    """Read one export and set its first rows beside our numbers: the loss
+    probability under the chain's smile and under the plain lognormal
+    Barchart assumes, our expected value, earnings inside the life, our IV
+    rank. Only a file named like a screener export, in the import folder."""
+    from datetime import datetime
+
+    from app.options.barchart_screener import enrich, is_screener_export, parse
+    from app.services.market_clock import ET
+
+    if "/" in body.name or "\\" in body.name or not is_screener_export(body.name):
+        raise HTTPException(status_code=422, detail="Not a Barchart screener export name")
+    path = _barchart_dir() / body.name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"{body.name} is not in the import folder")
+    rows, problems = parse(path.read_text(encoding="utf-8-sig", errors="replace"))
+    if not rows:
+        raise HTTPException(status_code=422, detail="; ".join(problems) or "No rows in the file")
+    today = datetime.now(ET).date()
+    checked = await enrich(
+        rows, service, today=today, limit=body.limit,
+        iv_store=getattr(request.app.state, "iv_history_store", None),
+        earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
+    )
+    rest = [r.to_dict() for r in rows[len(checked): body.max_rows]]
+    return {"file": body.name, "rows_total": len(rows), "checked": len(checked), "rows": checked + rest, "problems": problems[:20]}
+
+
 @router.post("/screen")
 async def screen(body: ScreenRequest, request: Request, service: OptionsService = Depends(_service)) -> dict:
     """Which of these underlyings suit the strategy -- one chain fetch per
