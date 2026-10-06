@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { importBarchartScreen, listBarchartScreens } from "../../api/options";
 import type { BarchartImportResponse, BarchartScreenFile, BarchartScreenRow, LoadableStructure } from "../../types/options";
@@ -17,6 +17,24 @@ const SKEW_TITLE = withBook(
   NATENBERG.impliedDistributions,
 );
 
+// How many rows to check against our chains, and how many chains that may
+// cost: rows sharing a (symbol, expiry) share a chain, so rows run cheap.
+const DEPTHS = [
+  { rows: 40, chains: 40, label: "first 40 rows" },
+  { rows: 200, chains: 60, label: "first 200 rows" },
+  { rows: 1000, chains: 100, label: "first 1000 rows (slow)" },
+];
+
+type SortKey = "Symbol" | "Expiry" | "Net" | "Loss BC" | "Ours skew" | "EV";
+const SORTS: Record<SortKey, (r: BarchartScreenRow) => number | string | null> = {
+  Symbol: (r) => r.symbol,
+  Expiry: (r) => r.dte,
+  Net: (r) => r.net,
+  "Loss BC": (r) => r.loss_prob,
+  "Ours skew": (r) => r.ours?.loss_prob_skew ?? null,
+  EV: (r) => r.ours?.expected_value ?? null,
+};
+
 function strikes(row: BarchartScreenRow): string {
   return row.legs
     .map((l) => `${l.side === "sell" ? "-" : "+"}${l.strike}${l.kind === "put" ? "P" : "C"}`)
@@ -34,6 +52,31 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
   const [result, setResult] = useState<BarchartImportResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [depth, setDepth] = useState(0);
+  // Best expectation first by default; rows without a figure sink.
+  const [sort, setSort] = useState<{ by: SortKey; desc: boolean }>({ by: "EV", desc: true });
+  const onSort = (by: SortKey) => setSort((s) => (s.by === by ? { by, desc: !s.desc } : { by, desc: by !== "Symbol" }));
+  const sorted = useMemo(() => {
+    if (!result) return [];
+    const get = SORTS[sort.by];
+    return [...result.rows].sort((a, b) => {
+      const x = get(a);
+      const y = get(b);
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      const cmp = typeof x === "string" ? x.localeCompare(String(y)) : (x as number) - (y as number);
+      return sort.desc ? -cmp : cmp;
+    });
+  }, [result, sort]);
+  const th = (label: SortKey, title?: string) => (
+    <th scope="col" title={title} aria-sort={sort.by === label ? (sort.desc ? "descending" : "ascending") : "none"}>
+      <button type="button" className="link-button" onClick={() => onSort(label)}>
+        {label}
+        {sort.by === label ? (sort.desc ? " ▼" : " ▲") : ""}
+      </button>
+    </th>
+  );
 
   const refresh = async () => {
     setError(null);
@@ -58,7 +101,7 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
     setLoading(true);
     setError(null);
     try {
-      setResult(await importBarchartScreen(chosen));
+      setResult(await importBarchartScreen(chosen, DEPTHS[depth].rows, DEPTHS[depth].chains));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -92,6 +135,13 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
                 ))}
               </select>
             )}
+            <select value={depth} onChange={(e) => setDepth(Number(e.target.value))} title="Rows checked against today's chains. Rows on the same symbol and expiry share one chain fetch.">
+              {DEPTHS.map((d, i) => (
+                <option key={d.rows} value={i}>
+                  check {d.label}
+                </option>
+              ))}
+            </select>
             <button type="button" className="generate-button" onClick={() => void runImport()} disabled={loading || !chosen}>
               {loading ? "Reading chains…" : "Import"}
             </button>
@@ -102,6 +152,13 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
           {error && <p className="order-rejection">{error}</p>}
           {result && (
             <>
+              {result.stale && (
+                <p className="pb-daily-warning">
+                  This export is from {result.as_of ? formatExpiry(result.as_of) : "an earlier day"}: its prices (Net, Max P / L,
+                  Loss BC) are that day's. Our columns are priced at today's quotes for the same strikes — compare those, and
+                  download a fresh export for Barchart's side.
+                </p>
+              )}
               <p className="order-hint">
                 {result.file}: {result.rows_total} rows, the first {result.checked} checked against today's chains
                 {result.rows.length < result.rows_total ? `, ${result.rows.length} shown` : ""}.
@@ -110,22 +167,25 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
               <table className="opt-table bc-import-table">
                 <thead>
                   <tr>
-                    <th scope="col">Symbol</th>
-                    <th scope="col">Expiry</th>
+                    {th("Symbol")}
+                    {th("Expiry")}
                     <th scope="col">Legs</th>
-                    <th scope="col" title="Per share at Barchart's natural prices; positive is a credit.">Net</th>
+                    {th("Net", "Per share at Barchart's natural prices; positive is a credit.")}
                     <th scope="col" title="Per contract, from Barchart's per-share figures × 100.">Max P / L</th>
-                    <th scope="col" title={SKEW_TITLE}>Loss BC</th>
+                    <th scope="col" title="Today's natural for the same strikes: sold at the bid, bought at the ask. Our loss probabilities and EV are priced at it.">
+                      Net now
+                    </th>
+                    {th("Loss BC", SKEW_TITLE)}
                     <th scope="col" title={SKEW_TITLE}>Ours flat</th>
-                    <th scope="col" title={SKEW_TITLE}>Ours skew</th>
-                    <th scope="col" title="Our expected value per contract at Barchart's prices, on the at-the-money distribution.">EV</th>
+                    {th("Ours skew", SKEW_TITLE)}
+                    {th("EV", "Our expected value per contract at today's natural prices for the same strikes, on the at-the-money distribution.")}
                     <th scope="col">Earnings</th>
                     <th scope="col" title="Barchart's IV rank / ours (ours needs 20 recorded sessions).">IV rank</th>
                     <th scope="col" aria-label="Actions" />
                   </tr>
                 </thead>
                 <tbody>
-                  {result.rows.map((r, i) => {
+                  {sorted.map((r, i) => {
                     const o = r.ours;
                     const worse = o?.loss_prob_skew != null && r.loss_prob != null && o.loss_prob_skew > r.loss_prob + 0.02;
                     return (
@@ -140,6 +200,9 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
                         <td>
                           {r.max_profit == null ? "—" : `$${(r.max_profit * 100).toFixed(0)}`} /{" "}
                           {r.max_loss == null ? "—" : `$${(r.max_loss * 100).toFixed(0)}`}
+                        </td>
+                        <td title={o?.priced_at === "file" ? "A leg is not quoted today: our figures use the file's net" : undefined}>
+                          {o?.net_now == null ? "—" : o.net_now.toFixed(2)}
                         </td>
                         <td>{pct(r.loss_prob)}</td>
                         <td>{o?.note ? <span title={o.note}>…</span> : pct(o?.loss_prob_flat)}</td>

@@ -30,6 +30,20 @@ from pathlib import Path
 # Barchart names a screener export "<screen>-option-screener[-<view>]-<mm-dd-yyyy>.csv".
 FILE_PATTERN = re.compile(r"^[a-z0-9\-]+-screener[a-z0-9\-]*-\d{2}-\d{2}-\d{4}(?: \(\d+\))?\.csv$", re.IGNORECASE)
 _LEG = re.compile(r"^Leg(\d+) Strike$", re.IGNORECASE)
+_AS_OF = re.compile(r"Downloaded from Barchart\.com as of (\d{2})-(\d{2})-(\d{4})", re.IGNORECASE)
+
+
+def export_date(text: str) -> date | None:
+    """The session the export's prices are from, out of Barchart's trailer
+    line ("Downloaded from Barchart.com as of 10-03-2026 ...")."""
+    match = _AS_OF.search(text[-400:])
+    if not match:
+        return None
+    month, day, year = (int(g) for g in match.groups())
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -201,71 +215,152 @@ def parse(text: str) -> tuple[list[ScreenRow], list[str]]:
 
 # --- set beside our own numbers ----------------------------------------------
 
-# Chains fetched per import at most: one per (symbol, expiry) among the rows
-# enriched. A 4,787-row export is mostly the same few dozen chains.
-MAX_CHAINS = 20
+
+def natural_net(row: ScreenRow, chain) -> float | None:
+    """Per share, the structure crossed at today's quotes: bids for the legs
+    sold, asks for the legs bought (as Barchart prices). None when a leg is
+    not quoted on both sides."""
+    total = 0.0
+    for leg in row.legs:
+        quote = chain.quote(leg.kind, leg.strike)
+        if quote is None:
+            return None
+        price = quote.bid if leg.side == "sell" else quote.ask
+        if price is None or price <= 0:
+            return None
+        total += price if leg.side == "sell" else -price
+    return round(total, 4)
+
+# Chains fetched per import at most, by default: one per (symbol, expiry)
+# among the rows checked. A 4,787-row export is mostly the same few dozen
+# chains, so rows far outnumber chains.
+MAX_CHAINS = 40
+# Chain fetches in flight at once: the source caches for five minutes and
+# rate-limits beyond that, and a screen of chains is no reason to burst.
+CHAIN_CONCURRENCY = 6
 
 
-async def enrich(rows: list[ScreenRow], service, *, today: date, limit: int, iv_store=None, earnings_calendar=None) -> list[dict]:
+async def enrich(
+    rows: list[ScreenRow],
+    service,
+    *,
+    today: date,
+    limit: int,
+    max_chains: int = MAX_CHAINS,
+    iv_store=None,
+    earnings_calendar=None,
+) -> list[dict]:
     """The first `limit` rows as dicts, each with an "ours" block: the loss
     probability under the chain's smile and under the plain lognormal (what
     Barchart's figure assumes), our expected value, the earnings date and
     whether it falls inside the life of the structure, and our IV rank.
-    Rows past the chain budget, or whose chain fails, carry a note instead."""
+
+    The chains the rows need are fetched first -- the first `max_chains`
+    distinct (symbol, expiry) in file order, CHAIN_CONCURRENCY at a time --
+    and everything a chain decides (ATM IV, the smile's distribution, the
+    rank) is worked out once per chain, not once per row. Rows whose chain
+    is past the budget or failed carry a note instead."""
+    import asyncio
+
     from app.options.distribution import Distribution
     from app.options.iv_history_store import COMPARABLE_DTE
     from app.options.screener import atm_iv_of, structure_outcome
 
-    chains: dict[tuple[str, date], object] = {}
+    from app.options.chain_fetch import STRIKE_WIDTHS
+
+    picked = rows[:limit]
+    keys: list[tuple[str, date]] = []
+    # How far from the money each chain has to reach: a condor's wings sit
+    # well outside the default +/-10 % band (MU's 800/1300 around 1,075),
+    # and a leg missing from the chain cannot be priced at today's quotes.
+    reach: dict[tuple[str, date], float] = {}
+    for row in picked:
+        key = (row.symbol, row.expiry)
+        if key not in keys and len(keys) < max_chains:
+            keys.append(key)
+        if row.price:
+            far = max(abs(leg.strike / row.price - 1) for leg in row.legs)
+            reach[key] = max(reach.get(key, 0.0), far)
+
+    def width_for(key) -> float:
+        need = reach.get(key, STRIKE_WIDTHS[-1]) + 0.01
+        return next((w for w in STRIKE_WIDTHS if w >= need), STRIKE_WIDTHS[-1])
+
+    gate = asyncio.Semaphore(CHAIN_CONCURRENCY)
+
+    async def fetch(key):
+        async with gate:
+            try:
+                return key, await service.chain(key[0], key[1], width_for(key))
+            except Exception as exc:
+                return key, exc
+
+    chains = dict(await asyncio.gather(*(fetch(k) for k in keys)))
+
+    # Per chain: (atm, years, distribution, rank).
+    per_chain: dict[tuple[str, date], tuple] = {}
+    for key, chain in chains.items():
+        if isinstance(chain, Exception):
+            continue
+        years = max((key[1] - today).days, 0) / 365
+        atm = atm_iv_of(chain.rows, chain.spot)
+        dist = Distribution.from_chain(chain.rows, chain.spot, atm, years) if atm and years > 0 else None
+        rank = None
+        dte = (key[1] - today).days
+        if iv_store is not None and atm and COMPARABLE_DTE[0] <= dte <= COMPARABLE_DTE[1]:
+            try:
+                found, _samples = await iv_store.rank(key[0], atm)
+                rank = None if found is None else round(found.percent, 1)
+            except Exception:
+                rank = None
+        per_chain[key] = (atm, years, dist, rank)
+
     earnings: dict[str, date | None] = {}
+    if earnings_calendar is not None:
+        for symbol in {k[0] for k in per_chain}:
+            try:
+                report = await earnings_calendar.next_earnings(symbol)
+                earnings[symbol] = report.report_date if report else None
+            except Exception:
+                earnings[symbol] = None
+
     out = []
-    for row in rows[:limit]:
+    for row in picked:
         item = row.to_dict()
         key = (row.symbol, row.expiry)
         if key not in chains:
-            if len(chains) >= MAX_CHAINS:
-                item["ours"] = {"note": f"not checked: {MAX_CHAINS} chains per import"}
-                out.append(item)
-                continue
-            try:
-                chains[key] = await service.chain(row.symbol, row.expiry)
-            except Exception as exc:
-                chains[key] = exc
+            item["ours"] = {"note": f"not checked: {max_chains} chains per import"}
+            out.append(item)
+            continue
         chain = chains[key]
         if isinstance(chain, Exception):
             item["ours"] = {"note": f"chain unavailable: {chain}"}
             out.append(item)
             continue
-        years = max((row.expiry - today).days, 0) / 365
-        atm = atm_iv_of(chain.rows, chain.spot)
-        ours: dict = {"atm_iv": None if atm is None else round(atm, 4), "spot": chain.spot}
-        if atm and years > 0 and row.net is not None:
+        atm, years, dist, rank = per_chain[key]
+        ours: dict = {"atm_iv": None if atm is None else round(atm, 4), "spot": chain.spot, "iv_rank": rank}
+        # Priced at today's natural for the same strikes, not at the file's
+        # prices: an export a few days old set against today's chain made a
+        # MU condor worth +$394 on paper (3-day-old credit, today's odds).
+        # Barchart's own net stays beside it.
+        net_now = natural_net(row, chain)
+        ours["net_now"] = net_now
+        net = net_now if net_now is not None else row.net
+        ours["priced_at"] = "today" if net_now is not None else "file"
+        if atm and years > 0 and net is not None:
             legs = [{"kind": l.kind, "strike": l.strike, "side": l.side, "iv": atm} for l in row.legs]
-            flat = structure_outcome(legs, row.net, chain.spot, atm, years, row.expiry)
-            dist = Distribution.from_chain(chain.rows, chain.spot, atm, years)
-            skewed = structure_outcome(legs, row.net, chain.spot, atm, years, row.expiry, dist=dist)
+            flat = structure_outcome(legs, net, chain.spot, atm, years, row.expiry)
+            skewed = structure_outcome(legs, net, chain.spot, atm, years, row.expiry, dist=dist)
             if flat and skewed:
                 ours.update(
                     loss_prob_flat=flat["loss_probability"],
                     loss_prob_skew=skewed["loss_probability"],
-                    skew_fitted=dist.skewed,
+                    skew_fitted=bool(dist and dist.skewed),
                     expected_value=skewed["expected_value"],
                 )
-        if earnings_calendar is not None and row.symbol not in earnings:
-            try:
-                next_report = await earnings_calendar.next_earnings(row.symbol)
-                earnings[row.symbol] = next_report.report_date if next_report else None
-            except Exception:
-                earnings[row.symbol] = None
         report = earnings.get(row.symbol)
         ours["earnings_date"] = report.isoformat() if report else None
         ours["earnings_inside"] = bool(report and report <= row.expiry)
-        if iv_store is not None and atm and row.dte is not None and COMPARABLE_DTE[0] <= row.dte <= COMPARABLE_DTE[1]:
-            try:
-                rank, _samples = await iv_store.rank(row.symbol, atm)
-                ours["iv_rank"] = None if rank is None else round(rank.percent, 1)
-            except Exception:
-                pass
         item["ours"] = ours
         out.append(item)
     return out

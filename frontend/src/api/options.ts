@@ -266,6 +266,11 @@ export function listBarchartScreens(): Promise<{ directory: string; files: Barch
 
 /** Read one export; its first `limit` rows come back checked against our
  * chains (loss probability with and without the skew, EV, earnings, rank). */
-export function importBarchartScreen(name: string, limit = 40): Promise<BarchartImportResponse> {
-  return send<BarchartImportResponse>("POST", "/trading/options/barchart-screens/import", { name, limit });
+export function importBarchartScreen(name: string, limit = 40, maxChains = 40): Promise<BarchartImportResponse> {
+  return send<BarchartImportResponse>("POST", "/trading/options/barchart-screens/import", {
+    name,
+    limit,
+    max_chains: maxChains,
+    max_rows: Math.max(300, limit),
+  });
 }

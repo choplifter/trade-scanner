@@ -607,7 +607,9 @@ async def barchart_screens(user: dict = Depends(get_current_user)) -> dict:
 class BarchartImportBody(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     # Rows checked against our own chains; the rest are returned as read.
-    limit: int = Field(default=40, ge=1, le=200)
+    limit: int = Field(default=40, ge=1, le=1000)
+    # Distinct (symbol, expiry) chains fetched for them at most.
+    max_chains: int = Field(default=40, ge=1, le=100)
     # Rows returned at most -- an export can run to thousands.
     max_rows: int = Field(default=300, ge=1, le=5000)
 
@@ -620,7 +622,7 @@ async def import_barchart_screen(body: BarchartImportBody, request: Request, ser
     rank. Only a file named like a screener export, in the import folder."""
     from datetime import datetime
 
-    from app.options.barchart_screener import enrich, is_screener_export, parse
+    from app.options.barchart_screener import enrich, export_date, is_screener_export, parse
     from app.services.market_clock import ET
 
     if "/" in body.name or "\\" in body.name or not is_screener_export(body.name):
@@ -628,17 +630,28 @@ async def import_barchart_screen(body: BarchartImportBody, request: Request, ser
     path = _barchart_dir() / body.name
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"{body.name} is not in the import folder")
-    rows, problems = parse(path.read_text(encoding="utf-8-sig", errors="replace"))
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    rows, problems = parse(text)
+    as_of = export_date(text)
     if not rows:
         raise HTTPException(status_code=422, detail="; ".join(problems) or "No rows in the file")
     today = datetime.now(ET).date()
     checked = await enrich(
-        rows, service, today=today, limit=body.limit,
+        rows, service, today=today, limit=body.limit, max_chains=body.max_chains,
         iv_store=getattr(request.app.state, "iv_history_store", None),
         earnings_calendar=getattr(request.app.state, "earnings_calendar", None),
     )
     rest = [r.to_dict() for r in rows[len(checked): body.max_rows]]
-    return {"file": body.name, "rows_total": len(rows), "checked": len(checked), "rows": checked + rest, "problems": problems[:20]}
+    return {
+        "file": body.name,
+        "as_of": as_of.isoformat() if as_of else None,
+        "today": today.isoformat(),
+        "stale": as_of is not None and as_of < today,
+        "rows_total": len(rows),
+        "checked": len(checked),
+        "rows": checked + rest,
+        "problems": problems[:20],
+    }
 
 
 @router.post("/screen")

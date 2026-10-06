@@ -1195,6 +1195,10 @@ export interface BarchartScreenRow {
   ticket: SpreadTicketRequest | null;
   ours?: {
     note?: string;
+    /** Today's natural for the same strikes; our figures are priced at it
+     * ("today"), or at the file's net when a leg is not quoted ("file"). */
+    net_now?: number | null;
+    priced_at?: "today" | "file";
     atm_iv?: number | null;
     spot?: number;
     loss_prob_flat?: number;
@@ -1209,6 +1213,10 @@ export interface BarchartScreenRow {
 
 export interface BarchartImportResponse {
   file: string;
+  /** The session the file's prices are from, and whether that is before today. */
+  as_of: string | null;
+  today: string;
+  stale: boolean;
   rows_total: number;
   checked: number;
   rows: BarchartScreenRow[];
