@@ -230,6 +230,8 @@ class SignalBacktestBody(BaseModel):
     # No new premium sold while SPY is below its 200-day average or its IV
     # spikes (app.options.signal_backtest.risk_off).
     market_filter: bool = False
+    # Narrowest bid/ask per leg (signal_backtest.MIN_LEG_SPREAD by default).
+    min_leg_spread: float = Field(default=0.05, ge=0.0, le=1.0)
 
 
 # Closes behind the first priced session: the 200-day trend filter needs
@@ -286,6 +288,7 @@ async def signal_backtest(body: SignalBacktestBody, request: Request, user: dict
         result = walk(
             variant, closes, priced, starting_equity=body.starting_equity, start=body.start, end=body.end,
             market_filter=body.market_filter, market=(closes.get("SPY", []), market_iv),
+            min_spread=body.min_leg_spread,
         )
         # "trade_log", not "trades": the summary's own "trades" is the count.
         out["results"].append({**summarize(result, body.starting_equity), "curve": result.curve, "trade_log": result.trades})

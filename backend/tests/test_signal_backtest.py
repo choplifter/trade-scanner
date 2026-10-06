@@ -125,3 +125,10 @@ def test_a_filtered_walk_sells_nothing_while_the_market_is_risk_off():
     filtered = walk("vol", closes, ivs, market_filter=True)
     assert not filtered.trades and filtered.skipped.get("market below its 200-day average")
     assert walk("vol", closes, ivs).trades, "unfiltered, the same tape trades"
+
+
+def test_a_wider_minimum_bid_ask_costs_a_cheap_spread_more_of_its_credit():
+    """HYG-like: cheap legs, where the floor -- not the 3 % -- sets the cost."""
+    tight = build_spread("HYG", "bull", "credit", 80.0, 0.07, TODAY, 100_000.0, "vol", min_spread=0.02)
+    real = build_spread("HYG", "bull", "credit", 80.0, 0.07, TODAY, 100_000.0, "vol", min_spread=0.05)
+    assert real.entry == pytest.approx(tight.entry - 0.03, abs=0.002), "two legs, 0.015 more half-spread each"

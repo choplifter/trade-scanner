@@ -24,7 +24,7 @@ What the prices are: Black-Scholes at the day's at-the-money IV -- the
 real one, from the IV history (option_iv_history: our recorder and the
 Barchart seed), flat across strikes, no skew, no dividends, an expiry
 assumed to exist DTE days out. Fills cross a bid/ask of SPREAD_FRAC of
-each leg's price (at least MIN_TICK). So it says whether the signal and
+each leg's price (at least MIN_LEG_SPREAD). So it says whether the signal and
 the rules hold up at realistic volatility levels -- not what a real
 chain, skew and liquidity would have paid. The response says so.
 
@@ -84,6 +84,12 @@ RISK_PER_TRADE = 0.01
 MAX_TOTAL_RISK = 0.05
 SPREAD_FRAC = 0.03
 MIN_TICK = 0.02
+# The narrowest bid/ask a leg is crossed at. A cent or two is a liquid
+# index option; on a cheap low-vol ETF it is a nickel -- HYG's 76/74 put
+# spread on 2026-10-06 quoted 0.29 mid against 0.24 natural, 0.05 across
+# the two legs' half-spreads. At 0.02 the backtest charged HYG-type
+# spreads less than half of that.
+MIN_LEG_SPREAD = 0.05
 
 GROUPS = {
     "equity": {"SPY", "QQQ", "IWM", "DIA", "XLK", "SMH"},
@@ -181,9 +187,9 @@ def _years(today: date, expiry: date) -> float:
     return max((expiry - today).days, 0) / 365
 
 
-def _cost(price: float) -> float:
+def _cost(price: float, min_spread: float = MIN_LEG_SPREAD) -> float:
     """Half the bid/ask of one leg: what crossing it costs against its mid."""
-    return max(MIN_TICK, SPREAD_FRAC * price) / 2
+    return max(min_spread, SPREAD_FRAC * price) / 2
 
 
 @dataclass
@@ -200,6 +206,7 @@ class Spread:
     max_loss: float  # dollars for the whole position
     opened: date
     variant: str
+    min_spread: float = MIN_LEG_SPREAD
 
     def mid_value(self, spot: float, iv: float, today: date) -> float:
         """What closing would cost (credit) or bring (debit) at mid, per share."""
@@ -213,7 +220,7 @@ class Spread:
         mid, a debit spread sold below it."""
         t = _years(today, self.expiry)
         legs = [bs_price(self.option, spot, k, t, iv) for k in (self.short_strike, self.long_strike)]
-        cross = sum(_cost(p) for p in legs)
+        cross = sum(_cost(p, self.min_spread) for p in legs)
         mid = self.mid_value(spot, iv, today)
         return max(0.0, mid + cross) if self.kind == "credit" else max(0.0, mid - cross)
 
@@ -250,7 +257,8 @@ def _inv_norm(p: float) -> float:
 
 
 def build_spread(
-    symbol: str, direction: str, kind: str, spot: float, iv: float, today: date, equity: float, variant: str
+    symbol: str, direction: str, kind: str, spot: float, iv: float, today: date, equity: float, variant: str,
+    min_spread: float = MIN_LEG_SPREAD,
 ) -> Spread | None:
     """The vertical for a signal and a regime, sized to RISK_PER_TRADE.
 
@@ -265,19 +273,20 @@ def build_spread(
     budget = equity * RISK_PER_TRADE
     width = max(step, round_strike(spot * WIDTH_PCT, step))
     while width >= step:
-        built = _vertical(direction, kind, spot, iv, t, step, width)
+        built = _vertical(direction, kind, spot, iv, t, step, width, min_spread)
         if built is None:
             return None
         option, short, long, entry, loss_per = built
         if loss_per <= budget:
             contracts = int(budget // loss_per)
             return Spread(symbol, direction, kind, option, long, short, expiry, contracts, round(entry, 4),
-                          round(loss_per * contracts, 2), today, variant)
+                          round(loss_per * contracts, 2), today, variant, min_spread)
         width = round_strike(width - step, step)
     return None
 
 
-def _vertical(direction: str, kind: str, spot: float, iv: float, t: float, step: float, width: float):
+def _vertical(direction: str, kind: str, spot: float, iv: float, t: float, step: float, width: float,
+              min_spread: float = MIN_LEG_SPREAD):
     """(option, short, long, entry per share, max loss per contract), or None
     when the market would not pay for the spread."""
     if kind == "credit":
@@ -289,7 +298,7 @@ def _vertical(direction: str, kind: str, spot: float, iv: float, t: float, step:
         long = round_strike(spot, step)
         short = long + width if option == "call" else long - width
     prices = {k: bs_price(option, spot, k, t, iv) for k in (short, long)}
-    cross = _cost(prices[short]) + _cost(prices[long])
+    cross = _cost(prices[short], min_spread) + _cost(prices[long], min_spread)
     if kind == "credit":
         entry = prices[short] - prices[long] - cross
         if entry <= MIN_TICK:
@@ -338,6 +347,7 @@ def walk(
     end: date | None = None,
     market_filter: bool = False,
     market: tuple[list[tuple[date, float]], dict[date, float]] | None = None,
+    min_spread: float = MIN_LEG_SPREAD,
 ) -> Result:
     """Run one signal method over the sessions where IV is known, between
     `start` and `end` when given -- so rules set on one stretch can be
@@ -431,7 +441,7 @@ def walk(
             if any(group_of(p.symbol) == group_of(symbol) for p in open_):
                 result.skip("group already open")
                 continue
-            spread = build_spread(symbol, direction, kind, past[-1], iv, today, equity, variant)
+            spread = build_spread(symbol, direction, kind, past[-1], iv, today, equity, variant, min_spread)
             if spread is None:
                 result.skip("does not fit the risk per trade")
                 continue
