@@ -218,6 +218,66 @@ async def backtest(body: BacktestRequest, request: Request, user: dict = Depends
         raise HTTPException(status_code=502, detail="Failed to run the backtest")
 
 
+class SignalBacktestBody(BaseModel):
+    """Symbols to walk (default: the user's watchlist) and the methods."""
+
+    symbols: list[str] | None = Field(default=None, max_length=60)
+    variants: list[Literal["trend", "band"]] = Field(default_factory=lambda: ["trend", "band"])
+    starting_equity: float = Field(default=100_000.0, gt=0)
+
+
+# Closes behind the first priced session: the 200-day trend filter needs
+# ~290 calendar days before the IV history starts, which is about a year
+# back -- so roughly two years in all.
+SIGNAL_BARS_LOOKBACK_DAYS = 760
+
+
+@router.post("/signal-backtest")
+async def signal_backtest(body: SignalBacktestBody, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """Donchian breakout and Bollinger dip, traded as volatility-picked
+    verticals under hard risk rules, over the sessions the IV history
+    covers. Synthetic option prices at the real daily IV -- see
+    app.options.signal_backtest for exactly what that does and does not
+    capture."""
+    import asyncio
+
+    from app.market_data.bars import get_daily_bars_multi
+    from app.playbooks.backtest import closes_by_session
+    from app.options.signal_backtest import summarize, walk
+
+    clients = getattr(request.app.state, "alpaca_clients", None)
+    iv_store = getattr(request.app.state, "iv_history_store", None)
+    if clients is None or iv_store is None:
+        raise HTTPException(status_code=503, detail="Market data or IV history not configured")
+    symbols = body.symbols
+    if not symbols:
+        watchlist = getattr(request.app.state, "watchlist_store", None)
+        symbols = await watchlist.list_symbols(user["id"]) if watchlist is not None else []
+    symbols = [s.upper() for s in symbols][:60]
+    if not symbols:
+        raise HTTPException(status_code=422, detail="No symbols: pass some, or add them to the watchlist")
+    try:
+        bars = await get_daily_bars_multi(clients, symbols, lookback_days=SIGNAL_BARS_LOOKBACK_DAYS)
+        closes = {s.upper(): closes_by_session(rows) for s, rows in bars.items()}
+        ivs = {s: await asyncio.to_thread(iv_store.series_sync, s) for s in symbols}
+    except Exception:
+        logger.exception("Signal backtest data failed")
+        raise HTTPException(status_code=502, detail="Failed to load closes or IV history")
+    priced = {s: series for s, series in ivs.items() if len(series) >= 60 and s in closes}
+    out = {
+        "synthetic": True,
+        "symbols": sorted(priced),
+        "without_iv_history": sorted(set(symbols) - set(priced)),
+        "first_session": min((min(v) for v in priced.values()), default=None),
+        "last_session": max((max(v) for v in priced.values()), default=None),
+        "results": [],
+    }
+    for variant in body.variants:
+        result = walk(variant, closes, priced, starting_equity=body.starting_equity)
+        out["results"].append({**summarize(result, body.starting_equity), "curve": result.curve, "trades": result.trades})
+    return out
+
+
 class NoteBody(BaseModel):
     note: str = Field(min_length=1, max_length=500)
 

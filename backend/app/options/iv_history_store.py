@@ -186,6 +186,16 @@ class IvHistoryStore:
             ).fetchall()
         return [row["atm_iv"] for row in rows]
 
+    def series_sync(self, symbol: str) -> dict[date, float]:
+        """Every comparable reading for `symbol`, keyed by session -- what a
+        backtest prices options at (app.options.signal_backtest)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT session_date, atm_iv FROM option_iv_history WHERE symbol = ? AND dte BETWEEN ? AND ?",
+                (symbol.upper(), COMPARABLE_DTE[0], COMPARABLE_DTE[1]),
+            ).fetchall()
+        return {date.fromisoformat(row["session_date"]): row["atm_iv"] for row in rows}
+
     async def history(self, symbol: str, limit: int = LOOKBACK_SESSIONS) -> list[float]:
         try:
             return await asyncio.to_thread(self._history_sync, symbol, limit)
