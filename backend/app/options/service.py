@@ -145,10 +145,11 @@ def build_mleg_request(
     alpaca_limit_price: float,
     client_order_id: str | None,
     order_type: OrderType = "limit",
+    time_in_force: str = "day",
 ):
     """The multi-leg order. Pure and testable without a client, like
-    app.trading.service._build_request. Options at Alpaca are day orders;
-    the sign of a limit says debit (+) or credit (-). A market order sends
+    app.trading.service._build_request. A day order unless `time_in_force`
+    says gtc; the sign of a limit says debit (+) or credit (-). A market order sends
     no price at all -- the legs' sides say which way the package goes."""
     from alpaca.trading.enums import OrderClass, OrderSide, PositionIntent, TimeInForce
     from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest, OptionLegRequest
@@ -164,7 +165,7 @@ def build_mleg_request(
     return request_cls(
         qty=qty,
         order_class=OrderClass.MLEG,
-        time_in_force=TimeInForce.DAY,
+        time_in_force=TimeInForce(time_in_force),
         legs=[
             OptionLegRequest(
                 symbol=leg.symbol,
@@ -184,6 +185,7 @@ def build_single_leg_request(
     limit_price: float,
     client_order_id: str | None,
     order_type: OrderType = "limit",
+    time_in_force: str = "day",
 ):
     """A plain option order: a long call/put opened outright, or a broken
     spread down to one contract being closed -- the SDK refuses MLEG with
@@ -204,7 +206,7 @@ def build_single_leg_request(
         qty=qty,
         side=OrderSide(leg.side),
         position_intent=PositionIntent(leg.position_intent),
-        time_in_force=TimeInForce.DAY,
+        time_in_force=TimeInForce(time_in_force),
         **kwargs,
     )
 
@@ -1137,11 +1139,13 @@ class OptionsService:
             return await self._submit_legs_one_by_one(resolved)
         if len(resolved.legs) == 1:
             request = build_single_leg_request(
-                resolved.legs[0], resolved.qty, resolved.limit_price, resolved.client_order_id, resolved.order_type
+                resolved.legs[0], resolved.qty, resolved.limit_price, resolved.client_order_id, resolved.order_type,
+                ticket.time_in_force,
             )
         else:
             request = build_mleg_request(
-                resolved.legs, resolved.qty, resolved.alpaca_limit_price, resolved.client_order_id, resolved.order_type
+                resolved.legs, resolved.qty, resolved.alpaca_limit_price, resolved.client_order_id, resolved.order_type,
+                ticket.time_in_force,
             )
         try:
             order = await asyncio.to_thread(self._trading.submit_order, request)

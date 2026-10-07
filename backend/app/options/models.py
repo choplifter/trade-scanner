@@ -258,6 +258,10 @@ class SpreadTicket(BaseModel):
     # credit: the least to receive.
     limit_price: float | None = Field(default=None, gt=0)
     order_type: OrderType = "limit"
+    # "day" ends at the close if unfilled; "gtc" rests until filled or
+    # cancelled (Alpaca: options take day or gtc). Opening orders only --
+    # closes stay day orders.
+    time_in_force: Literal["day", "gtc"] = "day"
     client_order_id: str | None = Field(default=None, max_length=128)
     # A built package written against shares the account holds -- a collar,
     # a protective put: 100 shares per contract cover a short call, and the

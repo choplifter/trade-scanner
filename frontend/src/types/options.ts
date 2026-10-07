@@ -299,6 +299,9 @@ export interface SpreadTicketRequest {
   limit_price?: number;
   /** "market" sends no price; limit_price is then ignored. Default limit. */
   order_type?: OptionOrderType;
+  /** Omitted = day: Alpaca cancels it at the close. gtc rests until filled
+   * or cancelled. */
+  time_in_force?: "day" | "gtc";
   client_order_id?: string;
   /** A built package written against held shares (a collar, a protective
    * put): the shares cover a short call and appear in the risk chart. */

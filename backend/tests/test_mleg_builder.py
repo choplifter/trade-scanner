@@ -120,3 +120,20 @@ def test_market_orders_carry_no_price_single_or_multi_leg():
     assert isinstance(request, MarketOrderRequest) and request.type is OrderType.MARKET
     assert request.symbol == "SPY260918C00760000" and request.legs is None
     assert "limit_price" not in request.to_request_fields()
+
+
+def test_an_opening_order_can_rest_until_cancelled():
+    """Alpaca takes day or gtc for options: a gtc package survives the close
+    instead of expiring with it."""
+    from app.options.models import SpreadTicket
+
+    legs = [
+        _leg("SPY260918P00735000", "buy", "buy_to_open", strike=735.0),
+        _leg("SPY260918P00740000", "sell", "sell_to_open", strike=740.0),
+    ]
+    assert build_mleg_request(legs, 1, -1.0, None).time_in_force is TimeInForce.DAY
+    assert build_mleg_request(legs, 1, -1.0, None, "limit", "gtc").time_in_force is TimeInForce.GTC
+    single = build_single_leg_request(legs[0], 1, 1.0, None, "limit", "gtc")
+    assert single.time_in_force is TimeInForce.GTC
+    ticket = SpreadTicket(underlying="SPY", strategy="bull_put", expiry="2026-09-18", qty=1, long_strike=735, short_strike=740)
+    assert ticket.time_in_force == "day"

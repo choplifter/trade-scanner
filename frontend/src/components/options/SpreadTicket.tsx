@@ -349,6 +349,26 @@ export function OrderTypeToggle({
   );
 }
 
+/** Day | GTC for an opening limit order. Not persisted, like the order
+ * type: a day order is the default, resting past the close a choice. */
+export function TimeInForceToggle({ value, onChange }: { value: "day" | "gtc"; onChange: (tif: "day" | "gtc") => void }) {
+  return (
+    <span
+      className="short-target-mode"
+      role="group"
+      aria-label="Time in force"
+      title="Day: cancelled by Alpaca at the close (16:00 New York) if not filled. GTC: rests until it fills or you cancel it -- check it now and then, the market moves on overnight."
+    >
+      <button type="button" aria-pressed={value === "day"} onClick={() => onChange("day")}>
+        Day
+      </button>
+      <button type="button" aria-pressed={value === "gtc"} onClick={() => onChange("gtc")}>
+        GTC
+      </button>
+    </span>
+  );
+}
+
 export function SpreadTicket({
   symbol,
   expiry,
@@ -383,6 +403,7 @@ export function SpreadTicket({
   const [limit, setLimit] = useState("");
   const [limitEdited, setLimitEdited] = useState(false);
   const [orderType, setOrderType] = useState<OptionOrderType>("limit");
+  const [tif, setTif] = useState<"day" | "gtc">("day");
   const market = orderType === "market";
   const [preview, setPreview] = useState<SpreadPreview | null>(null);
   const [pricing, setPricing] = useState(false);
@@ -523,7 +544,10 @@ export function SpreadTicket({
         ? builderTicket(symbol, expiry, spread.qty, builder, withShares)
         : ticketFor(symbol, strategy, expiry, spread.qty, legs!, ctx);
       if (spread.order_type === "market") ticket.order_type = "market";
-      else ticket.limit_price = spread.limit_price;
+      else {
+        ticket.limit_price = spread.limit_price;
+        if (tif === "gtc") ticket.time_in_force = "gtc";
+      }
       ticket.client_order_id = clientOrderIdRef.current ?? undefined;
       const result = await submitSpread(ticket, mode === "live" ? liveTyped.trim() : undefined);
       const legError = (result.order as { leg_error?: string | null } | undefined)?.leg_error;
@@ -846,6 +870,7 @@ export function SpreadTicket({
           <input type="number" min={1} step={1} value={qty} onChange={(e) => setQty(e.target.value)} />
         </label>
         <OrderTypeToggle value={orderType} onChange={setOrderType} />
+        {!market && <TimeInForceToggle value={tif} onChange={setTif} />}
         {!market && (
           <label>
             {income ? "Min premium" : single ? "Max premium" : direction === "debit" ? "Max debit" : "Min credit"}{" "}
@@ -1044,7 +1069,7 @@ export function SpreadTicket({
               </strong>{" "}
               {spread.order_type === "market"
                 ? `${spread.direction} ≈ ${money(spread.limit_price)} per ${unit} (market, day)`
-                : `${spread.direction} ${money(spread.limit_price)} per ${unit} (limit ${spread.alpaca_limit_price.toFixed(2)}, day)`}
+                : `${spread.direction} ${money(spread.limit_price)} per ${unit} (limit ${spread.alpaca_limit_price.toFixed(2)}, ${tif === "gtc" ? "good till cancelled" : "day"})`}
             </p>
             <ul className="spread-legs">
               {spread.legs.map((leg) => (
