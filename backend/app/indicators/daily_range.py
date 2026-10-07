@@ -75,24 +75,22 @@ def compute(ctx) -> dict:
     # aims at: session_marks.prior_session_range answers "the day before the
     # session being traded", which on a Saturday is Thursday, not Friday.
     # Two different questions, both correct.
-    today = datetime.now(ET).date()
+    now = datetime.now(ET)
+    today = now.date()
+    # Once today's session is over it is the most recent finished day and
+    # the one the chart should mark -- whether or not earlier days are in
+    # the window too.
+    hours = trading_hours_for(today)
+    if hours is not None and now >= hours[1]:
+        session = [b for b in bars if hours[0] <= b.timestamp.astimezone(ET) <= hours[1]]
+        if session:
+            return {
+                "High": max(b.high for b in session),
+                "Low": min(b.low for b in session),
+                "Close": max(session, key=lambda b: b.timestamp).close,
+            }
     high, low = session_marks.prior_session_range(bars, today)
     if high is None:
-        # Nothing before today in the window. Today itself may nonetheless
-        # have completed -- the market is closed and its session is over --
-        # in which case it is the most recent finished day and the one the
-        # chart should mark.
-        hours = trading_hours_for(today)
-        if hours is not None and datetime.now(ET) >= hours[1]:
-            session = [
-                b for b in bars if hours[0] <= b.timestamp.astimezone(ET) <= hours[1]
-            ]
-            if session:
-                return {
-                    "High": max(b.high for b in session),
-                    "Low": min(b.low for b in session),
-                    "Close": max(session, key=lambda b: b.timestamp).close,
-                }
         return _EMPTY
     return {
         "High": high,
