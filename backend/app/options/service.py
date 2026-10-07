@@ -51,6 +51,7 @@ from app.options.position_risk import (
     skew_delta,
     smile_slope,
     vol_forecast_today,
+    held_outlook as outlook_for,
 )
 from app.options.positions import SpreadGroup, group_spreads
 from app.options.quote_source import LiveQuoteSource, QuoteSource
@@ -98,37 +99,13 @@ def worst_case(
 
 
 def held_outlook(legs: list[SpreadLeg], qty: int, spot: float, now: datetime, vol) -> HeldOutlook | None:
-    """A held position's expectation from here on: its value at the (short)
-    expiry under the realised-vol forecast `vol`, less what it is worth at
-    today's mids -- the same EV (RV) the ticket shows, with today's mark in
-    place of the entry, since what was paid is spent either way. No cost:
-    held to expiry there is nothing more to cross. None without a forecast,
-    a mark on every leg, or a day left."""
-    mark = net_price(legs, "mid")
-    if vol is None or vol.forecast <= 0 or mark is None or not legs:
-        return None
-    expiry = min(leg.expiry for leg in legs)
-    dte = (expiry - now.date()).days
-    if dte <= 0:
-        return None
-    payoff_legs = [
-        PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
+    """position_risk.held_outlook for a ticket's legs, `qty` structures."""
+    risk_legs = [
+        RiskLeg(leg.kind, leg.strike, leg.expiry, (1 if leg.side == "buy" else -1) * leg.ratio_qty * qty, leg.iv, leg.mid)
         for leg in legs
     ]
-    horizon = now.replace(year=expiry.year, month=expiry.month, day=expiry.day)
-    ev = expected_value(payoff_legs, mark, horizon, spot, vol.forecast, dte / 365.0, qty)
-    if ev is None:
-        return None
-    shorts = [leg.iv for leg in legs if leg.side == "sell" and leg.iv]
-    ivs = shorts or [leg.iv for leg in legs if leg.iv]
-    return HeldOutlook(
-        expected_value_rv=ev,
-        pnl_per_day=round(ev / dte, 2),
-        dte=dte,
-        iv=round(sum(ivs) / len(ivs), 4) if ivs else None,
-        rv_forecast=round(vol.forecast, 4),
-        vol_forecast=vol.to_dict(),
-    )
+    out = outlook_for(risk_legs, spot, now, vol)
+    return HeldOutlook(**out) if out is not None else None
 
 
 def market_warning(leg_count: int, no_natural: bool) -> str:

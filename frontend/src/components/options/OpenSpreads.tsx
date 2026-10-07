@@ -97,6 +97,10 @@ function signed(value: number): string {
   return `${value > 0 ? "+" : ""}${money(value)}`;
 }
 
+function toneClass(tone: "good" | "bad" | "neutral" | undefined): string | undefined {
+  return tone === "good" ? "delta-up" : tone === "bad" ? "delta-down" : undefined;
+}
+
 function strategyLabel(group: SpreadGroup): string {
   if (group.strategy === "broken") return "broken";
   if (group.strategy === "custom") return "custom";
@@ -461,6 +465,10 @@ export function OpenSpreads({
             >
               Θ / V
             </th>
+            <th title="Expected P/L per calendar day from today's mid to expiry, if the stock moves as its realised-vol forecast says. Negative: on average closing now beats holding on.">
+              P/L / day
+            </th>
+            <th title="The short legs' implied volatility against the stock's realised-vol forecast for the days left.">Vol</th>
             <th>Triggers</th>
             <th />
           </tr>
@@ -470,6 +478,7 @@ export function OpenSpreads({
             const groupTriggers = triggers.filter((t) => t.underlying === group.underlying && t.expiry === group.expiry);
             const active = groupTriggers.filter((t) => t.status === "active");
             const isOpen = expanded === group.id;
+            const [perDay, vol] = group.outlook ? heldFigures(group.outlook, group.greeks?.theta ?? null, group.net_entry < 0) : [null, null];
             return [
               <tr
                 key={group.id}
@@ -520,6 +529,12 @@ export function OpenSpreads({
                     ? `${group.greeks.theta >= 0 ? "+" : ""}${group.greeks.theta.toFixed(0)} / ${group.greeks.vega >= 0 ? "+" : ""}${group.greeks.vega.toFixed(0)}`
                     : "—"}
                 </td>
+                <td className={toneClass(perDay?.tone)} title={perDay?.title}>
+                  {perDay?.value ?? "—"}
+                </td>
+                <td className={`spread-vol-cell ${toneClass(vol?.tone) ?? ""}`} title={vol?.title}>
+                  {vol ? vol.value.replace(/ %/g, "%") : "—"}
+                </td>
                 <td>
                   {active.length > 0
                     ? active.map((t) => (
@@ -566,7 +581,7 @@ export function OpenSpreads({
               </tr>,
               isOpen && (
                 <tr key={`${group.id}:detail`} className="spread-expand">
-                  <td colSpan={11}>
+                  <td colSpan={13}>
                     {(group.greeks || group.collateral) && (
                       <p className="spread-risk-line">
                         {group.greeks && <GreeksLine greeks={group.greeks} />}

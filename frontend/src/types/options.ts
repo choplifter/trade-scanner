@@ -431,6 +431,10 @@ export interface SpreadGroup {
   /** For a condor or credit vertical: its short legs and the side under
    * pressure (backend position_risk.adjustment_state). */
   adjust?: AdjustState | null;
+  /** What holding on is expected to earn from here, at the realised-vol
+   * forecast (backend position_risk.held_outlook); null in a replay, for a
+   * covered call or without quotes. */
+  outlook?: HeldOutlook | null;
 }
 
 export interface AdjustSide {

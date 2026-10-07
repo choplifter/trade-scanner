@@ -482,7 +482,49 @@ def adjustment_state(strategy: str, legs: list[RiskLeg], spot: float, now: datet
     return {"sides": sides, "tested": worst, "threshold": TESTED_DELTA}
 
 
-async def spread_risks(source, groups: list, dividends: "DividendCalendar | None") -> tuple[dict[str, dict], dict | None]:
+def held_outlook(legs: list[RiskLeg], spot: float, now: datetime, vol) -> dict | None:
+    """A held position's expectation from here on: its value at the (short)
+    expiry under the realised-vol forecast `vol`, less what it is worth at
+    today's mids -- the same EV (RV) the ticket shows, with today's mark in
+    place of the entry, since what was paid is spent either way. No cost:
+    held to expiry there is nothing more to cross. None without a forecast,
+    a mark on every leg, or a day left. `legs` are option legs only."""
+    from app.options.optimizer import expected_value
+    from app.options.payoff import PayoffLeg
+
+    if vol is None or vol.forecast <= 0 or not legs or any(leg.kind == "stock" or leg.expiry is None for leg in legs):
+        return None
+    if any(leg.mid is None for leg in legs):
+        return None
+    # Per share, signed like a ticket: positive is what the position is worth.
+    mark = sum(leg.qty * leg.mid for leg in legs)
+    expiry = min(leg.expiry for leg in legs)
+    dte = (expiry - now.date()).days
+    if dte <= 0:
+        return None
+    payoff_legs = [
+        PayoffLeg(kind=leg.kind, strike=leg.strike, side="buy" if leg.qty > 0 else "sell", ratio=int(abs(leg.qty)), expiry=leg.expiry, iv=leg.iv)
+        for leg in legs
+    ]
+    horizon = now.replace(year=expiry.year, month=expiry.month, day=expiry.day)
+    ev = expected_value(payoff_legs, mark, horizon, spot, vol.forecast, dte / 365.0, 1)
+    if ev is None:
+        return None
+    shorts = [leg.iv for leg in legs if leg.qty < 0 and leg.iv]
+    ivs = shorts or [leg.iv for leg in legs if leg.iv]
+    return {
+        "expected_value_rv": ev,
+        "pnl_per_day": round(ev / dte, 2),
+        "dte": dte,
+        "iv": round(sum(ivs) / len(ivs), 4) if ivs else None,
+        "rv_forecast": round(vol.forecast, 4),
+        "vol_forecast": vol.to_dict(),
+    }
+
+
+async def spread_risks(
+    source, groups: list, dividends: "DividendCalendar | None", clients=None
+) -> tuple[dict[str, dict], dict | None]:
     """Per held structure ({group id: {greeks, warnings}}) and the account's
     sum of the greeks across every structure that has them -- the "position
     analysis" view: what the book as a whole does when the market moves or
@@ -538,11 +580,19 @@ async def spread_risks(source, groups: list, dividends: "DividendCalendar | None
                 warnings += assignment_risks(legs, spot, now, await dividends.upcoming(g.underlying))
             except Exception:
                 logger.exception("Assignment check failed for %s", g.underlying)
+        # The forward expectation at the realised-vol forecast: today's
+        # realised vol, so not in a replay; not for a covered call, whose
+        # shares the option-only EV would leave out.
+        outlook = None
+        if not replay and not g.shares and legs:
+            dte = max(0, (min(leg.expiry for leg in legs if leg.expiry) - now.date()).days)
+            outlook = held_outlook(legs, spot, now, await vol_forecast_today(clients, g.underlying, dte))
         out[g.id] = {
             "greeks": greeks.to_dict() if greeks is not None else None,
             "warnings": warnings,
             "collateral": collateral_for(g),
             "adjust": adjustment_state(g.strategy, legs, spot, now),
+            "outlook": outlook,
         }
         if greeks is not None:
             theta += greeks.theta

@@ -246,7 +246,7 @@ async def spreads(request: Request, service: OptionsService = Depends(_service),
     except Exception:
         logger.exception("Open spreads fetch failed")
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
-    risks, totals = await spread_risks(service.source, groups, service.dividends)
+    risks, totals = await spread_risks(service.source, groups, service.dividends, getattr(service, "_clients", None))
     return {
         "spreads": [{**g.to_dict(), **risks.get(g.id, {"greeks": None, "warnings": [], "collateral": 0.0})} for g in groups],
         "triggers": triggers,

@@ -208,7 +208,7 @@ async def spreads(request: Request, user: dict = Depends(get_current_user)) -> d
     except Exception:
         logger.exception("Sim open spreads fetch failed")
         raise HTTPException(status_code=502, detail="Failed to read the simulated spreads")
-    risks, totals = await spread_risks(service.source, groups, service.dividends)
+    risks, totals = await spread_risks(service.source, groups, service.dividends, getattr(service, "_clients", None))
     return {
         "spreads": [{**g.to_dict(), **risks.get(g.id, {"greeks": None, "warnings": [], "collateral": 0.0})} for g in groups],
         "triggers": triggers,

@@ -55,3 +55,15 @@ def test_no_forecast_no_mark_or_no_day_left_gives_no_outlook():
     unpriced = [CONDOR[0].model_copy(update={"mid": None}), *CONDOR[1:]]
     assert held_outlook(unpriced, 1, SPOT, NOW, _vol(0.2)) is None
     assert held_outlook(CONDOR, 1, SPOT, datetime.combine(EXPIRY, NOW.timetz()), _vol(0.2)) is None
+
+
+def test_the_list_and_the_risk_chart_read_the_same_outlook():
+    """spread_risks hands position_risk the legs as held (signed contracts in
+    all); the risk chart hands service the ticket's legs and a quantity."""
+    from app.options.position_risk import RiskLeg, held_outlook as from_risk_legs
+
+    held = [RiskLeg(l.kind, l.strike, l.expiry, (1 if l.side == "buy" else -1) * 2, l.iv, l.mid) for l in CONDOR]
+    listed = from_risk_legs(held, SPOT, NOW, _vol(0.2))
+    charted = held_outlook(CONDOR, 2, SPOT, NOW, _vol(0.2))
+    assert listed == charted.model_dump()
+    assert from_risk_legs([*held, RiskLeg("stock", 0.0, None, 100)], SPOT, NOW, _vol(0.2)) is None
