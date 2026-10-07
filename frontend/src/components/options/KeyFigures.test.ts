@@ -4,7 +4,7 @@ import type { OptionEventsResponse, ResolvedSpread } from "../../types/options";
 import { keyFigures } from "./KeyFigures";
 
 const spread = (over: Partial<ResolvedSpread> = {}) =>
-  ({ expiry: "2026-11-20", net_mid: 1.0, net_natural: 0.85, max_loss: -800, expected_value: 12, direction: "credit", ...over }) as ResolvedSpread;
+  ({ expiry: "2026-11-20", dte: 40, net_mid: 1.0, net_natural: 0.85, max_loss: -800, expected_value: 12, direction: "credit", ...over }) as ResolvedSpread;
 
 const events = (ratio: number | null, report: string | null) =>
   ({ iv: { iv_over_realized: ratio }, earnings: report ? { report_date: report } : null }) as unknown as OptionEventsResponse;
@@ -23,5 +23,21 @@ describe("keyFigures", () => {
     const worse = tones(keyFigures(spread({ expected_value: -5, max_loss: -3000, net_natural: 0.6 }), events(1.0, "2026-12-01"), 100_000, true));
     expect(worse).toMatchObject({ EV: "bad", "Max loss": "bad", Earnings: "good", Quote: "bad" });
     expect(tones(keyFigures(spread({ max_loss: null }), null, 100_000, true))["Max loss"]).toBe("bad");
+  });
+});
+
+describe("P/L per day and Vol", () => {
+  it("spreads EV (RV) over the days left and shows IV against RV as levels", () => {
+    const figs = keyFigures(
+      spread({ expected_value_rv: 28, dte: 40, atm_iv: 0.153, vol_forecast: { forecast: 0.105, recent: 0.1, long_run: 0.12, weight_recent: 0.5 } }),
+      null,
+      100_000,
+      true,
+    );
+    const byLabel = Object.fromEntries(figs.map((f) => [f.label, f]));
+    expect(byLabel["P/L / day"].value).toBe("+$0.70");
+    expect(byLabel["P/L / day"].tone).toBe("good");
+    expect(byLabel["Vol"].value).toBe("IV 15.3 % · RV 10.5 %");
+    expect(byLabel["Vol"].tone).toBe("good"); // 1.46x: rich, good for a seller
   });
 });

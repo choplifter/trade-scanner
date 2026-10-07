@@ -62,6 +62,51 @@ export function keyFigures(
     ),
   });
 
+  // The expected P/L spread over the days left: what the order earns on
+  // average per calendar day if the stock moves as its realised-vol
+  // forecast says. Theta -- the P/L per day at a standing price -- beside it
+  // in the tooltip: the two part ways exactly when the stock moves.
+  const days = Math.max(spread.dte, 1);
+  const perDay = evRv == null ? null : evRv / days;
+  const theta = spread.greeks?.theta ?? null;
+  out.push({
+    label: "P/L / day",
+    value: perDay == null ? "—" : `${perDay >= 0 ? "+" : "−"}$${Math.abs(perDay).toFixed(2)}`,
+    tone: perDay == null ? "neutral" : perDay > 0 ? "good" : "bad",
+    title: withBook(
+      `Expected P/L per calendar day: EV (RV) over the ${spread.dte} days left. ` +
+        (theta != null ? `Theta, the P/L per day if the stock stood still, is ${theta >= 0 ? "+" : "−"}$${Math.abs(theta).toFixed(2)}; the gap between the two is what the expected movement costs (or pays). ` : "") +
+        "An average over the life, not a daily schedule: most of a credit spread's P/L arrives late, and a single move can outweigh many days of it.",
+      NATENBERG.theta,
+      NATENBERG.historicalVol,
+    ),
+  });
+
+  // The two volatilities the whole trade turns on, as levels: what the
+  // options price in (ATM IV) against what the stock is expected to realise.
+  const iv = spread.atm_iv ?? null;
+  const rv = spread.vol_forecast?.forecast ?? spread.realised_vol ?? null;
+  const volRatio = iv != null && rv ? iv / rv : null;
+  out.push({
+    label: "Vol",
+    value: iv == null && rv == null ? "—" : `IV ${iv == null ? "—" : `${(iv * 100).toFixed(1)} %`} · RV ${rv == null ? "—" : `${(rv * 100).toFixed(1)} %`}`,
+    tone:
+      volRatio == null
+        ? "neutral"
+        : volRatio >= RICH_IV_RATIO
+          ? selling ? "good" : "bad"
+          : volRatio <= CHEAP_IV_RATIO
+            ? selling ? "bad" : "good"
+            : "neutral",
+    title: withBook(
+      "IV: the at-the-money implied volatility the options price in. RV: the volatility the stock is expected to realise over the position's life -- its last 20 sessions blended toward the past year by the time left" +
+        (spread.vol_forecast ? ` (20-session ${(spread.vol_forecast.recent * 100).toFixed(1)} %` + (spread.vol_forecast.long_run != null ? `, year ${(spread.vol_forecast.long_run * 100).toFixed(1)} %)` : ")") : "") +
+        ". Selling pays when IV stands well above RV, buying when it stands below.",
+      NATENBERG.historicalVol,
+      NATENBERG.ivAsPredictor,
+    ),
+  });
+
   const loss = spread.max_loss;
   const share = loss != null && equity ? Math.abs(loss) / equity : null;
   out.push({
