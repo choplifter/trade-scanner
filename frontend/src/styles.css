@@ -3652,6 +3652,13 @@ td.chain-side.chain-stale {
   flex-wrap: wrap;
 }
 
+/* The ticket's order settings in one line, above the place button. */
+.order-summary {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
 /* The options ticket's short-distance control (delta or strikes). */
 .short-target {
   display: inline-flex;

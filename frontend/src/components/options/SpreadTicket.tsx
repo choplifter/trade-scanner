@@ -285,6 +285,32 @@ function CrossHint({ spread, limit }: { spread: ResolvedSpread; limit: string })
   );
 }
 
+/** The order as it would go out, in one line: type, price and where that
+ * price sits (at the mid, at the natural, or typed), time in force. */
+export function orderSummary({
+  market,
+  tif,
+  limit,
+  mid,
+  natural,
+  direction,
+}: {
+  market: boolean;
+  tif: "day" | "gtc";
+  limit: number | null;
+  mid: number | null;
+  natural: number | null;
+  direction: "debit" | "credit" | null;
+}): string {
+  const side = direction ? ` ${direction}` : "";
+  if (market) return `Market${natural != null ? ` ≈ ${natural.toFixed(2)}${side}` : ""} · Day (market orders are day only)`;
+  // The prefill writes the mid / natural as toFixed(2): compared the same way.
+  const at = (v: number | null) => v != null && limit != null && v.toFixed(2) === limit.toFixed(2);
+  const where = limit == null ? "at the mid" : at(mid) ? "= mid" : at(natural) ? "= natural" : "your price";
+  const price = limit != null ? ` ${limit.toFixed(2)}${side}` : mid != null ? ` ${mid.toFixed(2)}${side}` : "";
+  return `Limit${price} (${where}) · ${tif === "gtc" ? "GTC — rests until filled or cancelled" : "Day — cancelled at the close if unfilled"}`;
+}
+
 /** Mid | Natural: which price the tickets prefill. Persists in settings.
  * `disabled` while there is no priced preview to read a mid or natural
  * from: a click then has nothing to fill, and a button that does nothing
@@ -304,7 +330,7 @@ export function LimitModeToggle({
   };
   return (
     <span
-      className="short-target-mode"
+      className="timeframe-selector"
       role="group"
       aria-label="Limit prefill"
       title={
@@ -313,10 +339,10 @@ export function LimitModeToggle({
           : "Mid: better price, may rest unfilled on paper. Natural: bid/ask, fills at once."
       }
     >
-      <button type="button" aria-pressed={mode === "mid"} disabled={disabled} onClick={() => pick("mid")}>
+      <button type="button" className="timeframe-button" aria-pressed={mode === "mid"} disabled={disabled} onClick={() => pick("mid")}>
         Mid
       </button>
-      <button type="button" aria-pressed={mode === "natural"} disabled={disabled} onClick={() => pick("natural")}>
+      <button type="button" className="timeframe-button" aria-pressed={mode === "natural"} disabled={disabled} onClick={() => pick("natural")}>
         Natural
       </button>
     </span>
@@ -334,15 +360,15 @@ export function OrderTypeToggle({
 }) {
   return (
     <span
-      className="short-target-mode"
+      className="timeframe-selector"
       role="group"
       aria-label="Order type"
       title="Limit: at most / at least the price typed. Market: fills at once at whatever the market gives -- on a wide spread, far from the mid."
     >
-      <button type="button" aria-pressed={value === "limit"} onClick={() => onChange("limit")}>
+      <button type="button" className="timeframe-button" aria-pressed={value === "limit"} onClick={() => onChange("limit")}>
         Limit
       </button>
-      <button type="button" aria-pressed={value === "market"} onClick={() => onChange("market")}>
+      <button type="button" className="timeframe-button" aria-pressed={value === "market"} onClick={() => onChange("market")}>
         Market
       </button>
     </span>
@@ -354,15 +380,15 @@ export function OrderTypeToggle({
 export function TimeInForceToggle({ value, onChange }: { value: "day" | "gtc"; onChange: (tif: "day" | "gtc") => void }) {
   return (
     <span
-      className="short-target-mode"
+      className="timeframe-selector"
       role="group"
       aria-label="Time in force"
       title="Day: cancelled by Alpaca at the close (16:00 New York) if not filled. GTC: rests until it fills or you cancel it -- check it now and then, the market moves on overnight."
     >
-      <button type="button" aria-pressed={value === "day"} onClick={() => onChange("day")}>
+      <button type="button" className="timeframe-button" aria-pressed={value === "day"} onClick={() => onChange("day")}>
         Day
       </button>
-      <button type="button" aria-pressed={value === "gtc"} onClick={() => onChange("gtc")}>
+      <button type="button" className="timeframe-button" aria-pressed={value === "gtc"} onClick={() => onChange("gtc")}>
         GTC
       </button>
     </span>
@@ -1044,6 +1070,16 @@ export function SpreadTicket({
         </div>
       )}
 
+      <p className="order-summary" aria-live="polite">
+        {orderSummary({
+          market,
+          tif,
+          limit: limit.trim() !== "" && Number.isFinite(Number(limit)) ? Number(limit) : null,
+          mid: spread?.net_mid ?? null,
+          natural: spread?.net_natural ?? null,
+          direction: spread?.direction ?? null,
+        })}
+      </p>
       <button
         type="button"
         className={`generate-button${mode === "live" ? " live-action" : ""}`}

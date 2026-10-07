@@ -226,9 +226,11 @@ export function OptionOrders({
 
   return (
     <div className="option-orders">
-      <span className="option-orders-title" title="Option orders the market has not filled yet. A fill moves the contract into the spreads below.">
-        Working packages
-      </span>
+      {orders.length > 0 && (
+        <span className="option-orders-title" title="Option orders the market has not filled yet. A fill moves the contract into the spreads below.">
+          Working packages
+        </span>
+      )}
       {error && <p className="order-rejection">{error}</p>}
       <ul className="spread-legs">
         {orders.map((order) => {
