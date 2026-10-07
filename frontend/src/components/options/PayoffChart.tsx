@@ -182,7 +182,11 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
       </div>
       {view === "table" && canScenario ? (
         <div style={{ height: settings.riskChartHeight }} className="payoff-table-frame">
-          <PayoffTable payoff={payoff} ivFactor={ivFactor} expiryLabel={expiryLabel?.startsWith("at ") ? expiryLabel.slice(3) : expiryLabel} />
+          <PayoffTable
+            payoff={payoff}
+            ivFactor={ivFactor}
+            pickedMs={hoursAhead > 0 && payoff.as_of ? Date.parse(payoff.as_of) + Math.min(hoursAhead, maxHours) * 3600 * 1000 : null}
+            expiryLabel={expiryLabel?.startsWith("at ") ? expiryLabel.slice(3) : expiryLabel} />
         </div>
       ) : (
       <div className="payoff-frame" ref={frameRef} style={{ height: settings.riskChartHeight }} title="Drag the bottom edge to resize">
@@ -268,8 +272,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
       </div>
       {canScenario && (
         <div className="payoff-scenario-controls">
-          {view !== "table" && (
-          <label title="Reprice the position this many hours from now, everything else unchanged. Shows what waiting costs: the time value that leaves before your move arrives.">
+          <label title="Reprice the position this many hours from now, everything else unchanged. Shows what waiting costs: the time value that leaves before your move arrives. In the table it marks the nearest column.">
             Time
             <input
               type="range"
@@ -283,7 +286,6 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
               {hoursAhead > 0 ? whenLabel(payoff.as_of!, Math.min(hoursAhead, maxHours)) : "now"}
             </span>
           </label>
-          )}
           <label title="Scale every leg's implied volatility. A vol drop after the open or a data release takes value from long premium even when the underlying goes your way.">
             IV
             <input

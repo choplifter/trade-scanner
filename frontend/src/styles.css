@@ -5699,6 +5699,21 @@ td.chain-side.chain-stale {
   color: #fff;
 }
 
+/* The Time slider's column, and its cell at the spot. */
+.payoff-table th.picked {
+  color: #c0672e;
+  font-weight: 600;
+}
+
+.payoff-table td.picked {
+  box-shadow: inset 1px 0 0 #c0672e, inset -1px 0 0 #c0672e;
+}
+
+.payoff-table td.picked-spot {
+  outline: 2px solid #c0672e;
+  outline-offset: -2px;
+}
+
 .payoff-table-modes {
   display: flex;
   align-items: center;

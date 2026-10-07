@@ -12,6 +12,16 @@ interface PayoffTableProps {
   ivFactor: number;
   /** What the last column is called: "expiry", or a calendar's short expiry. */
   expiryLabel?: string;
+  /** The Time slider's moment (ms), or null at "now": the column nearest
+   * it is marked, its spot cell outlined. */
+  pickedMs?: number | null;
+}
+
+/** The column whose moment lies nearest `atMs`. */
+export function nearestColumn(dates: number[], atMs: number): number {
+  let best = 0;
+  for (let i = 1; i < dates.length; i++) if (Math.abs(dates[i] - atMs) < Math.abs(dates[best] - atMs)) best = i;
+  return best;
 }
 
 type CellMode = "money" | "pct_risk";
@@ -24,12 +34,13 @@ type CellMode = "money" | "pct_risk";
  * function call rather than a request. Coloured with the heatmap scale the
  * rest of the app uses, scaled to the table's own largest |P/L|.
  *
- * Time is the columns rather than a slider: the whole path of a position
- * is visible at once, which is what the table adds over the chart. The IV
- * slider still applies. Weekends are skipped, exchange holidays are not
+ * Time is the columns: the whole path of a position is visible at once,
+ * which is what the table adds over the chart. The IV slider reprices
+ * every cell; the Time slider marks the column nearest its moment.
+ * Weekends are skipped, exchange holidays are not
  * (no calendar of them is loaded); each column is that day's close.
  */
-export function PayoffTable({ payoff, ivFactor, expiryLabel }: PayoffTableProps) {
+export function PayoffTable({ payoff, ivFactor, expiryLabel, pickedMs = null }: PayoffTableProps) {
   const [mode, setMode] = useState<CellMode>("money");
   const risk = payoff.max_loss != null && payoff.max_loss < 0 ? -payoff.max_loss : null;
 
@@ -48,7 +59,11 @@ export function PayoffTable({ payoff, ivFactor, expiryLabel }: PayoffTableProps)
   if (!grid) return <p className="order-hint">no IV: table unavailable</p>;
 
   const { dates, prices, cells, maxAbs, asOfMs } = grid;
-  const spotRow = prices.indexOf(payoff.spot);
+  // priceGrid puts the spot in rounded to the cent.
+  const spotRow = prices.indexOf(Math.round(payoff.spot * 100) / 100);
+  const picked = pickedMs != null ? nearestColumn(dates, pickedMs) : null;
+  const cellClass = (r: number, c: number, strong: boolean) =>
+    [strong && "strong", c === picked && "picked", c === picked && r === spotRow && "picked-spot"].filter(Boolean).join(" ") || undefined;
   const label = (v: number) => {
     if (mode === "pct_risk" && risk) return `${((v / risk) * 100).toFixed(0)}%`;
     return formatNum(v, 0);
@@ -65,7 +80,7 @@ export function PayoffTable({ payoff, ivFactor, expiryLabel }: PayoffTableProps)
                 const last = i === dates.length - 1;
                 const title = i === 0 ? `today ${formatClock(atMs)}` : formatWeekdayDateTime(atMs);
                 return (
-                  <th key={atMs} className={last ? "expiry" : undefined} title={title}>
+                  <th key={atMs} className={[last && "expiry", i === picked && "picked"].filter(Boolean).join(" ") || undefined} title={title}>
                     {i === 0 ? "now" : last ? (expiryLabel ?? "expiry") : formatWeekdayDate(atMs)}
                   </th>
                 );
@@ -81,7 +96,7 @@ export function PayoffTable({ payoff, ivFactor, expiryLabel }: PayoffTableProps)
                   return (
                     <td
                       key={c}
-                      className={strong ? "strong" : undefined}
+                      className={cellClass(r, c, strong)}
                       style={{ background: heatmapFill(v, maxAbs) }}
                       title={`${c === 0 ? `today ${formatClock(asOfMs)}` : formatWeekdayDateTime(dates[c])} at ${price.toFixed(2)}: ${formatNum(v, 0)}`}
                     >
