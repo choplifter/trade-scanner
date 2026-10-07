@@ -3,7 +3,7 @@ import type { MouseEvent } from "react";
 
 import type { Payoff } from "../../types/options";
 import { formatNum } from "../../utils/format";
-import { hoursToExpiry, meanIv, scenarioCurve } from "../../utils/blackScholes";
+import { hoursToExpiry, meanIv, positionPnl, scenarioCurve } from "../../utils/blackScholes";
 import { dayKey, formatClock, formatWeekdayDateTime } from "../../utils/time";
 import { getSettings, updateSettings } from "../../api/settings";
 import { useSettings } from "../../hooks/useSettings";
@@ -19,6 +19,10 @@ const IV_FACTOR_STEP = 0.05;
 
 function money(value: number): string {
   return formatNum(value, 0);
+}
+
+function signedMoney(value: number): string {
+  return `${value > 0 ? "+" : ""}${money(value)}`;
 }
 
 interface PayoffChartProps {
@@ -86,6 +90,15 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
     [payoff, scenarioActive, hoursAhead, maxHours, ivFactor],
   );
   const baseIv = useMemo(() => meanIv(payoff), [payoff]);
+  // The scenario read at the spot as it stands: what the position would show
+  // then, at that IV, if the stock did not move -- beside what it shows now.
+  const atSpot = useMemo(() => {
+    if (!scenarioActive || !payoff.as_of) return null;
+    const asOf = Date.parse(payoff.as_of);
+    const now = positionPnl(payoff, payoff.spot, asOf, 1);
+    const then = positionPnl(payoff, payoff.spot, asOf + Math.min(hoursAhead, maxHours) * 3600 * 1000, ivFactor);
+    return now == null || then == null ? null : { now, then };
+  }, [payoff, scenarioActive, hoursAhead, maxHours, ivFactor]);
   // Whole hours up to three days, then quarter days: a 28-day spread does
   // not need 672 notches.
   const hourStep = maxHours <= 72 ? 1 : 6;
@@ -212,6 +225,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
             </text>
           </g>
         ))}
+        {atSpot && <circle className="payoff-hover-dot scenario" cx={x(payoff.spot)} cy={y(atSpot.then)} r={3.5} />}
         {hovered && (
           <g>
             <line className="payoff-hover" x1={x(hovered.price)} x2={x(hovered.price)} y1={PAD.top} y2={HEIGHT - PAD.bottom} />
@@ -282,6 +296,15 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
             />
             <span className="payoff-scenario-value">{ivLabel}</span>
           </label>
+          {atSpot && (
+            <span
+              className="payoff-scenario-pnl"
+              title="The position's P/L at the current spot: now, and at the time and IV the sliders set, the stock where it is. The difference is what the time and the change in IV alone do to it."
+            >
+              P/L at spot {payoff.spot.toFixed(2)}: now <b className={atSpot.now >= 0 ? "delta-up" : "delta-down"}>{signedMoney(atSpot.now)}</b> → then{" "}
+              <b className={atSpot.then >= 0 ? "delta-up" : "delta-down"}>{signedMoney(atSpot.then)}</b> ({signedMoney(atSpot.then - atSpot.now)})
+            </span>
+          )}
           {scenarioActive && (
             <button
               type="button"

@@ -4461,6 +4461,11 @@ td.chain-side.chain-stale {
   min-width: 6em;
 }
 
+.payoff-scenario-pnl {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
 /* --- Options help dialog ---------------------------------------------------- */
 
 .options-help {
