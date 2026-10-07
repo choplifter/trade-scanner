@@ -96,6 +96,10 @@ export interface Order {
   /** On a multi-leg leg: how many contracts of it per package (1:2:1 for a
    * butterfly). Alpaca's field, passed through; absent on plain orders. */
   ratio_qty?: string | number | null;
+  /** Alpaca's: when a day order ran out at the close. */
+  expired_at?: string | null;
+  /** On an option order or leg: buy_to_open, sell_to_close, ... */
+  position_intent?: string | null;
 }
 
 export interface PositionsResponse {

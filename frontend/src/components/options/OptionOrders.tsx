@@ -8,8 +8,13 @@ import type { Order } from "../../types/trading";
 import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 import { formatLeg, parseOcc } from "../../utils/occ";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
+import { expiredToResend, structureFromOrder } from "./resend";
+import { requestTicket } from "./ticketIntent";
 
 const POLL_MS = 4_000;
+// The expired list changes once a day, at the close: no need to poll it
+// with the working one.
+const EXPIRED_POLL_MS = 60_000;
 
 /** The stock a resting package is written on. A multi-leg order carries no
  * symbol of its own (it is null on the parent), so it comes off the first
@@ -146,8 +151,17 @@ function Describe({ order }: { order: Order }) {
  * widget's Orders tab. A cancel each; in Live the typed confirmation
  * first. Polled like the spreads; refetched on every replay tick.
  * Nothing to show means nothing rendered. */
-export function OptionOrders({ mode, onChanged }: { mode: TradingMode; onChanged?: () => void }) {
+export function OptionOrders({
+  mode,
+  onChanged,
+  onSelectSymbol,
+}: {
+  mode: TradingMode;
+  onChanged?: () => void;
+  onSelectSymbol?: (symbol: string) => void;
+}) {
   const [orders, setOrders] = useState<Order[]>([]);
+  const [closed, setClosed] = useState<Order[]>([]);
   const [quotes, setQuotes] = useState<Record<string, LegQuote>>({});
   const [error, setError] = useState<string | null>(null);
   const [liveTyped, setLiveTyped] = useState("");
@@ -189,7 +203,26 @@ export function OptionOrders({ mode, onChanged }: { mode: TradingMode; onChanged
     return () => window.clearInterval(id);
   }, [load, replayAsOf, mode]);
 
-  if (orders.length === 0 && !error) return null;
+  useEffect(() => {
+    const loadClosed = () =>
+      getOptionOrders("closed")
+        .then((res) => setClosed(res.orders))
+        .catch(() => setClosed([]));
+    loadClosed();
+    const id = window.setInterval(loadClosed, EXPIRED_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [mode, replayAsOf]);
+
+  const expired = expiredToResend(closed, orders, Date.now());
+
+  const resend = (order: Order) => {
+    const structure = structureFromOrder(order);
+    if (!structure) return;
+    onSelectSymbol?.(structure.ticket.underlying);
+    requestTicket({ symbol: structure.ticket.underlying, structure });
+  };
+
+  if (orders.length === 0 && expired.length === 0 && !error) return null;
 
   return (
     <div className="option-orders">
@@ -211,6 +244,12 @@ export function OptionOrders({ mode, onChanged }: { mode: TradingMode; onChanged
             {...packageDragProps(underlying, contract)}
           >
             <Describe order={order} />
+            {order.time_in_force === "gtc" && (
+              <span className="order-hint" title="Good till cancelled: rests past the close until it fills or you cancel it.">
+                {" "}
+                · GTC
+              </span>
+            )}
             {order.status && order.status !== "new" && order.status !== "accepted" ? <span className="order-hint"> · {order.status}</span> : null}
             {fill && (
               <span className={`order-hint order-fill-gap${fill.reachable ? " reachable" : ""}`} title={fill.title}>
@@ -238,6 +277,41 @@ export function OptionOrders({ mode, onChanged }: { mode: TradingMode; onChanged
           );
         })}
       </ul>
+      {expired.length > 0 && (
+        <>
+          <span
+            className="option-orders-title"
+            title="Day orders Alpaca cancelled at the close because they did not fill, from the last few days. Re-send loads the same strikes into the ticket at today's mid; nothing is sent until you place it there."
+          >
+            Expired at the close
+          </span>
+          <ul className="spread-legs">
+            {expired.map((order) => {
+              const structure = structureFromOrder(order);
+              const at = order.expired_at ? new Date(order.expired_at) : null;
+              return (
+                <li key={order.id} className="order-expired">
+                  <Describe order={order} />
+                  {at && <span className="order-hint"> · expired {at.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}</span>}{" "}
+                  <button
+                    type="button"
+                    className="row-action"
+                    disabled={!structure}
+                    title={
+                      structure
+                        ? "Load the same strikes into the ticket, priced at today's mid. Choose GTC there to let it rest past the close."
+                        : "This shape cannot be loaded by strikes; rebuild it in the ticket's builder."
+                    }
+                    onClick={() => resend(order)}
+                  >
+                    Re-send
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
       <LiveConfirmField mode={mode} value={liveTyped} onChange={setLiveTyped} />
     </div>
   );
