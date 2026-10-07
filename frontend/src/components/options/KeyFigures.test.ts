@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { OptionEventsResponse, ResolvedSpread } from "../../types/options";
-import { keyFigures } from "./KeyFigures";
+import { heldFigures, keyFigures } from "./KeyFigures";
 
 const spread = (over: Partial<ResolvedSpread> = {}) =>
   ({ expiry: "2026-11-20", dte: 40, net_mid: 1.0, net_natural: 0.85, max_loss: -800, expected_value: 12, direction: "credit", ...over }) as ResolvedSpread;
@@ -39,5 +39,18 @@ describe("P/L per day and Vol", () => {
     expect(byLabel["P/L / day"].tone).toBe("good");
     expect(byLabel["Vol"].value).toBe("IV 15.3 % · RV 10.5 %");
     expect(byLabel["Vol"].tone).toBe("good"); // 1.46x: rich, good for a seller
+  });
+});
+
+describe("a held spread's forward figures", () => {
+  const outlook = { expected_value_rv: -21, pnl_per_day: -1.5, dte: 14, iv: 0.14, rv_forecast: 0.16, vol_forecast: { forecast: 0.16, recent: 0.18, long_run: 0.13, weight_recent: 0.6 } };
+  it("shows what holding on adds a day and the short legs' IV against RV", () => {
+    const [perDay, vol] = heldFigures(outlook, 4.2, true);
+    expect(perDay.value).toBe("−$1.50");
+    expect(perDay.tone).toBe("bad");
+    expect(perDay.title).toContain("14 days left");
+    expect(perDay.title).toContain("+$4.20");
+    expect(vol.value).toBe("IV 14.0 % · RV 16.0 %");
+    expect(vol.tone).toBe("bad"); // 0.875x: cheap, bad for a seller
   });
 });

@@ -21,6 +21,7 @@ from app.options.models import (
     STRATEGY_LABELS,
     TIME_STRATEGIES,
     Coverage,
+    HeldOutlook,
     OrderType,
     Payoff,
     PayoffRequest,
@@ -94,6 +95,40 @@ def worst_case(
     expiry_moment = datetime.combine(payoff.expiry, time(16, 0), tzinfo=ET)
     floor = position_pnl(payoff_legs, net_price, 0.01, expiry_moment, qty)
     return floor if floor is not None else payoff.max_loss
+
+
+def held_outlook(legs: list[SpreadLeg], qty: int, spot: float, now: datetime, vol) -> HeldOutlook | None:
+    """A held position's expectation from here on: its value at the (short)
+    expiry under the realised-vol forecast `vol`, less what it is worth at
+    today's mids -- the same EV (RV) the ticket shows, with today's mark in
+    place of the entry, since what was paid is spent either way. No cost:
+    held to expiry there is nothing more to cross. None without a forecast,
+    a mark on every leg, or a day left."""
+    mark = net_price(legs, "mid")
+    if vol is None or vol.forecast <= 0 or mark is None or not legs:
+        return None
+    expiry = min(leg.expiry for leg in legs)
+    dte = (expiry - now.date()).days
+    if dte <= 0:
+        return None
+    payoff_legs = [
+        PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
+        for leg in legs
+    ]
+    horizon = now.replace(year=expiry.year, month=expiry.month, day=expiry.day)
+    ev = expected_value(payoff_legs, mark, horizon, spot, vol.forecast, dte / 365.0, qty)
+    if ev is None:
+        return None
+    shorts = [leg.iv for leg in legs if leg.side == "sell" and leg.iv]
+    ivs = shorts or [leg.iv for leg in legs if leg.iv]
+    return HeldOutlook(
+        expected_value_rv=ev,
+        pnl_per_day=round(ev / dte, 2),
+        dte=dte,
+        iv=round(sum(ivs) / len(ivs), 4) if ivs else None,
+        rv_forecast=round(vol.forecast, 4),
+        vol_forecast=vol.to_dict(),
+    )
 
 
 def market_warning(leg_count: int, no_natural: bool) -> str:
@@ -931,6 +966,12 @@ class OptionsService:
         payoff = self._payoff(held, req.qty, req.net_entry, spot, strategy)
         if payoff is None:
             raise OrderRejected("Could not build the risk chart for these legs", field="legs")
+        # Realised vol is today's: in a replay it would be look-ahead.
+        if getattr(self._source, "as_of", None) is None and strategy != "covered_call":
+            now = self._source.now()
+            dte = max(0, min(leg.expiry for leg in held).toordinal() - now.date().toordinal())
+            vol = await vol_forecast_today(self._clients, parsed.underlying, dte)
+            payoff.outlook = held_outlook(held, req.qty, spot, now, vol)
         return payoff
 
     async def _priced_close(self, req: CloseSpreadRequest) -> tuple[list[SpreadLeg], str, float, float | None]:

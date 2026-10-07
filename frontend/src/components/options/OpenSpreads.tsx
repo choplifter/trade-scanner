@@ -25,6 +25,7 @@ import { formatMoney } from "../../utils/format";
 import { Modal } from "../common/Modal";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
 import { NATENBERG, withBook } from "./bookRefs";
+import { heldFigures, KeyFigures } from "./KeyFigures";
 import { PayoffChart } from "./PayoffChart";
 import { GreeksLine, MarginBar } from "./PositionRisk";
 import { rollableLeg, type RollTarget } from "./RollTicket";
@@ -150,6 +151,9 @@ function GroupPayoff({ group }: { group: SpreadGroup }) {
         Risk {open ? "▾" : "▸"}
       </button>
       {open && error && <p className="order-rejection">{error}</p>}
+      {open && payoff?.outlook && (
+        <KeyFigures figures={heldFigures(payoff.outlook, group.greeks?.theta ?? null, group.net_entry < 0)} />
+      )}
       {open && payoff && (
         <PayoffChart
           payoff={payoff}

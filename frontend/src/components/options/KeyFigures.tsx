@@ -1,4 +1,4 @@
-import type { OptionEventsResponse, ResolvedSpread } from "../../types/options";
+import type { HeldOutlook, OptionEventsResponse, ResolvedSpread } from "../../types/options";
 import { formatExpiry } from "../../utils/occ";
 import { NATENBERG, withBook } from "./bookRefs";
 import { CHEAP_IV_RATIO, RICH_IV_RATIO } from "./eventMarks";
@@ -138,6 +138,47 @@ export function keyFigures(
     title: `What crossing the market costs against the mid: natural ${natural?.toFixed(2) ?? "—"} vs mid ${mid.toFixed(2)}. Up to 10 % green, above 25 % red -- there the bid/ask eats a large share of the premium.`,
   });
   return out;
+}
+
+/** A held position's two forward figures, the ticket's P/L / day and Vol:
+ * from today's mark to the (short) expiry, if the stock moves as its
+ * realised-vol forecast says -- backend service.held_outlook. Selling: the
+ * position was put on for a credit. */
+export function heldFigures(outlook: HeldOutlook, theta: number | null, selling: boolean): Figure[] {
+  const perDay = outlook.pnl_per_day;
+  const ev = outlook.expected_value_rv;
+  const iv = outlook.iv;
+  const rv = outlook.rv_forecast;
+  const ratio = iv != null && rv ? iv / rv : null;
+  const f = outlook.vol_forecast;
+  return [
+    {
+      label: "P/L / day",
+      value: `${perDay >= 0 ? "+" : "−"}$${Math.abs(perDay).toFixed(2)}`,
+      tone: perDay > 0 ? "good" : perDay < 0 ? "bad" : "neutral",
+      title: withBook(
+        `Expected P/L per calendar day from here: ${ev >= 0 ? "+" : "−"}$${Math.abs(ev).toFixed(0)} over the ${outlook.dte} days left, at today's mid and the realised-vol forecast. What is already won or lost does not count -- only what holding on is expected to add. ` +
+          (theta != null ? `Theta, the P/L per day if the stock stood still, is ${theta >= 0 ? "+" : "−"}$${Math.abs(theta).toFixed(2)}. ` : "") +
+          "An average to expiry, not a daily schedule; negative means closing now beats holding on, on average.",
+        NATENBERG.theta,
+        NATENBERG.historicalVol,
+      ),
+    },
+    {
+      label: "Vol",
+      value: `IV ${iv == null ? "—" : `${(iv * 100).toFixed(1)} %`} · RV ${(rv * 100).toFixed(1)} %`,
+      tone:
+        ratio == null ? "neutral" : ratio >= RICH_IV_RATIO ? (selling ? "good" : "bad") : ratio <= CHEAP_IV_RATIO ? (selling ? "bad" : "good") : "neutral",
+      title: withBook(
+        "IV: the implied volatility of the position's short legs (all legs when none is short). RV: the volatility the stock is expected to realise over the days left -- its last 20 sessions" +
+          ` (${(f.recent * 100).toFixed(1)} %)` +
+          (f.long_run != null ? ` blended toward the past year (${(f.long_run * 100).toFixed(1)} %)` : "") +
+          ". A short position keeps paying while IV stands well above RV.",
+        NATENBERG.historicalVol,
+        NATENBERG.ivAsPredictor,
+      ),
+    },
+  ];
 }
 
 export function KeyFigures({ figures }: { figures: Figure[] }) {

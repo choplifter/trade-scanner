@@ -171,6 +171,21 @@ export interface Payoff {
   mark_shift?: number;
   /** The moment the today curve was valued at (ISO). */
   as_of?: string | null;
+  /** Held positions only: the forward expectation and its volatilities. */
+  outlook?: HeldOutlook | null;
+}
+
+/** What a held position is expected to earn from today's mid to its
+ * (short) expiry at the realised-vol forecast -- backend
+ * service.held_outlook. Dollars for the whole position. */
+export interface HeldOutlook {
+  expected_value_rv: number;
+  pnl_per_day: number;
+  dte: number;
+  /** The short legs' mean IV, else all legs'. */
+  iv: number | null;
+  rv_forecast: number;
+  vol_forecast: { forecast: number; recent: number; long_run: number | null; weight_recent: number };
 }
 
 export interface Coverage {

@@ -515,6 +515,23 @@ class PayoffLegOut(BaseModel):
     iv: float | None = None
 
 
+class HeldOutlook(BaseModel):
+    """What a held position is expected to earn from here to its (short)
+    expiry if the stock moves as its realised-vol forecast says, and the
+    two volatilities behind that -- see app.options.service.held_outlook."""
+
+    # Dollars, the whole position, from today's mid to expiry.
+    expected_value_rv: float
+    # expected_value_rv over the calendar days left (at least one).
+    pnl_per_day: float
+    dte: int
+    # The legs' implied volatility: the short legs' mean, else all legs'.
+    iv: float | None
+    # The realised-vol forecast over the days left (iv_context.forecast_vol).
+    rv_forecast: float
+    vol_forecast: dict
+
+
 class Payoff(BaseModel):
     """P&L per position (x 100 x qty) over a grid of underlying prices --
     see app.options.payoff."""
@@ -536,6 +553,8 @@ class Payoff(BaseModel):
     mark_shift: float = 0.0
     # The moment the today curve was valued at.
     as_of: datetime | None = None
+    # Held positions only: the forward expectation and its volatilities.
+    outlook: HeldOutlook | None = None
 
 
 class ResolvedSpread(BaseModel):
