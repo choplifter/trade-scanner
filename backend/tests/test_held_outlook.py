@@ -67,3 +67,24 @@ def test_the_list_and_the_risk_chart_read_the_same_outlook():
     charted = held_outlook(CONDOR, 2, SPOT, NOW, _vol(0.2))
     assert listed == charted.model_dump()
     assert from_risk_legs([*held, RiskLeg("stock", 0.0, None, 100)], SPOT, NOW, _vol(0.2)) is None
+
+
+def test_the_outcome_splits_into_the_chance_of_a_gain_and_of_a_loss():
+    quiet = held_outlook(CONDOR, 1, SPOT, NOW, _vol(0.15))
+    wild = held_outlook(CONDOR, 1, SPOT, NOW, _vol(0.50))
+    assert quiet.chance_gain > wild.chance_gain and quiet.chance_loss < wild.chance_loss
+    assert abs(quiet.chance_gain + quiet.chance_loss - 1) < 0.02
+    # A condor's sides are capped: the most it adds is today's value back,
+    # the most it loses the wing less that value.
+    credit_left = -sum((1 if l.side == "buy" else -1) * l.mid for l in CONDOR) * 100
+    assert abs(quiet.max_gain - credit_left) < 1
+    assert abs(quiet.max_loss - (credit_left - 500)) < 1
+    assert 0 < quiet.avg_gain <= quiet.max_gain and quiet.max_loss <= quiet.avg_loss < 0
+    # The averages weighted by their chances are the expectation.
+    assert abs(wild.chance_gain * wild.avg_gain + wild.chance_loss * wild.avg_loss - wild.expected_value_rv) < 2
+
+
+def test_a_naked_short_call_has_no_largest_loss():
+    naked = [_leg("call", 110, "sell")]
+    out = held_outlook(naked, 1, SPOT, NOW, _vol(0.3))
+    assert out.max_loss is None and out.max_gain is not None

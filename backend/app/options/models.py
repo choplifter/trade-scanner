@@ -524,6 +524,14 @@ class HeldOutlook(BaseModel):
     expected_value_rv: float
     # expected_value_rv over the calendar days left (at least one).
     pnl_per_day: float
+    # Held to expiry, against today's value: the chance of a gain / a loss,
+    # the average of each, and the largest (None: unbounded).
+    chance_gain: float
+    chance_loss: float
+    avg_gain: float | None
+    avg_loss: float | None
+    max_gain: float | None
+    max_loss: float | None
     dte: int
     # The legs' implied volatility: the short legs' mean, else all legs'.
     iv: float | None

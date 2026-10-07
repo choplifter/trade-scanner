@@ -97,6 +97,16 @@ function signed(value: number): string {
   return `${value > 0 ? "+" : ""}${money(value)}`;
 }
 
+/** "83% +$2.0k · 17% −$27k", the gain side green and the loss side red. */
+function HeldOdds({ outlook }: { outlook: NonNullable<SpreadGroup["outlook"]> }) {
+  const [gain, loss] = heldFigures(outlook, null, true)[0].value.split(" · ");
+  return (
+    <>
+      <span className="delta-up">{gain}</span> · <span className="delta-down">{loss}</span>
+    </>
+  );
+}
+
 function toneClass(tone: "good" | "bad" | "neutral" | undefined): string | undefined {
   return tone === "good" ? "delta-up" : tone === "bad" ? "delta-down" : undefined;
 }
@@ -465,8 +475,8 @@ export function OpenSpreads({
             >
               Θ / V
             </th>
-            <th title="Expected P/L per calendar day from today's mid to expiry, if the stock moves as its realised-vol forecast says. Negative: on average closing now beats holding on.">
-              P/L / day
+            <th title="Held to expiry, against what the position is worth today: the chance of ending higher and the most it can add, the chance of ending lower and the most it can lose -- at the stock's realised-vol forecast. Hover a cell for the averages.">
+              If held
             </th>
             <th title="The short legs' implied volatility against the stock's realised-vol forecast for the days left.">Vol</th>
             <th>Triggers</th>
@@ -478,7 +488,7 @@ export function OpenSpreads({
             const groupTriggers = triggers.filter((t) => t.underlying === group.underlying && t.expiry === group.expiry);
             const active = groupTriggers.filter((t) => t.status === "active");
             const isOpen = expanded === group.id;
-            const [perDay, vol] = group.outlook ? heldFigures(group.outlook, group.greeks?.theta ?? null, group.net_entry < 0) : [null, null];
+            const [held, vol] = group.outlook ? heldFigures(group.outlook, group.greeks?.theta ?? null, group.net_entry < 0) : [null, null];
             return [
               <tr
                 key={group.id}
@@ -529,8 +539,8 @@ export function OpenSpreads({
                     ? `${group.greeks.theta >= 0 ? "+" : ""}${group.greeks.theta.toFixed(0)} / ${group.greeks.vega >= 0 ? "+" : ""}${group.greeks.vega.toFixed(0)}`
                     : "—"}
                 </td>
-                <td className={toneClass(perDay?.tone)} title={perDay?.title}>
-                  {perDay?.value ?? "—"}
+                <td className="spread-vol-cell" title={held?.title}>
+                  {group.outlook ? <HeldOdds outlook={group.outlook} /> : "—"}
                 </td>
                 <td className={`spread-vol-cell ${toneClass(vol?.tone) ?? ""}`} title={vol?.title}>
                   {vol ? vol.value.replace(/ %/g, "%") : "—"}

@@ -181,6 +181,14 @@ export interface Payoff {
 export interface HeldOutlook {
   expected_value_rv: number;
   pnl_per_day: number;
+  /** Held to expiry, against today's value: the chance of a gain / loss,
+   * the average of each, the largest (null: unlimited). */
+  chance_gain: number;
+  chance_loss: number;
+  avg_gain: number | null;
+  avg_loss: number | null;
+  max_gain: number | null;
+  max_loss: number | null;
   dte: number;
   /** The short legs' mean IV, else all legs'. */
   iv: number | null;

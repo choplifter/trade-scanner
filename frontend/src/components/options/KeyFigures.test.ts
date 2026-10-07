@@ -43,14 +43,27 @@ describe("P/L per day and Vol", () => {
 });
 
 describe("a held spread's forward figures", () => {
-  const outlook = { expected_value_rv: -21, pnl_per_day: -1.5, dte: 14, iv: 0.14, rv_forecast: 0.16, vol_forecast: { forecast: 0.16, recent: 0.18, long_run: 0.13, weight_recent: 0.6 } };
-  it("shows what holding on adds a day and the short legs' IV against RV", () => {
-    const [perDay, vol] = heldFigures(outlook, 4.2, true);
-    expect(perDay.value).toBe("−$1.50");
-    expect(perDay.tone).toBe("bad");
-    expect(perDay.title).toContain("14 days left");
-    expect(perDay.title).toContain("+$4.20");
-    expect(vol.value).toBe("IV 14.0 % · RV 16.0 %");
-    expect(vol.tone).toBe("bad"); // 0.875x: cheap, bad for a seller
+  const outlook = {
+    expected_value_rv: -1518, pnl_per_day: -34.5, dte: 44, iv: 0.55, rv_forecast: 0.63,
+    chance_gain: 0.83, chance_loss: 0.17, avg_gain: 1200, avg_loss: -14800, max_gain: 1978, max_loss: -27022,
+    vol_forecast: { forecast: 0.63, recent: 0.47, long_run: 0.81, weight_recent: 0.6 },
+  };
+  const n = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  it("shows holding to expiry as two chances and amounts, the averages in the tooltip", () => {
+    const [held, vol] = heldFigures(outlook, 58, true);
+    expect(held.label).toBe("If held");
+    expect(held.value).toBe("83% +$2.0k · 17% −$27k");
+    expect(held.tone).toBe("bad");
+    expect(held.title).toContain("44 days");
+    expect(held.title).toContain(`adding up to $${n(1978)} (on average $${n(1200)})`);
+    expect(held.title).toContain(`losing up to $${n(27022)} (on average $${n(14800)})`);
+    expect(held.title).toContain("+$58.00");
+    expect(vol.value).toBe("IV 55.0 % · RV 63.0 %");
+    expect(vol.tone).toBe("bad"); // 0.87x: cheap, bad for a seller
+  });
+  it("says unlimited for a side with no largest value", () => {
+    const [held] = heldFigures({ ...outlook, max_loss: null }, null, true);
+    expect(held.value).toBe("83% +$2.0k · 17% −∞");
+    expect(held.title).toContain("losing up to unlimited");
   });
 });

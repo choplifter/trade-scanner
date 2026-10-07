@@ -482,6 +482,56 @@ def adjustment_state(strategy: str, legs: list[RiskLeg], spot: float, now: datet
     return {"sides": sides, "tested": worst, "threshold": TESTED_DELTA}
 
 
+def held_odds(payoff_legs, mark: float, horizon: datetime, spot: float, sigma: float, years: float) -> dict | None:
+    """The two sides of a held position's outcome from today's mark to the
+    horizon, on the lognormal at `sigma` (the grid expected_value uses): the
+    chance of ending above today's value and below it, the average gain and
+    loss on each side, and the largest of each -- None for one that keeps
+    growing past the grid (a naked side). Dollars, the whole position."""
+    from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl
+
+    width = sigma * math.sqrt(years)
+    if width <= 0 or spot <= 0:
+        return None
+    mu = -0.5 * width * width
+    reach = CHANCE_SIGMA_REACH * width
+    step = 2 * reach / (CHANCE_GRID_POINTS - 1)
+    gain_mass = loss_mass = gain_sum = loss_sum = total = 0.0
+    seen: list[float] = []
+    for i in range(CHANCE_GRID_POINTS):
+        x = -reach + i * step
+        mass = _norm_cdf((x + step / 2 - mu) / width) - _norm_cdf((x - step / 2 - mu) / width)
+        pnl = position_pnl(payoff_legs, mark, spot * math.exp(x), horizon, 1)
+        if pnl is None:
+            return None
+        seen.append(pnl)
+        total += mass
+        if pnl > 0:
+            gain_mass += mass
+            gain_sum += mass * pnl
+        elif pnl < 0:
+            loss_mass += mass
+            loss_sum += mass * pnl
+    if total <= 0:
+        return None
+    # Beyond the grid: a side that still moves further out is unbounded.
+    far = {p: position_pnl(payoff_legs, mark, p, horizon, 1) for p in (0.01, spot * 5, spot * 10)}
+    if any(v is None for v in far.values()):
+        return None
+    lo, hi5, hi10 = far[0.01], far[spot * 5], far[spot * 10]
+    extremes = [*seen, lo, hi5, hi10]
+    rising, falling = hi10 > hi5 + 0.01, hi10 < hi5 - 0.01
+    best, worst = max(extremes), min(extremes)
+    return {
+        "chance_gain": round(gain_mass / total, 4),
+        "chance_loss": round(loss_mass / total, 4),
+        "avg_gain": round(gain_sum / gain_mass, 2) if gain_mass > 0 else None,
+        "avg_loss": round(loss_sum / loss_mass, 2) if loss_mass > 0 else None,
+        "max_gain": None if rising else round(max(best, 0.0), 2),
+        "max_loss": None if falling else round(min(worst, 0.0), 2),
+    }
+
+
 def held_outlook(legs: list[RiskLeg], spot: float, now: datetime, vol) -> dict | None:
     """A held position's expectation from here on: its value at the (short)
     expiry under the realised-vol forecast `vol`, less what it is worth at
@@ -508,13 +558,15 @@ def held_outlook(legs: list[RiskLeg], spot: float, now: datetime, vol) -> dict |
     ]
     horizon = now.replace(year=expiry.year, month=expiry.month, day=expiry.day)
     ev = expected_value(payoff_legs, mark, horizon, spot, vol.forecast, dte / 365.0, 1)
-    if ev is None:
+    odds = held_odds(payoff_legs, mark, horizon, spot, vol.forecast, dte / 365.0)
+    if ev is None or odds is None:
         return None
     shorts = [leg.iv for leg in legs if leg.qty < 0 and leg.iv]
     ivs = shorts or [leg.iv for leg in legs if leg.iv]
     return {
         "expected_value_rv": ev,
         "pnl_per_day": round(ev / dte, 2),
+        **odds,
         "dte": dte,
         "iv": round(sum(ivs) / len(ivs), 4) if ivs else None,
         "rv_forecast": round(vol.forecast, 4),

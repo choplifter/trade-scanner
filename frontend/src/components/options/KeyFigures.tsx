@@ -140,27 +140,41 @@ export function keyFigures(
   return out;
 }
 
-/** A held position's two forward figures, the ticket's P/L / day and Vol:
+/** "$2.0k" from 10k down to 1k, "$27k" above, "$850" below; null: unlimited. */
+function compact(v: number | null): string {
+  if (v == null) return "∞";
+  const a = Math.abs(v);
+  if (a >= 10_000) return `$${Math.round(a / 1000)}k`;
+  if (a >= 1_000) return `$${(a / 1000).toFixed(1)}k`;
+  return `$${a.toFixed(0)}`;
+}
+
+/** A held position's two forward figures -- what holding to expiry can
+ * bring, as two chances and amounts, and Vol:
  * from today's mark to the (short) expiry, if the stock moves as its
  * realised-vol forecast says -- backend service.held_outlook. Selling: the
  * position was put on for a credit. */
 export function heldFigures(outlook: HeldOutlook, theta: number | null, selling: boolean): Figure[] {
-  const perDay = outlook.pnl_per_day;
   const ev = outlook.expected_value_rv;
   const iv = outlook.iv;
   const rv = outlook.rv_forecast;
   const ratio = iv != null && rv ? iv / rv : null;
   const f = outlook.vol_forecast;
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const up = (v: number | null) => (v == null ? "unlimited" : `$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`);
+  const avg = (v: number | null) => (v == null ? "" : ` (on average $${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })})`);
   return [
     {
-      label: "P/L / day",
-      value: `${perDay >= 0 ? "+" : "−"}$${Math.abs(perDay).toFixed(2)}`,
-      tone: perDay > 0 ? "good" : perDay < 0 ? "bad" : "neutral",
+      label: "If held",
+      value: `${pct(outlook.chance_gain)} +${compact(outlook.max_gain)} · ${pct(outlook.chance_loss)} −${compact(outlook.max_loss)}`,
+      tone: ev > 0 ? "good" : ev < 0 ? "bad" : "neutral",
       title: withBook(
-        `Expected P/L per calendar day from here: ${ev >= 0 ? "+" : "−"}$${Math.abs(ev).toFixed(0)} over the ${outlook.dte} days left, at today's mid and the realised-vol forecast. What is already won or lost does not count -- only what holding on is expected to add. ` +
-          (theta != null ? `Theta, the P/L per day if the stock stood still, is ${theta >= 0 ? "+" : "−"}$${Math.abs(theta).toFixed(2)}. ` : "") +
-          "An average to expiry, not a daily schedule; negative means closing now beats holding on, on average.",
-        NATENBERG.theta,
+        `If held to expiry (${outlook.dte} days): ${pct(outlook.chance_gain)} chance it ends above what it is worth today, adding up to ${up(outlook.max_gain)}${avg(outlook.avg_gain)}; ` +
+          `${pct(outlook.chance_loss)} chance it ends below, losing up to ${up(outlook.max_loss)}${avg(outlook.avg_loss)}. ` +
+          `Both together average ${ev >= 0 ? "+" : "−"}$${Math.abs(ev).toFixed(0)} (${outlook.pnl_per_day >= 0 ? "+" : "−"}$${Math.abs(outlook.pnl_per_day).toFixed(2)} a day). ` +
+          (theta != null ? `Theta, what a day earns if the stock stands still: ${theta >= 0 ? "+" : "−"}$${Math.abs(theta).toFixed(2)}. ` : "") +
+          `The odds assume the stock moves as its realised-vol forecast says (${(rv * 100).toFixed(1)} %); what is already won or lost does not count.`,
+        NATENBERG.probability,
         NATENBERG.historicalVol,
       ),
     },
