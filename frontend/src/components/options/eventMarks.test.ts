@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ivPremiumSentence, ivPremiumTone } from "./eventMarks";
+import { ivPremiumSentence, ivPremiumTone, ivTone, ratioTone, sideTone, toneClass } from "./eventMarks";
 
 const iv = (atm: number | null, rv: number | null, ratio: number | null) => ({
   atm_iv: atm,
@@ -27,5 +27,17 @@ describe("IV against realised vol", () => {
   it("names the expiry it was judged on when that is not the chain shown", () => {
     const zeroDte = { ...iv(0.12, 0.15, 1.07), reference: { atm_iv: 0.16, expiry: "2026-11-20", dte: 49 } };
     expect(ivPremiumSentence(zeroDte)).toMatch(/^IV 1\.07× realised · premium fair \(16 % on .+ \(49 d\) vs 15 % over 20 sessions\)$/);
+  });
+});
+
+describe("one colour rule for volatility everywhere", () => {
+  it("is green for the side rich or cheap premium suits, red against it", () => {
+    expect(sideTone(ratioTone(1.4), true)).toBe("good");
+    expect(sideTone(ratioTone(1.4), false)).toBe("bad");
+    expect(sideTone(ivTone(20), true)).toBe("bad");
+    expect(sideTone(ivTone(20), false)).toBe("good");
+    expect(sideTone(ratioTone(1.05), true)).toBe("neutral");
+    expect(sideTone(ratioTone(null), true)).toBe("neutral");
+    expect([toneClass("good"), toneClass("bad"), toneClass("neutral")]).toEqual(["delta-up", "delta-down", undefined]);
   });
 });

@@ -1,7 +1,7 @@
 import type { HeldOutlook, OptionEventsResponse, ResolvedSpread } from "../../types/options";
 import { formatExpiry } from "../../utils/occ";
 import { NATENBERG, withBook } from "./bookRefs";
-import { CHEAP_IV_RATIO, RICH_IV_RATIO } from "./eventMarks";
+import { CHEAP_IV_RATIO, RICH_IV_RATIO, ratioTone, sideTone } from "./eventMarks";
 
 type Tone = "good" | "bad" | "neutral";
 
@@ -30,7 +30,7 @@ export function keyFigures(
     label: "IV/RV",
     value: ratio == null ? "—" : `${ratio.toFixed(2)}×`,
     // Rich helps a seller, cheap a buyer.
-    tone: ratio == null ? "neutral" : ratio >= RICH_IV_RATIO ? (selling ? "good" : "bad") : ratio <= CHEAP_IV_RATIO ? (selling ? "bad" : "good") : "neutral",
+    tone: sideTone(ratioTone(ratio), selling),
     title: withBook(
       `Implied volatility over the stock's realised volatility of the last 20 sessions. From ${RICH_IV_RATIO.toFixed(2)} the premium is rich -- good for selling it; up to ${CHEAP_IV_RATIO.toFixed(2)} cheap -- good for buying it.`,
       NATENBERG.historicalVol,
@@ -90,14 +90,7 @@ export function keyFigures(
   out.push({
     label: "Vol",
     value: iv == null && rv == null ? "—" : `IV ${iv == null ? "—" : `${(iv * 100).toFixed(1)} %`} · RV ${rv == null ? "—" : `${(rv * 100).toFixed(1)} %`}`,
-    tone:
-      volRatio == null
-        ? "neutral"
-        : volRatio >= RICH_IV_RATIO
-          ? selling ? "good" : "bad"
-          : volRatio <= CHEAP_IV_RATIO
-            ? selling ? "bad" : "good"
-            : "neutral",
+    tone: sideTone(ratioTone(volRatio), selling),
     title: withBook(
       "IV: the at-the-money implied volatility the options price in. RV: the volatility the stock is expected to realise over the position's life -- its last 20 sessions blended toward the past year by the time left" +
         (spread.vol_forecast ? ` (20-session ${(spread.vol_forecast.recent * 100).toFixed(1)} %` + (spread.vol_forecast.long_run != null ? `, year ${(spread.vol_forecast.long_run * 100).toFixed(1)} %)` : ")") : "") +
@@ -181,8 +174,7 @@ export function heldFigures(outlook: HeldOutlook, theta: number | null, selling:
     {
       label: "Vol",
       value: `IV ${iv == null ? "—" : `${(iv * 100).toFixed(1)} %`} · RV ${(rv * 100).toFixed(1)} %`,
-      tone:
-        ratio == null ? "neutral" : ratio >= RICH_IV_RATIO ? (selling ? "good" : "bad") : ratio <= CHEAP_IV_RATIO ? (selling ? "bad" : "good") : "neutral",
+      tone: sideTone(ratioTone(ratio), selling),
       title: withBook(
         "IV: the implied volatility of the position's short legs (all legs when none is short). RV: the volatility the stock is expected to realise over the days left -- its last 20 sessions" +
           ` (${(f.recent * 100).toFixed(1)} %)` +

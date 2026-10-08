@@ -81,6 +81,29 @@ export function ivTone(percent: number | null | undefined): IvTone | null {
   return percent >= 60 ? "rich" : percent <= 30 ? "cheap" : "mid";
 }
 
+/** Good or bad for the side being traded: rich premium is good to sell
+ * and bad to buy, cheap the other way round. The one rule the ticket, the
+ * open spreads and the Screener colour volatility by, so a green means the
+ * same thing everywhere. */
+export type SideTone = "good" | "bad" | "neutral";
+
+export function sideTone(tone: IvTone | null, selling: boolean): SideTone {
+  if (tone === "rich") return selling ? "good" : "bad";
+  if (tone === "cheap") return selling ? "bad" : "good";
+  return "neutral";
+}
+
+/** IV over realised as rich / mid / cheap, on the same bands as the rank's. */
+export function ratioTone(ratio: number | null | undefined): IvTone | null {
+  if (ratio == null) return null;
+  return ratio >= RICH_IV_RATIO ? "rich" : ratio <= CHEAP_IV_RATIO ? "cheap" : "mid";
+}
+
+/** The CSS class a side tone is painted with. */
+export function toneClass(tone: SideTone): string | undefined {
+  return tone === "good" ? "delta-up" : tone === "bad" ? "delta-down" : undefined;
+}
+
 /** The chain's at-the-money IV beside the VIX -- both are an annualised
  * expectation of a 30-day move, so they are on one scale, and the gap is
  * what says whether this symbol is priced above or below the market's own

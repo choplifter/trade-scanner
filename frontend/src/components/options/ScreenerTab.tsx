@@ -19,7 +19,7 @@ import type {
 import { formatMoney, formatPrice } from "../../utils/format";
 import { formatExpiry } from "../../utils/occ";
 import { ScreenerHelp } from "./ScreenerHelp";
-import { CHEAP_IV_RATIO, CONE_TITLE, ivTone, RICH_IV_RATIO } from "./eventMarks";
+import { CHEAP_IV_RATIO, CONE_TITLE, ivTone, RICH_IV_RATIO, ratioTone, sideTone, toneClass } from "./eventMarks";
 import { requestOptimizer } from "./optimizerIntent";
 import { requestTicket } from "./ticketIntent";
 
@@ -27,6 +27,11 @@ interface ScreenerTabProps {
   /** Clicking a row loads that symbol into the widget (and the chart). */
   onSelectSymbol?: (symbol: string) => void;
 }
+
+/** The screens that sell premium -- rich IV is good for them; the rest
+ * (debit spread, long option, calendar) pay for it, the ticket's rule for a
+ * debit. */
+const SELLING_SCREENS = new Set<ScreenStrategy>(["cash_secured_put", "covered_call", "credit_spread", "iron_condor"]);
 
 const STRATEGIES: { key: ScreenStrategy; label: string; title: string }[] = [
   {
@@ -413,6 +418,8 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     store(STORE_STRATEGY, next);
   };
   const [result, setResult] = useState<ScreenResponse | null>(null);
+  // Coloured for the screen the rows came from, not the button pressed since.
+  const selling = SELLING_SCREENS.has(result?.strategy ?? strategy);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -743,22 +750,22 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     <td>{pct(row.atm_iv)}</td>
                     <td>{pct(row.realised_vol)}</td>
                     <td
-                      className={row.iv_rv_ratio == null ? undefined : row.iv_rv_ratio >= RICH_IV_RATIO ? "delta-up" : row.iv_rv_ratio <= CHEAP_IV_RATIO ? "delta-down" : undefined}
+                      className={toneClass(sideTone(ratioTone(row.iv_rv_ratio), selling))}
                       title={
                         row.ref_iv != null && row.ref_expiry
                           ? withBook(`Judged on ${formatExpiry(row.ref_expiry)} (${row.ref_dte} d), IV ${pct(row.ref_iv)}: the ${row.dte}-day chain screened is outside the 20-90 day band, and a chain that near prices the next few sessions rather than the stock. The IV rank is read on the same expiry.`, NATENBERG.historicalVol, NATENBERG.ivAsPredictor)
-                          : withBook("At-the-money IV over the stock's realised volatility of the last 20 sessions. From 1.20 rich (green), up to 0.95 cheap (red).", NATENBERG.historicalVol, NATENBERG.ivAsPredictor)
+                          : withBook(`At-the-money IV over the stock's realised volatility of the last 20 sessions. From ${RICH_IV_RATIO.toFixed(2)} rich, up to ${CHEAP_IV_RATIO.toFixed(2)} cheap -- green where that suits this screen's side (rich for selling, cheap for buying), red where it works against it, as in the ticket.`, NATENBERG.historicalVol, NATENBERG.ivAsPredictor)
                       }
                     >
                       {row.iv_rv_ratio == null ? "—" : `${row.iv_rv_ratio.toFixed(2)}×`}
                       {row.ref_iv != null && <span className="screen-ref"> {row.ref_dte}d</span>}
                     </td>
                     <td
-                      className={ivTone(row.iv_rank) === "rich" ? "delta-up" : ivTone(row.iv_rank) === "cheap" ? "delta-down" : undefined}
+                      className={toneClass(sideTone(ivTone(row.iv_rank), selling))}
                       title={
                         row.iv_rank == null
                           ? `${row.iv_rank_samples} sessions recorded, 20 needed`
-                          : withBook(`Today's IV at ${row.iv_rank.toFixed(0)} % of its 52-week range (${row.iv_rank_samples} sessions). From 60 % rich against its own year (green), up to 30 % cheap (red) -- coloured like IV/RV, on the IV-rank bands used everywhere else.`, NATENBERG.ivAsPredictor)
+                          : withBook(`Today's IV at ${row.iv_rank.toFixed(0)} % of its 52-week range (${row.iv_rank_samples} sessions). From 60 % rich against its own year, up to 30 % cheap -- coloured like IV/RV for this screen's side, on the IV-rank bands used everywhere else.`, NATENBERG.ivAsPredictor)
                       }
                     >
                       {row.iv_rank == null ? "—" : `${row.iv_rank.toFixed(0)} %`}
