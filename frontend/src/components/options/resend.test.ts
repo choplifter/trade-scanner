@@ -61,6 +61,9 @@ describe("re-sending an expired package", () => {
       condor("close", "expired", "2026-10-07T20:00:02Z", true),
     ];
     expect(expiredToResend(closed, [], now).map((o) => o.id)).toEqual(["new"]);
-    expect(expiredToResend(closed, [condor("again", "new", null)], now)).toEqual([]);
+    expect(expiredToResend(closed, [condor("again", "new", "2026-10-08T14:00:00Z")], now)).toEqual([]);
+    // Re-sent and filled: no longer working, but the package is not offered again.
+    const filled = condor("filled", "filled", "2026-10-08T14:00:00Z");
+    expect(expiredToResend([...closed, filled], [], now)).toEqual([]);
   });
 });

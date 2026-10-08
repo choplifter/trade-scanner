@@ -21,33 +21,31 @@ function endedAt(order: Order): number {
 }
 
 /** The packages worth offering again: opening orders that ran out at a
- * close in the last `days` days, newest first, one per set of contracts
- * (a re-sent order that expired again replaces the older one), and none
- * that is resting again right now. */
+ * close in the last `days` days, newest first -- and only while that
+ * expired order is the package's latest attempt. Re-sent and working,
+ * re-sent and filled, or cancelled since: a later order with the same
+ * contracts hides it. */
 export function expiredToResend(closed: Order[], open: Order[], now: number, days = 4): Order[] {
   const key = (o: Order) =>
     legsOf(o)
       .map((l) => `${l.side}:${l.symbol}`)
       .sort()
       .join("|");
-  const resting = new Set(open.map(key));
-  const seen = new Set<string>();
-  const out: Order[] = [];
-  const recent = closed
-    .filter((o) => o.status === "expired")
+  const submitted = (o: Order) => Date.parse(o.submitted_at ?? o.created_at ?? "") || 0;
+  const latest = new Map<string, Order>();
+  for (const o of [...closed, ...open]) {
+    const k = key(o);
+    const seen = latest.get(k);
+    if (!seen || submitted(o) > submitted(seen)) latest.set(k, o);
+  }
+  return closed
+    .filter((o) => o.status === "expired" && latest.get(key(o)) === o)
     .filter((o) => {
       const at = endedAt(o);
       return Number.isFinite(at) && now - at <= days * DAY_MS;
     })
     .filter((o) => !legsOf(o).some((l) => (l.position_intent ?? "").endsWith("_to_close")))
     .sort((a, b) => endedAt(b) - endedAt(a));
-  for (const o of recent) {
-    const k = key(o);
-    if (resting.has(k) || seen.has(k)) continue;
-    seen.add(k);
-    out.push(o);
-  }
-  return out;
 }
 
 /** The order's contracts as a structure the ticket loads by strikes: an
