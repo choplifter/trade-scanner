@@ -268,6 +268,18 @@ function AdjustBlock({
   );
 }
 
+/** The triggers armed on this spread: every leg a trigger closes is one of
+ * the spread's own. Underlying and expiry alone are not enough -- a bear
+ * put and an iron condor on the same stock and expiry are two positions,
+ * and a trigger closes only the legs it was armed with (backend
+ * options/monitor.py). */
+export function triggersFor(group: SpreadGroup, triggers: UnderlyingTrigger[]): UnderlyingTrigger[] {
+  const own = new Set(group.legs.map((leg) => leg.symbol));
+  return triggers.filter(
+    (t) => t.underlying === group.underlying && t.legs.length > 0 && t.legs.every((leg) => own.has(leg.symbol)),
+  );
+}
+
 function closeLegs(group: SpreadGroup) {
   return group.legs.map((leg) => ({ symbol: leg.symbol, qty: leg.qty }));
 }
@@ -309,14 +321,14 @@ export function OpenSpreads({
       setLevels(null);
       return;
     }
-    const group = spreads.find((g) => g.underlying === symbol);
+    // Several spreads on the symbol: the one whose row is open, else the first.
+    const onSymbol = spreads.filter((g) => g.underlying === symbol);
+    const group = onSymbol.find((g) => g.id === expanded) ?? onSymbol[0];
     if (!group) {
       setLevels(null);
       return;
     }
-    const active = triggers.find(
-      (t) => t.status === "active" && t.underlying === group.underlying && t.expiry === group.expiry,
-    );
+    const active = triggersFor(group, triggers).find((t) => t.status === "active");
     setLevels({
       symbol,
       strikes: group.legs.map((leg) => ({
@@ -327,7 +339,7 @@ export function OpenSpreads({
       closeBelow: active?.close_below ?? null,
       closeAbove: active?.close_above ?? null,
     });
-  }, [symbol, spreads, triggers, setLevels]);
+  }, [symbol, spreads, triggers, setLevels, expanded]);
   useEffect(() => () => setLevels(null), [setLevels]);
 
   const openClose = (group: SpreadGroup) => {
@@ -485,7 +497,7 @@ export function OpenSpreads({
         </thead>
         <tbody>
           {spreads.map((group) => {
-            const groupTriggers = triggers.filter((t) => t.underlying === group.underlying && t.expiry === group.expiry);
+            const groupTriggers = triggersFor(group, triggers);
             const active = groupTriggers.filter((t) => t.status === "active");
             const isOpen = expanded === group.id;
             const [held, vol] = group.outlook ? heldFigures(group.outlook, group.greeks?.theta ?? null, group.net_entry < 0) : [null, null];
