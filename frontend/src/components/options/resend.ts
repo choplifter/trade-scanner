@@ -11,6 +11,31 @@ interface Leg {
 }
 
 const DAY_MS = 24 * 3600 * 1000;
+const DISMISSED_KEY = "options.expiredDismissed";
+
+/** Expired packages the viewer has dismissed, by order id. Kept in this
+ * browser only: it is a view preference, and a blocked or empty storage
+ * simply shows everything again. */
+export function loadDismissed(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_KEY);
+    const ids = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((v): v is string => typeof v === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** Saves the dismissed ids, keeping only those still among `known` -- the
+ * expired orders the list could show -- so the store does not grow. */
+export function saveDismissed(ids: Set<string>, known: Order[]): void {
+  const live = new Set(known.map((o) => o.id));
+  try {
+    window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids].filter((id) => live.has(id))));
+  } catch {
+    // Storage blocked: the dismissal lasts until the page reloads.
+  }
+}
 
 function legsOf(order: Order): Order[] {
   return order.legs && order.legs.length > 0 ? order.legs : [order];

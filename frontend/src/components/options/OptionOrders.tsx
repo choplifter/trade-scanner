@@ -8,7 +8,7 @@ import type { Order } from "../../types/trading";
 import { packageDragProps, symbolDragProps } from "../../utils/dragSymbol";
 import { formatLeg, parseOcc } from "../../utils/occ";
 import { LiveConfirmField } from "../trading/LiveConfirmField";
-import { expiredToResend, structureFromOrder } from "./resend";
+import { expiredToResend, loadDismissed, saveDismissed, structureFromOrder } from "./resend";
 import { requestTicket } from "./ticketIntent";
 
 const POLL_MS = 4_000;
@@ -162,6 +162,7 @@ export function OptionOrders({
 }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [closed, setClosed] = useState<Order[]>([]);
+  const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
   const [quotes, setQuotes] = useState<Record<string, LegQuote>>({});
   const [error, setError] = useState<string | null>(null);
   const [liveTyped, setLiveTyped] = useState("");
@@ -213,7 +214,14 @@ export function OptionOrders({
     return () => window.clearInterval(id);
   }, [mode, replayAsOf]);
 
-  const expired = expiredToResend(closed, orders, Date.now());
+  const offered = expiredToResend(closed, orders, Date.now());
+  const expired = offered.filter((o) => !dismissed.has(o.id));
+
+  const dismiss = (order: Order) => {
+    const next = new Set(dismissed).add(order.id);
+    setDismissed(next);
+    saveDismissed(next, offered);
+  };
 
   const resend = (order: Order) => {
     const structure = structureFromOrder(order);
@@ -307,6 +315,14 @@ export function OptionOrders({
                     onClick={() => resend(order)}
                   >
                     Re-send
+                  </button>{" "}
+                  <button
+                    type="button"
+                    className="row-action"
+                    title="Remove it from this list. Alpaca already cancelled the order at the close, so nothing is sent; the list forgets it in this browser."
+                    onClick={() => dismiss(order)}
+                  >
+                    Dismiss
                   </button>
                 </li>
               );

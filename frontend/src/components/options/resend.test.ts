@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Order } from "../../types/trading";
-import { expiredToResend, structureFromOrder } from "./resend";
+import { expiredToResend, loadDismissed, saveDismissed, structureFromOrder } from "./resend";
 
 const leg = (symbol: string, side: "buy" | "sell", intent = `${side}_to_open`) =>
   ({ symbol, side, ratio_qty: "1", position_intent: intent }) as unknown as Order;
@@ -65,5 +65,28 @@ describe("re-sending an expired package", () => {
     // Re-sent and filled: no longer working, but the package is not offered again.
     const filled = condor("filled", "filled", "2026-10-08T14:00:00Z");
     expect(expiredToResend([...closed, filled], [], now)).toEqual([]);
+  });
+});
+
+describe("dismissing an expired package", () => {
+  it("remembers the ids still listed and forgets the rest; a blocked storage shows everything", () => {
+    const data: Record<string, string> = {};
+    const g = globalThis as unknown as { window?: unknown };
+    g.window = { localStorage: { getItem: (k: string) => data[k] ?? null, setItem: (k: string, v: string) => (data[k] = v) } };
+    saveDismissed(new Set(["a", "gone"]), [condor("a", "expired", null), condor("b", "expired", null)]);
+    expect([...loadDismissed()]).toEqual(["a"]);
+    g.window = {
+      localStorage: {
+        getItem: () => {
+          throw new Error("blocked");
+        },
+        setItem: () => {
+          throw new Error("blocked");
+        },
+      },
+    };
+    expect(loadDismissed().size).toBe(0);
+    expect(() => saveDismissed(new Set(["a"]), [])).not.toThrow();
+    delete g.window;
   });
 });
