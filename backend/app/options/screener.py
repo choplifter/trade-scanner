@@ -47,7 +47,7 @@ from app.options.distribution import Distribution
 from app.options.iv_context import bid_iv, cone_reading
 from app.options.chain_fetch import CHAIN_DAYS_AHEAD, STRIKE_PCT_RANGE
 from app.options.optimizer import CHANCE_GRID_POINTS, CHANCE_SIGMA_REACH, _norm_cdf, position_pnl, profit_mass
-from app.options.payoff import PayoffLeg
+from app.options.payoff import PayoffLeg, years_between
 from app.services.market_clock import ET
 from app.trading.errors import OrderRejected
 
@@ -146,6 +146,10 @@ WING_REACH_PCT = 0.06
 # the credit. Seen on TLT and XLU on 2026-10-01, both of which came back
 # with one-point wings and an expectancy a hair under zero because of it.
 WING_MIN_POINTS = 1.0
+# The time the wing percentages are sized for, and the shortest the
+# scaling counts (an hour), so the last minutes do not shrink it to nothing.
+WING_FULL_YEARS = 30 / 365
+WING_MIN_YEARS = 1 / (365 * 24)
 # How far the chain must be fetched. The default band is ten percent of
 # spot, which is the right cost for a chain being polled every fifteen
 # seconds and nowhere near what this screen looks for: a short strike
@@ -265,8 +269,9 @@ class ScreenRequest(BaseModel):
     # built to price. A cash-secured put ties up the underlying, which is
     # a different decision and rarely the one being asked here.
     strategy: Strategy = "iron_condor"
-    dte_min: int = Field(default=DTE_RANGE[0], ge=1, le=400)
-    dte_max: int = Field(default=DTE_RANGE[1], ge=1, le=400)
+    # 0 screens today's expiry (0DTE).
+    dte_min: int = Field(default=DTE_RANGE[0], ge=0, le=400)
+    dte_max: int = Field(default=DTE_RANGE[1], ge=0, le=400)
     min_open_interest: int = Field(default=MIN_OPEN_INTEREST, ge=0)
     min_option_volume: int = Field(default=MIN_OPTION_VOLUME, ge=0)
     # Share of equity one position may risk, in percent. None uses
@@ -327,15 +332,24 @@ class ScreenRequest(BaseModel):
             raise ValueError("wing_target_pct must not exceed wing_reach_pct")
         return self
 
-    def wing_width_for(self, spot: float) -> tuple[float, float]:
-        """(aimed width, furthest accepted) in points for this spot."""
+    def wing_width_for(self, spot: float, years: float | None = None) -> tuple[float, float]:
+        """(aimed width, furthest accepted) in points for this spot.
+
+        The percentages are sized for a month or more. A shorter expiry has
+        a smaller expected move -- it shrinks with the square root of the
+        time left -- so the wing does too: 3 % of spot at 30 days, about
+        1.4 % at 7, about 0.3 % on the morning of a 0DTE. Unscaled, a 0DTE
+        put spread on SPY got a $23 wing against a 12-cent credit."""
         if self.wing_points is not None:
             # The reach keeps its proportion to the aim, so naming a width
             # in points does not also silently narrow what is accepted.
             ratio = self.wing_reach_pct / self.wing_target_pct
             return self.wing_points, self.wing_points * ratio
-        target = max(spot * self.wing_target_pct, WING_MIN_POINTS)
-        return target, max(spot * self.wing_reach_pct, target)
+        scale = 1.0
+        if years is not None and years < WING_FULL_YEARS:
+            scale = math.sqrt(max(years, WING_MIN_YEARS) / WING_FULL_YEARS)
+        target = max(spot * self.wing_target_pct * scale, WING_MIN_POINTS)
+        return target, max(spot * self.wing_reach_pct * scale, target)
 
 
 @dataclass
@@ -667,6 +681,12 @@ def is_monthly(expiry: date) -> bool:
     a weekly and merely loses its preference -- it is not excluded.
     """
     return expiry.weekday() == 4 and 15 <= expiry.day <= 21
+
+
+def _years_left(expiry: date) -> float:
+    """Time to the expiry's 16:00 close, counted in minutes: a same-day
+    (0DTE) expiry has hours left, where whole days would make it zero."""
+    return years_between(datetime.now(ET), expiry)
 
 
 def pick_expiry(
@@ -1085,12 +1105,12 @@ async def _priced(
         for leg, kind, attr in ((row.short_put, "put", "put_spread"), (row.short_call, "call", "call_spread")):
             if leg is None:
                 continue
-            target, reach = req.wing_width_for(chain.spot)
+            target, reach = req.wing_width_for(chain.spot, _years_left(row.expiry) if row.expiry else None)
             wing = pick_wing(chain.rows, kind, leg["strike"], chain.spot, target=target, reach=reach)
             setattr(row, attr, vertical_of(leg, wing))
     # The chain's smile, fitted once for the row: every chance below is
     # read under it (app.options.distribution).
-    years_left = max((row.expiry - datetime.now(timezone.utc).date()).days, 0) / 365 if row.expiry else 0.0
+    years_left = _years_left(row.expiry) if row.expiry else 0.0
     dist = (
         Distribution.from_chain(chain.rows, chain.spot, row.atm_iv, years_left) if row.atm_iv and years_left > 0 else None
     )
@@ -1222,7 +1242,7 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain, dist=None) -> dict 
         # A long option or a calendar: the screen judged the chain, not a
         # structure, so there is nothing here to value.
         return None
-    years = max((row.expiry - datetime.now(timezone.utc).date()).days, 0) / 365 if row.expiry else 0.0
+    years = _years_left(row.expiry) if row.expiry else 0.0
     if not row.expiry:
         return None
     outcome = structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry, cross=cross, dist=dist)
@@ -1271,7 +1291,7 @@ def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date, 
         {"kind": kind, "strike": vertical["short_strike"], "side": "sell", "iv": short_iv},
         {"kind": kind, "strike": vertical["long_strike"], "side": "buy", "iv": _leg_iv(chain, kind, vertical["long_strike"])},
     ]
-    years = max((expiry - datetime.now(timezone.utc).date()).days, 0) / 365
+    years = _years_left(expiry)
     # The expected value under this corner's own IV, as above; the chance
     # under the whole smile, like every other chance in the app.
     return structure_outcome(

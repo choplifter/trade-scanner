@@ -1274,3 +1274,28 @@ def test_a_row_carries_its_iv_in_the_volatility_cone_when_there_is_a_year_of_clo
     assert rows["NEW"]["cone_pct"] is None
     # Reported, not judged: no criterion reads it.
     assert all(c["key"] != "cone" for c in rows["X"]["criteria"])
+
+
+def test_a_screen_can_ask_for_todays_expiry_only():
+    from datetime import date as _date
+
+    from app.options.screener import ScreenRequest, pick_expiry
+
+    req = ScreenRequest(strategy="credit_spread", dte_min=0, dte_max=0, symbols=["SPY"], scan_universe=False)
+    assert (req.dte_min, req.dte_max) == (0, 0)
+    today = _date(2026, 10, 9)
+    assert pick_expiry([today, _date(2026, 10, 12)], today, 0, 0) == today
+
+
+def test_the_wing_shrinks_with_the_time_left():
+    from app.options.screener import ScreenRequest
+
+    req = ScreenRequest(strategy="credit_spread", symbols=["SPY"], scan_universe=False)
+    month, _ = req.wing_width_for(777.0, 45 / 365)
+    week, _ = req.wing_width_for(777.0, 7 / 365)
+    zero_dte, _ = req.wing_width_for(777.0, 5.5 / (365 * 24))
+    assert round(month, 2) == round(777.0 * req.wing_target_pct, 2), "a month or more: unchanged"
+    assert month > week > zero_dte
+    assert 1.0 <= zero_dte <= 3.0, "a couple of dollars on SPY for a same-day spread"
+    pinned = ScreenRequest(strategy="credit_spread", symbols=["SPY"], scan_universe=False, wing_points=5)
+    assert pinned.wing_width_for(777.0, 5.5 / (365 * 24))[0] == 5, "a width named in points stays as named"

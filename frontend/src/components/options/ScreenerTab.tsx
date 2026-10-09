@@ -147,9 +147,10 @@ function reasonFor(row: ScreenRow): string {
 
 /** A typed bound, or the default when the field is empty or nonsense --
  * a half-typed "0." must not send NaN and be refused by the validator. */
-function numeric(text: string, fallback: number): number {
+export function numeric(text: string, fallback: number, allowZero = false): number {
   const value = Number(text);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
+  if (text.trim() === "" || !Number.isFinite(value)) return fallback;
+  return value > 0 || (allowZero && value === 0) ? value : fallback;
 }
 
 /** How old a stored run is, in the words a trader uses about a table. */
@@ -488,8 +489,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     try {
       const bounds = {
         strategy,
-        dte_min: numeric(dteMin, 30),
-        dte_max: numeric(dteMax, 60),
+        // 0 is today's expiry (0DTE), not a blank.
+        dte_min: numeric(dteMin, 30, true),
+        dte_max: numeric(dteMax, 60, true),
         short_delta_min: numeric(deltaMin, 0.1),
         short_delta_max: numeric(deltaMax, 0.2),
         min_open_interest: Math.round(numeric(minOi, 5000)),
@@ -564,10 +566,22 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
       <div className="opt-preference screen-filters">
         <label title="Days to expiry. The screen takes the listed expiry nearest the middle of this window; past 60 days it asks for the full expiry board.">
           DTE{" "}
-          <input type="number" min={1} max={400} step={1} value={dteMin} onChange={(e) => setDteMin(e.target.value)} />
+          <input type="number" min={0} max={400} step={1} value={dteMin} onChange={(e) => setDteMin(e.target.value)} />
           <span aria-hidden>–</span>
-          <input type="number" min={1} max={400} step={1} value={dteMax} onChange={(e) => setDteMax(e.target.value)} />
+          <input type="number" min={0} max={400} step={1} value={dteMax} onChange={(e) => setDteMax(e.target.value)} />
         </label>
+        <button
+          type="button"
+          className="timeframe-button"
+          aria-pressed={dteMin.trim() === "0" && dteMax.trim() === "0"}
+          title="Today's expiry only (0DTE). Only names with daily expiries list one -- SPY, QQQ, IWM and a few more; the rest come back with no expiry in the window."
+          onClick={() => {
+            setDteMin("0");
+            setDteMax("0");
+          }}
+        >
+          0DTE
+        </button>
         <label title="The band the short strike's delta must fall in. 0.10-0.20 is the conventional premium-selling range; higher takes more premium and more risk.">
           Δ{" "}
           <input type="number" min={0.01} max={0.99} step={0.01} value={deltaMin} onChange={(e) => setDeltaMin(e.target.value)} />
