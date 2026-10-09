@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import type { ZeroDteTrade } from "../../types/playbooks";
-import { DEFAULT_FORM, filterTrades, requestFromForm } from "./ZeroDtePanel";
+import { DEFAULT_FORM, filterTrades, requestFromForm, runLabel } from "./ZeroDtePanel";
+
+describe("the run's label", () => {
+  it("names the strategy and the settings the result was computed with", () => {
+    const label = runLabel({
+      strategy: "0DTE bull put spread on SPY",
+      params: { short_delta: 0.15, width: 3, entry: "13:00", stop_mult: null, take_profit: 0.5 },
+      first_day: "2024-02-01",
+      last_day: "2026-10-08",
+    });
+    expect(label).toContain("0DTE bull put spread on SPY · short Δ 0.15 · $3 wide · entry 13:00 · no stop · target 50 %");
+    expect(label).toContain("2024");
+    expect(label).toContain("2026");
+    expect(runLabel({ params: { stop_mult: 2, take_profit: null } })).toContain("stop 2× credit · no target");
+  });
+});
 
 describe("the 0DTE backtest form", () => {
   it("starts held to the close: no stop, no target, no dates", () => {

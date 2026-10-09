@@ -356,5 +356,9 @@ export interface ZeroDteResult {
   no_data: number;
   no_data_days: string[];
   params: Record<string, string | number | null>;
+  /** "0DTE bull put spread on SPY". */
+  strategy?: string;
+  first_day?: string | null;
+  last_day?: string | null;
   generated_at: string;
 }

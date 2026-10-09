@@ -100,6 +100,25 @@ function EquityCurve({ points }: { points: { day: string; equity: number }[] }) 
   );
 }
 
+/** The run in one line: the strategy and the settings it was computed with
+ * (the result's own, not the form's -- the form may have moved on). */
+export function runLabel(r: Pick<ZeroDteResult, "strategy" | "params" | "first_day" | "last_day">): string {
+  const p = r.params;
+  const num = (v: unknown) => (typeof v === "number" ? v : null);
+  const stop = num(p.stop_mult);
+  const target = num(p.take_profit);
+  const parts = [
+    r.strategy ?? "0DTE bull put spread on SPY",
+    `short Δ ${num(p.short_delta)?.toFixed(2) ?? "?"}`,
+    `$${num(p.width) ?? "?"} wide`,
+    `entry ${p.entry ?? "?"}`,
+    stop == null ? "no stop" : `stop ${stop}× credit`,
+    target == null ? "no target" : `target ${Math.round(target * 100)} %`,
+  ];
+  if (r.first_day && r.last_day) parts.push(`${formatExpiry(r.first_day)} ${r.first_day.slice(0, 4)} – ${formatExpiry(r.last_day)} ${r.last_day.slice(0, 4)}`);
+  return parts.join(" · ");
+}
+
 export type TradeFilter = "all" | "losses" | "stops" | "pinned";
 
 /** The trades a filter keeps, newest first or worst first. */
@@ -208,7 +227,7 @@ export function ZeroDtePanel() {
     <section className="pb-daily zdte">
       <div className="pb-start-head">
         <button type="button" className="timeframe-button" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          0DTE backtest (SPY) {open ? "▾" : "▸"}
+          0DTE bull put spread (SPY) — backtest {open ? "▾" : "▸"}
         </button>
         <span className="order-hint" title={CAVEATS}>
           Same-day put credit spreads on real option bars · research only
@@ -265,6 +284,7 @@ export function ZeroDtePanel() {
             {CAVEATS_TEXT}
           </p>
           {r && r.trades === 0 && <p className="order-hint">No trades in this range ({r.days} sessions, {r.no_data} without data).</p>}
+          {r && <h4 className="zdte-run">{runLabel(r)}</h4>}
           {r && r.trades > 0 && (
             <>
               <div className="key-figures" role="group" aria-label="0DTE backtest summary">

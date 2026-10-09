@@ -346,5 +346,8 @@ async def run(clients, start: date, end: date, p: Params, concurrency: int = 4) 
     out["no_data"] = len(missing)
     out["no_data_days"] = sorted(missing)[:20]
     out["params"] = {**asdict(p), "entry": p.entry.strftime("%H:%M")}
+    out["strategy"] = f"0DTE bull put spread on {p.underlying}"
+    out["first_day"] = days[0].isoformat() if days else None
+    out["last_day"] = days[-1].isoformat() if days else None
     out["generated_at"] = datetime.now(timezone.utc).isoformat()
     return out
