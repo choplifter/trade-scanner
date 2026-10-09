@@ -54,7 +54,14 @@ def test_no_forecast_no_mark_or_no_day_left_gives_no_outlook():
     assert held_outlook(CONDOR, 1, SPOT, NOW, None) is None
     unpriced = [CONDOR[0].model_copy(update={"mid": None}), *CONDOR[1:]]
     assert held_outlook(unpriced, 1, SPOT, NOW, _vol(0.2)) is None
-    assert held_outlook(CONDOR, 1, SPOT, datetime.combine(EXPIRY, NOW.timetz()), _vol(0.2)) is None
+    # After the expiry day's 16:00 close nothing is left to expect...
+    from app.services.market_clock import ET
+
+    after_close = datetime(EXPIRY.year, EXPIRY.month, EXPIRY.day, 16, 30, tzinfo=ET)
+    assert held_outlook(CONDOR, 1, SPOT, after_close, _vol(0.2)) is None
+    # ...but on the morning of it the hours to the close still count.
+    morning = datetime(EXPIRY.year, EXPIRY.month, EXPIRY.day, 10, 0, tzinfo=ET)
+    assert held_outlook(CONDOR, 1, SPOT, morning, _vol(0.2)) is not None
 
 
 def test_the_list_and_the_risk_chart_read_the_same_outlook():

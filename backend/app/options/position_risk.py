@@ -548,24 +548,29 @@ def held_outlook(legs: list[RiskLeg], spot: float, now: datetime, vol) -> dict |
         return None
     # Per share, signed like a ticket: positive is what the position is worth.
     mark = sum(leg.qty * leg.mid for leg in legs)
+    from app.options.payoff import expiry_moment, years_between
+
     expiry = min(leg.expiry for leg in legs)
     dte = (expiry - now.date()).days
-    if dte <= 0:
+    # To the 16:00 close in minutes: a position expiring today still has
+    # hours, and its expectation is worth showing.
+    years = years_between(now, expiry)
+    if years <= 0:
         return None
     payoff_legs = [
         PayoffLeg(kind=leg.kind, strike=leg.strike, side="buy" if leg.qty > 0 else "sell", ratio=int(abs(leg.qty)), expiry=leg.expiry, iv=leg.iv)
         for leg in legs
     ]
-    horizon = now.replace(year=expiry.year, month=expiry.month, day=expiry.day)
-    ev = expected_value(payoff_legs, mark, horizon, spot, vol.forecast, dte / 365.0, 1)
-    odds = held_odds(payoff_legs, mark, horizon, spot, vol.forecast, dte / 365.0)
+    horizon = expiry_moment(expiry)
+    ev = expected_value(payoff_legs, mark, horizon, spot, vol.forecast, years, 1)
+    odds = held_odds(payoff_legs, mark, horizon, spot, vol.forecast, years)
     if ev is None or odds is None:
         return None
     shorts = [leg.iv for leg in legs if leg.qty < 0 and leg.iv]
     ivs = shorts or [leg.iv for leg in legs if leg.iv]
     return {
         "expected_value_rv": ev,
-        "pnl_per_day": round(ev / dte, 2),
+        "pnl_per_day": round(ev / max(dte, 1), 2),
         **odds,
         "dte": dte,
         "iv": round(sum(ivs) / len(ivs), 4) if ivs else None,

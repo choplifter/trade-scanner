@@ -154,6 +154,11 @@ def _expiry_moment(expiry: date) -> datetime:
     return datetime.combine(expiry, time(16, 0), tzinfo=ET)
 
 
+def expiry_moment(expiry: date) -> datetime:
+    """16:00 ET on the expiry day -- the moment an option is settled at."""
+    return _expiry_moment(expiry)
+
+
 def years_between(now: datetime, expiry: date) -> float:
     delta = _expiry_moment(expiry) - now.astimezone(ET)
     return max(0.0, delta / timedelta(days=365))

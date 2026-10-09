@@ -8,7 +8,7 @@ builder is a pure function with its own tests.
 
 import asyncio
 import logging
-from datetime import date, datetime, time
+from datetime import date, datetime
 
 from app.alpaca.client import AlpacaClients
 from app.core.config import Settings
@@ -38,9 +38,9 @@ from app.options.models import (
 )
 from app.options.distribution import Distribution
 from app.options.optimizer import chance_of_profit, expected_value, position_pnl
-from app.services.market_clock import ET, current_session
+from app.services.market_clock import current_session
 from app.options.occ import try_parse_occ
-from app.options.payoff import PayoffLeg, payoff_curve
+from app.options.payoff import PayoffLeg, expiry_moment, payoff_curve, years_between
 from app.options.position_risk import (
     DividendCalendar,
     RiskLeg,
@@ -93,8 +93,7 @@ def worst_case(
         PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
         for leg in legs
     ]
-    expiry_moment = datetime.combine(payoff.expiry, time(16, 0), tzinfo=ET)
-    floor = position_pnl(payoff_legs, net_price, 0.01, expiry_moment, qty)
+    floor = position_pnl(payoff_legs, net_price, 0.01, expiry_moment(payoff.expiry), qty)
     return floor if floor is not None else payoff.max_loss
 
 
@@ -764,13 +763,15 @@ class OptionsService:
         # horizon and the cross still unpaid -- the same ones as the EV.
         ev_inputs = None
         sigma = atm_iv(chain)
-        years = max(0.0, (payoff.expiry - self._source.now().date()).days / 365.0) if payoff is not None else 0.0
+        # To the 16:00 close in minutes, not whole days: a same-day spread
+        # has hours left, and days would make it zero.
+        years = years_between(self._source.now(), payoff.expiry) if payoff is not None else 0.0
         if payoff is not None and sigma and years > 0:
             payoff_legs = [
                 PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
                 for leg in legs
             ]
-            horizon = self._source.now().replace(year=payoff.expiry.year, month=payoff.expiry.month, day=payoff.expiry.day)
+            horizon = expiry_moment(payoff.expiry)
             # Net of the cross, as in the Optimizer and the Screener: the
             # chance assumes a fill at the natural. Only the part of that
             # gap the limit has not already paid is charged -- a limit at

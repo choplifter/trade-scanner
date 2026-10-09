@@ -213,6 +213,47 @@ def quote_from_snapshot(meta: ContractMeta, snap: Any) -> LegQuote:
     )
 
 
+def with_solved_iv(quote: LegQuote, spot: float | None, now: datetime) -> LegQuote:
+    """The quote with an implied volatility solved from its mid when Alpaca
+    sent none -- which it stops doing in the last hours of a contract's
+    life, so a same-day spread lost its "today" curve and every figure
+    built on IV. Time to the 16:00 close is counted in minutes
+    (payoff.years_between), the replay engine's way. Missing greeks come
+    from that IV too. Alpaca's own values are kept wherever present."""
+    if quote.iv is not None or quote.mid is None or not spot or spot <= 0:
+        return quote
+    from app.options.payoff import bs_greeks, implied_vol, years_between
+
+    years = years_between(now, quote.expiry)
+    iv = implied_vol(quote.kind, quote.mid, spot, quote.strike, years)
+    if iv is None:
+        return quote
+    delta, gamma, theta = bs_greeks(quote.kind, spot, quote.strike, years, iv)
+    return replace(
+        quote,
+        iv=iv,
+        delta=quote.delta if quote.delta is not None else delta,
+        gamma=quote.gamma if quote.gamma is not None else gamma,
+        theta=quote.theta if quote.theta is not None else theta,
+    )
+
+
+def chain_with_solved_iv(chain: "Chain", now: datetime) -> "Chain":
+    """with_solved_iv over every quote of the chain, as a new Chain (the
+    cached one stays as fetched)."""
+    if all((r.call is None or r.call.iv is not None) and (r.put is None or r.put.iv is not None) for r in chain.rows):
+        return chain
+    rows = [
+        StrikeRow(
+            strike=r.strike,
+            call=with_solved_iv(r.call, chain.spot, now) if r.call is not None else None,
+            put=with_solved_iv(r.put, chain.spot, now) if r.put is not None else None,
+        )
+        for r in chain.rows
+    ]
+    return replace(chain, rows=rows)
+
+
 def build_chain_rows(
     contracts: dict[str, ContractMeta],
     snapshots: dict[str, Any],

@@ -18,7 +18,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
 
 from app.alpaca.client import AlpacaClients
-from app.options.chain import Chain, ExpiryInfo, LegQuote
+from app.options.chain import Chain, ExpiryInfo, LegQuote, chain_with_solved_iv, with_solved_iv
 from app.options.chain_fetch import ChainCache, fetch_leg_quotes
 from app.services.market_clock import ET
 
@@ -88,11 +88,29 @@ class LiveQuoteSource:
 
     async def chain(self, underlying: str, expiry: date, width: float | None = None) -> Chain:
         if width is None:
-            return await self._chain_cache.chain(underlying, expiry)
-        return await self._chain_cache.chain(underlying, expiry, width)
+            chain = await self._chain_cache.chain(underlying, expiry)
+        else:
+            chain = await self._chain_cache.chain(underlying, expiry, width)
+        # Near expiry Alpaca sends no IV: solved from the mids instead.
+        return chain_with_solved_iv(chain, self.now())
 
     async def leg_quotes(self, symbols: list[str]) -> dict[str, LegQuote]:
-        return await fetch_leg_quotes(self._clients, symbols)
+        quotes = await fetch_leg_quotes(self._clients, symbols)
+        if all(q.iv is not None for q in quotes.values()):
+            return quotes
+        from app.options.occ import try_parse_occ
+
+        now = self.now()
+        spots: dict[str, float | None] = {}
+        out = {}
+        for symbol, quote in quotes.items():
+            parsed = try_parse_occ(symbol)
+            if quote.iv is None and parsed is not None:
+                if parsed.underlying not in spots:
+                    spots[parsed.underlying] = await self.spot(parsed.underlying)
+                quote = with_solved_iv(quote, spots[parsed.underlying], now)
+            out[symbol] = quote
+        return out
 
 
 class ReplayQuoteSource:
