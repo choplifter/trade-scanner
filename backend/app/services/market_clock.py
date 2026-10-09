@@ -35,6 +35,18 @@ def trading_hours_for(day: date) -> tuple[datetime, datetime] | None:
     return market_open, market_close
 
 
+def sessions_between(start: date, end: date) -> dict[date, tuple[datetime, datetime]]:
+    """{day: (market_open, market_close)} in ET for every NYSE session in
+    [start, end] -- one schedule query for a whole range, where looping
+    trading_hours_for would cost one per day (and thrash its cache past
+    512 days). Blocking: call it off the event loop."""
+    schedule = _NYSE.schedule(start_date=start, end_date=end)
+    return {
+        ts.date(): (row.market_open.tz_convert(ET).to_pydatetime(), row.market_close.tz_convert(ET).to_pydatetime())
+        for ts, row in schedule.iterrows()
+    }
+
+
 def current_session(now: datetime | None = None) -> Session:
     now = (now or datetime.now(ET)).astimezone(ET)
     hours = trading_hours_for(now.date())

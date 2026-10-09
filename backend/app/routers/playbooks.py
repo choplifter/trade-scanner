@@ -307,6 +307,55 @@ class DailyMethodBody(BaseModel):
 DAILY_BARS_LOOKBACK_DAYS = 330
 
 
+class ZeroDteBody(BaseModel):
+    """Parameters of the 0DTE put credit spread backtest -- see
+    app.options.zero_dte.Params for what each one does."""
+
+    start: date | None = None  # default: the first day Alpaca has option bars
+    end: date | None = None  # default: yesterday
+    entry: str = Field(default="10:00", pattern=r"^\d{2}:\d{2}$")
+    short_delta: float = Field(default=0.10, gt=0.0, lt=0.5)
+    width: float = Field(default=2.0, gt=0.0, le=20.0)
+    stop_mult: float | None = Field(default=2.0, gt=1.0, le=20.0)
+    take_profit: float | None = Field(default=None, gt=0.0, lt=1.0)
+    slippage: float = Field(default=0.01, ge=0.0, le=0.5)
+    fee: float = Field(default=0.03, ge=0.0, le=2.0)
+
+
+@router.post("/zero-dte-backtest")
+async def zero_dte_backtest(body: ZeroDteBody, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """SPY 0DTE put credit spreads on Alpaca's real option minute bars
+    (app.options.zero_dte). The first run fetches and caches every day's
+    bars -- several minutes; later runs read the cache."""
+    from datetime import time as clock
+    from datetime import timedelta
+
+    from app.options.zero_dte import FIRST_DAY, Params, run
+
+    clients = getattr(request.app.state, "alpaca_clients", None)
+    if clients is None:
+        raise HTTPException(status_code=503, detail="Market data not configured")
+    hh, mm = (int(x) for x in body.entry.split(":"))
+    if not (9 * 60 + 31 <= hh * 60 + mm <= 15 * 60 + 30):
+        raise HTTPException(status_code=422, detail="Entry must lie between 09:31 and 15:30 ET")
+    params = Params(
+        entry=clock(hh, mm),
+        short_delta=body.short_delta,
+        width=body.width,
+        stop_mult=body.stop_mult,
+        take_profit=body.take_profit,
+        slippage=body.slippage,
+        fee=body.fee,
+    )
+    end = body.end or (datetime.now(UTC).date() - timedelta(days=1))
+    start = body.start or FIRST_DAY
+    try:
+        return await run(clients, start, end, params)
+    except Exception:
+        logger.exception("0DTE backtest failed")
+        raise HTTPException(status_code=502, detail="Failed to load the option bars")
+
+
 @router.post("/daily-method")
 async def daily_method(body: DailyMethodBody, request: Request, user: dict = Depends(get_current_user)) -> dict:
     """Today's proposals under the daily method (app.options.daily_method):
