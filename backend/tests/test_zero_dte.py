@@ -119,3 +119,12 @@ def test_each_trade_carries_both_legs_prices_in_and_out():
     assert math.isclose(held.short_exit, max(0.0, held.short_strike - settle), abs_tol=0.01)
     assert math.isclose(held.long_exit, max(0.0, held.long_strike - settle), abs_tol=0.01)
     assert len(summarize([stop, held], 2)["trade_list"]) == 2
+
+
+def test_each_trade_says_the_iv_and_spys_move_at_entry():
+    path = _path(590.0, 591.0)
+    trade = simulate_day(DAY, DayBars(spot=path, puts=_puts(path)), Params(stop_mult=None))
+    # The synthetic chain is priced at a flat 15 % IV.
+    assert trade.entry_iv is not None and abs(trade.entry_iv - IV) < 0.01
+    moved = path[ENTRY] / path[OPEN] - 1
+    assert abs(trade.move_open - moved * 100) < 0.01

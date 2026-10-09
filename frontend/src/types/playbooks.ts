@@ -331,6 +331,10 @@ export interface ZeroDteTrade {
   long_entry: number;
   short_exit: number;
   long_exit: number;
+  /** The at-the-money put's implied vol at entry; null when unsolvable. */
+  entry_iv?: number | null;
+  /** SPY's move from its first regular-session bar to the entry, in per cent. */
+  move_open?: number | null;
 }
 
 export interface ZeroDteResult {

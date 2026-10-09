@@ -98,6 +98,11 @@ class Trade:
     long_entry: float = 0.0
     short_exit: float = 0.0
     long_exit: float = 0.0
+    # The market at entry: the at-the-money put's implied vol (None when its
+    # print does not solve), and SPY's move since its first regular-session
+    # bar, in per cent.
+    entry_iv: float | None = None
+    move_open: float | None = None
 
 
 @dataclass
@@ -140,6 +145,15 @@ def _last(series: dict[int, float], minute: int, stale: int) -> float | None:
         if m in series:
             return series[m]
     return None
+
+
+def _atm_iv(bars: DayBars, spot: float, minute: int, years: float, stale: int) -> float | None:
+    """The implied vol of the put nearest the spot at `minute`."""
+    if not bars.puts:
+        return None
+    strike = min(bars.puts, key=lambda k: abs(k - spot))
+    sigma = implied_vol("put", _last(bars.puts[strike], minute, stale), spot, strike, years)
+    return round(sigma, 4) if sigma is not None else None
 
 
 def simulate_day(day: date, bars: DayBars, p: Params, close_minute: int = 16 * 60) -> Trade | None:
@@ -213,6 +227,8 @@ def simulate_day(day: date, bars: DayBars, p: Params, close_minute: int = 16 * 6
         long_entry=round(long_px, 2),
         short_exit=round(leg_exit[0], 2),
         long_exit=round(leg_exit[1], 2),
+        entry_iv=_atm_iv(bars, spot, entry, years, p.stale_minutes),
+        move_open=round((spot / bars.spot[min(bars.spot)] - 1) * 100, 2),
     )
 
 

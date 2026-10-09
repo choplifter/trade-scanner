@@ -158,6 +158,12 @@ function TradeTable({ trades }: { trades: ZeroDteTrade[] }) {
           <th scope="col" title="Net per share after a cent of slippage per leg">
             Credit
           </th>
+          <th scope="col" title="Implied volatility of the at-the-money put at entry">
+            IV
+          </th>
+          <th scope="col" title="SPY's move from the open to the entry">
+            SPY vs open
+          </th>
           <th scope="col">Exit</th>
           <th scope="col">SPY entry → exit</th>
           <th scope="col" title="Per spread, after slippage and fees">
@@ -174,6 +180,10 @@ function TradeTable({ trades }: { trades: ZeroDteTrade[] }) {
             <LegCell side="short" strike={t.short_strike} entry={t.short_entry} exit={t.short_exit} delta={t.short_delta} />
             <LegCell side="long" strike={t.long_strike} entry={t.long_entry} exit={t.long_exit} />
             <td>{t.credit.toFixed(2)}</td>
+            <td>{t.entry_iv == null ? "—" : `${(t.entry_iv * 100).toFixed(0)} %`}</td>
+            <td className={tone(t.move_open)}>
+              {t.move_open == null ? "—" : `${t.move_open > 0 ? "+" : ""}${t.move_open.toFixed(2)} %`}
+            </td>
             <td>
               {t.exit} {t.exit_at}
               {t.pinned ? " · pinned" : ""}
