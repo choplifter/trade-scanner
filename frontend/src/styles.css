@@ -6588,6 +6588,33 @@ td.chain-side.chain-stale {
   border-bottom: 1px solid var(--border, #2a2a2a);
 }
 
+/* The 0DTE backtest's parameter row. */
+.zdte-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.zdte-form input[type="number"] {
+  width: 64px;
+}
+
+.zdte-form input[type="date"] {
+  width: 130px;
+}
+
+.pb-bt-equity.negative {
+  stroke: var(--delta-down);
+}
+
+.zdte-years,
+.zdte-worst {
+  margin-top: 6px;
+}
+
 .pb-daily h4 {
   margin: 8px 0 4px;
   font-size: 12px;

@@ -294,3 +294,59 @@ export interface DailyMethodResult {
   entries: DailyMethodEntry[];
   skipped: { symbol: string; reason: string }[];
 }
+
+/** POST /trading/options/playbooks/zero-dte-backtest -- see backend
+ * app/options/zero_dte.py. Omitted fields take the backend's defaults; a
+ * null stop or target means none. */
+export interface ZeroDteRequest {
+  start?: string;
+  end?: string;
+  entry?: string;
+  short_delta?: number;
+  width?: number;
+  stop_mult?: number | null;
+  take_profit?: number | null;
+  slippage?: number;
+  fee?: number;
+}
+
+export interface ZeroDteTrade {
+  day: string;
+  spot: number;
+  short_strike: number;
+  long_strike: number;
+  short_delta: number;
+  /** Per share, after slippage. */
+  credit: number;
+  exit_value: number;
+  exit: "stop" | "target" | "expiry";
+  exit_at: string;
+  close: number;
+  /** Dollars per spread, after slippage and fees. */
+  pnl: number;
+  pinned: boolean;
+}
+
+export interface ZeroDteResult {
+  days: number;
+  trades: number;
+  win_rate?: number;
+  total?: number;
+  avg?: number;
+  avg_win?: number | null;
+  avg_loss?: number | null;
+  profit_factor?: number | null;
+  max_drawdown?: number;
+  /** Dollars per spread. */
+  avg_credit?: number;
+  stops?: number;
+  targets?: number;
+  pinned?: number;
+  by_year?: Record<string, { trades: number; pnl: number; wins: number; worst: number }>;
+  worst?: ZeroDteTrade[];
+  equity?: { day: string; equity: number }[];
+  no_data: number;
+  no_data_days: string[];
+  params: Record<string, string | number | null>;
+  generated_at: string;
+}

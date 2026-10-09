@@ -15,6 +15,8 @@ import type {
   CampaignPatch,
   DailyMethodResult,
   PlaybookScriptsResponse,
+  ZeroDteRequest,
+  ZeroDteResult,
 } from "../types/playbooks";
 import type { TradingRejection } from "../types/trading";
 
@@ -80,4 +82,11 @@ export function runPlaybookBacktest(body: BacktestRequest): Promise<BacktestResu
  * bull put spreads, entries across the watchlist. Proposes only. */
 export function runDailyMethod(account: "paper" | "sim"): Promise<DailyMethodResult> {
   return send<DailyMethodResult>("POST", `${BASE}/daily-method`, { account });
+}
+
+/** SPY 0DTE put credit spreads on Alpaca's real option minute bars. The
+ * first run fetches and caches every day's bars (minutes); later runs read
+ * the cache. */
+export function runZeroDteBacktest(body: ZeroDteRequest): Promise<ZeroDteResult> {
+  return send<ZeroDteResult>("POST", `${BASE}/zero-dte-backtest`, body);
 }
