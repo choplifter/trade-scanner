@@ -180,3 +180,35 @@ def test_ev_at_realised_vol_rewards_selling_into_a_quiet_tape(monkeypatch):
         results[label] = out[0]["ours"]
     assert results["quiet"]["rv_forecast"] < results["wild"]["rv_forecast"]
     assert results["quiet"]["expected_value_rv"] > results["wild"]["expected_value_rv"] + 50
+
+
+def test_a_bull_put_export_is_checked_against_todays_chain_like_a_condor():
+    import asyncio
+
+    from app.options.barchart_screener import enrich
+    from app.options.chain import Chain, LegQuote, StrikeRow
+
+    expiry = date(2026, 11, 20)
+
+    def q(kind, k, bid, ask):
+        return LegQuote(symbol=f"{kind}{k}", strike=k, kind=kind, expiry=expiry, bid=bid, ask=ask, mid=(bid + ask) / 2,
+                        last=bid, bid_size=1, ask_size=1, delta=None, gamma=None, theta=None, iv=0.25, open_interest=10, tradable=True)
+
+    class Service:
+        async def chain(self, symbol, exp, width=0.10):
+            rows = [StrikeRow(float(k), q("call", float(k), 1.0, 1.05), q("put", float(k), max(0.01, (52 - k) * 0.1), max(0.02, (52 - k) * 0.1 + 0.03)))
+                    for k in range(40, 60)]
+            return Chain(underlying=symbol, expiry=exp, spot=50.10, feed="opra", as_of=None, rows=rows)
+
+    rows, _ = parse(VERTICAL)
+    out = asyncio.run(enrich(rows, Service(), today=date(2026, 10, 6), limit=5))
+    ours = out[0]["ours"]
+    assert out[0]["strategy"] == "bull_put"
+    # Sold the 48 put at its bid, bought the 46 at its ask.
+    assert ours["net_now"] is not None and ours["priced_at"] == "today"
+    assert "expected_value" in ours and "loss_prob_skew" in ours
+
+
+def test_barcharts_vertical_screener_files_are_accepted():
+    assert is_screener_export("short-put-vertical-spread-option-screener-10-09-2026.csv")
+    assert is_screener_export("bull-put-spread-screener-10-09-2026 (1).csv")

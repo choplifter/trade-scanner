@@ -46,8 +46,8 @@ const STRATEGIES: { key: ScreenStrategy; label: string; title: string }[] = [
   },
   {
     key: "credit_spread",
-    label: "Credit spread",
-    title: "As above, and the chain must list a strike further out to buy as the wing -- with enough credit against the width it risks.",
+    label: "Bull put spread",
+    title: "A put credit spread: the short put at the delta band, a put further out bought as the wing -- with enough credit against the width it risks. The chain qualities as for the cash-secured put.",
   },
   {
     key: "iron_condor",

@@ -24,8 +24,11 @@ import csv
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+
+from app.options.payoff import years_between
+from app.services.market_clock import ET
 
 # Barchart names a screener export "<screen>-option-screener[-<view>]-<mm-dd-yyyy>.csv".
 FILE_PATTERN = re.compile(r"^[a-z0-9\-]+-screener[a-z0-9\-]*-\d{2}-\d{2}-\d{4}(?: \(\d+\))?\.csv$", re.IGNORECASE)
@@ -304,7 +307,13 @@ async def enrich(
     for key, chain in chains.items():
         if isinstance(chain, Exception):
             continue
-        years = max((key[1] - today).days, 0) / 365
+        days = (key[1] - today).days
+        # A same-day expiry still has hours to the close: counted in minutes
+        # (as the ticket does), where whole days would make it zero.
+        if days == 0 and today == datetime.now(ET).date():
+            years = years_between(datetime.now(ET), key[1])
+        else:
+            years = max(days, 0) / 365
         atm = atm_iv_of(chain.rows, chain.spot)
         dist = Distribution.from_chain(chain.rows, chain.spot, atm, years) if atm and years > 0 else None
         rank = None

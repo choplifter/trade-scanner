@@ -12,7 +12,7 @@ interface ScreenerHelpProps {
 const LABELS: Record<ScreenStrategy, string> = {
   cash_secured_put: "Cash-secured put",
   covered_call: "Covered call",
-  credit_spread: "Credit spread",
+  credit_spread: "Bull put spread",
   iron_condor: "Iron condor",
   debit_spread: "Debit spread",
   long_option: "Long option",
