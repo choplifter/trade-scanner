@@ -21,14 +21,15 @@ export interface ZeroDteForm {
   end: string;
 }
 
-// The backend's own defaults (zero_dte.Params): the first setup tested, not
-// the grid's best -- a default picked from hindsight would bake the
-// overfitting in.
+// The first setup tested (0.10 delta, $2, 10:00), not the grid's best -- a
+// default picked from hindsight would bake the overfitting in -- but held to
+// the close: a 2x stop on an 8-cent credit fires on ordinary noise and was
+// the worst choice in every corner of the grid, so it made a poor first look.
 export const DEFAULT_FORM: ZeroDteForm = {
   entry: "10:00",
   shortDelta: "0.10",
   width: "2",
-  stop: "2",
+  stop: "",
   target: "",
   slippage: "0.01",
   fee: "0.03",
