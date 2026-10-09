@@ -6611,8 +6611,14 @@ td.chain-side.chain-stale {
 }
 
 .zdte-years,
-.zdte-worst {
+.zdte-trades {
   margin-top: 6px;
+}
+
+/* The full trade list scrolls inside the panel. */
+.zdte-list {
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 .pb-daily h4 {

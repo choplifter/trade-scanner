@@ -325,6 +325,12 @@ export interface ZeroDteTrade {
   /** Dollars per spread, after slippage and fees. */
   pnl: number;
   pinned: boolean;
+  /** Each leg's price per share at entry and at the exit (intrinsic on
+   * SPY's close when held to expiry). */
+  short_entry: number;
+  long_entry: number;
+  short_exit: number;
+  long_exit: number;
 }
 
 export interface ZeroDteResult {
@@ -344,6 +350,8 @@ export interface ZeroDteResult {
   pinned?: number;
   by_year?: Record<string, { trades: number; pnl: number; wins: number; worst: number }>;
   worst?: ZeroDteTrade[];
+  /** Every trade, oldest first. */
+  trade_list?: ZeroDteTrade[];
   equity?: { day: string; equity: number }[];
   no_data: number;
   no_data_days: string[];

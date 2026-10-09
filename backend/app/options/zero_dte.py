@@ -91,6 +91,13 @@ class Trade:
     close: float  # SPY at the exit
     pnl: float  # dollars per spread, after slippage and fees
     pinned: bool = False
+    # Each leg's own price per share: the print it was opened at, and the
+    # print it was closed at (intrinsic on SPY's close when held to expiry).
+    # The credit and exit value are these netted, plus the slippage.
+    short_entry: float = 0.0
+    long_entry: float = 0.0
+    short_exit: float = 0.0
+    long_exit: float = 0.0
 
 
 @dataclass
@@ -166,16 +173,17 @@ def simulate_day(day: date, bars: DayBars, p: Params, close_minute: int = 16 * 6
 
     short_s, long_s = bars.puts[short_k], bars.puts[long_k]
     exit_kind, exit_value, exit_minute = "expiry", None, close_minute
+    leg_exit = (0.0, 0.0)
     for m in range(entry + 1, close_minute):
         a, b = _last(short_s, m, p.stale_minutes), _last(long_s, m, p.stale_minutes)
         if a is None or b is None or (m not in short_s and m not in long_s):
             continue
         value = max(0.0, a - b) + 2 * p.slippage  # what closing costs
         if p.stop_mult is not None and value >= p.stop_mult * credit:
-            exit_kind, exit_value, exit_minute = "stop", value, m
+            exit_kind, exit_value, exit_minute, leg_exit = "stop", value, m, (a, b)
             break
         if p.take_profit is not None and value <= (1 - p.take_profit) * credit:
-            exit_kind, exit_value, exit_minute = "target", value, m
+            exit_kind, exit_value, exit_minute, leg_exit = "target", value, m, (a, b)
             break
 
     last_spot = max((m for m in bars.spot if m <= close_minute), default=None)
@@ -183,7 +191,8 @@ def simulate_day(day: date, bars: DayBars, p: Params, close_minute: int = 16 * 6
     close_at = _last(bars.spot, exit_minute, 60) or settle
     pinned = False
     if exit_value is None:
-        exit_value = max(0.0, short_k - settle) - max(0.0, long_k - settle)
+        leg_exit = (max(0.0, short_k - settle), max(0.0, long_k - settle))
+        exit_value = leg_exit[0] - leg_exit[1]
         pinned = long_k < settle < short_k
     legs_closed = 2 if exit_kind != "expiry" else 0
     pnl = (credit - exit_value) * 100 - p.fee * (2 + legs_closed)
@@ -200,6 +209,10 @@ def simulate_day(day: date, bars: DayBars, p: Params, close_minute: int = 16 * 6
         close=round(close_at, 2),
         pnl=round(pnl, 2),
         pinned=pinned,
+        short_entry=round(short_px, 2),
+        long_entry=round(long_px, 2),
+        short_exit=round(leg_exit[0], 2),
+        long_exit=round(leg_exit[1], 2),
     )
 
 
@@ -241,6 +254,8 @@ def summarize(trades: list[Trade], days_tried: int) -> dict:
         "pinned": sum(t.pinned for t in trades),
         "by_year": years,
         "worst": [asdict(t) for t in worst],
+        # Every trade, oldest first -- the panel's full list.
+        "trade_list": [asdict(t) for t in trades],
         "equity": curve,
     }
 

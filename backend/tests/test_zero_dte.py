@@ -102,3 +102,20 @@ def test_a_day_that_rallied_above_the_highest_strike_does_not_cover():
     rally = _path(590.0, 606.0)
     assert not covers(DayBars(spot=rally, puts=_puts(rally, strikes=range(560, 601))))
     assert covers(DayBars(spot=rally, puts=_puts(rally, strikes=range(560, 607))))
+
+
+def test_each_trade_carries_both_legs_prices_in_and_out():
+    from app.options.zero_dte import Params as P
+
+    path = _path(590.0, 575.0)
+    stop = simulate_day(DAY, DayBars(spot=path, puts=_puts(path)), P(stop_mult=2.0))
+    # Opened: sold the short at its print, bought the long at its; the
+    # credit is the difference less a cent per leg.
+    assert math.isclose(stop.credit, stop.short_entry - stop.long_entry - 0.02, abs_tol=0.011)
+    # Closed at the stop: the legs' prints there, plus a cent each.
+    assert math.isclose(stop.exit_value, stop.short_exit - stop.long_exit + 0.02, abs_tol=0.011)
+    held = simulate_day(DAY, DayBars(spot=path, puts=_puts(path)), P(stop_mult=None))
+    settle = path[CLOSE]
+    assert math.isclose(held.short_exit, max(0.0, held.short_strike - settle), abs_tol=0.01)
+    assert math.isclose(held.long_exit, max(0.0, held.long_strike - settle), abs_tol=0.01)
+    assert len(summarize([stop, held], 2)["trade_list"]) == 2

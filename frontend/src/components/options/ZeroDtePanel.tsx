@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { runZeroDteBacktest } from "../../api/playbooks";
-import type { ZeroDteRequest, ZeroDteResult } from "../../types/playbooks";
+import type { ZeroDteRequest, ZeroDteResult, ZeroDteTrade } from "../../types/playbooks";
 import { formatExpiry } from "../../utils/occ";
 import { NATENBERG, withBook } from "./bookRefs";
 
@@ -100,6 +100,76 @@ function EquityCurve({ points }: { points: { day: string; equity: number }[] }) 
   );
 }
 
+export type TradeFilter = "all" | "losses" | "stops" | "pinned";
+
+/** The trades a filter keeps, newest first or worst first. */
+export function filterTrades(trades: ZeroDteTrade[], filter: TradeFilter, sort: "date" | "pnl"): ZeroDteTrade[] {
+  const kept = trades.filter((t) =>
+    filter === "losses" ? t.pnl < 0 : filter === "stops" ? t.exit === "stop" : filter === "pinned" ? t.pinned : true,
+  );
+  return [...kept].sort((a, b) => (sort === "pnl" ? a.pnl - b.pnl : b.day.localeCompare(a.day)));
+}
+
+/** One leg: sold or bought, strike, the price it was opened and closed at. */
+function LegCell({ side, strike, entry, exit, delta }: { side: "short" | "long"; strike: number; entry: number; exit: number; delta?: number }) {
+  const verbs = side === "short" ? ["Sold", "bought back"] : ["Bought", "sold"];
+  return (
+    <td title={`${verbs[0]} at ${entry.toFixed(2)}, ${verbs[1]} at ${exit.toFixed(2)} per share`}>
+      {side === "short" ? "−" : "+"}
+      {strike}P · {entry.toFixed(2)} → {exit.toFixed(2)}
+      {delta != null ? ` · Δ ${Math.abs(delta).toFixed(2)}` : ""}
+    </td>
+  );
+}
+
+/** Trades as rows: each leg on its own, the credit, how and when it ended,
+ * SPY at entry and exit, the P/L. */
+function TradeTable({ trades }: { trades: ZeroDteTrade[] }) {
+  return (
+    <table className="opt-table zdte-trades">
+      <thead>
+        <tr>
+          <th scope="col">Day</th>
+          <th scope="col" title="The put sold: strike · price in → price out · delta at entry">
+            Short leg
+          </th>
+          <th scope="col" title="The put bought below it: strike · price in → price out">
+            Long leg
+          </th>
+          <th scope="col" title="Net per share after a cent of slippage per leg">
+            Credit
+          </th>
+          <th scope="col">Exit</th>
+          <th scope="col">SPY entry → exit</th>
+          <th scope="col" title="Per spread, after slippage and fees">
+            P/L
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {trades.map((t) => (
+          <tr key={t.day}>
+            <th scope="row">
+              {formatExpiry(t.day)} {t.day.slice(0, 4)}
+            </th>
+            <LegCell side="short" strike={t.short_strike} entry={t.short_entry} exit={t.short_exit} delta={t.short_delta} />
+            <LegCell side="long" strike={t.long_strike} entry={t.long_entry} exit={t.long_exit} />
+            <td>{t.credit.toFixed(2)}</td>
+            <td>
+              {t.exit} {t.exit_at}
+              {t.pinned ? " · pinned" : ""}
+            </td>
+            <td>
+              {t.spot.toFixed(2)} → {t.close.toFixed(2)}
+            </td>
+            <td className={tone(t.pnl)}>{money(t.pnl, 2)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 const CAVEATS_TEXT =
   "Real SPY option minute bars from Alpaca since Feb 2024 -- trades, not quotes: Alpaca keeps no historical bid/ask for options, so a fill is the last print and the crossing cost is the slippage set here. Delta at entry comes from the IV solved out of that print. A close between the strikes means assignment of SPY shares in reality; it is counted as 'pinned' and priced as a clean expiry. The full grid (2,688 settings) found no setup whose 2024-25 result carried into 2026: read a good run here as one draw, not as proof.";
 const CAVEATS = withBook(CAVEATS_TEXT, NATENBERG.ivAsPredictor, NATENBERG.verticals);
@@ -114,6 +184,9 @@ export function ZeroDtePanel() {
   const [result, setResult] = useState<ZeroDteResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
+  const [filter, setFilter] = useState<TradeFilter>("all");
+  const [sort, setSort] = useState<"date" | "pnl">("date");
   const request = requestFromForm(form);
   const set = (key: keyof ZeroDteForm) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -252,37 +325,35 @@ export function ZeroDtePanel() {
               {r.worst && r.worst.length > 0 && (
                 <>
                   <h4>Worst days</h4>
-                  <table className="opt-table zdte-worst">
-                    <thead>
-                      <tr>
-                        <th scope="col">Day</th>
-                        <th scope="col">Spread</th>
-                        <th scope="col">Credit</th>
-                        <th scope="col">Exit</th>
-                        <th scope="col">SPY entry → exit</th>
-                        <th scope="col">P/L</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {r.worst.map((t) => (
-                        <tr key={t.day}>
-                          <th scope="row">{formatExpiry(t.day)}</th>
-                          <td>
-                            {t.short_strike}/{t.long_strike}P · Δ {Math.abs(t.short_delta).toFixed(2)}
-                          </td>
-                          <td>{t.credit.toFixed(2)}</td>
-                          <td>
-                            {t.exit} {t.exit_at}
-                            {t.pinned ? " · pinned" : ""}
-                          </td>
-                          <td>
-                            {t.spot.toFixed(2)} → {t.close.toFixed(2)}
-                          </td>
-                          <td className={tone(t.pnl)}>{money(t.pnl, 2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <TradeTable trades={r.worst} />
+                </>
+              )}
+              {r.trade_list && r.trade_list.length > 0 && (
+                <>
+                  <div className="pb-start-head">
+                    <button type="button" className="timeframe-button" aria-expanded={listOpen} onClick={() => setListOpen((o) => !o)}>
+                      All trades ({r.trade_list.length}) {listOpen ? "▾" : "▸"}
+                    </button>
+                    {listOpen && (
+                      <>
+                        <select value={filter} onChange={(e) => setFilter(e.target.value as TradeFilter)} aria-label="Which trades">
+                          <option value="all">all</option>
+                          <option value="losses">losses</option>
+                          <option value="stops">stopped</option>
+                          <option value="pinned">pinned</option>
+                        </select>
+                        <select value={sort} onChange={(e) => setSort(e.target.value as "date" | "pnl")} aria-label="Order">
+                          <option value="date">newest first</option>
+                          <option value="pnl">worst first</option>
+                        </select>
+                      </>
+                    )}
+                  </div>
+                  {listOpen && (
+                    <div className="zdte-list">
+                      <TradeTable trades={filterTrades(r.trade_list, filter, sort)} />
+                    </div>
+                  )}
                 </>
               )}
               {r.no_data > 0 && <p className="order-hint">{r.no_data} session(s) without option bars were left out.</p>}
