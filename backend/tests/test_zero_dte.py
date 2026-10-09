@@ -85,3 +85,20 @@ def test_one_calendar_query_gives_each_session_with_its_early_closes():
     assert date(2024, 11, 28) not in sessions, "Thanksgiving"
     assert sessions[date(2024, 11, 29)] == trading_hours_for(date(2024, 11, 29))
     assert sessions[date(2024, 11, 29)][1].hour == 13
+
+
+def test_a_day_whose_lowest_strike_is_still_priced_does_not_cover():
+    from app.options.zero_dte import covers
+
+    path = _path(590.0, 590.0)
+    assert covers(DayBars(spot=path, puts=_puts(path, strikes=range(560, 601))))
+    # Strikes only down to 588: the lowest is worth far more than a dime.
+    assert not covers(DayBars(spot=path, puts=_puts(path, strikes=range(588, 601))))
+
+
+def test_a_day_that_rallied_above_the_highest_strike_does_not_cover():
+    from app.options.zero_dte import covers
+
+    rally = _path(590.0, 606.0)
+    assert not covers(DayBars(spot=rally, puts=_puts(rally, strikes=range(560, 601))))
+    assert covers(DayBars(spot=rally, puts=_puts(rally, strikes=range(560, 607))))

@@ -49,9 +49,16 @@ logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path(__file__).resolve().parent.parent.parent / ".cache" / "zero_dte"
 MINUTES_PER_YEAR = 365 * 24 * 60
-# How far below the spot the fetched strikes reach: a 0.05-delta 0DTE put
-# sits well inside 5 % even on a wild morning.
-STRIKE_REACH = 0.05
+# How far below the open the fetched strikes reach. 5 % was not enough: on
+# the crash days (5 Aug 2024, the April 2025 tariff week) implied vol ran
+# near 100 % and a 0.05-delta put sat further out than that -- the very
+# days a backtest must not lose. A day is refetched when even its lowest
+# strike was still worth more than COVERED_PRICE (see covers).
+STRIKE_REACH = 0.12
+COVERED_PRICE = 0.10
+# And above the open: a put just under the spot after a rally (a 0.20-delta
+# short at 13:00) lies above the open's price.
+STRIKE_REACH_UP = 0.03
 # Alpaca's option bar history begins here.
 FIRST_DAY = date(2024, 2, 1)
 
@@ -93,6 +100,23 @@ class DayBars:
 
     spot: dict[int, float]
     puts: dict[float, dict[int, float]] = field(default_factory=dict)
+    # How far below the open the strikes were fetched (older caches: 0.05).
+    reach: float = 0.05
+    reach_up: float = 0.0
+
+
+def covers(bars: DayBars) -> bool:
+    """Whether the fetched strikes reach far enough: the lowest one never
+    traded above COVERED_PRICE, so every lower strike was cheaper still and
+    no delta a trade could aim for lies below the fetched range -- and the
+    highest one is at or above every price SPY traded at, so a put just
+    under the spot exists whenever the trade looks."""
+    if not bars.puts:
+        return False
+    lowest = bars.puts[min(bars.puts)]
+    low_ok = max(lowest.values(), default=0.0) <= COVERED_PRICE
+    high_ok = max(bars.puts) >= max(bars.spot.values(), default=0.0)
+    return low_ok and high_ok
 
 
 def occ_symbol(underlying: str, expiry: date, strike: float, kind: str = "P") -> str:
@@ -238,7 +262,12 @@ async def load_day(
     path = cache_dir / underlying / f"{day.isoformat()}.pkl"
     if path.exists():
         try:
-            return pickle.loads(path.read_bytes())
+            cached = pickle.loads(path.read_bytes())
+            # A day fetched with a narrower reach than today's, whose lowest
+            # strike was still priced, is fetched again with the wider one.
+            if covers(cached) or (cached.reach >= STRIKE_REACH and cached.reach_up >= STRIKE_REACH_UP):
+                return cached
+            logger.info("0DTE cache %s does not reach far enough; fetching again", path)
         except Exception:
             logger.warning("Unreadable 0DTE cache %s; fetching again", path)
     from alpaca.data.requests import OptionBarsRequest, StockBarsRequest
@@ -253,7 +282,8 @@ async def load_day(
     if not spot:
         return None
     first = spot[min(spot)]
-    strikes = [float(k) for k in range(math.floor(first * (1 - STRIKE_REACH)), math.ceil(first) + 1)]
+    top = max(math.ceil(first * (1 + STRIKE_REACH_UP)), math.ceil(max(spot.values())))
+    strikes = [float(k) for k in range(math.floor(first * (1 - STRIKE_REACH)), top + 1)]
     symbols = {occ_symbol(underlying, day, k): k for k in strikes}
     puts: dict[float, dict[int, float]] = {}
     names = list(symbols)
@@ -267,7 +297,7 @@ async def load_day(
             closes = _minute_closes(rows)
             if closes:
                 puts[symbols[name]] = closes
-    bars = DayBars(spot=spot, puts=puts)
+    bars = DayBars(spot=spot, puts=puts, reach=STRIKE_REACH, reach_up=STRIKE_REACH_UP)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(bars))
     return bars
