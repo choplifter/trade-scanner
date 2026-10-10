@@ -212,3 +212,22 @@ def test_a_bull_put_export_is_checked_against_todays_chain_like_a_condor():
 def test_barcharts_vertical_screener_files_are_accepted():
     assert is_screener_export("short-put-vertical-spread-option-screener-10-09-2026.csv")
     assert is_screener_export("bull-put-spread-screener-10-09-2026 (1).csv")
+
+
+# Barchart's real bull put export layout (checked 2026-10-10): Leg1 is the
+# sold put, priced at its bid; Leg2 the bought one at its ask.
+BULL_PUT_EXPORT = '''Symbol,Price~,"Exp Date",DTE,"Leg1 Strike",Type,Bid1,"Leg2 Strike",Type,Ask2,BE,BE%,"Max Profit","Max Loss","Max Profit%",Risk/Reward,"IV Rank","Loss Prob"
+XYZ,26.50,2026-11-20,41,24.00,Put,0.80,22.00,Put,0.35,23.55,-11.13%,0.45,1.55,+29.03%,"3.44 to 1",80.04%,28.0%
+"Downloaded from Barchart.com as of 10-10-2026 12:01am CDT"
+'''
+
+
+def test_barcharts_real_bull_put_layout_reads_the_sold_leg_first():
+    rows, problems = parse(BULL_PUT_EXPORT)
+    assert problems == [] and len(rows) == 1
+    row = rows[0]
+    assert [(l.side, l.strike) for l in row.legs] == [("sell", 24.0), ("buy", 22.0)]
+    assert row.strategy == "bull_put" and row.net == pytest.approx(0.45)
+    assert row.loss_prob == pytest.approx(0.28) and row.iv_rank == pytest.approx(80.04)
+    assert ticket_for(row)["short_strike"] == 24.0 and ticket_for(row)["long_strike"] == 22.0
+    assert is_screener_export("bull-put-spread-option-screener-bot-bull-put-10-10-2026.csv")
