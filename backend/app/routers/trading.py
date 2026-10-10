@@ -181,6 +181,42 @@ async def get_trades(
         raise HTTPException(status_code=502, detail="Failed to reach the trading API")
 
 
+@router.get("/closed-spreads")
+async def get_closed_spreads(
+    request: Request, service: OrderService = Depends(_service), range_key: str = Query("all", alias="range")
+) -> dict:
+    """Closed option spreads -- the per-contract round trips of /trades put
+    back together into the structures they were traded as (app.options.
+    closed_spreads), with how each ended and day and week subtotals."""
+    from app.alpaca.activities import fetch_option_activities
+    from app.options.closed_spreads import group_spreads, in_range, summarize_spreads
+    from app.trading.trades import period_start
+
+    store = getattr(request.app.state, "trade_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Trade record not initialised")
+    try:
+        start = period_start(range_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        result = await service.sync_trades(
+            store, "all", user_id=getattr(service, "user_id", 0),
+            include_legacy=getattr(service, "include_legacy_trades", True),
+        )
+        activities = await fetch_option_activities(service._trading)
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Closed spreads failed")
+        raise HTTPException(status_code=502, detail="Failed to reach the trading API")
+    kinds = {str(a.get("id")): str(a.get("activity_type") or "").upper() for a in activities if isinstance(a, dict)}
+    spreads = in_range(group_spreads(result["trades"], kinds), start)
+    return {"range": (range_key or "all").lower(), "spreads": spreads, **summarize_spreads(spreads)}
+
+
 @router.get("/journal")
 async def get_journal(request: Request, user: dict = Depends(get_current_user)) -> dict:
     """This user's notes on closed trades -- see app.trading.journal_store.

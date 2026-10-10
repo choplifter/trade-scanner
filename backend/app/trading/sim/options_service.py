@@ -147,6 +147,11 @@ class SimOptionsService(OptionsService):
             "options_buying_power": round(max(0.0, buying_power - reserved), 2),
             "buying_power": round(buying_power, 2),
             "equity": round(equity, 2),
+            "cash": _number(base.get("cash")),
+            # The simulated book keeps no closing equity per day, so there is
+            # no day change to report -- left empty rather than shown as 0.
+            "last_equity": None,
+            "day_pl": None,
             "options_approved_level": SIM_OPTIONS_LEVEL,
             "options_trading_level": SIM_OPTIONS_LEVEL,
             "feed": self._source.feed,

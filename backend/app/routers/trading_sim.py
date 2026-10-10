@@ -161,6 +161,25 @@ async def get_orders(request: Request, status: str = "open", user: dict = Depend
     return {"orders": orders, "status": status}
 
 
+@router.get("/closed-spreads")
+async def get_closed_spreads(
+    request: Request, range_key: str = Query("all", alias="range"), user: dict = Depends(get_current_user)
+) -> dict:
+    """The simulated book's closed option spreads -- see the live route."""
+    from app.options.closed_spreads import group_spreads, in_range, summarize_spreads
+    from app.trading.trades import period_start
+
+    try:
+        start = period_start(range_key)
+        result = await (await _service(request, user)).trades("all")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TradingError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_detail()) from exc
+    spreads = in_range(group_spreads(result["trades"]), start)
+    return {"range": (range_key or "all").lower(), "spreads": spreads, **summarize_spreads(spreads)}
+
+
 @router.get("/trades")
 async def get_trades(
     request: Request, range_key: str = Query("all", alias="range"), user: dict = Depends(get_current_user)

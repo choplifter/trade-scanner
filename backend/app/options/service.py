@@ -97,6 +97,12 @@ def worst_case(
     return floor if floor is not None else payoff.max_loss
 
 
+def _day_change(equity, last_equity) -> float | None:
+    """Equity against yesterday's close, in dollars; None without both."""
+    now, before = _number(equity), _number(last_equity)
+    return None if now is None or before is None or before <= 0 else round(now - before, 2)
+
+
 def held_outlook(legs: list[SpreadLeg], qty: int, spot: float, now: datetime, vol) -> HeldOutlook | None:
     """position_risk.held_outlook for a ticket's legs, `qty` structures."""
     risk_legs = [
@@ -362,6 +368,10 @@ class OptionsService:
             "options_buying_power": _number(raw.get("options_buying_power")),
             "buying_power": _number(raw.get("buying_power")),
             "equity": _number(raw.get("equity")),
+            "cash": _number(raw.get("cash")),
+            # Yesterday's closing equity, and today's change against it.
+            "last_equity": _number(raw.get("last_equity")),
+            "day_pl": _day_change(raw.get("equity"), raw.get("last_equity")),
             "options_approved_level": raw.get("options_approved_level"),
             "options_trading_level": level,
         }
