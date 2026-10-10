@@ -1494,7 +1494,7 @@ function TradesTable({
 
 /** The Balance tab: the equity curve over a chosen range, with what it adds
  * up to underneath it. */
-function BalancePanel({
+export function BalancePanel({
   range,
   onRangeChange,
   history,

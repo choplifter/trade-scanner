@@ -3652,6 +3652,18 @@ td.chain-side.chain-stale {
   flex-wrap: wrap;
 }
 
+/* The Closed tab's balance section: the Trading widget's chart, given a
+   height of its own -- there it fills a fixed-height pane by flex, here the
+   tab scrolls and the chart would collapse to a strip. */
+.options-balance .trading-subview {
+  height: auto;
+}
+
+.options-balance .trading-balance-chart {
+  flex: none;
+  height: 220px;
+}
+
 /* The Closed tab: the journal note under an opened spread. */
 .closed-journal {
   margin-top: 4px;

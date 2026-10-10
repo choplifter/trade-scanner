@@ -8,6 +8,7 @@ import type { ClosedSpread, ClosedSpreadsResponse } from "../../types/options";
 import { STRATEGY_LABELS } from "../../types/options";
 import { formatExpiry, formatStrike } from "../../utils/occ";
 import { JournalEditor } from "../trading/TradeJournalWidget";
+import { OptionsBalance } from "./OptionsBalance";
 
 const RANGES = [
   { key: "day", label: "Today" },
@@ -121,6 +122,7 @@ export function ClosedSpreadsTab({ mode }: { mode: TradingMode }) {
           </span>
         </div>
       )}
+      <OptionsBalance spreads={data?.spreads ?? []} rangeLabel={RANGES.find((r) => r.key === range)?.label.toLowerCase() ?? range} />
       {buckets.length > 0 && (
         <>
           <div className="pb-start-head">
