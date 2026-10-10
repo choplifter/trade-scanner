@@ -25,6 +25,17 @@ E_FAR = date(2026, 11, 20)  # 73 dte
 SPOT = 100.0
 
 
+class FrozenClock(datetime):
+    """datetime with now() fixed at NOW, for code that reads the wall clock
+    (the playbooks router): the fake chain's expiries are fixed dates, so a
+    real clock walks past them -- E_MID, the wheel's target, expired on
+    2026-10-09 and turned every first proposal into a hold."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return NOW if tz is None else NOW.astimezone(tz)
+
+
 def _quote(symbol, kind, strike, expiry, mid, delta):
     return LegQuote(
         symbol=symbol, strike=strike, kind=kind, expiry=expiry, bid=round(mid - 0.05, 2), ask=round(mid + 0.05, 2), mid=mid, last=mid,

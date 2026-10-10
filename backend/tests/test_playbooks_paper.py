@@ -217,7 +217,7 @@ def test_the_paper_loop_ticks_each_user_with_a_campaign(store, monkeypatch):
 
 
 @pytest.fixture
-def api(tmp_path):
+def api(tmp_path, monkeypatch):
     from app.auth.dependency import get_current_user
     from app.routers import playbooks
 
@@ -230,6 +230,10 @@ def api(tmp_path):
     app.state.playbook_store = store
     app.state.playbook_runner = PlaybookRunner(store)
     app.dependency_overrides[get_current_user] = lambda: {"id": 1, "username": "t"}
+    # The router reads the wall clock; the fake chain's expiries are fixed.
+    from tests.test_playbooks_core import FrozenClock
+
+    monkeypatch.setattr(playbooks, "datetime", FrozenClock)
 
     async def fake_sim(request, user):
         return services["sim"]

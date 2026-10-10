@@ -18,7 +18,7 @@ NOW = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def api(tmp_path):
+def api(tmp_path, monkeypatch):
     from app.auth.dependency import get_current_user
     from app.routers import playbooks, trading_sim_options
 
@@ -31,6 +31,10 @@ def api(tmp_path):
     app.state.playbook_store = store
     app.state.playbook_runner = PlaybookRunner(store)
     app.dependency_overrides[get_current_user] = lambda: {"id": 1, "username": "t"}
+    # The router reads the wall clock; the fake chain's expiries are fixed.
+    from tests.test_playbooks_core import FrozenClock
+
+    monkeypatch.setattr(playbooks, "datetime", FrozenClock)
 
     async def fake_service(request, user):
         return service
