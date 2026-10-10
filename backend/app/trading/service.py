@@ -241,6 +241,12 @@ class OrderService:
         activities = await fetch_option_activities(self._trading)
         fills.extend(fills_from_activities(activities, fills))
         closed, still_open = round_trips(fills)
+        # Expired contracts Alpaca has not booked an activity for yet: past
+        # their expiry and no longer held, so closed at 0.00 now.
+        lapsed = await self._lapsed_option_fills(still_open)
+        if lapsed:
+            fills.extend(lapsed)
+            closed, still_open = round_trips(fills)
         await store.upsert(closed, account=self._account, user_id=user_id)
         selected = in_period(
             await store.all(account=self._account, user_id=user_id, include_legacy=include_legacy), start
@@ -253,6 +259,25 @@ class OrderService:
             "buckets": bucket_by_day(selected),
             "open_symbols": sorted(still_open),
         }
+
+    async def _lapsed_option_fills(self, still_open: dict[str, float]) -> list:
+        """trades.fills_for_lapsed_options against the broker's positions;
+        nothing when the positions cannot be read (better an open trip for a
+        while than a wrong close)."""
+        from app.options.occ import try_parse_occ
+        from app.services.market_clock import ET
+        from app.trading.trades import fills_for_lapsed_options
+
+        today = datetime.now(ET).date()
+        if not any((p := try_parse_occ(s)) is not None and p.expiry < today for s in still_open):
+            return []
+        try:
+            positions = _plain(await asyncio.to_thread(self._trading.get_all_positions)) or []
+        except Exception:
+            logger.exception("Positions fetch for lapsed options failed")
+            return []
+        held = {str(p.get("symbol") or "").upper() for p in positions if isinstance(p, dict)}
+        return fills_for_lapsed_options(still_open, held, today)
 
     async def portfolio_history(self, range_key: str = "1M") -> dict:
         """The account equity curve, for one of the ranges in _HISTORY_RANGES.

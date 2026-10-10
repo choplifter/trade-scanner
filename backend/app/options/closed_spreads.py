@@ -44,7 +44,7 @@ def leg_outcome(row: dict, activity_kinds: dict[str, str]) -> str:
         oid = str(oid)
         if oid.startswith("assign:"):
             return "assigned"
-        if oid.startswith("expiry:"):
+        if oid.startswith(("expiry:", "lapsed:")):
             return "expired"
         kind = activity_kinds.get(oid)
         if kind in ACTIVITY_OUTCOMES:

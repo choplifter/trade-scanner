@@ -447,3 +447,24 @@ def fills_from_activities(activities: list[dict], fills: list[Fill]) -> list[Fil
         qty = min(abs(qty), abs(net)) if qty else abs(net)
         out.append(Fill(symbol=symbol, side="buy" if net < 0 else "sell", qty=qty, price=0.0, at=at, order_id=activity_id))
     return out
+
+
+def fills_for_lapsed_options(still_open: dict[str, float], held: set[str], today: date) -> list[Fill]:
+    """Closing fills at 0.00 for option contracts the record still counts as
+    open although their expiry has passed and the broker no longer holds
+    them -- they expired (or were assigned). Alpaca books the expiry as an
+    account activity, but in the paper account often a trading day or more
+    later, and until then a Friday 0DTE spread sat in the record as an open
+    position over the weekend. The order id is "lapsed:<symbol>"; when the
+    real activity arrives later, fills_from_activities skips it because the
+    position is already flat."""
+    from app.options.occ import try_parse_occ
+
+    out: list[Fill] = []
+    for symbol, signed in still_open.items():
+        parsed = try_parse_occ(symbol)
+        if parsed is None or parsed.expiry >= today or symbol.upper() in held or abs(signed) <= _FLAT:
+            continue
+        at = datetime.combine(parsed.expiry, time(16, 0), tzinfo=ET)
+        out.append(Fill(symbol=symbol, side="buy" if signed < 0 else "sell", qty=abs(signed), price=0.0, at=at, order_id=f"lapsed:{symbol}"))
+    return out

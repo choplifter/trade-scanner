@@ -29,11 +29,23 @@ def _plain_activity(row) -> dict:
     return dict(getattr(row, "__dict__", {}))
 
 
-async def fetch_option_activities(trading_client, *, after: str | None = None, page_size: int = PAGE_SIZE) -> list[dict]:
+# Pages read per call at most: 50 x 100 activities is years of a busy
+# account, and a bound keeps a misbehaving token from looping forever.
+MAX_PAGES = 50
+
+
+async def fetch_option_activities(
+    trading_client, *, after: str | None = None, page_size: int = PAGE_SIZE, max_pages: int = MAX_PAGES
+) -> list[dict]:
     """Assignments, expirations and exercises on the account, oldest first,
     from `after` (an ISO timestamp) on. Each row as a plain dict with at
     least id, activity_type, date, symbol, qty. An empty list on failure --
-    logged, because a silent empty answer here reads as "nothing happened"."""
+    logged, because a silent empty answer here reads as "nothing happened".
+
+    Every page: Alpaca answers at most `page_size` rows and continues from a
+    page_token (the last row's id). Reading only the first page left the
+    newest expiries out once an account had more than a hundred -- the very
+    ones still showing as open positions."""
     params: dict = {
         "activity_types": ",".join(OPTION_ACTIVITY_TYPES),
         "direction": "asc",
@@ -41,11 +53,19 @@ async def fetch_option_activities(trading_client, *, after: str | None = None, p
     }
     if after:
         params["after"] = after
-    try:
-        rows = await asyncio.to_thread(trading_client.get, "/account/activities", params)
-    except Exception:
-        logger.exception("Alpaca account activities fetch failed")
-        return []
-    if not isinstance(rows, list):
-        return []
-    return [_plain_activity(r) for r in rows]
+    out: list[dict] = []
+    for _ in range(max_pages):
+        try:
+            rows = await asyncio.to_thread(trading_client.get, "/account/activities", dict(params))
+        except Exception:
+            logger.exception("Alpaca account activities fetch failed")
+            return out
+        if not isinstance(rows, list) or not rows:
+            break
+        page = [_plain_activity(r) for r in rows]
+        out.extend(page)
+        last_id = page[-1].get("id")
+        if len(rows) < page_size or not last_id or last_id == params.get("page_token"):
+            break
+        params["page_token"] = last_id
+    return out
