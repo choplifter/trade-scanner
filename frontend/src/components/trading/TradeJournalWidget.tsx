@@ -8,6 +8,7 @@ import { formatPrice } from "../../utils/format";
 import { signedNumber, tradeTime } from "./TradingWidget";
 import { TradeStats } from "./TradeStats";
 import { formatLeg } from "../../utils/occ";
+import type { JournalEntry } from "../../types/journal";
 
 /** Same intraday-vs-daily heuristic ScreenBacktestPanel uses for a backtest
  * pick's timeframeKey: a trade that opened and closed the same day needs an
@@ -25,21 +26,21 @@ function focusFor(trade: JournaledTrade): ChartFocus {
 
 const STARS = [1, 2, 3, 4, 5];
 
-interface Draft {
+export interface Draft {
   note: string;
   rating: number | null;
   tags: string[];
 }
 
-function draftFrom(trade: JournaledTrade): Draft {
+function draftFrom(entry: JournalEntry | null | undefined): Draft {
   return {
-    note: trade.journal?.note ?? "",
-    rating: trade.journal?.rating ?? null,
-    tags: trade.journal?.tags ?? [],
+    note: entry?.note ?? "",
+    rating: entry?.rating ?? null,
+    tags: entry?.tags ?? [],
   };
 }
 
-function StarRating({ value, onChange }: { value: number | null; onChange: (next: number | null) => void }) {
+export function StarRating({ value, onChange }: { value: number | null; onChange: (next: number | null) => void }) {
   return (
     <span className="journal-stars">
       {STARS.map((n) => (
@@ -95,16 +96,19 @@ function TagChips({ tags, onChange }: { tags: string[]; onChange: (next: string[
   );
 }
 
-function JournalEditor({
-  trade,
+/** Note, 1-5 rating and tags for one journal entry -- a stock trade's, or
+ * a closed option spread's (ClosedSpreadsTab), keyed by whatever id the
+ * caller saves it under. */
+export function JournalEditor({
+  entry,
   onSave,
   onCancel,
 }: {
-  trade: JournaledTrade;
+  entry: JournalEntry | null | undefined;
   onSave: (draft: Draft) => Promise<void>;
   onCancel: () => void;
 }) {
-  const [draft, setDraft] = useState<Draft>(() => draftFrom(trade));
+  const [draft, setDraft] = useState<Draft>(() => draftFrom(entry));
   const [saving, setSaving] = useState(false);
 
   return (
@@ -226,7 +230,7 @@ export function TradeJournalWidget({ onSelectPick }: { onSelectPick: (focus: Cha
                       <tr>
                         <td colSpan={8}>
                           <JournalEditor
-                            trade={trade}
+                            entry={trade.journal}
                             onCancel={() => setEditingId(null)}
                             onSave={async (draft) => {
                               await saveEntry(trade.id, draft);

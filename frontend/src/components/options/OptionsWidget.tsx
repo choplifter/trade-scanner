@@ -26,7 +26,7 @@ import { atmIv, chainOf } from "../../utils/atmIv";
 import { isSymbolDrag, readDroppedSymbol } from "../../utils/dragSymbol";
 import type { ParsedOcc } from "../../utils/occ";
 import { formatDateTime } from "../../utils/time";
-import type { LoadableStructure } from "../../types/options";
+import type { LoadableStructure, OptionsAccountResponse } from "../../types/options";
 import { AiIdeaTab } from "./AiIdeaTab";
 import { ExpiryAxis } from "./ExpiryAxis";
 import { OptimizerTab } from "./OptimizerTab";
@@ -57,6 +57,7 @@ import { subscribeTicketIntent, type TicketIntent } from "./ticketIntent";
 import { useCampaigns } from "../../hooks/useCampaigns";
 import { OptionsHelp } from "./OptionsHelp";
 import { TrackRecordTab } from "./TrackRecordTab";
+import { ClosedSpreadsTab } from "./ClosedSpreadsTab";
 import { ScreenerTab } from "./ScreenerTab";
 import { OptionOrders } from "./OptionOrders";
 import { SpreadTicket } from "./SpreadTicket";
@@ -73,7 +74,7 @@ import {
   templateLegs,
 } from "./builderLegs";
 
-export type OptionsTab = "chain" | "spreads" | "idea" | "optimizer" | "screener" | "playbooks" | "record";
+export type OptionsTab = "chain" | "spreads" | "closed" | "idea" | "optimizer" | "screener" | "playbooks" | "record";
 
 interface OptionsWidgetProps {
   symbol: string | null;
@@ -581,6 +582,15 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           <button
             type="button"
             className="timeframe-button"
+            aria-pressed={tab === "closed"}
+            onClick={() => setTab("closed")}
+            title="Closed option spreads -- how each ended, what it made or lost, day and week totals -- and the options journal"
+          >
+            Closed
+          </button>
+          <button
+            type="button"
+            className="timeframe-button"
             aria-pressed={tab === "record"}
             onClick={() => setTab("record")}
             title="Whether the predictions came true: Screener rows and your tickets settled after expiry, and the past year rebuilt from stored implied volatility"
@@ -622,8 +632,12 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           onClose={() => setRollTarget(null)}
         />
         {spreads.account && (
-          <span className="widget-count" title="Options buying power · options trading level · data feed">
-            BP {spreads.account.options_buying_power?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? "—"} ·
+          <span
+            className="widget-count"
+            title="Account equity · today's change against yesterday's close · cash · options buying power · options trading level · data feed"
+          >
+            <AccountBalance account={spreads.account} /> · BP{" "}
+            {spreads.account.options_buying_power?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? "—"} ·
             L{spreads.account.options_trading_level ?? "?"} · {spreads.account.feed}
           </span>
         )}
@@ -675,6 +689,8 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
           />
         ) : tab === "screener" ? (
           <ScreenerTab onSelectSymbol={onSelectSymbol} />
+        ) : tab === "closed" ? (
+          <ClosedSpreadsTab mode={mode} />
         ) : tab === "record" ? (
           <TrackRecordTab />
         ) : tab === "playbooks" ? (
@@ -895,5 +911,27 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
         )}
       </div>
     </div>
+  );
+}
+
+/** Equity, today's change and cash for the widget header. The day's change
+ * is absent in the simulation, which keeps no daily close. */
+export function AccountBalance({ account }: { account: OptionsAccountResponse }) {
+  const fmt = (v: number) => `$${Math.round(v).toLocaleString()}`;
+  const day = account.day_pl;
+  return (
+    <>
+      Equity {account.equity == null ? "—" : fmt(account.equity)}
+      {day != null && (
+        <>
+          {" "}
+          <span className={day > 0 ? "delta-up" : day < 0 ? "delta-down" : undefined}>
+            ({day >= 0 ? "+" : "−"}
+            {fmt(Math.abs(day))} today)
+          </span>
+        </>
+      )}
+      {account.cash != null && ` · cash ${fmt(account.cash)}`}
+    </>
   );
 }

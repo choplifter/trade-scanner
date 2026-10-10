@@ -17,6 +17,7 @@ interface OptionsHelpProps {
 const TAB_TITLES: Record<OptionsTab, string> = {
   chain: "Chain",
   spreads: "Open spreads",
+  closed: "Closed spreads & journal",
   idea: "Idea",
   optimizer: "Optimizer",
   screener: "Screener",
@@ -1061,6 +1062,46 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
           </>
         )}
 
+        {tab === "closed" && (
+          <>
+            <h3>Closed spreads</h3>
+            <dl>
+              <dt>What is listed</dt>
+              <dd>
+                Every option spread that is no longer held: closed by an order, expired, assigned or exercised. The trade
+                record keeps each contract as its own round trip; legs opened together on one underlying are put back
+                together into the spread they were traded as. A condor closed one side at a time stays one row, ended
+                &quot;closed + expired&quot;.
+              </dd>
+              <dt>Entry / Exit</dt>
+              <dd>
+                Per share, as filled: <em>cr</em> received, <em>db</em> paid. An exit of 0.00 means it expired
+                worthless. P&amp;L is the realised result for the whole position, after fills.
+              </dd>
+              <dt>Ended</dt>
+              <dd>
+                How the legs left the account: <em>closed</em> by an order, <em>expired</em>, <em>assigned</em> (a short
+                leg turned into shares -- those shares show as their own trade under Trading) or <em>exercised</em>.
+              </dd>
+              <dt>Today / Week / Month / All</dt>
+              <dd>
+                Calendar periods in New York time, by the day a spread closed. The subtotals add the spreads up by week
+                (from Monday) or by day.
+              </dd>
+              <dt>Journal</dt>
+              <dd>
+                Open a row and <em>Write journal</em>: a note, a 1-5 rating and tags for that spread -- the plan, what
+                happened, what to do differently. Kept with the stock trades&apos; journal; <em>with notes only</em> lists
+                the spreads you wrote about.
+              </dd>
+              <dt>Account in the header</dt>
+              <dd>
+                Equity, today&apos;s change against yesterday&apos;s close and cash, beside the options buying power. The
+                simulation keeps no daily close, so it shows no change for today.
+              </dd>
+            </dl>
+          </>
+        )}
         {tab === "record" && (
           <>
             <h3>Record</h3>

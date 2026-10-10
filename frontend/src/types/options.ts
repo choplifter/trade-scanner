@@ -211,6 +211,11 @@ export interface OptionsAccountResponse {
   options_buying_power: number | null;
   buying_power: number | null;
   equity: number | null;
+  cash?: number | null;
+  /** Yesterday's closing equity and today's change against it; null in the
+   * simulation, which keeps no daily close. */
+  last_equity?: number | null;
+  day_pl?: number | null;
   options_approved_level: number | null;
   options_trading_level: number | null;
   can_submit: boolean;
@@ -1257,4 +1262,67 @@ export interface BarchartImportResponse {
   checked: number;
   rows: BarchartScreenRow[];
   problems: string[];
+}
+
+/** One leg of a closed spread -- its own round trip in the trade record. */
+export interface ClosedSpreadLeg {
+  trade_id: string;
+  symbol: string;
+  kind: OptionKind;
+  strike: number;
+  expiry: string;
+  side: "long" | "short";
+  qty: number;
+  /** Per share. */
+  entry: number;
+  exit: number;
+  pnl: number;
+  outcome: "closed" | "expired" | "assigned" | "exercised";
+  closed_at: string;
+}
+
+/** GET /trading/closed-spreads -- see backend app/options/closed_spreads.py. */
+export interface ClosedSpread {
+  /** "spread:<first leg's trade id>"; the journal keys its notes by it. */
+  id: string;
+  underlying: string;
+  strategy: string;
+  expiry: string;
+  qty: number;
+  opened_at: string;
+  closed_at: string;
+  /** Per share, signed like a ticket: positive paid (debit), negative received. */
+  entry_net: number;
+  exit_net: number;
+  pnl: number;
+  /** "expired", "closed", or several joined with " + ". */
+  outcome: string;
+  held_days: number;
+  legs: ClosedSpreadLeg[];
+}
+
+export interface ClosedSpreadBucket {
+  date?: string;
+  week_start?: string;
+  count: number;
+  wins: number;
+  pnl: number;
+}
+
+export interface ClosedSpreadsResponse {
+  range: string;
+  spreads: ClosedSpread[];
+  summary: {
+    count: number;
+    wins: number;
+    losses: number;
+    win_rate: number | null;
+    pnl: number;
+    avg_win: number | null;
+    avg_loss: number | null;
+    best: number | null;
+    worst: number | null;
+  };
+  days: ClosedSpreadBucket[];
+  weeks: ClosedSpreadBucket[];
 }

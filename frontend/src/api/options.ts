@@ -9,6 +9,7 @@
 import { API_BASE, OrderRejectedError, checkUnauthorized, extractErrorMessage, getJson } from "./http";
 import { tradingPath } from "./tradingMode";
 import type {
+  ClosedSpreadsResponse,
   BarchartImportResponse,
   BarchartScreenFile,
   ChainResponse,
@@ -92,6 +93,11 @@ export function latestScreen(strategy: string): Promise<{
 
 export function screenUnderlyings(body: ScreenRequest): Promise<ScreenResponse> {
   return send<ScreenResponse>("POST", "/trading/options/screen", body);
+}
+
+/** Closed option spreads for one calendar range (day | week | month | all). */
+export function getClosedSpreads(range: string): Promise<ClosedSpreadsResponse> {
+  return getJson<ClosedSpreadsResponse>(tradingPath(`/trading/closed-spreads?range=${encodeURIComponent(range)}`));
 }
 
 export function getOptionsAccount(): Promise<OptionsAccountResponse> {
