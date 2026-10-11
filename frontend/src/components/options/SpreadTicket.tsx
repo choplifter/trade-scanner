@@ -56,6 +56,7 @@ import {
   type PickContext,
 } from "./legPicker";
 import { PayoffChart } from "./PayoffChart";
+import { publishTicketPayoff } from "./ticketPayoff";
 import {
   BUILDER_TEMPLATES,
   type BuilderTemplate,
@@ -535,6 +536,21 @@ export function SpreadTicket({
   // A preview still on its way back from the other order type prices the
   // wrong order; don't submit off it.
   const spread = preview && (preview.spread.order_type ?? "limit") === orderType ? preview.spread : null;
+  // The dock's own Risk chart panel draws the same payoff, larger.
+  const ticketPayoff = spread?.payoff ?? null;
+  useEffect(() => {
+    if (!ticketPayoff || !symbol) {
+      publishTicketPayoff(null);
+      return;
+    }
+    publishTicketPayoff({
+      symbol,
+      title: `${STRATEGY_LABELS[strategy]} · ${formatExpiry(ticketPayoff.expiry)}`,
+      payoff: ticketPayoff,
+      expiryLabel: time ? `at short expiry ${formatExpiry(ticketPayoff.expiry)}` : "at expiry",
+    });
+  }, [ticketPayoff, symbol, strategy, time]);
+  useEffect(() => () => publishTicketPayoff(null), []);
   // Alpaca supports no uncovered short option at any level, and takes a
   // multi-leg order only if every leg is covered inside it. The simulated
   // book is our own and still takes one. Against shares, a short call may

@@ -15,9 +15,17 @@ import { formatMoney } from "./utils/format";
 import { chartSymbolOf, parseOcc } from "./utils/occ";
 import EarningsWidget from "./components/earnings/EarningsWidget";
 import { OptionsWidget } from "./components/options/OptionsWidget";
+import {
+  OptionsRecordPanel,
+  OptionsRiskPanel,
+  OptionsScreenerPanel,
+  OptionsSpreadsPanel,
+} from "./components/options/OptionsPanels";
+import type { DockWidgetId } from "./components/layout/dockShared";
 import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { DockviewDashboard } from "./components/layout/DockviewDashboard";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
+import { DockProfileMenu } from "./components/layout/DockProfileMenu";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { NewsFeedWidget } from "./components/newsFeed/NewsFeedWidget";
 import { ReplayPanel } from "./components/replay/ReplayPanel";
@@ -235,6 +243,26 @@ function AppShell({ user, onLogout }: AppShellProps) {
     // change does -- it is a rare, intentional action, not a tick.
     [selectedSymbol, underlying, focusContract, chartFocus, selectSymbol, selectPick, tradingMode.mode],
   );
+  // The dock's extra panels: parts of the Options widget that can be put
+  // where the work needs them (see OptionsPanels.tsx). Dock only -- the
+  // grid and the panels layout have a fixed set of widgets.
+  const dockWidgets = useMemo<Record<DockWidgetId, ReactNode>>(
+    () => ({
+      ...widgets,
+      options_risk: <OptionsRiskPanel key="options_risk" />,
+      options_screener: <OptionsScreenerPanel key="options_screener" onSelectSymbol={selectSymbol} />,
+      options_spreads: (
+        <OptionsSpreadsPanel
+          key="options_spreads"
+          symbol={underlying}
+          mode={tradingMode.mode}
+          onSelectSymbol={selectSymbol}
+        />
+      ),
+      options_record: <OptionsRecordPanel key="options_record" />,
+    }),
+    [widgets, underlying, selectSymbol, tradingMode.mode],
+  );
 
   // Shared between the panels-mode active and idle layouts below -- only
   // whether replay gets a resizable third row differs between them, not
@@ -385,6 +413,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               <span className="session-dot" />
               {SESSION_LABEL[session] ?? session}
             </span>
+            {dashboardLayout.mode === "dock" && <DockProfileMenu />}
             <LayoutModeToggle
               mode={dashboardLayout.mode}
               onChange={dashboardLayout.setMode}
@@ -441,7 +470,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               widgets={widgets}
             />
           ) : dashboardLayout.mode === "dock" ? (
-            <DockviewDashboard widgets={widgets} selectedSymbol={underlying} resetRef={dockResetRef} />
+            <DockviewDashboard widgets={dockWidgets} selectedSymbol={underlying} resetRef={dockResetRef} />
           ) : replaySession ? (
             // A session is running -- replay gets its own resizable third
             // row, same as it always has. news_feed no longer lives here --

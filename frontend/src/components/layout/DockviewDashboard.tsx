@@ -11,10 +11,10 @@ import type {
 import "dockview-react/dist/styles/dockview.css";
 
 import { getStored, setStored, subscribeRemote } from "../../api/prefs";
-import { WIDGET_IDS, type WidgetId } from "../../hooks/useDashboardLayout";
 import { ChartCopyPanel } from "./ChartCopyPanel";
 import { DockTab } from "./DockTab";
-import { DockContext, WIDGET_TITLES, type PanelParams } from "./dockShared";
+import { addWidgetPanel, buildDefaultLayout, clearActiveProfile, registerDockApi } from "./dockLayouts";
+import { DOCK_WIDGET_IDS, DockContext, WIDGET_TITLES, type DockWidgetId, type PanelParams } from "./dockShared";
 import { useEffectiveDark } from "../../hooks/useSettings";
 
 type DockviewApi = DockviewReadyEvent["api"];
@@ -23,7 +23,7 @@ interface DockviewDashboardProps {
   /** Widget elements by stable id. Same object DashboardGrid/ResizablePanels
    * render from -- build it memoized in the caller so a re-render can't
    * remount a widget (see WidgetId's docs for what that breaks). */
-  widgets: Record<WidgetId, ReactNode>;
+  widgets: Record<DockWidgetId, ReactNode>;
   /** The dashboard's current underlying symbol -- what a chart copy opened
    * from a tab's context menu starts pinned to. */
   selectedSymbol: string | null;
@@ -80,24 +80,10 @@ function GroupHeaderActions({ group, containerApi, activePanel }: IDockviewHeade
   );
 }
 
-function addWidgetPanel(
-  api: DockviewApi,
-  id: WidgetId,
-  position?: { referencePanel: WidgetId; direction: "left" | "right" | "above" | "below" | "within" },
-) {
-  api.addPanel({
-    id,
-    component: "widget",
-    params: { widgetId: id },
-    title: WIDGET_TITLES[id],
-    ...(position ? { position } : {}),
-  } satisfies Parameters<DockviewApi["addPanel"]>[0]);
-}
-
 /** Ids of the singleton widgets with an open panel -- copies never count. */
-function openWidgetIds(api: DockviewApi): Set<WidgetId> {
+function openWidgetIds(api: DockviewApi): Set<DockWidgetId> {
   return new Set(
-    api.panels.filter((p) => !(p.params as PanelParams | undefined)?.copy).map((p) => p.id as WidgetId),
+    api.panels.filter((p) => !(p.params as PanelParams | undefined)?.copy).map((p) => p.id as DockWidgetId),
   );
 }
 
@@ -150,27 +136,6 @@ function saveDockLayout(layout: SerializedDockview) {
   }
 }
 
-/** Builds a default arrangement roughly mirroring panels mode's layout
- * (scanner+chart+trading/watchlist across the top, analytics widgets
- * tabbed together below) -- the starting point for a first-ever mount, or
- * whenever loadDockLayout() has nothing usable saved. */
-function buildDefaultLayout(api: DockviewApi) {
-  addWidgetPanel(api, "scanner");
-  addWidgetPanel(api, "chart", { referencePanel: "scanner", direction: "right" });
-  addWidgetPanel(api, "trading", { referencePanel: "chart", direction: "right" });
-  addWidgetPanel(api, "watchlist", { referencePanel: "trading", direction: "below" });
-  addWidgetPanel(api, "symbol_info", { referencePanel: "scanner", direction: "below" });
-  addWidgetPanel(api, "news_feed", { referencePanel: "symbol_info", direction: "within" });
-  addWidgetPanel(api, "ideas", { referencePanel: "symbol_info", direction: "below" });
-  addWidgetPanel(api, "benchmark", { referencePanel: "ideas", direction: "within" });
-  addWidgetPanel(api, "history", { referencePanel: "ideas", direction: "within" });
-  addWidgetPanel(api, "gex_plan", { referencePanel: "ideas", direction: "within" });
-  addWidgetPanel(api, "replay", { referencePanel: "ideas", direction: "within" });
-  addWidgetPanel(api, "trade_journal", { referencePanel: "ideas", direction: "within" });
-  addWidgetPanel(api, "options", { referencePanel: "trading", direction: "within" });
-  addWidgetPanel(api, "earnings", { referencePanel: "ideas", direction: "within" });
-}
-
 /**
  * Prototype: the dashboard's widgets hosted in `dockview-react` (VS-Code
  * style docking -- tabs, drag-to-dock/rearrange, float, maximize, close/
@@ -195,7 +160,7 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
   // Which WIDGET_IDS currently have an open panel, for the reopen menu.
   // Dockview doesn't expose this as reactive state on its own -- resynced
   // off the same onDidLayoutChange the persistence write already listens to.
-  const [openIds, setOpenIds] = useState<Set<WidgetId>>(new Set());
+  const [openIds, setOpenIds] = useState<Set<DockWidgetId>>(new Set());
 
   // The arrangement stored for this person arrives after the first paint
   // (api/prefs.ts hydrates once /auth/me has answered). Applying it here is
@@ -242,6 +207,7 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
         // the layout-change event below then persists the rebuilt default.
         event.api.clear();
         buildDefaultLayout(event.api);
+        clearActiveProfile();
       };
     }
 
@@ -259,7 +225,15 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
     });
   };
 
-  const closedIds = WIDGET_IDS.filter((id) => !openIds.has(id));
+  const closedIds = DOCK_WIDGET_IDS.filter((id) => !openIds.has(id));
+  // The header's layout-profile menu switches and saves through the api.
+  // An effect, not onReady: StrictMode's mount-unmount-mount would
+  // otherwise leave it unregistered.
+  useEffect(() => {
+    if (!containerApi) return;
+    registerDockApi(containerApi);
+    return () => registerDockApi(null);
+  }, [containerApi]);
   const dockValue = useMemo(() => ({ widgets, selectedSymbol }), [widgets, selectedSymbol]);
 
   return (
@@ -288,7 +262,7 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
  * back to its own default placement -- there's no single "right" spot to
  * dock an arbitrary reopened widget back into an arrangement the user may
  * have since rearranged. */
-function ReopenWidgetMenu({ api, closedIds }: { api: DockviewApi; closedIds: WidgetId[] }) {
+function ReopenWidgetMenu({ api, closedIds }: { api: DockviewApi; closedIds: DockWidgetId[] }) {
   const [open, setOpen] = useState(false);
 
   return (

@@ -48,6 +48,9 @@ interface PayoffChartProps {
   /** What to call the at-expiry line: "at expiry" or, for a calendar, the
    * short leg's expiry. */
   expiryLabel?: string;
+  /** Fill the parent's height (the dock's Risk chart panel) instead of the
+   * shared, drag-resized height every ticket's chart keeps. */
+  fill?: boolean;
 }
 
 /** "today 15:00" within the day, "Tue 08.09. 15:00" beyond it -- in the
@@ -69,7 +72,7 @@ function whenLabel(asOf: string, hoursAhead: number): string {
  * today curve quietly assumes away -- right direction, an hour early,
  * vola drops: what is the position worth then? Both reset when the
  * structure changes, so a stale scenario never sits under a new spread. */
-export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
+export function PayoffChart({ payoff, expiryLabel, fill = false }: PayoffChartProps) {
   const [hover, setHover] = useState<number | null>(null);
   const [showLegs, setShowLegsState] = useState(loadShowLegs);
   const toggleLegs = () =>
@@ -100,7 +103,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const frame = frameRef.current;
-    if (!frame || typeof ResizeObserver === "undefined") return;
+    if (fill || !frame || typeof ResizeObserver === "undefined") return;
     let timer: number | null = null;
     const observer = new ResizeObserver(() => {
       const height = Math.round(frame.getBoundingClientRect().height);
@@ -113,7 +116,8 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
       observer.disconnect();
       if (timer != null) window.clearTimeout(timer);
     };
-  }, []);
+  }, [fill]);
+  const frameHeight = fill ? undefined : settings.riskChartHeight;
 
   const maxHours = useMemo(() => hoursToExpiry(payoff), [payoff]);
   const canScenario = payoff.today != null && maxHours > 0 && (payoff.legs?.length ?? 0) > 0;
@@ -195,7 +199,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
       : `IV ×${ivFactor.toFixed(2)}`;
 
   return (
-    <div className="payoff-chart">
+    <div className={`payoff-chart${fill ? " fill" : ""}`}>
       <div className="payoff-view-toggle">
         <span className="timeframe-selector" role="group" aria-label="Risk view">
           <button type="button" className="timeframe-button" aria-pressed={view === "chart"} onClick={() => updateSettings({ riskView: "chart" })}>
@@ -225,7 +229,7 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
         )}
       </div>
       {view === "table" && canScenario ? (
-        <div style={{ height: settings.riskChartHeight }} className="payoff-table-frame">
+        <div style={{ height: frameHeight }} className={`payoff-table-frame${fill ? " fill" : ""}`}>
           <PayoffTable
             payoff={payoff}
             ivFactor={ivFactor}
@@ -233,7 +237,12 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
             expiryLabel={expiryLabel?.startsWith("at ") ? expiryLabel.slice(3) : expiryLabel} />
         </div>
       ) : (
-      <div className="payoff-frame" ref={frameRef} style={{ height: settings.riskChartHeight }} title="Drag the bottom edge to resize">
+      <div
+        className={`payoff-frame${fill ? " fill" : ""}`}
+        ref={frameRef}
+        style={{ height: frameHeight }}
+        title={fill ? undefined : "Drag the bottom edge to resize"}
+      >
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         preserveAspectRatio="none"

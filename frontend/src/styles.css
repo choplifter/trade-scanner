@@ -6894,3 +6894,102 @@ td.chain-side.chain-stale {
 .screen-step .opt-run {
   margin-left: 0;
 }
+
+/* The header's named dock layouts (DockProfileMenu). */
+.dock-profile {
+  position: relative;
+  display: inline-flex;
+}
+
+.dock-profile-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 1200;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.dock-profile-row {
+  display: flex;
+  align-items: center;
+}
+
+.dock-profile-row button[role="menuitem"] {
+  flex: 1;
+  text-align: left;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dock-profile-row button[role="menuitem"]:hover {
+  background: var(--row-hover);
+}
+
+.dock-profile-row button[aria-current="true"] {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.dock-profile-delete {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.dock-profile-delete:hover {
+  color: var(--delta-down);
+}
+
+.dock-profile-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+
+.dock-profile-save {
+  display: flex;
+  gap: 6px;
+  padding: 2px;
+}
+
+.dock-profile-save input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+/* The dock's Risk chart panel: the ticket's payoff at the panel's size. */
+.options-risk-body {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+
+.payoff-chart.fill {
+  flex: 1;
+  min-height: 0;
+}
+
+.payoff-chart.fill .payoff-frame,
+.payoff-chart.fill .payoff-table-frame {
+  flex: 1;
+  min-height: 160px;
+  max-height: none;
+  resize: none;
+}
