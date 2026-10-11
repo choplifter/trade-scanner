@@ -369,6 +369,20 @@ export function passesFilters(
   return true;
 }
 
+function activeFilterCount(f: ResultFilters): number {
+  return Object.values(f).filter((v) => (v ?? "").trim() !== "").length;
+}
+
+/** "bull put spreads", "iron condors" -- what the run button says it scans for. */
+function structureName(strategy: ScreenStrategy, side: OptionKind): string {
+  if (strategy === "credit_spread") return side === "put" ? "bull put spreads" : "bear call spreads";
+  if (strategy === "debit_spread") return side === "put" ? "bear put spreads" : "bull call spreads";
+  if (strategy === "iron_condor") return "iron condors";
+  if (strategy === "cash_secured_put") return "cash-secured puts";
+  if (strategy === "covered_call") return "covered calls";
+  return strategy.replace("_", " ");
+}
+
 function filtersActive(f: ResultFilters): boolean {
   return Object.values(f).some((v) => (v ?? "").trim() !== "");
 }
@@ -969,6 +983,8 @@ const STORE_PRICE_AT = "screener.priceAt";
 const STORE_TWO_EXPIRIES = "screener.twoExpiries";
 const STORE_ALL_COLUMNS = "screener.allColumns";
 const STORE_FILTERS = "screener.filters";
+const STORE_SETTINGS_OPEN = "screener.settingsOpen";
+const STORE_FILTERS_OPEN = "screener.filtersOpen";
 const VERTICAL_LABELS: Record<"credit_spread" | "debit_spread", Record<OptionKind, string>> = {
   credit_spread: { put: "Bull put", call: "Bear call" },
   debit_spread: { put: "Bear put", call: "Bull call" },
@@ -1190,6 +1206,28 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     setStored(PRESETS_KEY, JSON.stringify(next));
     if (activePreset === name) setActivePreset("");
   };
+  const [settingsOpen, setSettingsOpen] = useState(() => stored(STORE_SETTINGS_OPEN) === "1");
+  const toggleSettings = () =>
+    setSettingsOpen((v) => {
+      store(STORE_SETTINGS_OPEN, v ? "0" : "1");
+      return !v;
+    });
+  const [filtersOpen, setFiltersOpen] = useState(() => stored(STORE_FILTERS_OPEN) === "1");
+  const toggleFilters = () =>
+    setFiltersOpen((v) => {
+      store(STORE_FILTERS_OPEN, v ? "0" : "1");
+      return !v;
+    });
+  // What the folded settings come to, so they can stay folded.
+  const settingsSummary = [
+    dteMin.trim() === "0" && dteMax.trim() === "0" ? "0DTE" : `${dteMin}–${dteMax} DTE`,
+    `Δ ${deltaMin}–${deltaMax}`,
+    `OI ${Number(minOi || 0).toLocaleString()}+`,
+    `quotes ≤ ${maxSpread} %`,
+    `earnings ${earnings === "early" ? "early ok" : earnings}`,
+    priceAt,
+    ...(twoExpiries ? ["+1 expiry"] : []),
+  ].join(" · ");
   const activeIsOwn = savedPresets.some((p) => p.name === activePreset);
   const activeNote = presetsHere.find((p) => p.name === activePreset)?.note;
 
@@ -1231,58 +1269,44 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
 
   return (
     <div className="opt-screener">
-      <div className="opt-preference screen-presets">
-        <label title="The presets of the strategy on screen (for a credit or debit spread, of its side). Each holds every screen setting and result filter; choosing one sets them all, and the screen button runs it.">
-          Preset{" "}
-          <select
-            value={activePreset}
-            onChange={(e) => {
-              const p = presetsHere.find((x) => x.name === e.target.value);
-              if (p) applyPreset(p);
-              else setActivePreset("");
-            }}
-          >
-            <option value="">—</option>
-            {presetsHere.map((p) => (
-              <option key={p.name} value={p.name} title={p.note}>
-                {p.builtIn ? "★ " : ""}
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {activeIsOwn && (
-          <button type="button" className="timeframe-button" onClick={() => deletePreset(activePreset)} title="Delete this saved preset">
-            Delete
-          </button>
-        )}
-        <input
-          type="text"
-          className="screen-preset-name"
-          placeholder="Save current as…"
-          value={presetName}
-          maxLength={60}
-          onChange={(e) => setPresetName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") savePreset();
-          }}
-        />
-        <button
-          type="button"
-          className="timeframe-button"
-          disabled={!presetName.trim() || BUILT_IN_PRESETS.some((b) => b.name === presetName.trim())}
-          onClick={savePreset}
-          title="Save the strategy, side, screen bounds, pricing and result filters as they are now. A name already saved is replaced; a built-in name is taken."
-        >
-          Save
-        </button>
-        {activeNote && (
-          <span className="order-hint screen-preset-note" title={activeNote}>
-            {activeNote}
+      <div className="screen-steps">
+        {/* 1 -- what to scan */}
+        <div className="screen-step">
+          <span className="screen-step-n">1</span>
+          <span className="screen-step-label">Scan</span>
+          <span className="timeframe-selector" role="group" aria-label="What to scan">
+            <button
+              type="button"
+              className="timeframe-button"
+              aria-pressed={!universe}
+              onClick={() => universe && toggleUniverse()}
+              title="The symbols on your watchlist (up to 60) -- for 'is a name I follow worth writing today'. Add symbols in the Watchlist widget."
+            >
+              Watchlist · {symbols.length} symbol{symbols.length === 1 ? "" : "s"}
+            </button>
+            <button
+              type="button"
+              className="timeframe-button"
+              aria-pressed={universe}
+              onClick={() => !universe && toggleUniverse()}
+              title="The whole tradable market, narrowed first to the 40 most traded names in the price band -- for 'is there anything worth writing at all'."
+            >
+              Universe · top 40 most traded
+            </button>
           </span>
-        )}
-      </div>
-      <div className="opt-preference">
+          <span className="order-hint">
+            {universe
+              ? "the market's 40 most traded optionable names, picked fresh each run"
+              : symbols.length === 0
+                ? "your watchlist is empty -- add symbols in the Watchlist widget, or scan the universe"
+                : "only the names you follow"}
+          </span>
+        </div>
+
+        {/* 2 -- strategy */}
+        <div className="screen-step">
+          <span className="screen-step-n">2</span>
+          <span className="screen-step-label">Strategy</span>
         {STRATEGIES.map((b) => (
           <button
             key={b.key}
@@ -1319,76 +1343,44 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
             ))}
           </span>
         )}
-        <button
-          type="button"
-          className="timeframe-button"
-          aria-pressed={universe}
-          onClick={toggleUniverse}
-          title="Screen the tradable universe instead of the watchlist. Stage one narrows it on price and dollar volume -- numbers the scanner's universe already carries, so that part is free -- and only the survivors cost a chain fetch."
-        >
-          {universe ? "Universe" : "Watchlist"}
-        </button>
-        <span className="screen-side-toggle">
-          {(["mid", "natural"] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              className="timeframe-button"
-              aria-pressed={priceAt === k}
-              onClick={() => setPriceAt(k)}
-              title={
-                k === "mid"
-                  ? "Credit, EV and the extremes at the mids; the chance of profit is net of crossing the quotes either way."
-                  : "Credit, EV and the extremes at the natural -- every leg at its bid or ask, Barchart's convention and the honest number for a limit meant to fill at once."
-              }
-            >
-              {k === "mid" ? "Mid" : "Natural"}
-            </button>
-          ))}
-        </span>
-        <button
-          type="button"
-          className="timeframe-button"
-          aria-pressed={twoExpiries}
-          onClick={toggleTwoExpiries}
-          title="Besides each row's own structure the screen lists it at 10, 16 and 25 delta on the same expiry (no extra cost). This adds the same on a second expiry in the window -- one more chain fetch per symbol."
-        >
-          +1 expiry
-        </button>
-        <button
-          type="button"
-          className="timeframe-button"
-          aria-pressed={allColumns}
-          onClick={toggleAllColumns}
-          title="Off: the essentials -- fillable, premium rich, the structure, its odds and worth, the room to the breakeven. On: every column, IV and realised vol, the cone, open interest and volume, profit/loss, R/R, the account risk."
-        >
-          All columns
-        </button>
-        <button
-          type="button"
-          className="generate-button opt-run"
-          disabled={loading || (!universe && symbols.length === 0)}
-          onClick={() => void run()}
-        >
-          {loading ? "Reading chains…" : universe ? "Screen the universe" : `Screen ${Math.min(symbols.length, 60)} symbols`}
-        </button>
-        <span className="order-hint">
-          {universe ? "top 40 by dollar volume · one chain fetch each" : "from your watchlist · one chain fetch each"}
-        </span>
-        <button
-          type="button"
-          className="timeframe-button options-help-button"
-          onClick={() => setHelpOpen(true)}
-          title="How to read a screen, and what to try when nothing passes"
-          aria-label="How to read a screen"
-        >
-          ?
-        </button>
-      </div>
-      <BarchartImportPanel onSelectSymbol={onSelectSymbol} />
-      <ScreenerHelp open={helpOpen} onClose={() => setHelpOpen(false)} strategy={strategy} />
+        </div>
 
-      <div className="opt-preference screen-filters">
+        {/* 3 -- preset and settings */}
+        <div className="screen-step">
+          <span className="screen-step-n">3</span>
+          <span className="screen-step-label">Settings</span>
+        <label title="The presets of the strategy on screen (for a credit or debit spread, of its side). Each holds every screen setting and result filter; choosing one sets them all, and the screen button runs it.">
+          Preset{" "}
+          <select
+            value={activePreset}
+            onChange={(e) => {
+              const p = presetsHere.find((x) => x.name === e.target.value);
+              if (p) applyPreset(p);
+              else setActivePreset("");
+            }}
+          >
+            <option value="">—</option>
+            {presetsHere.map((p) => (
+              <option key={p.name} value={p.name} title={p.note}>
+                {p.builtIn ? "★ " : ""}
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+          <button
+            type="button"
+            className="timeframe-button screen-disclosure"
+            aria-expanded={settingsOpen}
+            onClick={toggleSettings}
+            title="DTE window, delta band, open interest, wing, quote limit, earnings rule, mid or natural pricing, a second expiry"
+          >
+            {settingsOpen ? "▾" : "▸"} {settingsSummary}
+          </button>
+        </div>
+        {activeNote && <p className="order-hint screen-preset-note">{activeNote}</p>}
+        {settingsOpen && (
+          <div className="opt-preference screen-filters screen-settings-panel">
         <label title={withGloss("DTE", "Days to expiry. The screen takes the listed expiry nearest the middle of this window; past 60 days it asks for the full expiry board.")}>
           DTE{" "}
           <input type="number" min={0} max={400} step={1} value={dteMin} onChange={(e) => setDteMin(e.target.value)} />
@@ -1441,15 +1433,124 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
             <option value="ignore">ignore</option>
           </select>
         </label>
-      </div>
-
-      <div className="opt-preference screen-filters screen-result-filters">
-        <span
-          className="order-hint"
-          title="Limits on each structure's own numbers, applied to the rows on screen at once -- also to a stored run, and to the candidates under a row. Blank means no limit; a number a row does not carry fails the limit."
-        >
-          Show only:
+        <span className="screen-side-toggle">
+          {(["mid", "natural"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              className="timeframe-button"
+              aria-pressed={priceAt === k}
+              onClick={() => setPriceAt(k)}
+              title={
+                k === "mid"
+                  ? "Credit, EV and the extremes at the mids; the chance of profit is net of crossing the quotes either way."
+                  : "Credit, EV and the extremes at the natural -- every leg at its bid or ask, Barchart's convention and the honest number for a limit meant to fill at once."
+              }
+            >
+              {k === "mid" ? "Mid" : "Natural"}
+            </button>
+          ))}
         </span>
+            <button
+              type="button"
+              className="timeframe-button"
+              aria-pressed={twoExpiries}
+              onClick={toggleTwoExpiries}
+              title="Besides each row's own structure the screen lists it at 10, 16 and 25 delta on the same expiry (no extra cost). This adds the same on a second expiry in the window -- one more chain fetch per symbol."
+            >
+              +1 expiry
+            </button>
+          </div>
+        )}
+
+        {/* 4 -- run */}
+        <div className="screen-step">
+          <span className="screen-step-n">4</span>
+          <button
+            type="button"
+            className="generate-button opt-run"
+            disabled={loading || (!universe && symbols.length === 0)}
+            onClick={() => void run()}
+          >
+            {loading ? "Reading chains…" : `Scan ${universe ? "the universe" : `${Math.min(symbols.length, 60)} watchlist symbols`}`}
+          </button>
+          <span className="order-hint">
+            for {structureName(strategy, side)} · one option chain per symbol, about {universe ? "15-30" : `${Math.max(5, Math.round(Math.min(symbols.length, 60) * 0.4))}`} s
+          </span>
+          <button
+            type="button"
+            className="timeframe-button options-help-button"
+            onClick={() => setHelpOpen(true)}
+            title="How to read a screen, and what to try when nothing passes"
+            aria-label="How to read a screen"
+          >
+            ?
+          </button>
+        </div>
+      </div>
+      <ScreenerHelp open={helpOpen} onClose={() => setHelpOpen(false)} strategy={strategy} />
+
+      {!result && !loading && (
+        <div className="screen-guide">
+          <strong>How to screen:</strong> 1 · choose what to scan -- your <em>watchlist</em> for names you follow, or the{" "}
+          <em>universe</em> for the market's most traded names. 2 · pick a strategy (and, for a spread, its side). 3 · optionally
+          pick a ★ preset, which sets everything else. 4 · press <em>Scan</em>. Each row is the best structure for one symbol;
+          click a row for every criterion, ▸ for the same structure at other deltas, <em>Ticket</em> to load it.
+        </div>
+      )}
+
+      {/* the results' own tools: filters, columns, saving the setup */}
+      {result && (
+        <div className="screen-results-bar">
+          <button
+            type="button"
+            className="timeframe-button screen-disclosure"
+            aria-expanded={filtersOpen}
+            onClick={toggleFilters}
+            title="Limit the rows on screen by each structure's own numbers -- applied at once, also to a stored run"
+          >
+            {filtersOpen ? "▾" : "▸"} Filter results{filtersActive(filters) ? ` (${activeFilterCount(filters)} active)` : ""}
+          </button>
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={allColumns}
+            onClick={toggleAllColumns}
+            title="Off: the essentials -- fillable, premium rich, the structure, its odds and worth, the room to the breakeven. On: every column, IV and realised vol, the cone, open interest and volume, the account risk."
+          >
+            All columns
+          </button>
+          <span className="screen-save">
+        {activeIsOwn && (
+          <button type="button" className="timeframe-button" onClick={() => deletePreset(activePreset)} title="Delete this saved preset">
+            Delete
+          </button>
+        )}
+        <input
+          type="text"
+          className="screen-preset-name"
+          placeholder="Save current as…"
+          value={presetName}
+          maxLength={60}
+          onChange={(e) => setPresetName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") savePreset();
+          }}
+        />
+        <button
+          type="button"
+          className="timeframe-button"
+          disabled={!presetName.trim() || BUILT_IN_PRESETS.some((b) => b.name === presetName.trim())}
+          onClick={savePreset}
+          title="Save the strategy, side, screen bounds, pricing and result filters as they are now. A name already saved is replaced; a built-in name is taken."
+        >
+          Save
+        </button>
+          </span>
+        </div>
+      )}
+      {result && filtersOpen && (
+        <div className="opt-preference screen-filters screen-result-filters">
         <label title={withGloss("Loss ≤", "Loss probability at most, in percent -- the share of the implied distribution under which the structure ends in a loss (net of crossing the quotes).")}>
           Loss ≤{" "}
           <input type="number" min={0} max={100} step={1} placeholder="%" value={filters.maxLossProb} onChange={(e) => setFilter("maxLossProb", e.target.value)} />
@@ -1492,13 +1593,13 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           />{" "}
           Earnings ok
         </label>
-        {filtersActive(filters) && (
-          <button type="button" className="timeframe-button" onClick={clearFilters}>
-            Clear
-          </button>
-        )}
-      </div>
-
+          {filtersActive(filters) && (
+            <button type="button" className="timeframe-button" onClick={clearFilters}>
+              Clear
+            </button>
+          )}
+        </div>
+      )}
       {error && <p className="order-rejection">{error}</p>}
       {!universe && symbols.length === 0 && <p className="widget-empty">Add symbols to the watchlist to screen them.</p>}
 
@@ -1879,6 +1980,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           <p className="order-hint">{result.disclaimer}</p>
         </>
       )}
+      <div className="screen-import">
+        <BarchartImportPanel onSelectSymbol={onSelectSymbol} />
+      </div>
     </div>
   );
 }

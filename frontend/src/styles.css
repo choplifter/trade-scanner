@@ -6807,3 +6807,84 @@ td.chain-side.chain-stale {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* The screener's guided panel: four numbered steps, the rarely changed
+   settings folded under a summary, the results' own tools beside them. */
+.screen-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.screen-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.screen-step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  flex: none;
+}
+
+.screen-step-label {
+  min-width: 58px;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.screen-disclosure {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen-settings-panel {
+  margin-left: 26px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border);
+}
+
+.screen-guide {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.screen-results-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 8px;
+}
+
+.screen-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.screen-import {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}

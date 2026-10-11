@@ -54,6 +54,31 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
           yours.
         </p>
 
+        <h3>Getting started</h3>
+        <dl>
+          <dt>1 · Scan: Watchlist or Universe</dt>
+          <dd>
+            <strong>Watchlist</strong> screens the symbols on your watchlist (up to 60) — the question "is a name I
+            follow worth writing today?". Add symbols in the Watchlist widget. <strong>Universe</strong> screens the whole
+            tradable market, narrowed first to the 40 most traded optionable names in the price band — the question
+            "is there anything worth writing at all?". Both cost one option chain per symbol.
+          </dd>
+          <dt>2 · Strategy</dt>
+          <dd>What to look for. A credit or debit spread also takes its side (bull put or bear call, bear put or bull call).</dd>
+          <dt>3 · Settings</dt>
+          <dd>
+            Pick a ★ preset to set everything at once, or open the summary line to change the DTE window, the delta
+            band, open interest, the wing, the quote limit, the earnings rule, mid or natural pricing and a second
+            expiry. The line shows what is set even when folded.
+          </dd>
+          <dt>4 · Scan</dt>
+          <dd>
+            The button says what it will do. When the results are in: <em>Filter results</em> narrows the rows by their
+            own numbers, <em>All columns</em> shows every column, and the box on the right saves the whole setup as your
+            own preset. Click a row for its criteria, ▸ for the same structure at other deltas, <em>Ticket</em> to load it.
+          </dd>
+        </dl>
+
         <h3>Read the columns in this order</h3>
         <p className="options-help-intro">
           The table shows the essentials by default: whether it can be filled (worst leg), whether the premium is
