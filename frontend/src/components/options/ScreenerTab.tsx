@@ -13,6 +13,7 @@ import type {
   ScreenRow,
   ScreenShortLeg,
   ScreenStrategy,
+  OptionKind,
   ScreenVertical,
   Strategy,
 } from "../../types/options";
@@ -92,16 +93,14 @@ export function structureOf(row: ScreenRow, strategy: ScreenStrategy): LoadableS
   if (strategy === "covered_call" && call) {
     return { strategy: "covered_call" as Strategy, ticket: { ...base, strategy: "covered_call" as Strategy, short_strike: call.strike } };
   }
-  if (strategy === "credit_spread" && row.put_spread) {
-    // A put vertical written below the money: bullish, hence bull_put.
+  if (strategy === "credit_spread" && (row.put_spread || row.call_spread)) {
+    // A put vertical written below the money is a bull put, a call
+    // vertical written above it a bear call.
+    const pair = row.put_spread ?? row.call_spread!;
+    const shape = (row.put_spread ? "bull_put" : "bear_call") as Strategy;
     return {
-      strategy: "bull_put" as Strategy,
-      ticket: {
-        ...base,
-        strategy: "bull_put" as Strategy,
-        long_strike: row.put_spread.long_strike,
-        short_strike: row.put_spread.short_strike,
-      },
+      strategy: shape,
+      ticket: { ...base, strategy: shape, long_strike: pair.long_strike, short_strike: pair.short_strike },
     };
   }
   if (strategy === "iron_condor" && row.put_spread && row.call_spread) {
@@ -211,6 +210,12 @@ const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
   Expiry: (r) => r.dte,
   "Put side": (r) => r.put_outcome?.expected_value ?? null,
   "Call side": (r) => r.call_outcome?.expected_value ?? null,
+  "Bull put": (r) => r.put_outcome?.expected_value ?? null,
+  "Bear put": (r) => r.put_outcome?.expected_value ?? null,
+  "Bear call": (r) => r.call_outcome?.expected_value ?? null,
+  "Bull call": (r) => r.call_outcome?.expected_value ?? null,
+  "Short put": (r) => r.short_put?.delta ?? null,
+  "Short call": (r) => r.short_call?.delta ?? null,
   "R/R": (r) => r.outcome?.risk_reward ?? null,
   "Loss prob": (r) => r.outcome?.loss_probability ?? null,
   EV: (r) => r.outcome?.expected_value ?? null,
@@ -233,6 +238,29 @@ function BreakevenVolCell({ row, buyer }: { row: ScreenRow; buyer: boolean }) {
       {(be * 100).toFixed(1)}%{margin == null ? "" : ` (${margin >= 0 ? "+" : ""}${margin.toFixed(1)})`}
     </td>
   );
+}
+
+/** The sides a screen's rows carry, and what each column is called: both
+ * for a condor ("Put side", "Call side"), one named after the structure
+ * otherwise. An older stored run carries no `sides`: read off the strategy. */
+function sideColumns(result: ScreenResponse): { kind: OptionKind; label: string }[] {
+  const strategy = result.strategy;
+  const sides: OptionKind[] =
+    result.sides ??
+    (strategy === "cash_secured_put" || strategy === "credit_spread" || strategy === "debit_spread"
+      ? ["put"]
+      : strategy === "covered_call"
+        ? ["call"]
+        : ["put", "call"]);
+  if (sides.length === 2) return [{ kind: "put", label: "Put side" }, { kind: "call", label: "Call side" }];
+  const kind = sides[0];
+  const label =
+    strategy === "credit_spread" || strategy === "debit_spread"
+      ? VERTICAL_LABELS[strategy][kind]
+      : kind === "put"
+        ? "Short put"
+        : "Short call";
+  return [{ kind, label }];
 }
 
 function sortRows(rows: ScreenRow[], by: string | null, desc: boolean): ScreenRow[] {
@@ -391,6 +419,11 @@ function SideCell({
 // per browser; a blocked or empty storage just means the defaults.
 const STORE_STRATEGY = "screener.strategy";
 const STORE_UNIVERSE = "screener.universe";
+const STORE_SIDE = "screener.side";
+const VERTICAL_LABELS: Record<"credit_spread" | "debit_spread", Record<OptionKind, string>> = {
+  credit_spread: { put: "Bull put", call: "Bear call" },
+  debit_spread: { put: "Bear put", call: "Bull call" },
+};
 
 function stored(key: string): string | null {
   try {
@@ -418,6 +451,13 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     setStrategyState(next);
     store(STORE_STRATEGY, next);
   };
+  // The side a vertical is written on; remembered like the strategy.
+  const [side, setSideState] = useState<OptionKind>(() => (stored(STORE_SIDE) === "call" ? "call" : "put"));
+  const setSide = (next: OptionKind) => {
+    setSideState(next);
+    store(STORE_SIDE, next);
+  };
+  const vertical = strategy === "credit_spread" || strategy === "debit_spread";
   const [result, setResult] = useState<ScreenResponse | null>(null);
   // Coloured for the screen the rows came from, not the button pressed since.
   const selling = SELLING_SCREENS.has(result?.strategy ?? strategy);
@@ -472,7 +512,10 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     setResult(null);
     latestScreen(strategy)
       .then((res) => {
-        if (!cancelled && res.screen) setResult(res.screen);
+        // The background pass screens the put side; a stored run of the
+        // other side would be the wrong table under the right button.
+        const storedSide = res.screen?.side ?? "put";
+        if (!cancelled && res.screen && (!vertical || storedSide === side)) setResult(res.screen);
       })
       .catch(() => {
         // No stored run is the ordinary case before the first pass.
@@ -480,7 +523,8 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     return () => {
       cancelled = true;
     };
-  }, [strategy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy, side]);
 
   const run = async () => {
     if (!universe && symbols.length === 0) return;
@@ -489,6 +533,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     try {
       const bounds = {
         strategy,
+        ...(vertical ? { side } : {}),
         // 0 is today's expiry (0DTE), not a blank.
         dte_min: numeric(dteMin, 30, true),
         dte_max: numeric(dteMax, 60, true),
@@ -530,6 +575,30 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
             {b.label}
           </button>
         ))}
+        {vertical && (
+          <span className="screen-side-toggle">
+            {(["put", "call"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                className="timeframe-button"
+                aria-pressed={side === k}
+                onClick={() => setSide(k)}
+                title={
+                  strategy === "credit_spread"
+                    ? k === "put"
+                      ? "Bull put: sell a put below the price, buy one further down. Paid if the stock holds above the short strike."
+                      : "Bear call: sell a call above the price, buy one further up. Paid if the stock stays below the short strike."
+                    : k === "put"
+                      ? "Bear put: buy a put, sell one further down. Pays on a fall to the short strike."
+                      : "Bull call: buy a call, sell one further up. Pays on a rise to the short strike."
+                }
+              >
+                {VERTICAL_LABELS[strategy as "credit_spread" | "debit_spread"][k]}
+              </button>
+            ))}
+          </span>
+        )}
         <button
           type="button"
           className="timeframe-button"
@@ -674,13 +743,19 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   onSort={onSort}
                 />
                 <Th label="Expiry" title="Sorts by days to expiry." sort={sort} onSort={onSort} />
-                <Th
-                  label="Put side"
-                  title="long/short · width · delta of the short · what crossing the short's quote costs / what crossing the wing's costs · credit per dollar of width · what this side is worth under the volatility its own strikes trade at. The two quote widths are the ones to read first: everything priced after them is computed from mids, so a wide quote makes the rest fiction. Either is marked red past the limit set above. Sorts by that side's own expectancy."
-                  sort={sort}
-                  onSort={onSort}
-                />
-                <Th label="Call side" title="As the put side, read off the calls. Sorts by that side's own expectancy." sort={sort} onSort={onSort} />
+                {sideColumns(result).map((col) => (
+                  <Th
+                    key={col.kind}
+                    label={col.label}
+                    title={
+                      col.label.startsWith("Short")
+                        ? `The short ${col.kind}: strike · delta · what crossing its quote costs against its mid (red past the limit set above). Sorts by delta.`
+                        : `long/short · width · delta of the short · what crossing the short's quote costs / what crossing the wing's costs · credit per dollar of width · what this ${col.kind} spread is worth under the volatility its own strikes trade at. The two quote widths are the ones to read first: everything priced after them is computed from mids, so a wide quote makes the rest fiction. Either is marked red past the limit set above. Sorts by its own expectancy.`
+                    }
+                    sort={sort}
+                    onSort={onSort}
+                  />
+                ))}
                 {result.rows.some((r) => r.outcome) && (
                   <>
                     <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
@@ -794,20 +869,16 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       {row.volume_oi_ratio == null ? "—" : `${row.volume_oi_ratio.toFixed(2)}×`}
                     </td>
                     <td>{row.expiry ? `${row.expiry} (${row.dte}d)` : "—"}</td>
-                    <SideCell
-                      leg={row.short_put}
-                      vertical={row.put_spread}
-                      outcome={row.put_outcome}
-                      maxSpread={result.criteria.max_spread_fraction}
-                      side="put"
-                    />
-                    <SideCell
-                      leg={row.short_call}
-                      vertical={row.call_spread}
-                      outcome={row.call_outcome}
-                      maxSpread={result.criteria.max_spread_fraction}
-                      side="call"
-                    />
+                    {sideColumns(result).map((col) => (
+                      <SideCell
+                        key={col.kind}
+                        leg={col.kind === "put" ? row.short_put : row.short_call}
+                        vertical={col.kind === "put" ? row.put_spread : row.call_spread}
+                        outcome={col.kind === "put" ? row.put_outcome : row.call_outcome}
+                        maxSpread={result.criteria.max_spread_fraction}
+                        side={col.kind}
+                      />
+                    ))}
                     {result.rows.some((r) => r.outcome) && (
                       <>
                         <td>
@@ -873,7 +944,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   </tr>
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={20}>
+                      <td colSpan={19 + sideColumns(result).length - 1}>
                         <Criteria row={row} />
                       </td>
                     </tr>

@@ -972,6 +972,9 @@ export type ScreenStrategy =
   | "calendar";
 
 export interface ScreenRequest {
+  /** Which side a vertical is written on (credit: bull put / bear call;
+   * debit: bear put / bull call). Ignored by the fixed-side strategies. */
+  side?: OptionKind;
   /** Omitted with `scan_universe`: stage one picks the list. */
   symbols?: string[] | null;
   /** Screen the tradable universe: stage one narrows it on price and
@@ -1121,6 +1124,12 @@ export interface ScreenResponse {
   stored_at?: string;
   preselection: ScreenPreselection | null;
   strategy: ScreenStrategy;
+  /** The vertical's side, and the sides picked and judged (older stored
+   * runs carry neither: both sides). */
+  side?: OptionKind;
+  sides?: OptionKind[];
+  /** "bull put", "bear call"… for a vertical. */
+  structure?: string | null;
   bias: ScreenBias;
   criteria: {
     dte: [number, number];

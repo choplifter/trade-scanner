@@ -68,7 +68,9 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
                 </>
               ) : (
                 <>
-                  <strong>Put side</strong> column (a vertical is screened on its put side)
+                  column of the side screened — <strong>{strategy === "debit_spread" ? "Bear put" : "Bull put"}</strong>{" "}
+                  or <strong>{strategy === "debit_spread" ? "Bull call" : "Bear call"}</strong>, chosen beside the
+                  strategy; a vertical is picked, judged and valued on that side alone
                 </>
               )}
               . <code>295/305 · 10w · Δ0.16 · 23/92 % · 19 %</code> reads as: buy 295

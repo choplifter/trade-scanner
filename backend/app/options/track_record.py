@@ -217,12 +217,19 @@ def from_screen_row(row: dict, strategy: str) -> dict | None:
         natural = bid if bid is not None and bid > 0 else leg["mid"]
         price = -natural
     else:
-        pairs = [row.get("put_spread"), row.get("call_spread")] if strategy == "iron_condor" else [row.get("put_spread")]
-        if any(p is None for p in pairs):
-            return None
+        # The sides the row carries: both for a condor, the one screened for
+        # a vertical (a bull put's puts, a bear call's calls).
+        sided = [(kind, row.get(f"{kind}_spread")) for kind in ("put", "call")]
+        if strategy == "iron_condor":
+            if any(pair is None for _, pair in sided):
+                return None
+        else:
+            sided = [(kind, pair) for kind, pair in sided if pair is not None][:1]
+            if not sided:
+                return None
         credit = 0.0
         cross = 0.0
-        for pair, kind in zip(pairs, ("put", "call")):
+        for kind, pair in sided:
             legs.append({"kind": kind, "strike": pair["short_strike"], "side": "sell", "ratio": 1})
             legs.append({"kind": kind, "strike": pair["long_strike"], "side": "buy", "ratio": 1})
             credit += pair["credit"]

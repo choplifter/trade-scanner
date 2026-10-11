@@ -120,6 +120,29 @@ STRATEGY_BIAS: dict[str, Bias] = {
     "calendar": "long_vega",
 }
 
+def sides_for(strategy: str, side: str = "put") -> tuple[str, ...]:
+    """The sides a strategy actually trades, and so the only ones it picks,
+    judges and shows. A cash-secured put is the puts alone, a covered call
+    the calls, a vertical the side asked for, a condor both. The two that
+    judge a chain rather than a structure (long option, calendar) read
+    both, as before."""
+    if strategy == "cash_secured_put":
+        return ("put",)
+    if strategy == "covered_call":
+        return ("call",)
+    if strategy in ("credit_spread", "debit_spread"):
+        return (side,)
+    return ("put", "call")
+
+
+VERTICAL_NAMES = {
+    ("credit_spread", "put"): "bull put",
+    ("credit_spread", "call"): "bear call",
+    ("debit_spread", "put"): "bear put",
+    ("debit_spread", "call"): "bull call",
+}
+
+
 # Strategies whose shape needs a wing beyond the short strike.
 SPREAD_STRATEGIES = frozenset({"credit_spread", "iron_condor", "debit_spread"})
 # What a credit structure must bring in against the width it risks. The
@@ -269,6 +292,11 @@ class ScreenRequest(BaseModel):
     # built to price. A cash-secured put ties up the underlying, which is
     # a different decision and rarely the one being asked here.
     strategy: Strategy = "iron_condor"
+    # Which side a vertical is written on: a credit spread on the puts is a
+    # bull put, on the calls a bear call; a debit spread on the puts is a
+    # bear put, on the calls a bull call. Ignored by the other strategies,
+    # whose side is fixed (see sides_for).
+    side: Literal["put", "call"] = "put"
     # 0 screens today's expiry (0DTE).
     dte_min: int = Field(default=DTE_RANGE[0], ge=0, le=400)
     dte_max: int = Field(default=DTE_RANGE[1], ge=0, le=400)
@@ -756,9 +784,10 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
             )
         )
 
+    traded = sides_for(req.strategy, req.side)
     fracs = [
         leg["spread_fraction"]
-        for leg in (row.short_put, row.short_call)
+        for leg in (row.short_put if "put" in traded else None, row.short_call if "call" in traded else None)
         if leg is not None and leg["spread_fraction"] is not None
     ]
     widest = max(fracs) if fracs else None
@@ -789,6 +818,8 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
 
     for leg, label in ((row.short_put, "Short put delta"), (row.short_call, "Short call delta")):
         key = "short_put_delta" if "put" in label.lower() else "short_call_delta"
+        if ("put" if "put" in key else "call") not in traded:
+            continue
         out.append(
             Criterion(
                 key,
@@ -802,9 +833,8 @@ def _criteria(row: Row, req: ScreenRequest, today: date) -> list[Criterion]:
         )
 
     if req.strategy in SPREAD_STRATEGIES:
-        # An iron condor needs both wings; a vertical needs the one on its
-        # own side, and the put side is the one a screen defaults to.
-        pairs = [row.put_spread, row.call_spread] if req.strategy == "iron_condor" else [row.put_spread]
+        # An iron condor needs both wings; a vertical the one on its side.
+        pairs = [row.put_spread if side == "put" else row.call_spread for side in traded]
         found = [p for p in pairs if p is not None]
         out.append(
             Criterion(
@@ -1099,8 +1129,9 @@ async def _priced(
     if cone is not None:
         row.cone_pct, row.cone_window = round(cone.percentile, 1), cone.window
     band = (req.short_delta_min, req.short_delta_max)
-    row.short_put = pick_short(chain.rows, "put", band)
-    row.short_call = pick_short(chain.rows, "call", band)
+    traded = sides_for(req.strategy, req.side)
+    row.short_put = pick_short(chain.rows, "put", band) if "put" in traded else None
+    row.short_call = pick_short(chain.rows, "call", band) if "call" in traded else None
     if req.strategy in SPREAD_STRATEGIES:
         for leg, kind, attr in ((row.short_put, "put", "put_spread"), (row.short_call, "call", "call_spread")):
             if leg is None:
@@ -1228,10 +1259,11 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain, dist=None) -> dict 
         credit = leg["mid"]
         cross = _half_spread(leg)
     elif req.strategy in SPREAD_STRATEGIES:
-        pairs = [row.put_spread, row.call_spread] if req.strategy == "iron_condor" else [row.put_spread]
+        kinds = sides_for(req.strategy, req.side)
+        pairs = [row.put_spread if kind == "put" else row.call_spread for kind in kinds]
         if any(p is None for p in pairs):
             return None
-        for pair, kind in zip(pairs, ("put", "call")):
+        for pair, kind in zip(pairs, kinds):
             legs.append({"kind": kind, "strike": pair["short_strike"], "side": "sell", "iv": _leg_iv(chain, kind, pair["short_strike"])})
             legs.append({"kind": kind, "strike": pair["long_strike"], "side": "buy", "iv": _leg_iv(chain, kind, pair["long_strike"])})
             credit += pair["credit"]
@@ -1365,6 +1397,10 @@ async def screen_underlyings(
     return {
         "as_of": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "strategy": req.strategy,
+        # The sides this screen picked and judged; for a vertical, which one.
+        "side": req.side,
+        "sides": list(sides_for(req.strategy, req.side)),
+        "structure": VERTICAL_NAMES.get((req.strategy, req.side)),
         "bias": req.bias,
         # Stage one, when it ran: how many names were considered and what
         # the ones that never got a chain fell on.

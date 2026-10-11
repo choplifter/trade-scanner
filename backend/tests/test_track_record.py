@@ -158,3 +158,14 @@ def test_the_reconstruction_is_calibrated_on_a_market_that_moves_as_priced():
     r = report(items)
     assert r["overall"]["n"] > 300
     assert abs(r["overall"]["actual"] - r["overall"]["predicted"]) < 0.08
+
+
+def test_a_bear_call_row_is_recorded_on_its_calls():
+    row = {
+        "symbol": "IWM", "expiry": "2026-11-20", "spot": 250.0, "atm_iv": 0.2,
+        "put_spread": None,
+        "call_spread": {"short_strike": 262, "long_strike": 270, "credit": 0.9, "cross": 0.1},
+        "outcome": {"win_probability": 0.7, "breakeven_vol": 0.2, "max_loss": -720.0},
+    }
+    p = from_screen_row(row, "credit_spread")
+    assert [l["kind"] for l in p["legs"]] == ["call", "call"] and p["price"] == pytest.approx(-0.8)

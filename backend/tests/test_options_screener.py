@@ -1299,3 +1299,41 @@ def test_the_wing_shrinks_with_the_time_left():
     assert 1.0 <= zero_dte <= 3.0, "a couple of dollars on SPY for a same-day spread"
     pinned = ScreenRequest(strategy="credit_spread", symbols=["SPY"], scan_universe=False, wing_points=5)
     assert pinned.wing_width_for(777.0, 5.5 / (365 * 24))[0] == 5, "a width named in points stays as named"
+
+
+# --- the sides a strategy trades ----------------------------------------------
+
+
+def _keys(row) -> set[str]:
+    return {c["key"] for c in row["criteria"]}
+
+
+def test_a_bull_put_screen_picks_judges_and_shows_the_puts_alone():
+    body = _run(_Service({"A": _chain(iv=0.40)}), ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    assert body["sides"] == ["put"] and body["structure"] == "bull put"
+    assert row["short_put"] is not None and row["put_spread"] is not None
+    assert row["short_call"] is None and row["call_spread"] is None and row["call_outcome"] is None
+    assert "short_put_delta" in _keys(row) and "short_call_delta" not in _keys(row)
+
+
+def test_a_bear_call_screen_is_the_same_on_the_calls():
+    body = _run(
+        _Service({"A": _chain(iv=0.40)}),
+        ScreenRequest(symbols=["A"], strategy="credit_spread", side="call"),
+        closes={"A": _closes(0.01)},
+    )
+    row = body["rows"][0]
+    assert body["sides"] == ["call"] and body["structure"] == "bear call"
+    assert row["short_put"] is None and row["call_spread"] is not None
+    assert "short_call_delta" in _keys(row) and "short_put_delta" not in _keys(row)
+    assert row["outcome"] is not None, "the bear call is valued as the structure"
+
+
+def test_a_cash_secured_put_is_not_judged_on_a_call_and_a_condor_keeps_both():
+    csp = _run(_Service({"A": _chain()}), ScreenRequest(symbols=["A"], strategy="cash_secured_put"), closes={"A": _closes(0.01)})
+    assert csp["sides"] == ["put"] and csp["rows"][0]["short_call"] is None
+    assert "short_call_delta" not in _keys(csp["rows"][0])
+    condor = _run(_Service({"A": _chain(iv=0.40)}), ScreenRequest(symbols=["A"], strategy="iron_condor"), closes={"A": _closes(0.01)})
+    assert condor["sides"] == ["put", "call"]
+    assert {"short_put_delta", "short_call_delta"} <= _keys(condor["rows"][0])
