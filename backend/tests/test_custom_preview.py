@@ -336,3 +336,12 @@ def test_against_shares_the_greeks_carry_the_shares(service):
     bare = asyncio.run(service.preview(put_only)).greeks
     with_stock = asyncio.run(service.preview(hedged)).greeks
     assert bare["delta"] < 0 and with_stock["delta"] == pytest.approx(bare["delta"] + 100, abs=0.01)
+
+
+def test_every_payoff_leg_carries_its_entry_for_the_per_leg_curves(service):
+    spread = asyncio.run(
+        service.preview(_built(TicketLeg(kind="call", strike=105, side="sell"), TicketLeg(kind="call", strike=110, side="buy")))
+    )
+    prices = {(l.strike, l.side): l.price for l in spread.payoff.legs}
+    mids = {(l.strike, l.side): l.mid for l in spread.legs}
+    assert prices == mids and all(p is not None for p in prices.values())

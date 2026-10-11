@@ -658,6 +658,14 @@ export function OptionsHelp({ open, onClose, tab, strategy }: OptionsHelpProps) 
             <dl>
               <dt>at expiry (solid)</dt>
               <dd>P&amp;L over the underlying's price when the (first) expiry arrives. Green and red tint the two sides of zero.</dd>
+              <dt>Legs (thin dashed)</dt>
+              <dd>
+                Each leg's own P/L at expiry, from its own entry -- its mid on a ticket, its average fill on a held
+                position: green for a leg bought, red for one sold, grey for shares. The solid curve is their sum; a
+                sold put's own line falls away steeply below its strike, and the bought put's rising line is what
+                catches it. A leg's curve leaves the frame where it is larger than the whole. The Legs button hides
+                them; the hover readout lists each leg's value at the price under the pointer.
+              </dd>
               <dt>today (dashed)</dt>
               <dd>
                 The same legs valued now by Black-Scholes with each leg's IV. What the position would be worth if the

@@ -908,6 +908,7 @@ class OptionsService:
         spot: float,
         strategy: str | None = None,
         with_stock: bool = False,
+        leg_prices: dict[str, float] | None = None,
     ) -> Payoff | None:
         """The risk chart for `legs` (a covered call gets its share leg at
         the spot). None when the curve cannot be built.
@@ -918,12 +919,22 @@ class OptionsService:
         worth nothing at the spot it is referenced to, so the mark stays
         the options' own."""
         mark = net_price(legs, "mid")
+        # Each leg's entry for its own curve: the price given (a held leg's
+        # average fill), else its mid now (a ticket about to be sent).
         payoff_legs = [
-            PayoffLeg(kind=leg.kind, strike=leg.strike, side=leg.side, ratio=leg.ratio_qty, expiry=leg.expiry, iv=leg.iv)
+            PayoffLeg(
+                kind=leg.kind,
+                strike=leg.strike,
+                side=leg.side,
+                ratio=leg.ratio_qty,
+                expiry=leg.expiry,
+                iv=leg.iv,
+                price=(leg_prices or {}).get(leg.symbol, leg.mid),
+            )
             for leg in legs
         ]
         if strategy == "covered_call" or with_stock:
-            payoff_legs.append(PayoffLeg(kind="stock", strike=spot, side="buy"))
+            payoff_legs.append(PayoffLeg(kind="stock", strike=spot, side="buy", price=spot))
         try:
             return Payoff(**payoff_curve(payoff_legs, qty, net_entry, spot, self._source.now(), mark=mark))
         except (ValueError, ZeroDivisionError):
@@ -953,7 +964,8 @@ class OptionsService:
         if parsed is not None and len(held) == 1 and held[0].kind == "call" and held[0].side == "sell":
             if await self._shares_held(parsed.underlying) >= 100 * req.qty:
                 strategy = "covered_call"
-        payoff = self._payoff(held, req.qty, req.net_entry, spot, strategy)
+        entries = {leg.symbol: leg.entry_price for leg in req.legs if leg.entry_price is not None}
+        payoff = self._payoff(held, req.qty, req.net_entry, spot, strategy, leg_prices=entries)
         if payoff is None:
             raise OrderRejected("Could not build the risk chart for these legs", field="legs")
         # Realised vol is today's: in a replay it would be look-ahead.

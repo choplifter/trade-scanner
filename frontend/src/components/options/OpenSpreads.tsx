@@ -140,7 +140,12 @@ function GroupPayoff({ group }: { group: SpreadGroup }) {
     if (!open) return;
     let cancelled = false;
     const load = () =>
-      getSpreadPayoff({ legs: closeLegs(group), qty: group.qty || 1, net_entry: group.net_entry })
+      getSpreadPayoff({
+        // Each leg's own fill too, so the chart can draw it from there.
+        legs: group.legs.map((leg) => ({ symbol: leg.symbol, qty: leg.qty, entry_price: leg.avg_entry_price })),
+        qty: group.qty || 1,
+        net_entry: group.net_entry,
+      })
         .then((res) => {
           if (!cancelled) {
             setPayoff(res);

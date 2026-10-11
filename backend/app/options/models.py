@@ -517,6 +517,9 @@ class PayoffLegOut(BaseModel):
     ratio: int = 1
     expiry: date | None = None
     iv: float | None = None
+    # Per share, the leg's entry: its mid on a ticket, the average fill on a
+    # held position. What the per-leg curves are drawn from.
+    price: float | None = None
 
 
 class HeldOutlook(BaseModel):
@@ -640,6 +643,9 @@ class CloseLeg(BaseModel):
 
     symbol: str = Field(min_length=15, max_length=21)
     qty: int
+    # Per share, what the held leg was opened at -- only the risk chart reads
+    # it, to draw each leg's own P/L from its own entry.
+    entry_price: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def check_qty(self) -> "CloseLeg":

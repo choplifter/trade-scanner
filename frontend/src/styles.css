@@ -6763,3 +6763,47 @@ td.chain-side.chain-stale {
   flex: 1 1 100%;
   white-space: normal;
 }
+
+/* The risk chart's per-leg curves (PayoffChart, "Legs"): thin and dashed,
+   green for a leg bought, red for one sold, grey for shares. */
+.payoff-leg {
+  fill: none;
+  stroke-width: 1.2;
+  stroke-dasharray: 5 3;
+  opacity: 0.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.payoff-leg.buy {
+  stroke: var(--delta-up);
+}
+
+.payoff-leg.sell {
+  stroke: var(--delta-down);
+}
+
+.payoff-leg.stock {
+  stroke: var(--text-muted);
+}
+
+.payoff-swatch.leg {
+  border-top-style: dashed;
+}
+
+.payoff-swatch.leg.buy {
+  border-top-color: var(--delta-up);
+}
+
+.payoff-swatch.leg.sell {
+  border-top-color: var(--delta-down);
+}
+
+.payoff-swatch.leg.stock {
+  border-top-color: var(--text-muted);
+}
+
+.payoff-leg-legend {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

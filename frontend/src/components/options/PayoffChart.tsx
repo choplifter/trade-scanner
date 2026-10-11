@@ -3,7 +3,7 @@ import type { MouseEvent } from "react";
 
 import type { Payoff } from "../../types/options";
 import { formatNum } from "../../utils/format";
-import { hoursToExpiry, meanIv, positionPnl, scenarioCurve } from "../../utils/blackScholes";
+import { hoursToExpiry, legCurves, meanIv, positionPnl, scenarioCurve } from "../../utils/blackScholes";
 import { dayKey, formatClock, formatWeekdayDateTime } from "../../utils/time";
 import { getSettings, updateSettings } from "../../api/settings";
 import { useSettings } from "../../hooks/useSettings";
@@ -16,6 +16,24 @@ const PAD = { top: 14, right: 12, bottom: 24, left: 52 };
 const IV_FACTOR_MIN = 0.5;
 const IV_FACTOR_MAX = 1.5;
 const IV_FACTOR_STEP = 0.05;
+
+const LEGS_KEY = "payoff.showLegs";
+
+function loadShowLegs(): boolean {
+  try {
+    return window.localStorage.getItem(LEGS_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+/** "−175P", "+170P", "+100 sh" -- a leg as the legend and the readout name it. */
+function legLabel(leg: { kind: string; strike: number; side: string; ratio: number }): string {
+  const sign = leg.side === "buy" ? "+" : "−";
+  if (leg.kind === "stock") return `${sign}shares`;
+  const ratio = leg.ratio > 1 ? `${leg.ratio}× ` : "";
+  return `${sign}${ratio}${leg.strike}${leg.kind === "put" ? "P" : "C"}`;
+}
 
 function money(value: number): string {
   return formatNum(value, 0);
@@ -53,6 +71,21 @@ function whenLabel(asOf: string, hoursAhead: number): string {
  * structure changes, so a stale scenario never sits under a new spread. */
 export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
   const [hover, setHover] = useState<number | null>(null);
+  const [showLegs, setShowLegsState] = useState(loadShowLegs);
+  const toggleLegs = () =>
+    setShowLegsState((v) => {
+      try {
+        window.localStorage.setItem(LEGS_KEY, v ? "0" : "1");
+      } catch {
+        // Blocked storage: the choice lasts for this visit.
+      }
+      return !v;
+    });
+  // Each leg's own P/L at expiry -- a single-leg position is its own curve.
+  const legs = useMemo(() => {
+    const curves = legCurves(payoff);
+    return curves && curves.length > 1 ? curves : null;
+  }, [payoff]);
   const [hoursAhead, setHoursAhead] = useState(0);
   const [ivFactor, setIvFactor] = useState(1);
   const structureKey = `${payoff.expiry}:${(payoff.legs ?? []).map((l) => `${l.side}${l.kind}${l.strike}`).join("|")}`;
@@ -179,6 +212,17 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
             Table
           </button>
         </span>
+        {legs && view === "chart" && (
+          <button
+            type="button"
+            className="timeframe-button"
+            aria-pressed={showLegs}
+            onClick={toggleLegs}
+            title="Each leg's own P/L at expiry, from its own entry (its mid on a ticket, its fill when held): green bought, red sold. The solid curve is their sum. A leg's curve runs off the frame where it is larger than the whole -- the other legs are what keep the sum inside it."
+          >
+            Legs
+          </button>
+        )}
       </div>
       {view === "table" && canScenario ? (
         <div style={{ height: settings.riskChartHeight }} className="payoff-table-frame">
@@ -198,6 +242,11 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
         role="img"
         aria-label="Profit and loss over the underlying price"
       >
+        <defs>
+          <clipPath id="payoff-plot">
+            <rect x={PAD.left} y={PAD.top} width={WIDTH - PAD.left - PAD.right} height={HEIGHT - PAD.top - PAD.bottom} />
+          </clipPath>
+        </defs>
         <path className="payoff-area-profit" d={area(payoff.at_expiry, true)} />
         <path className="payoff-area-loss" d={area(payoff.at_expiry, false)} />
         {ticksY.map((v) => (
@@ -214,6 +263,17 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
             {v.toFixed(v < 10 ? 2 : 1)}
           </text>
         ))}
+        {legs && showLegs && (
+          <g clipPath="url(#payoff-plot)">
+            {legs.map(({ leg, values }, i) => (
+              <path
+                key={`${leg.side}${leg.kind}${leg.strike}${i}`}
+                className={`payoff-leg ${leg.kind === "stock" ? "stock" : leg.side}`}
+                d={path(values)}
+              />
+            ))}
+          </g>
+        )}
         {payoff.today && <path className="payoff-today" d={path(payoff.today)} />}
         {scenario && <path className="payoff-scenario" d={path(scenario)} />}
         <path className="payoff-expiry" d={path(payoff.at_expiry)} />
@@ -260,6 +320,15 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
             {ivFactor !== 1 ? `, ${ivLabel}` : ""}
           </span>
         )}
+        {legs && showLegs && view === "chart" && (
+          <span className="payoff-leg-legend">
+            {legs.map(({ leg }, i) => (
+              <span key={`${legLabel(leg)}${i}`}>
+                <i className={`payoff-swatch leg ${leg.kind === "stock" ? "stock" : leg.side}`} /> {legLabel(leg)}
+              </span>
+            ))}
+          </span>
+        )}
         <span>max profit {payoff.max_profit == null ? "unlimited" : money(payoff.max_profit)}</span>
         <span>max loss {payoff.max_loss == null ? "unbounded" : money(payoff.max_loss)}</span>
         {hovered && (
@@ -267,6 +336,9 @@ export function PayoffChart({ payoff, expiryLabel }: PayoffChartProps) {
             at {hovered.price.toFixed(2)}: {money(hovered.expiry)}
             {hovered.today != null ? ` / today ${money(hovered.today)}` : ""}
             {hovered.scenario != null ? ` / then ${money(hovered.scenario)}` : ""}
+            {legs && showLegs && hover != null
+              ? ` · ${legs.map(({ leg, values }) => `${legLabel(leg)} ${money(values[hover])}`).join(", ")}`
+              : ""}
           </span>
         )}
       </div>

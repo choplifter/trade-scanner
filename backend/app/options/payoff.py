@@ -40,6 +40,9 @@ class PayoffLeg:
     ratio: int = 1
     expiry: date | None = None  # None for a stock leg
     iv: float | None = None
+    # Per share, what the leg was (or will be) bought or sold at -- for the
+    # risk chart's per-leg curves. None when not known.
+    price: float | None = None
 
     @property
     def sign(self) -> int:
@@ -304,7 +307,15 @@ def payoff_curve(
         "expiry": first_expiry,
         "multiplier": multiplier,
         "legs": [
-            {"kind": leg.kind, "strike": leg.strike, "side": leg.side, "ratio": leg.ratio, "expiry": leg.expiry, "iv": leg.iv}
+            {
+                "kind": leg.kind,
+                "strike": leg.strike,
+                "side": leg.side,
+                "ratio": leg.ratio,
+                "expiry": leg.expiry,
+                "iv": leg.iv,
+                "price": leg.price,
+            }
             for leg in legs
         ],
         "net_price": net_price,

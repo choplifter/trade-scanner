@@ -151,6 +151,9 @@ export interface PayoffLegOut {
   ratio: number;
   expiry: string | null;
   iv: number | null;
+  /** Per share, the leg's entry: its mid on a ticket, its average fill when
+   * held. What the risk chart's per-leg curves are drawn from. */
+  price?: number | null;
 }
 
 export interface Payoff {
@@ -534,6 +537,9 @@ export interface SpreadTotals {
 export interface CloseLeg {
   symbol: string;
   qty: number;
+  /** Per share, what a held leg was opened at -- read by the risk chart
+   * only, for each leg's own curve. */
+  entry_price?: number | null;
 }
 
 export type OptionOrderType = "limit" | "market";

@@ -51,6 +51,30 @@ function legValue(leg: PayoffLegOut, spot: number, atMs: number, ivFactor: numbe
   return bsPrice(leg.kind, spot, leg.strike, years, leg.iv * ivFactor);
 }
 
+/** Each leg's own P/L over the payoff's price grid when the (first) expiry
+ * arrives -- the legs the solid curve is the sum of, drawn one by one.
+ * A leg expiring later is valued by Black-Scholes at that moment, as the
+ * backend values it. Null when a leg carries no entry price, or a later
+ * leg no IV. Summed, the curves give the solid one up to the gap between
+ * the legs' mids and the order's own limit. */
+export function legCurves(payoff: Payoff): { leg: PayoffLegOut; values: number[] }[] | null {
+  const legs = payoff.legs ?? [];
+  if (!legs.length || legs.some((l) => l.price == null)) return null;
+  const atMs = expiryMoment(payoff.expiry);
+  const out: { leg: PayoffLegOut; values: number[] }[] = [];
+  for (const leg of legs) {
+    const sign = leg.side === "buy" ? 1 : -1;
+    const values: number[] = [];
+    for (const price of payoff.prices) {
+      const value = legValue(leg, price, atMs, 1);
+      if (value == null) return null;
+      values.push(Math.round(sign * leg.ratio * (value - (leg.price as number)) * payoff.multiplier * 100) / 100);
+    }
+    out.push({ leg, values });
+  }
+  return out;
+}
+
 /**
  * The position's P&L over the payoff's price grid at `hoursAhead` hours
  * after the payoff's own valuation moment, with every leg's IV multiplied
