@@ -55,6 +55,13 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
         </p>
 
         <h3>Read the columns in this order</h3>
+        <p className="options-help-intro">
+          The table shows the essentials by default: whether it can be filled (worst leg), whether the premium is
+          rich (IV/RV, IV rank), the structure, its loss probability and expected value, the breakeven-vol margin and
+          the room to the breakeven. <strong>All columns</strong> adds IV and realised vol, the cone, open interest
+          and volume, profit/loss, R/R and the account risk; every row's criteria (click the row) carry the same
+          numbers either way.
+        </p>
         <dl>
           <dt>1 · Quote width — can it be filled at all?</dt>
           {winged ? (

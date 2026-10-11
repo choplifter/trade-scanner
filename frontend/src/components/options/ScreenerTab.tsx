@@ -530,6 +530,7 @@ const STORE_UNIVERSE = "screener.universe";
 const STORE_SIDE = "screener.side";
 const STORE_PRICE_AT = "screener.priceAt";
 const STORE_TWO_EXPIRIES = "screener.twoExpiries";
+const STORE_ALL_COLUMNS = "screener.allColumns";
 const VERTICAL_LABELS: Record<"credit_spread" | "debit_spread", Record<OptionKind, string>> = {
   credit_spread: { put: "Bull put", call: "Bear call" },
   debit_spread: { put: "Bear put", call: "Bull call" },
@@ -589,6 +590,15 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     setPriceAtState(next);
     store(STORE_PRICE_AT, next);
   };
+  // The essentials by default: can it fill, is the premium rich, what is it
+  // worth, how much room. The rest stays one click away (and in each row's
+  // criteria, which carry the same numbers).
+  const [allColumns, setAllColumnsState] = useState(() => stored(STORE_ALL_COLUMNS) === "1");
+  const toggleAllColumns = () =>
+    setAllColumnsState((v) => {
+      store(STORE_ALL_COLUMNS, v ? "0" : "1");
+      return !v;
+    });
   // A second expiry for the candidates: one more chain a symbol.
   const [twoExpiries, setTwoExpiriesState] = useState(() => stored(STORE_TWO_EXPIRIES) === "1");
   const toggleTwoExpiries = () =>
@@ -771,6 +781,15 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         </button>
         <button
           type="button"
+          className="timeframe-button"
+          aria-pressed={allColumns}
+          onClick={toggleAllColumns}
+          title="Off: the essentials -- fillable, premium rich, the structure, its odds and worth, the room to the breakeven. On: every column, IV and realised vol, the cone, open interest and volume, profit/loss, R/R, the account risk."
+        >
+          All columns
+        </button>
+        <button
+          type="button"
           className="generate-button opt-run"
           disabled={loading || (!universe && symbols.length === 0)}
           onClick={() => void run()}
@@ -891,18 +910,26 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   sort={sort}
                   onSort={onSort}
                 />
-                <Th label="IV" title="At-the-money implied volatility of the screened expiry." sort={sort} onSort={onSort} />
-                <Th label="RV" title="Close-to-close volatility of the last 20 sessions, annualised." sort={sort} onSort={onSort} />
+                {allColumns && (
+                  <>
+                    <Th label="IV" title="At-the-money implied volatility of the screened expiry." sort={sort} onSort={onSort} />
+                    <Th label="RV" title="Close-to-close volatility of the last 20 sessions, annualised." sort={sort} onSort={onSort} />
+                  </>
+                )}
                 <Th label="IV/RV" title="Implied over realised. Above 1.2 the premium is rich, below 0.95 it is cheap." sort={sort} onSort={onSort} />
                 <Th label="IV rank" title="Where today's IV sits in this symbol's own recorded range. Needs 20 sessions." sort={sort} onSort={onSort} />
-                <Th label="Cone" title={CONE_TITLE} sort={sort} onSort={onSort} />
-                <Th label="OI" title="Open interest across the fetched strikes of that expiry." sort={sort} onSort={onSort} />
-                <Th
-                  label="Vol/OI"
-                  title="Contracts traded today against the positions already open. Open interest says a crowd is positioned; this says whether anyone is still trading it. Above 1 the expiry is being built today rather than carried."
-                  sort={sort}
-                  onSort={onSort}
-                />
+                {allColumns && (
+                  <>
+                    <Th label="Cone" title={CONE_TITLE} sort={sort} onSort={onSort} />
+                    <Th label="OI" title="Open interest across the fetched strikes of that expiry." sort={sort} onSort={onSort} />
+                    <Th
+                      label="Vol/OI"
+                      title="Contracts traded today against the positions already open. Open interest says a crowd is positioned; this says whether anyone is still trading it. Above 1 the expiry is being built today rather than carried."
+                      sort={sort}
+                      onSort={onSort}
+                    />
+                  </>
+                )}
                 <Th label="Expiry" title="Sorts by days to expiry." sort={sort} onSort={onSort} />
                 {sideColumns(result).map((col) => (
                   <Th
@@ -919,10 +946,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 ))}
                 {result.rows.some((r) => r.outcome) && (
                   <>
-                    <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
-                      Profit / Loss
-                    </th>
-                    <Th label="R/R" title="What the structure risks against what it can make. 3:1 means three dollars at risk for every one it pays." sort={sort} onSort={onSort} />
+                    {allColumns && (
+                      <>
+                        <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
+                          Profit / Loss
+                        </th>
+                        <Th label="R/R" title="What the structure risks against what it can make. 3:1 means three dollars at risk for every one it pays." sort={sort} onSort={onSort} />
+                      </>
+                    )}
                     <Th label="Loss prob" title="Share of the option market's own implied distribution at expiry under which the structure loses." sort={sort} onSort={onSort} />
                     <Th
                       label="EV"
@@ -946,15 +977,17 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       sort={sort}
                       onSort={onSort}
                     />
-                    <Th
-                      label="Risk %"
-                      title="The max loss against your account's equity -- the size decision, as opposed to R/R, which is the structure's own shape. The criterion fails past 2 %."
-                      sort={sort}
-                      onSort={onSort}
-                    />
+                    {allColumns && (
+                      <Th
+                        label="Risk %"
+                        title="The max loss against your account's equity -- the size decision, as opposed to R/R, which is the structure's own shape. The criterion fails past 2 %."
+                        sort={sort}
+                        onSort={onSort}
+                      />
+                    )}
                   </>
                 )}
-                {result.rows.some((r) => r.term_ratio != null) && (
+                {allColumns && result.rows.some((r) => r.term_ratio != null) && (
                   <th scope="col" title="The front expiry's implied volatility over the back one's.">Front/back</th>
                 )}
                 <th scope="col" aria-label="Actions" />
@@ -1003,8 +1036,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                         );
                       })()}
                     </td>
-                    <td>{pct(row.atm_iv)}</td>
-                    <td>{pct(row.realised_vol)}</td>
+                    {allColumns && (
+                      <>
+                        <td>{pct(row.atm_iv)}</td>
+                        <td>{pct(row.realised_vol)}</td>
+                      </>
+                    )}
                     <td
                       className={toneClass(sideTone(ratioTone(row.iv_rv_ratio), selling))}
                       title={
@@ -1026,15 +1063,19 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     >
                       {row.iv_rank == null ? "—" : `${row.iv_rank.toFixed(0)} %`}
                     </td>
-                    <td title={row.cone_pct == null ? "Less than a year of closes" : `Above ${row.cone_pct.toFixed(0)} % of ${row.cone_window}-session spells this year`}>
-                      {row.cone_pct == null ? "—" : `${row.cone_pct.toFixed(0)} %`}
-                    </td>
-                    <td title={row.open_interest == null ? "Not reported for this expiry right now" : undefined}>
-                      {row.open_interest == null ? "—" : row.open_interest.toLocaleString()}
-                    </td>
-                    <td className={row.volume_oi_ratio != null && row.volume_oi_ratio >= 1 ? "delta-up" : undefined}>
-                      {row.volume_oi_ratio == null ? "—" : `${row.volume_oi_ratio.toFixed(2)}×`}
-                    </td>
+                    {allColumns && (
+                      <>
+                        <td title={row.cone_pct == null ? "Less than a year of closes" : `Above ${row.cone_pct.toFixed(0)} % of ${row.cone_window}-session spells this year`}>
+                          {row.cone_pct == null ? "—" : `${row.cone_pct.toFixed(0)} %`}
+                        </td>
+                        <td title={row.open_interest == null ? "Not reported for this expiry right now" : undefined}>
+                          {row.open_interest == null ? "—" : row.open_interest.toLocaleString()}
+                        </td>
+                        <td className={row.volume_oi_ratio != null && row.volume_oi_ratio >= 1 ? "delta-up" : undefined}>
+                          {row.volume_oi_ratio == null ? "—" : `${row.volume_oi_ratio.toFixed(2)}×`}
+                        </td>
+                      </>
+                    )}
                     <td>{row.expiry ? `${row.expiry} (${row.dte}d)` : "—"}</td>
                     {sideColumns(result).map((col) => (
                       <SideCell
@@ -1048,24 +1089,30 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     ))}
                     {result.rows.some((r) => r.outcome) && (
                       <>
-                        <td>
-                          {row.outcome
-                            ? `${formatMoney(row.outcome.max_profit ?? 0)} / ${formatMoney(row.outcome.max_loss ?? 0)}`
-                            : "—"}
-                        </td>
-                        <td>{row.outcome?.risk_reward == null ? "—" : `${row.outcome.risk_reward.toFixed(1)} : 1`}</td>
+                        {allColumns && (
+                          <>
+                            <td>
+                              {row.outcome
+                                ? `${formatMoney(row.outcome.max_profit ?? 0)} / ${formatMoney(row.outcome.max_loss ?? 0)}`
+                                : "—"}
+                            </td>
+                            <td>{row.outcome?.risk_reward == null ? "—" : `${row.outcome.risk_reward.toFixed(1)} : 1`}</td>
+                          </>
+                        )}
                         <td>{row.outcome ? pct(row.outcome.loss_probability) : "—"}</td>
                         <td className={row.outcome ? (row.outcome.expected_value > 0 ? "delta-up" : "delta-down") : undefined}>
                           {row.outcome ? formatMoney(row.outcome.expected_value) : "—"}
                         </td>
                         <BreakevenVolCell row={row} buyer={result.strategy === "debit_spread"} />
                         <td>{toBreakeven(row.outcome)}</td>
-                        <td className={row.risk_share != null && row.risk_share > 0.02 ? "delta-down" : undefined}>
-                          {row.risk_share == null ? "—" : pct(row.risk_share, 1)}
-                        </td>
+                        {allColumns && (
+                          <td className={row.risk_share != null && row.risk_share > 0.02 ? "delta-down" : undefined}>
+                            {row.risk_share == null ? "—" : pct(row.risk_share, 1)}
+                          </td>
+                        )}
                       </>
                     )}
-                    {result.rows.some((r) => r.term_ratio != null) && (
+                    {allColumns && result.rows.some((r) => r.term_ratio != null) && (
                       <td>{row.term_ratio == null ? "—" : `${row.term_ratio.toFixed(2)}×`}</td>
                     )}
                     <td className="screen-actions">
@@ -1126,14 +1173,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   </tr>
                   {unfolded.has(row.symbol) && (row.candidates?.length ?? 0) > 0 && (
                     <tr key={`${row.symbol}-candidates`} className="screen-detail">
-                      <td colSpan={20 + sideColumns(result).length - 1}>
+                      <td colSpan={40}>
                         <CandidateTable row={row} strategy={result.strategy} onSelectSymbol={onSelectSymbol} />
                       </td>
                     </tr>
                   )}
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={20 + sideColumns(result).length - 1}>
+                      <td colSpan={40}>
                         <Criteria row={row} />
                       </td>
                     </tr>
