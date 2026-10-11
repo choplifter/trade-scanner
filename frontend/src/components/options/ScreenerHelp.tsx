@@ -190,13 +190,13 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             <dd>
               A report inside the expiry is why the premium is fat, and it collapses with the report. Early policy lets
               one through in the first third of the position's life — the volatility drops while the strikes are still
-              far away and weeks of decay follow. Avoid fails any report inside. If a row is rich on IV/RV and holds a
+              far away and weeks of decay follow. Avoid takes an expiry that ends before the report, and leaves a symbol out (listed under the table) when every expiry in the window holds it. If a row is rich on IV/RV and holds a
               report, you are being paid for the event, not for the premium.
               <BookRefLine refs={[NATENBERG.gaps]} />
             </dd>
           ) : (
             <dd>
-              Avoid by default: a report inside the expiry fails the row. Bought before a print, the structure pays for
+              Avoid by default: the expiry is one that ends before the report, and a symbol whose every expiry in the window holds it is left out. Bought before a print, the structure pays for
               the event in its implied volatility and then watches that volatility collapse once the news is out.
               <BookRefLine refs={[NATENBERG.gaps]} />
             </dd>

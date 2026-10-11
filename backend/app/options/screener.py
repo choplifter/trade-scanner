@@ -453,6 +453,9 @@ class Row:
     call_outcome: dict | None = None
     # The same structure at other deltas (and expiries): see _candidates.
     candidates: list = field(default_factory=list)
+    # Set under the avoid policy when every expiry in the window holds the
+    # next report: the symbol is left out of the table, counted instead.
+    excluded_by_earnings: bool = False
     # The calendar's slope: the back expiry's ATM IV and front over back.
     back_expiry: date | None = None
     back_iv: float | None = None
@@ -1098,6 +1101,25 @@ async def _priced(
         return row
     row.spot = strip.get("spot")
     listed = [date.fromisoformat(e["expiry"]) for e in strip.get("expiries", [])]
+    # Under "avoid" the report decides the expiry: the window's expiries that
+    # end before it are the only candidates, and a symbol with none is not a
+    # row at all. Looked up first for that reason (once; reused below).
+    report_known = False
+    if req.policy == "avoid" and earnings_calendar is not None:
+        try:
+            earnings = await earnings_calendar.next_earnings(symbol)
+            row.earnings_date = earnings.report_date if earnings is not None else None
+        except Exception:
+            logger.debug("Earnings lookup failed for %s", symbol, exc_info=True)
+        report_known = True
+        if row.earnings_date is not None and row.earnings_date >= today:
+            in_window = [e for e in listed if req.dte_min <= (e - today).days <= req.dte_max]
+            before = [e for e in listed if e < row.earnings_date]
+            if in_window and not any(e < row.earnings_date for e in in_window):
+                row.excluded_by_earnings = True
+                row.note = f"every expiry {req.dte_min}-{req.dte_max} days out holds the report on {row.earnings_date}"
+                return row
+            listed = before + [e for e in listed if e >= row.earnings_date and (e - today).days > req.dte_max]
     expiry = pick_expiry(listed, today, req.dte_min, req.dte_max, prefer_monthly=req.prefer_monthly)
     if expiry is None:
         row.note = f"no listed expiry {req.dte_min}-{req.dte_max} days out"
@@ -1203,7 +1225,7 @@ async def _priced(
             row.iv_rank_samples = samples
         except Exception:
             logger.debug("IV rank lookup failed for %s", symbol, exc_info=True)
-    if earnings_calendar is not None:
+    if earnings_calendar is not None and not report_known:
         try:
             earnings = await earnings_calendar.next_earnings(symbol)
             row.earnings_date = earnings.report_date if earnings is not None else None
@@ -1540,7 +1562,8 @@ async def screen_underlyings(
             for symbol in symbols
         )
     )
-    ranked = rank_rows(list(rows), req.bias)
+    excluded = [r for r in rows if r.excluded_by_earnings]
+    ranked = rank_rows([r for r in rows if not r.excluded_by_earnings], req.bias)
     return {
         "as_of": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "strategy": req.strategy,
@@ -1569,6 +1592,12 @@ async def screen_underlyings(
             "cheap_iv_rank": CHEAP_IV_RANK,
         },
         "rows": [r.to_dict() for r in ranked],
+        # Left out under the avoid policy: every expiry in the window holds
+        # the report. Named so the table's silence about them is explained.
+        "excluded_by_earnings": [
+            {"symbol": r.symbol, "earnings_date": r.earnings_date.isoformat() if r.earnings_date else None}
+            for r in excluded
+        ],
         "disclaimer": (
             "Contract volume is not read (a day bar per contract); open interest and quoted size stand in. "
             "IV rank is judged where a symbol has 20 recorded sessions (a year, for those seeded from Barchart); "

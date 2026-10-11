@@ -1159,6 +1159,8 @@ export interface ScreenResponse {
   /** "bull put", "bear call"… for a vertical. */
   structure?: string | null;
   price_at?: "mid" | "natural";
+  /** Left out under "avoid": every expiry in the window holds the report. */
+  excluded_by_earnings?: { symbol: string; earnings_date: string | null }[];
   bias: ScreenBias;
   criteria: {
     dte: [number, number];

@@ -775,10 +775,31 @@ def test_the_boundary_is_a_third_of_the_position():
     assert just_past["passed"] is False
 
 
-def test_avoid_still_fails_any_report_inside_the_expiry():
-    early = _with_earnings(TODAY + timedelta(days=5), earnings_policy="avoid")
-    assert early["passed"] is False, "asked to avoid, and it is inside"
-    assert early["label"] == "Earnings clear"
+def _screen_with_report(day: date, service=None, strategy="iron_condor", **over):
+    service = service or _Service({"A": _chain()})
+    return _run(
+        service,
+        ScreenRequest(symbols=["A"], strategy=strategy, **over),
+        calendar=_Calendar({"A": day}),
+        closes={"A": _closes(0.01)},
+    )
+
+
+def test_avoid_leaves_out_a_symbol_whose_every_expiry_holds_the_report():
+    body = _screen_with_report(TODAY + timedelta(days=5), earnings_policy="avoid")
+    assert body["rows"] == [], "asked to avoid, and the only expiry holds the report"
+    assert body["excluded_by_earnings"] == [{"symbol": "A", "earnings_date": (TODAY + timedelta(days=5)).isoformat()}]
+
+
+def test_avoid_takes_an_expiry_before_the_report_when_the_window_has_one():
+    chain = _chain(iv=0.40)
+    later = chain.expiry + timedelta(days=7)
+    service = _TwoExpiries(chain, later)
+    report = chain.expiry + timedelta(days=3)  # after the first expiry, before the second
+    body = _screen_with_report(report, service=service, earnings_policy="avoid")
+    row = body["rows"][0]
+    assert row["expiry"] == chain.expiry.isoformat()
+    assert _criterion(row, "earnings")["passed"] is True
 
 
 def test_ignore_leaves_the_criterion_out_entirely():
@@ -806,8 +827,8 @@ def test_the_buy_side_strategies_still_avoid_the_print_by_default():
 
     assert EARNINGS_POLICY["long_option"] == "avoid" and EARNINGS_POLICY["debit_spread"] == "avoid"
     assert EARNINGS_POLICY["iron_condor"] == "early" and EARNINGS_POLICY["credit_spread"] == "early"
-    early_for_a_long = _with_earnings(TODAY + timedelta(days=5), strategy="debit_spread")
-    assert early_for_a_long["passed"] is False
+    body = _screen_with_report(TODAY + timedelta(days=5), strategy="debit_spread")
+    assert body["rows"] == [] and body["excluded_by_earnings"][0]["symbol"] == "A"
 
 
 def test_the_old_boolean_still_means_something():

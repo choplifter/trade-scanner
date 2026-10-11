@@ -909,6 +909,21 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           pass screens the universe every half hour. Press the button for a live one.
         </p>
       )}
+      {result?.stored_at && result.criteria.earnings_policy !== earnings && (
+        <p className="order-rejection">
+          This stored run treated earnings as "{result.criteria.earnings_policy}", not "{earnings}" as set above
+          {earnings === "avoid" ? " -- rows holding a report before their expiry are still in it" : ""}. Run the screen to
+          apply your setting.
+        </p>
+      )}
+      {result?.excluded_by_earnings && result.excluded_by_earnings.length > 0 && (
+        <p className="order-hint" title="Under avoid, a symbol whose every expiry in the window holds its next report is not a row: there is no structure in the window that misses the print.">
+          Left out for earnings ({result.excluded_by_earnings.length}):{" "}
+          {result.excluded_by_earnings
+            .map((x) => `${x.symbol}${x.earnings_date ? ` ${formatExpiry(x.earnings_date)}` : ""}`)
+            .join(", ")}
+        </p>
+      )}
       {result && (
         <>
           {result.preselection && (
