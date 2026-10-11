@@ -262,6 +262,16 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             the report's jump, so part of any margin here is that jump. The riskier trade; size it as one.
             <BookRefLine refs={[NATENBERG.gaps]} />
           </dd>
+          <dt>★ Bear call · Iron condor · Cash-secured put · Covered call · Bull call (cheap vol)</dt>
+          <dd>
+            The same reasoning for each visible strategy, the bars fitted to its shape. Bear call: the bull put's mirror,
+            where the margin is rarer (calls carry less skew) and the upward drift works against it. Iron condor: twice
+            the credit on one width at risk — loss : gain up to 6, loss probability up to 38 %, the nearer breakeven
+            0.8σ+ away. Cash-secured put: 15–25 delta, only on stock you would hold; loss : gain left open. Covered call:
+            a little looser (IV/RV 1.1+, margin 2+), the shares being held anyway. Bull call: the buyer's side — the
+            margin reads the other way (the forecast over the breakeven vol), loss : gain up to 1.5. Each note in the
+            preset menu says why.
+          </dd>
         </dl>
 
         <h3>Show only</h3>

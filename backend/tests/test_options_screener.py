@@ -1457,3 +1457,15 @@ def test_a_debit_spread_is_valued_as_bought_its_long_leg_at_the_delta_band():
     assert out["max_loss"] == pytest.approx(-debit * 100, abs=1.0)
     assert out["max_profit"] == pytest.approx((pair["width"] - debit) * 100, abs=1.0)
     assert out["breakevens"] == [pytest.approx(pair["short_strike"] - debit, abs=0.01)]
+
+
+def test_a_debit_spreads_side_is_valued_as_bought_and_a_lone_short_leg_has_its_own_side_value():
+    body = _run(_Service({"A": _chain(iv=0.20)}), ScreenRequest(symbols=["A"], strategy="debit_spread"), closes={"A": _closes(0.02)})
+    side = body["rows"][0]["put_outcome"]
+    pair = body["rows"][0]["put_spread"]
+    # Bought: it cannot lose more than it cost, nor make more than the width less that.
+    assert side["max_loss"] == pytest.approx(-pair["credit"] * 100, abs=1.0)
+    assert side["max_profit"] == pytest.approx((pair["width"] - pair["credit"]) * 100, abs=1.0)
+    for strategy, key in (("cash_secured_put", "put_outcome"), ("covered_call", "call_outcome")):
+        row = _run(_Service({"A": _chain(iv=0.30)}), ScreenRequest(symbols=["A"], strategy=strategy), closes={"A": _closes(0.01)})["rows"][0]
+        assert row[key] is not None and "expected_value" in row[key]

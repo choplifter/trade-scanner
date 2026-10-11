@@ -97,3 +97,15 @@ describe("the earnings-ok limit and the early-earnings preset", () => {
     expect(Number(early.filters.minToBe)).toBeGreaterThan(Number(gems.filters.minToBe));
   });
 });
+
+describe("presets for every visible strategy", () => {
+  it("ships at least one preset per strategy on the bar, each with a note", async () => {
+    const { BUILT_IN_PRESETS } = await import("./ScreenerTab");
+    const covered = new Set(BUILT_IN_PRESETS.map((p) => `${p.strategy}:${p.strategy.endsWith("spread") ? p.side : ""}`));
+    for (const key of ["cash_secured_put:", "covered_call:", "credit_spread:put", "credit_spread:call", "iron_condor:", "debit_spread:call"]) {
+      expect(covered.has(key)).toBe(true);
+    }
+    expect(BUILT_IN_PRESETS.every((p) => (p.note ?? "").length > 40)).toBe(true);
+    expect(new Set(BUILT_IN_PRESETS.map((p) => p.name)).size).toBe(BUILT_IN_PRESETS.length);
+  });
+});

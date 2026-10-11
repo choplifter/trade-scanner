@@ -1176,8 +1176,12 @@ async def _priced(
     )
     row.outcome = _outcome_for(row, req, chain, dist)
     if req.strategy in SPREAD_STRATEGIES and row.expiry:
-        row.put_outcome = _side_outcome(row.put_spread, "put", chain, row.expiry, dist)
-        row.call_outcome = _side_outcome(row.call_spread, "call", chain, row.expiry, dist)
+        bought = req.strategy == "debit_spread"
+        row.put_outcome = _side_outcome(row.put_spread, "put", chain, row.expiry, dist, bought=bought)
+        row.call_outcome = _side_outcome(row.call_spread, "call", chain, row.expiry, dist, bought=bought)
+    elif req.strategy in ("cash_secured_put", "covered_call") and row.expiry:
+        row.put_outcome = _single_outcome(row.short_put, "put", chain, row.expiry, dist)
+        row.call_outcome = _single_outcome(row.short_call, "call", chain, row.expiry, dist)
     # The same structure at other deltas, and on a second expiry if asked:
     # what Barchart lists as separate rows, kept under the symbol here.
     if req.candidates and row.outcome is not None and (req.strategy in SPREAD_STRATEGIES or req.strategy in ("cash_secured_put", "covered_call")):
@@ -1464,7 +1468,9 @@ def candidates_on(
     return out
 
 
-def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date, dist=None) -> dict | None:
+def _side_outcome(
+    vertical: dict | None, kind: str, chain: Chain, expiry: date, dist=None, *, bought: bool = False
+) -> dict | None:
     """One vertical valued under the volatility its own strikes trade at.
 
     Not half of `_outcome_for`. That one builds a single terminal
@@ -1492,11 +1498,34 @@ def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date, 
         {"kind": kind, "strike": vertical["short_strike"], "side": "sell", "iv": short_iv},
         {"kind": kind, "strike": vertical["long_strike"], "side": "buy", "iv": _leg_iv(chain, kind, vertical["long_strike"])},
     ]
+    credit = vertical["credit"]
+    if bought:
+        # A debit vertical: the leg at the delta band is bought, the wing
+        # sold -- the same flip as in value_structure.
+        for leg in legs:
+            leg["side"] = "buy" if leg["side"] == "sell" else "sell"
+        credit = -abs(credit)
     years = _years_left(expiry)
     # The expected value under this corner's own IV, as above; the chance
     # under the whole smile, like every other chance in the app.
     return structure_outcome(
-        legs, vertical["credit"], chain.spot, short_iv, years, expiry, cross=vertical.get("cross", 0.0), dist=dist
+        legs, credit, chain.spot, short_iv, years, expiry, cross=vertical.get("cross", 0.0), dist=dist
+    )
+
+
+def _single_outcome(leg: dict | None, kind: str, chain: Chain, expiry: date, dist=None) -> dict | None:
+    """A lone short leg (cash-secured put, covered call) valued under its own
+    strike's IV rather than the at-the-money one -- what the put skew does
+    to a put written below the money, as _side_outcome shows for a
+    vertical."""
+    if leg is None or leg.get("mid") is None:
+        return None
+    iv = _leg_iv(chain, kind, leg["strike"])
+    if not iv:
+        return None
+    legs = [{"kind": kind, "strike": leg["strike"], "side": "sell", "iv": iv}]
+    return structure_outcome(
+        legs, leg["mid"], chain.spot, iv, _years_left(expiry), expiry, cross=_half_spread(leg), dist=dist
     )
 
 

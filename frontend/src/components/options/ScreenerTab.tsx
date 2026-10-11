@@ -519,6 +519,152 @@ export const BUILT_IN_PRESETS: ScreenPreset[] = [
       earningsOk: "1",
     },
   },
+  {
+    name: "Bot gems · Bear call 30–45 DTE",
+    builtIn: true,
+    note:
+      "The bull put's mirror on the calls, for when you would not bet on a rise: a call sold above the price at 12-20 " +
+      "delta, a further one bought. Calls carry less skew premium than puts, so the same margin is rarer -- and the " +
+      "stock's usual upward drift works against the position. Same bars otherwise: natural pricing, no earnings inside, " +
+      "IV/RV 1.2+, breakeven vol 3+ points over the forecast, loss probability up to 25 %, loss : gain up to 10, the " +
+      "breakeven 0.9 sigma+ away.",
+    strategy: "credit_spread",
+    side: "call",
+    dteMin: "30",
+    dteMax: "45",
+    deltaMin: "0.12",
+    deltaMax: "0.20",
+    minOi: "5000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "25",
+      maxLossGain: "10",
+      minToBe: "0.9",
+      minMargin: "3",
+      minIvRv: "1.2",
+      earningsOk: "1",
+    },
+  },
+  {
+    name: "Bot gems · Iron condor 30–45 DTE",
+    builtIn: true,
+    note:
+      "A bull put and a bear call together, both shorts at 12-20 delta: twice the credit on the same width at risk, so " +
+      "loss : gain is lower (about 3-5 : 1) -- but two sides can be breached, so the loss probability runs higher " +
+      "(about 25-35 %). It suits a stock expected to stay in its range, in a market with positive dealer gamma (see the " +
+      "GEX regime). Natural pricing, no earnings inside, IV/RV 1.2+, breakeven vol 3+ points over the forecast, the " +
+      "nearer breakeven 0.8 sigma+ away.",
+    strategy: "iron_condor",
+    side: "put",
+    dteMin: "30",
+    dteMax: "45",
+    deltaMin: "0.12",
+    deltaMax: "0.20",
+    minOi: "5000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "38",
+      maxLossGain: "6",
+      minToBe: "0.8",
+      minMargin: "3",
+      minIvRv: "1.2",
+      earningsOk: "1",
+    },
+  },
+  {
+    name: "Bot gems · Cash-secured put 30–45 DTE",
+    builtIn: true,
+    note:
+      "A put sold at 15-25 delta with the strike's cash set aside -- paid to place a limit order below the market. Only " +
+      "on a stock you would hold if assigned: the loss runs to the strike less the premium, so loss : gain is not a " +
+      "useful bar here and is left open. Natural pricing, no earnings inside, IV/RV 1.2+, breakeven vol 3+ points over " +
+      "the forecast, loss probability up to 25 %, the breakeven 0.8 sigma+ away.",
+    strategy: "cash_secured_put",
+    side: "put",
+    dteMin: "30",
+    dteMax: "45",
+    deltaMin: "0.15",
+    deltaMax: "0.25",
+    minOi: "5000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "25",
+      minToBe: "0.8",
+      minMargin: "3",
+      minIvRv: "1.2",
+      earningsOk: "1",
+    },
+  },
+  {
+    name: "Bot gems · Covered call 30–45 DTE",
+    builtIn: true,
+    note:
+      "A call sold at 15-25 delta against 100 shares held per contract: income on stock you own, the gain above the " +
+      "strike given up. The premium is judged like any other sale -- IV/RV 1.1+ and breakeven vol 2+ points over the " +
+      "forecast (a little looser, since the shares are held anyway) -- with natural pricing and no earnings inside, where " +
+      "a gap up would call the shares away at the strike.",
+    strategy: "covered_call",
+    side: "call",
+    dteMin: "30",
+    dteMax: "45",
+    deltaMin: "0.15",
+    deltaMax: "0.25",
+    minOi: "5000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      minMargin: "2",
+      minIvRv: "1.1",
+      earningsOk: "1",
+    },
+  },
+  {
+    name: "Bot gems · Bull call (cheap vol) 30–45 DTE",
+    builtIn: true,
+    note:
+      "The buyer's side: a call bought at 35-50 delta and one sold further up, for when implied volatility is cheap -- " +
+      "the forecast at least 3 points over the breakeven vol (BE margin reads for the buyer here). A debit costs at most " +
+      "what was paid, so loss : gain up to 1.5 keeps the payout worth the price. A view on direction as well as on " +
+      "volatility: switch the side to a bear put for a fall. Natural pricing, no earnings inside -- a report props the " +
+      "volatility up and collapses it the day after, the wrong way round for a buyer.",
+    strategy: "debit_spread",
+    side: "call",
+    dteMin: "30",
+    dteMax: "45",
+    deltaMin: "0.35",
+    deltaMax: "0.50",
+    minOi: "5000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossGain: "1.5",
+      minMargin: "3",
+      earningsOk: "1",
+    },
+  },
 ];
 
 const PRESETS_KEY = "screener.presets";
