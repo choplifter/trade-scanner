@@ -13,8 +13,8 @@ import "dockview-react/dist/styles/dockview.css";
 import { getStored, setStored, subscribeRemote } from "../../api/prefs";
 import { ChartCopyPanel } from "./ChartCopyPanel";
 import { DockTab } from "./DockTab";
-import { addWidgetPanel, buildDefaultLayout, clearActiveProfile, registerDockApi } from "./dockLayouts";
-import { DOCK_WIDGET_IDS, DockContext, WIDGET_TITLES, type DockWidgetId, type PanelParams } from "./dockShared";
+import { buildDefaultLayout, clearActiveProfile, publishClosedIds, registerDockApi } from "./dockLayouts";
+import { DOCK_WIDGET_IDS, DockContext, type DockWidgetId, type PanelParams } from "./dockShared";
 import { useEffectiveDark } from "../../hooks/useSettings";
 
 type DockviewApi = DockviewReadyEvent["api"];
@@ -225,7 +225,13 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
     });
   };
 
-  const closedIds = DOCK_WIDGET_IDS.filter((id) => !openIds.has(id));
+  // The header's "+ Widget" menu lists what is closed (DockWidgetMenu) --
+  // in the header rather than over the dock, where it covered the top-right
+  // group's maximize button.
+  useEffect(() => {
+    publishClosedIds(DOCK_WIDGET_IDS.filter((id) => !openIds.has(id)));
+  }, [openIds]);
+  useEffect(() => () => publishClosedIds([]), []);
   // The header's layout-profile menu switches and saves through the api.
   // An effect, not onReady: StrictMode's mount-unmount-mount would
   // otherwise leave it unregistered.
@@ -239,9 +245,6 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
   return (
     <DockContext.Provider value={dockValue}>
       <div className="dockview-dashboard">
-        {containerApi && closedIds.length > 0 && (
-          <ReopenWidgetMenu api={containerApi} closedIds={closedIds} />
-        )}
         <DockviewReact
           className="dockview-root"
           theme={theme}
@@ -254,40 +257,3 @@ export function DockviewDashboard({ widgets, selectedSymbol, resetRef }: Dockvie
     </DockContext.Provider>
   );
 }
-
-/** Corner menu listing widgets with no open panel -- Dockview has no
- * built-in affordance for this (closing a panel just removes it), so this
- * is the dashboard's own. Click a widget to reopen it as a new panel;
- * position is omitted (unlike buildDefaultLayout's calls) so Dockview falls
- * back to its own default placement -- there's no single "right" spot to
- * dock an arbitrary reopened widget back into an arrangement the user may
- * have since rearranged. */
-function ReopenWidgetMenu({ api, closedIds }: { api: DockviewApi; closedIds: DockWidgetId[] }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="dockview-reopen">
-      <button type="button" className="dockview-reopen-button" onClick={() => setOpen((v) => !v)}>
-        + Widget ({closedIds.length})
-      </button>
-      {open && (
-        <div className="dockview-reopen-menu" role="menu">
-          {closedIds.map((id) => (
-            <button
-              key={id}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                addWidgetPanel(api, id);
-                setOpen(false);
-              }}
-            >
-              {WIDGET_TITLES[id]}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-

@@ -26,6 +26,7 @@ import { DashboardGrid } from "./components/layout/DashboardGrid";
 import { DockviewDashboard } from "./components/layout/DockviewDashboard";
 import { LayoutModeToggle } from "./components/layout/LayoutModeToggle";
 import { DockProfileMenu } from "./components/layout/DockProfileMenu";
+import { DockWidgetMenu } from "./components/layout/DockWidgetMenu";
 import { ResizablePanels } from "./components/layout/ResizablePanels";
 import { NewsFeedWidget } from "./components/newsFeed/NewsFeedWidget";
 import { ReplayPanel } from "./components/replay/ReplayPanel";
@@ -413,6 +414,7 @@ function AppShell({ user, onLogout }: AppShellProps) {
               <span className="session-dot" />
               {SESSION_LABEL[session] ?? session}
             </span>
+            {dashboardLayout.mode === "dock" && <DockWidgetMenu />}
             {dashboardLayout.mode === "dock" && <DockProfileMenu />}
             <LayoutModeToggle
               mode={dashboardLayout.mode}

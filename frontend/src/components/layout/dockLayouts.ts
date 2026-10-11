@@ -255,3 +255,35 @@ export function deleteProfile(name: string) {
 export function clearActiveProfile() {
   if (state.active !== null) commit({ ...state, active: null });
 }
+
+/** The widgets with no open panel, published by the dock for the header's
+ * "+ Widget" menu. */
+let closedIds: readonly DockWidgetId[] = [];
+const closedListeners = new Set<() => void>();
+
+export function publishClosedIds(ids: readonly DockWidgetId[]) {
+  if (ids.length === closedIds.length && ids.every((id, i) => id === closedIds[i])) return;
+  closedIds = ids;
+  for (const l of closedListeners) l();
+}
+
+export function useClosedDockIds(): readonly DockWidgetId[] {
+  return useSyncExternalStore(
+    (l) => {
+      closedListeners.add(l);
+      return () => {
+        closedListeners.delete(l);
+      };
+    },
+    () => closedIds,
+  );
+}
+
+/** Opens a closed widget again. No position: Dockview's own default
+ * placement -- there is no single right spot in an arrangement the user
+ * may have rebuilt since. */
+export function reopenWidget(id: DockWidgetId): boolean {
+  if (!dockApi) return false;
+  addWidgetPanel(dockApi, id);
+  return true;
+}
