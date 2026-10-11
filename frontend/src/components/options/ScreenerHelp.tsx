@@ -296,6 +296,14 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             enter after 10:00 ET, skip FOMC and CPI days, prefer positive dealer gamma, close before Alpaca's 15:30 /
             15:45 ET liquidation.
           </dd>
+          <dt>★ 0DTE bear call</dt>
+          <dd>
+            The 0DTE bull put's mirror on the calls, on a watchlist of SPY, QQQ, IWM. An index's calls carry little
+            skew premium, so the short sits a little nearer — 8–15 delta, the breakeven 1.0σ+ of the hours left away —
+            to bring a credit worth having. Loss probability up to 15 %, loss : gain up to 15, margin 2+, IV/RV open.
+            The upward drift and squeezes work against it: a day that is not trending up, under the call wall, positive
+            dealer gamma; out before Alpaca's 15:30 / 15:45 ET liquidation.
+          </dd>
           <dt>★ 0DTE iron condor</dt>
           <dd>
             The same day's expiry on both sides, on a watchlist of SPY, QQQ, IWM: shorts at 5–12 delta, the nearer

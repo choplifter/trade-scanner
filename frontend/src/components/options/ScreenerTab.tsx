@@ -586,6 +586,40 @@ export const BUILT_IN_PRESETS: ScreenPreset[] = [
     },
   },
   {
+    name: "Bot gems · 0DTE bear call",
+    builtIn: true,
+    note:
+      "Bear call spreads expiring today, on the names with daily expiries -- run it on a watchlist of SPY, QQQ, IWM. The " +
+      "call side of an index carries little skew premium, so at the bull put's 5-12 delta the credit is thin; the short " +
+      "sits a little nearer, at 8-15 delta, with the breakeven still at least 1.0 sigma of the hours left away. Loss " +
+      "probability up to 15 %, loss : gain up to 15, breakeven vol 2+ points over the forecast; IV/RV left open (read on " +
+      "the 30-60 day IV). Natural pricing, quotes within 10 %; a spread with no credit at the natural is left out. Not " +
+      "in the screen, but part of the trade: the market's upward drift and its squeezes work against it, so take it on a " +
+      "day that is not trending up -- under the call wall, after a run-up stalls, in a positive dealer-gamma regime (see " +
+      "GEX). Enter after 10:00 ET, skip FOMC and CPI days, close before 15:30 ET (15:45 for SPY and QQQ) -- Alpaca " +
+      "liquidates what it cannot cover from then.",
+    strategy: "credit_spread",
+    side: "call",
+    dteMin: "0",
+    dteMax: "0",
+    deltaMin: "0.08",
+    deltaMax: "0.15",
+    minOi: "2000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "15",
+      maxLossGain: "15",
+      minToBe: "1.0",
+      minMargin: "2",
+      earningsOk: "1",
+    },
+  },
+  {
     name: "Bot gems · 0DTE iron condor",
     builtIn: true,
     note:
