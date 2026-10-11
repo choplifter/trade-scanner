@@ -1012,11 +1012,9 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       sort={sort}
                       onSort={onSort}
                     />
-                    {allColumns && (
-                      <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
-                        Profit / Loss
-                      </th>
-                    )}
+                    <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
+                      Profit / Loss
+                    </th>
                     <Th label="Loss prob" title="Share of the option market's own implied distribution at expiry under which the structure loses." sort={sort} onSort={onSort} />
                     <Th
                       label="EV"
@@ -1176,13 +1174,11 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                           })()}
                         </td>
                         <td>{row.outcome?.risk_reward == null ? "—" : `${row.outcome.risk_reward.toFixed(1)} : 1`}</td>
-                        {allColumns && (
-                          <td>
-                            {row.outcome
-                              ? `${formatMoney(row.outcome.max_profit ?? 0)} / ${formatMoney(row.outcome.max_loss ?? 0)}`
-                              : "—"}
-                          </td>
-                        )}
+                        <td>
+                          {row.outcome
+                            ? `${formatMoney(row.outcome.max_profit ?? 0)} / ${formatMoney(row.outcome.max_loss ?? 0)}`
+                            : "—"}
+                        </td>
                         <td>{row.outcome ? pct(row.outcome.loss_probability) : "—"}</td>
                         <td className={row.outcome ? (row.outcome.expected_value > 0 ? "delta-up" : "delta-down") : undefined}>
                           {row.outcome ? formatMoney(row.outcome.expected_value) : "—"}
