@@ -220,7 +220,11 @@ const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
   "Bull call": (r) => r.call_outcome?.expected_value ?? null,
   "Short put": (r) => r.short_put?.delta ?? null,
   "Short call": (r) => r.short_call?.delta ?? null,
-  "R/R": (r) => r.outcome?.risk_reward ?? null,
+  "Loss : Gain": (r) => r.outcome?.risk_reward ?? null,
+  Credit: (r) => creditPerContract(r, undefined),
+  Debit: (r) => creditPerContract(r, undefined, true),
+  // Reports inside the expiry first, the soonest at the top.
+  Earnings: (r) => (r.earnings_date && earningsInside(r).inside ? Date.parse(r.earnings_date) : null),
   "Loss prob": (r) => r.outcome?.loss_probability ?? null,
   EV: (r) => r.outcome?.expected_value ?? null,
   "BE vol": (r) => r.outcome?.breakeven_vol ?? null,
@@ -266,6 +270,35 @@ function sideColumns(result: ScreenResponse): { kind: OptionKind; label: string 
         ? "Short put"
         : "Short call";
   return [{ kind, label }];
+}
+
+/** The structure's credit (or debit) per contract, at whatever the run was
+ * priced at -- the absolute figure Barchart shows. Older stored runs carry
+ * no credit on the outcome: read off the legs instead. */
+function creditPerContract(row: ScreenRow, priceAt: "mid" | "natural" | undefined, debit = false): number | null {
+  const o = row.outcome;
+  if (!o) return null;
+  if (o.credit != null) {
+    const perShare = priceAt === "natural" && o.credit_natural != null ? o.credit_natural : o.credit;
+    return Math.abs(perShare) * 100;
+  }
+  // A run stored before the outcome carried its credit: a written
+  // structure keeps exactly its credit at best, a bought one loses exactly
+  // its debit at worst.
+  const extreme = debit ? o.max_loss : o.max_profit;
+  return extreme == null ? null : Math.abs(extreme);
+}
+
+/** Whether the next report falls before the expiry, and how far into the
+ * position: early is the crush arriving while the strikes are far away,
+ * late a gap meeting high gamma and little time. */
+function earningsInside(row: ScreenRow): { inside: boolean; share: number | null } {
+  if (!row.earnings_date || !row.expiry) return { inside: false, share: null };
+  const today = new Date().toISOString().slice(0, 10);
+  if (row.earnings_date < today || row.earnings_date > row.expiry) return { inside: false, share: null };
+  const span = (Date.parse(row.expiry) - Date.parse(today)) / 864e5;
+  const until = (Date.parse(row.earnings_date) - Date.parse(today)) / 864e5;
+  return { inside: true, share: span > 0 ? until / span : null };
 }
 
 /** "−4.2% · 1.1σ": how far the nearest breakeven sits from the price. */
@@ -931,6 +964,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   </>
                 )}
                 <Th label="Expiry" title="Sorts by days to expiry." sort={sort} onSort={onSort} />
+                <Th
+                  label="Earnings"
+                  title="The next report. Red when it falls before the expiry -- the reason the premium is rich, and the move the structure has to survive -- with how far into the position it comes. Sorts the reports inside the expiry first."
+                  sort={sort}
+                  onSort={onSort}
+                />
                 {sideColumns(result).map((col) => (
                   <Th
                     key={col.kind}
@@ -946,13 +985,22 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 ))}
                 {result.rows.some((r) => r.outcome) && (
                   <>
+                    <Th
+                      label={result.strategy === "debit_spread" ? "Debit" : "Credit"}
+                      title={`What the structure ${result.strategy === "debit_spread" ? "costs" : "brings in"} per contract, at the ${result.price_at === "natural" ? "natural (every leg at its bid or ask)" : "mid"} -- the absolute figure Barchart shows.`}
+                      sort={sort}
+                      onSort={onSort}
+                    />
+                    <Th
+                      label="Loss : Gain"
+                      title="The most it can lose against the most it can make, per contract. 7 : 1 means seven dollars at risk for every one it pays -- a ratio a high chance of profit has to make up for, which is what the EV says whether it does."
+                      sort={sort}
+                      onSort={onSort}
+                    />
                     {allColumns && (
-                      <>
-                        <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
-                          Profit / Loss
-                        </th>
-                        <Th label="R/R" title="What the structure risks against what it can make. 3:1 means three dollars at risk for every one it pays." sort={sort} onSort={onSort} />
-                      </>
+                      <th scope="col" title="Max profit and max loss of the structure named in this row, per contract.">
+                        Profit / Loss
+                      </th>
                     )}
                     <Th label="Loss prob" title="Share of the option market's own implied distribution at expiry under which the structure loses." sort={sort} onSort={onSort} />
                     <Th
@@ -1077,6 +1125,23 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       </>
                     )}
                     <td>{row.expiry ? `${row.expiry} (${row.dte}d)` : "—"}</td>
+                    {(() => {
+                      const e = earningsInside(row);
+                      return (
+                        <td
+                          className={e.inside ? "delta-down" : undefined}
+                          title={
+                            !row.earnings_date
+                              ? "No report date known"
+                              : e.inside
+                                ? `Reports ${row.earnings_date}, before this expiry${e.share != null ? ` -- ${Math.round(e.share * 100)} % into the position` : ""}`
+                                : `Reports ${row.earnings_date}, after this expiry`
+                          }
+                        >
+                          {row.earnings_date ? `${e.inside ? "⚠ " : ""}${formatExpiry(row.earnings_date)}` : "—"}
+                        </td>
+                      );
+                    })()}
                     {sideColumns(result).map((col) => (
                       <SideCell
                         key={col.kind}
@@ -1089,15 +1154,19 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     ))}
                     {result.rows.some((r) => r.outcome) && (
                       <>
+                        <td>
+                          {(() => {
+                            const c = creditPerContract(row, result.price_at, result.strategy === "debit_spread");
+                            return c == null ? "—" : formatMoney(c);
+                          })()}
+                        </td>
+                        <td>{row.outcome?.risk_reward == null ? "—" : `${row.outcome.risk_reward.toFixed(1)} : 1`}</td>
                         {allColumns && (
-                          <>
-                            <td>
-                              {row.outcome
-                                ? `${formatMoney(row.outcome.max_profit ?? 0)} / ${formatMoney(row.outcome.max_loss ?? 0)}`
-                                : "—"}
-                            </td>
-                            <td>{row.outcome?.risk_reward == null ? "—" : `${row.outcome.risk_reward.toFixed(1)} : 1`}</td>
-                          </>
+                          <td>
+                            {row.outcome
+                              ? `${formatMoney(row.outcome.max_profit ?? 0)} / ${formatMoney(row.outcome.max_loss ?? 0)}`
+                              : "—"}
+                          </td>
                         )}
                         <td>{row.outcome ? pct(row.outcome.loss_probability) : "—"}</td>
                         <td className={row.outcome ? (row.outcome.expected_value > 0 ? "delta-up" : "delta-down") : undefined}>
