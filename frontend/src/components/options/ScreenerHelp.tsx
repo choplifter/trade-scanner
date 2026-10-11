@@ -236,8 +236,8 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
           <dt>Preset · Save current as…</dt>
           <dd>
             Every screen setting — strategy and side, DTE, delta band, open interest, wing, quote limit, earnings,
-            mid or natural, +1 expiry — and every result filter, under a name. Choosing one sets them all; the screen
-            button runs it. Saved presets follow your login. ★ marks the built-in ones.
+            mid or natural, +1 expiry — and every result filter, under a name. The menu offers the presets of the
+            strategy on screen only (for a vertical, of its side). Choosing one sets them all; the screen button runs it. Saved presets follow your login. ★ marks the built-in ones.
           </dd>
           <dt>★ Bot gems · 30–45 DTE</dt>
           <dd>

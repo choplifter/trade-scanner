@@ -1061,6 +1061,13 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const [presetName, setPresetName] = useState("");
   const [activePreset, setActivePreset] = useState<string>("");
   const allPresets = [...BUILT_IN_PRESETS, ...savedPresets];
+  // Only the presets of the strategy on screen -- and for a vertical, of its
+  // side: a bear call preset is not offered under Bull put.
+  const presetsHere = allPresets.filter((p) => p.strategy === strategy && (!vertical || p.side === side));
+  useEffect(() => {
+    if (activePreset && !presetsHere.some((p) => p.name === activePreset)) setActivePreset("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy, side]);
   // A second expiry for the candidates: one more chain a symbol.
   const [twoExpiries, setTwoExpiriesState] = useState(() => stored(STORE_TWO_EXPIRIES) === "1");
   const toggleTwoExpiries = () =>
@@ -1184,7 +1191,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     if (activePreset === name) setActivePreset("");
   };
   const activeIsOwn = savedPresets.some((p) => p.name === activePreset);
-  const activeNote = allPresets.find((p) => p.name === activePreset)?.note;
+  const activeNote = presetsHere.find((p) => p.name === activePreset)?.note;
 
   const run = async () => {
     if (!universe && symbols.length === 0) return;
@@ -1225,18 +1232,18 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   return (
     <div className="opt-screener">
       <div className="opt-preference screen-presets">
-        <label title="Every screen setting and result filter under a name. Choosing one sets them all; press the screen button to run it.">
+        <label title="The presets of the strategy on screen (for a credit or debit spread, of its side). Each holds every screen setting and result filter; choosing one sets them all, and the screen button runs it.">
           Preset{" "}
           <select
             value={activePreset}
             onChange={(e) => {
-              const p = allPresets.find((x) => x.name === e.target.value);
+              const p = presetsHere.find((x) => x.name === e.target.value);
               if (p) applyPreset(p);
               else setActivePreset("");
             }}
           >
             <option value="">—</option>
-            {allPresets.map((p) => (
+            {presetsHere.map((p) => (
               <option key={p.name} value={p.name} title={p.note}>
                 {p.builtIn ? "★ " : ""}
                 {p.name}
