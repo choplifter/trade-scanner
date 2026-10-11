@@ -614,6 +614,38 @@ export const BUILT_IN_PRESETS: ScreenPreset[] = [
     },
   },
   {
+    name: "Bot gems · ETF condor 30–45 DTE",
+    builtIn: true,
+    note:
+      "Iron condors on quiet index and sector ETFs (SPY, QQQ, IWM, DIA, TLT, XLF, XLV …) -- run it on a watchlist of " +
+      "them; the universe picks the most traded names, mostly single stocks. At 13-25 % implied volatility a 12-20 " +
+      "delta short brings too little against the width, so the shorts sit nearer, at 15-25 delta, and the bars are fitted " +
+      "to a calm market: loss probability up to 40 %, loss : gain up to 6, the nearer breakeven 0.7 sigma+ away, " +
+      "breakeven vol 2+ points over the forecast, IV/RV 1.1+. ETFs report no earnings, but the rule stays on avoid for " +
+      "the few single names a watchlist holds. Natural pricing, quotes within 10 %.",
+    strategy: "iron_condor",
+    side: "put",
+    dteMin: "30",
+    dteMax: "45",
+    deltaMin: "0.15",
+    deltaMax: "0.25",
+    minOi: "5000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "40",
+      maxLossGain: "6",
+      minToBe: "0.7",
+      minMargin: "2",
+      minIvRv: "1.1",
+      earningsOk: "1",
+    },
+  },
+  {
     name: "Bot gems · Cash-secured put 30–45 DTE",
     builtIn: true,
     note:
@@ -1632,6 +1664,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           This stored run treated earnings as "{result.criteria.earnings_policy}", not "{earnings}" as set above
           {earnings === "avoid" ? " -- rows holding a report before their expiry are still in it" : ""}. Run the screen to
           apply your setting.
+        </p>
+      )}
+      {result?.excluded_no_credit && result.excluded_no_credit.length > 0 && (
+        <p
+          className="order-hint"
+          title="A written structure that takes nothing in once every leg is crossed -- the short's bid at or under the wing's ask. Not tradable for a credit, so not a row; on quiet names the quotes are often wider than the premium."
+        >
+          Left out, no credit at the natural ({result.excluded_no_credit.length}): {result.excluded_no_credit.join(", ")}
         </p>
       )}
       {result?.excluded_by_earnings && result.excluded_by_earnings.length > 0 && (

@@ -456,6 +456,10 @@ class Row:
     # Set under the avoid policy when every expiry in the window holds the
     # next report: the symbol is left out of the table, counted instead.
     excluded_by_earnings: bool = False
+    # A written structure that brings in nothing once every leg is crossed
+    # (the short's bid at or under the wing's ask): not tradable for a
+    # credit, so left out and named instead.
+    excluded_no_credit: bool = False
     # The calendar's slope: the back expiry's ATM IV and front over back.
     back_expiry: date | None = None
     back_iv: float | None = None
@@ -1175,6 +1179,7 @@ async def _priced(
         Distribution.from_chain(chain.rows, chain.spot, row.atm_iv, years_left) if row.atm_iv and years_left > 0 else None
     )
     row.outcome = _outcome_for(row, req, chain, dist)
+    row.excluded_no_credit = no_credit(row.outcome, req.strategy)
     if req.strategy in SPREAD_STRATEGIES and row.expiry:
         bought = req.strategy == "debit_spread"
         row.put_outcome = _side_outcome(row.put_spread, "put", chain, row.expiry, dist, bought=bought)
@@ -1296,6 +1301,19 @@ def preselect(universe: dict, req: ScreenRequest) -> Preselection:
     if len(kept) > req.limit:
         reasons["past_limit"] = len(kept) - req.limit
     return Preselection(symbols=selected, considered=len(universe or {}), reasons=reasons)
+
+
+# The strategies that are written for a credit: one without a credit at the
+# natural is not a trade.
+CREDIT_STRATEGIES = frozenset({"cash_secured_put", "covered_call", "credit_spread", "iron_condor"})
+
+
+def no_credit(outcome: dict | None, strategy: str) -> bool:
+    """Whether a written structure takes nothing in at the natural."""
+    if strategy not in CREDIT_STRATEGIES or not outcome:
+        return False
+    natural = outcome.get("credit_natural")
+    return natural is not None and natural <= 0
 
 
 # The short deltas every row is also tried at: about 1.3, 1.0 and 0.7
@@ -1453,7 +1471,7 @@ def candidates_on(
         if key in seen:
             continue
         outcome = value_structure(parts, req, chain, expiry, atm_iv, dist)
-        if outcome is None:
+        if outcome is None or no_credit(outcome, req.strategy):
             continue
         seen.add(key)
         out.append(
@@ -1592,7 +1610,8 @@ async def screen_underlyings(
         )
     )
     excluded = [r for r in rows if r.excluded_by_earnings]
-    ranked = rank_rows([r for r in rows if not r.excluded_by_earnings], req.bias)
+    no_credit_rows = [r for r in rows if r.excluded_no_credit and not r.excluded_by_earnings]
+    ranked = rank_rows([r for r in rows if not r.excluded_by_earnings and not r.excluded_no_credit], req.bias)
     return {
         "as_of": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "strategy": req.strategy,
@@ -1627,6 +1646,9 @@ async def screen_underlyings(
             {"symbol": r.symbol, "earnings_date": r.earnings_date.isoformat() if r.earnings_date else None}
             for r in excluded
         ],
+        # Left out as untradable for a credit: nothing comes in once every
+        # leg is crossed.
+        "excluded_no_credit": [r.symbol for r in no_credit_rows],
         "disclaimer": (
             "Contract volume is not read (a day bar per contract); open interest and quoted size stand in. "
             "IV rank is judged where a symbol has 20 recorded sessions (a year, for those seeded from Barchart); "

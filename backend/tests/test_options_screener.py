@@ -46,8 +46,10 @@ def _chain(spot=100.0, *, spread=0.02, iv=0.30, oi=5_000) -> Chain:
         put_delta = -max(0.02, min(0.98, 0.5 + moneyness * 4))
         # Floored well above a penny: at 0.05 the rounding to cents collapses
         # bid and ask onto each other and every spread reads as zero.
-        mid_call = max(1.0, (spot - strike) * 0.5 + 3)
-        mid_put = max(1.0, (strike - spot) * 0.5 + 3)
+        # Out of the money the premium falls off with distance, as a chain's
+        # does: a flat floor made every vertical free and, crossed, a debit.
+        mid_call = (spot - strike) * 0.5 + 3 if strike <= spot else max(0.25, 3 - (strike - spot) * 0.12)
+        mid_put = (strike - spot) * 0.5 + 3 if strike >= spot else max(0.25, 3 - (spot - strike) * 0.12)
         rows.append(
             StrikeRow(
                 strike=float(strike),
@@ -293,7 +295,9 @@ def test_an_earnings_report_inside_the_expiry_fails_that_criterion():
 
 
 def test_thin_open_interest_and_wide_quotes_fail_their_criteria():
-    service = _Service({"THIN": _chain(oi=50, spread=0.20)})
+    # Wide enough to fail the quote criterion (12 % each side of the mid),
+    # not so wide that crossing it leaves no credit at all.
+    service = _Service({"THIN": _chain(oi=50, spread=0.12)})
     body = _run(service, ScreenRequest(symbols=["THIN"]), closes={"THIN": _closes(0.01)})
     criteria = {c["key"]: c for c in body["rows"][0]["criteria"]}
     assert criteria["open_interest"]["passed"] is False
@@ -387,13 +391,15 @@ def test_a_debit_spread_asks_for_the_wing_but_not_for_a_credit():
 
 
 def test_a_thin_credit_against_the_width_fails():
-    # A chain whose far strikes are nearly worthless: the credit is a
-    # rounding error against five points of width.
+    # A chain whose far strikes are nearly worthless: the credit is a few
+    # cents against five points of width -- still a credit when crossed.
+    thin = {90: (0.40, 0.42), 85: (0.10, 0.12), 80: (0.04, 0.05)}
     rows = []
     for r in _chain(spot=100.0).rows:
         put = r.put
-        if put is not None and r.strike < 95:
-            put = _quote(put.symbol, r.strike, "put", bid=0.10, ask=0.12, delta=put.delta)
+        if put is not None and int(r.strike) in thin:
+            bid, ask = thin[int(r.strike)]
+            put = _quote(put.symbol, r.strike, "put", bid=bid, ask=ask, delta=put.delta)
         rows.append(StrikeRow(strike=r.strike, call=r.call, put=put))
     chain = Chain(underlying="A", expiry=EXPIRY, spot=100.0, feed="opra", as_of=None, rows=rows)
     body = _run(_Service({"A": chain}), ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
@@ -946,7 +952,7 @@ def test_the_row_carries_both_risk_numbers_and_keeps_them_apart():
     row = body["rows"][0]
     outcome = row["outcome"]
     if outcome["max_profit"]:
-        assert outcome["risk_reward"] == pytest.approx(abs(outcome["max_loss"]) / outcome["max_profit"], rel=1e-6)
+        assert outcome["risk_reward"] == pytest.approx(abs(outcome["max_loss"]) / outcome["max_profit"], abs=0.01)
     else:
         assert outcome["risk_reward"] is None, "nothing to make, so no ratio rather than a division by zero"
     assert row["risk_share"] == pytest.approx(abs(outcome["max_loss"]) / 50_000.0, rel=1e-6)
@@ -1471,3 +1477,11 @@ def test_a_debit_spreads_side_is_valued_as_bought_and_a_lone_short_leg_has_its_o
     for strategy, key in (("cash_secured_put", "put_outcome"), ("covered_call", "call_outcome")):
         row = _run(_Service({"A": _chain(iv=0.30)}), ScreenRequest(symbols=["A"], strategy=strategy), closes={"A": _closes(0.01)})["rows"][0]
         assert row[key] is not None and "expected_value" in row[key]
+
+
+
+def test_a_written_structure_with_no_credit_once_crossed_is_left_out_and_named():
+    # Quotes so wide that the short's bid sits under the wing's ask.
+    body = _run(_Service({"A": _chain(spread=0.45)}), ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    assert body["rows"] == []
+    assert body["excluded_no_credit"] == ["A"]

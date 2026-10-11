@@ -1167,6 +1167,9 @@ export interface ScreenResponse {
   price_at?: "mid" | "natural";
   /** Left out under "avoid": every expiry in the window holds the report. */
   excluded_by_earnings?: { symbol: string; earnings_date: string | null }[];
+  /** Left out as untradable: a written structure with no credit once every
+   * leg is crossed. */
+  excluded_no_credit?: string[];
   bias: ScreenBias;
   criteria: {
     dte: [number, number];

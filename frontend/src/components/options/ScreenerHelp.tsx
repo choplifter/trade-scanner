@@ -287,6 +287,14 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             the report's jump, so part of any margin here is that jump. The riskier trade; size it as one.
             <BookRefLine refs={[NATENBERG.gaps]} />
           </dd>
+          <dt>★ ETF condor</dt>
+          <dd>
+            Iron condors on quiet index and sector ETFs — run it on a watchlist of them, since the universe picks mostly
+            single stocks. At 13–25 % implied volatility a short at 12–20 delta brings too little against the width
+            (an 11 October scan of ETFs read loss : gain from 11 to 60 : 1 for bull puts), so the shorts sit at 15–25 delta
+            and the bars fit a calm market: loss probability up to 40 %, loss : gain up to 6, the nearer breakeven
+            0.7σ+ away, margin 2+, IV/RV 1.1+.
+          </dd>
           <dt>★ Bear call · Iron condor · Cash-secured put · Covered call · Bull call (cheap vol)</dt>
           <dd>
             The same reasoning for each visible strategy, the bars fitted to its shape. Bear call: the bull put's mirror,
