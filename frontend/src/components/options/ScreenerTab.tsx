@@ -311,6 +311,9 @@ export interface FilterContext {
   forecast: number | null;
   ivRv: number | null;
   buyer: boolean;
+  /** The breakeven's distance in sigmas when the outcome does not carry it
+   * (a run stored before it did): read off the strikes, credit and IV. */
+  toBeSigma?: number | null;
 }
 
 function limit(text: string): number | null {
@@ -347,7 +350,8 @@ export function passesFilters(
   if (loss != null && !(o.max_loss != null && Math.abs(o.max_loss) <= Math.abs(loss))) return false;
   if (ratio != null && !(o.risk_reward != null && o.risk_reward <= ratio)) return false;
   if (ev != null && !(o.expected_value >= ev)) return false;
-  if (toBe != null && !(o.to_breakeven_sigma != null && Math.abs(o.to_breakeven_sigma) >= toBe)) return false;
+  const sigmas = o.to_breakeven_sigma ?? ctx.toBeSigma ?? null;
+  if (toBe != null && !(sigmas != null && Math.abs(sigmas) >= toBe)) return false;
   return true;
 }
 
@@ -355,8 +359,53 @@ function filtersActive(f: ResultFilters): boolean {
   return Object.values(f).some((v) => (v ?? "").trim() !== "");
 }
 
+/** The nearest breakeven's distance in sigmas from the row's own legs, for
+ * runs stored before the outcome carried it: short strike less (put) or
+ * plus (call) the credit, against the ATM IV over the days left. */
+function toBeSigmaOf(row: ScreenRow): number | null {
+  if (!row.spot || !row.atm_iv || !row.dte || row.dte <= 0) return null;
+  const sigma = row.atm_iv * Math.sqrt(row.dte / 365);
+  const credit = (row.put_spread?.credit ?? 0) + (row.call_spread?.credit ?? 0);
+  const bes: number[] = [];
+  if (row.put_spread) bes.push(row.put_spread.short_strike - credit);
+  else if (row.short_put?.mid != null) bes.push(row.short_put.strike - row.short_put.mid);
+  if (row.call_spread) bes.push(row.call_spread.short_strike + credit);
+  else if (row.short_call?.mid != null && !row.short_put) bes.push(row.short_call.strike + row.short_call.mid);
+  const valid = bes.filter((b) => b > 0);
+  if (!valid.length) return null;
+  return Math.min(...valid.map((b) => Math.abs(Math.log(b / row.spot!) / sigma)));
+}
+
 function contextOf(row: ScreenRow, strategy: ScreenStrategy): FilterContext {
-  return { forecast: row.forecast_vol ?? row.realised_vol, ivRv: row.iv_rv_ratio, buyer: strategy === "debit_spread" };
+  return {
+    forecast: row.forecast_vol ?? row.realised_vol,
+    ivRv: row.iv_rv_ratio,
+    buyer: strategy === "debit_spread",
+    toBeSigma: row.outcome?.to_breakeven_sigma ?? toBeSigmaOf(row),
+  };
+}
+
+const FILTER_LABELS: Record<keyof ResultFilters, string> = {
+  maxLossProb: "Loss",
+  minProfit: "Profit",
+  maxLoss: "Max loss",
+  maxLossGain: "Loss : Gain",
+  minEv: "EV",
+  minToBe: "To BE",
+  minMargin: "BE margin",
+  minIvRv: "IV/RV",
+};
+
+/** How many of `rows` each active limit removes on its own -- what turns
+ * "no rows" into "the earnings rule and BE margin took them". */
+function filterFunnel(rows: ScreenRow[], filters: ResultFilters, strategy: ScreenStrategy): { label: string; removed: number }[] {
+  return (Object.keys(filters) as (keyof ResultFilters)[])
+    .filter((key) => (filters[key] ?? "").trim() !== "")
+    .map((key) => {
+      const only: ResultFilters = { ...NO_FILTERS, [key]: filters[key] };
+      const removed = rows.filter((r) => !passesFilters(r.outcome, only, contextOf(r, strategy))).length;
+      return { label: FILTER_LABELS[key], removed };
+    });
 }
 
 // --- presets -------------------------------------------------------------------
@@ -395,8 +444,10 @@ export const BUILT_IN_PRESETS: ScreenPreset[] = [
       "Priced at the natural, so the credit is one a limit fills at. No earnings inside the expiry (the rich IV before a " +
       "report pays for the print, not an edge). Quotes within 10 %, open interest 5,000+. Kept only where the premium is " +
       "rich against the stock's own movement (IV/RV 1.2+) and the breakeven vol sits 3+ points over the forecast -- the " +
-      "measured edge -- with loss probability up to 22 %, loss : gain up to 6 and the breakeven at least 0.9 sigma away. " +
-      "EV is left open: under the market's own odds a fairly priced spread is about zero by construction.",
+      "measured edge -- with loss probability up to 25 %, loss : gain up to 10 (a cap on far-out credits worth a rounding " +
+      "error; a 16-delta spread runs 6-9 : 1) and the breakeven at least 0.9 sigma away. EV is left open: under the " +
+      "market's own odds a fairly priced spread is about zero by construction. In earnings season expect few or no rows: " +
+      "most of the rich premium then is the coming report, which this preset declines to sell.",
     strategy: "credit_spread",
     side: "put",
     dteMin: "30",
@@ -411,8 +462,8 @@ export const BUILT_IN_PRESETS: ScreenPreset[] = [
     twoExpiries: false,
     filters: {
       ...NO_FILTERS,
-      maxLossProb: "22",
-      maxLossGain: "6",
+      maxLossProb: "25",
+      maxLossGain: "10",
       minToBe: "0.9",
       minMargin: "3",
       minIvRv: "1.2",
@@ -1287,8 +1338,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           {filtersActive(filters) && (
             <p className="order-hint">
               {result.rows.filter((r) => passesFilters(r.outcome, filters, contextOf(r, result.strategy))).length} of{" "}
-              {result.rows.length} rows meet the
-              filters below the screen settings ·{" "}
+              {result.rows.length} rows meet the filters · each on its own removes{" "}
+              {filterFunnel(result.rows, filters, result.strategy)
+                .map((f) => `${f.label} ${f.removed}`)
+                .join(", ")}
+              {result.excluded_by_earnings && result.excluded_by_earnings.length > 0
+                ? ` · ${result.excluded_by_earnings.length} more left out for earnings before the screen`
+                : ""}{" "}
+              ·{" "}
               <button type="button" className="link-button" onClick={clearFilters}>
                 clear
               </button>

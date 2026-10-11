@@ -66,3 +66,13 @@ describe("the margin and IV/RV limits, and the built-in preset", () => {
     expect(pass(withBe, gems.filters, ctx)).toBe(true);
   });
 });
+
+describe("a run stored before the outcome carried its distance to breakeven", () => {
+  it("is judged on the distance read off its legs, not failed for lacking it", async () => {
+    const { passesFilters: pass } = await import("./ScreenerTab");
+    const old = { ...pltr, to_breakeven_sigma: undefined };
+    const ctx = { forecast: 0.436, ivRv: 1.3, buyer: false, toBeSigma: 0.98 };
+    expect(pass(old, { ...none, minToBe: "0.9" }, ctx)).toBe(true);
+    expect(pass(old, { ...none, minToBe: "1.0" }, ctx)).toBe(false);
+  });
+});

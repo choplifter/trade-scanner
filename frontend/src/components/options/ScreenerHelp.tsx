@@ -244,9 +244,13 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             Bull put spreads 30–45 days out with the short at 12–20 delta, where theta pays well and gamma is still
             mild; priced at the natural; no earnings inside the expiry; quotes within 10 %, open interest 5,000+.
             Kept only where the premium is rich against the stock's own movement (IV/RV 1.2+) and the breakeven vol
-            sits 3+ points over the forecast — the measured edge — with loss probability up to 22 %, loss : gain up
-            to 6 and the breakeven at least 0.9σ away. EV is left open on purpose: under the market's own odds a
-            fairly priced spread is worth about zero by construction, so an EV ≥ 0 limit would keep almost nothing.
+            sits 3+ points over the forecast — the measured edge — with loss probability up to 25 %, loss : gain up
+            to 10 (a cap on far-out credits worth a rounding error; a 16-delta spread runs 6–9 : 1) and the breakeven
+            at least 0.9σ away. EV is left open on purpose: under the market's own odds a fairly priced spread is
+            worth about zero by construction, so an EV ≥ 0 limit would keep almost nothing. In earnings season expect
+            few or no rows: on 9 October 50 of 60 bull-put rows held a report before expiry, and every row with a
+            margin worth having was one of them — the rich premium was the coming report, which this preset declines
+            to sell. The line above the table says which limit removed what.
             <BookRefLine refs={[NATENBERG.marginForError, NATENBERG.volForecasting]} />
           </dd>
         </dl>
