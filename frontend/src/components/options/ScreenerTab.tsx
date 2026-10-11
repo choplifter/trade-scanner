@@ -1774,6 +1774,22 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 ? ` · earnings only in the first ${Math.round(result.criteria.early_earnings_fraction * 100)} % of the position`
                 : ""}
           </p>
+          {result.rows.length > 0 && result.rows.every((r) => r.expiry == null) && (
+            <div className="screen-guide">
+              <strong>
+                No symbol lists an expiry {result.criteria.dte[0]}–{result.criteria.dte[1]} days out.
+              </strong>{" "}
+              {result.criteria.dte[1] === 0 ? (
+                <>
+                  A 0DTE screen needs an expiry today: on a weekend or a market holiday there is none, and only names
+                  with daily expiries (SPY, QQQ, IWM) have one every session. Run it on a trading day -- best after
+                  10:00 ET -- or set DTE to 1–3 to see the next session's expiry.
+                </>
+              ) : (
+                <>Widen the DTE window in step 3.</>
+              )}
+            </div>
+          )}
           {filtersActive(filters) &&
             result.rows.length > 0 &&
             !result.rows.some((r) => passesFilters(r.outcome, filters, contextOf(r, result.strategy))) &&
