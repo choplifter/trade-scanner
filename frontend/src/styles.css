@@ -6748,3 +6748,18 @@ td.chain-side.chain-stale {
 .screen-candidates th {
   padding: 2px 8px;
 }
+
+/* The screener's preset bar. */
+.screen-presets {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.screen-preset-name {
+  width: 160px;
+}
+
+.screen-preset-note {
+  flex: 1 1 100%;
+  white-space: normal;
+}

@@ -4,6 +4,7 @@ import { NATENBERG, withBook } from "./bookRefs";
 
 import { OrderRejectedError } from "../../api/http";
 import { latestScreen, screenUnderlyings } from "../../api/options";
+import { getStored, setStored } from "../../api/prefs";
 import { useWatchlist } from "../../hooks/useWatchlist";
 import type {
   LoadableStructure,
@@ -286,9 +287,31 @@ interface ResultFilters {
   minEv: string;
   /** Nearest breakeven at least this many sigmas from the price. */
   minToBe: string;
+  /** Breakeven vol at least this many points past the forecast, read for
+   * the structure's side -- where a seller's edge comes from. */
+  minMargin: string;
+  /** Implied over realised volatility at least. */
+  minIvRv: string;
 }
 
-const NO_FILTERS: ResultFilters = { maxLossProb: "", minProfit: "", maxLoss: "", maxLossGain: "", minEv: "", minToBe: "" };
+const NO_FILTERS: ResultFilters = {
+  maxLossProb: "",
+  minProfit: "",
+  maxLoss: "",
+  maxLossGain: "",
+  minEv: "",
+  minToBe: "",
+  minMargin: "",
+  minIvRv: "",
+};
+
+/** What a row knows that its outcome does not: the forecast its margin is
+ * read against, its IV/RV, and which side of volatility it is on. */
+export interface FilterContext {
+  forecast: number | null;
+  ivRv: number | null;
+  buyer: boolean;
+}
 
 function limit(text: string): number | null {
   if (text.trim() === "") return null;
@@ -298,15 +321,27 @@ function limit(text: string): number | null {
 
 /** Whether a structure's outcome meets every limit set. A number the
  * outcome does not carry fails a limit on it: "unknown" is not "within". */
-export function passesFilters(o: ScreenOutcome | null | undefined, f: ResultFilters): boolean {
-  const lossProb = limit(f.maxLossProb);
-  const profit = limit(f.minProfit);
-  const loss = limit(f.maxLoss);
-  const ratio = limit(f.maxLossGain);
-  const ev = limit(f.minEv);
-  const toBe = limit(f.minToBe);
-  if ([lossProb, profit, loss, ratio, ev, toBe].every((v) => v == null)) return true;
+export function passesFilters(
+  o: ScreenOutcome | null | undefined,
+  f: ResultFilters,
+  ctx: FilterContext = { forecast: null, ivRv: null, buyer: false },
+): boolean {
+  const lossProb = limit(f.maxLossProb ?? "");
+  const profit = limit(f.minProfit ?? "");
+  const loss = limit(f.maxLoss ?? "");
+  const ratio = limit(f.maxLossGain ?? "");
+  const ev = limit(f.minEv ?? "");
+  const toBe = limit(f.minToBe ?? "");
+  const margin = limit(f.minMargin ?? "");
+  const ivRv = limit(f.minIvRv ?? "");
+  if ([lossProb, profit, loss, ratio, ev, toBe, margin, ivRv].every((v) => v == null)) return true;
+  if (ivRv != null && !(ctx.ivRv != null && ctx.ivRv >= ivRv)) return false;
   if (!o) return false;
+  if (margin != null) {
+    if (o.breakeven_vol == null || ctx.forecast == null) return false;
+    const gap = (o.breakeven_vol - ctx.forecast) * 100;
+    if (!((ctx.buyer ? -gap : gap) >= margin)) return false;
+  }
   if (lossProb != null && !(o.loss_probability * 100 <= lossProb)) return false;
   if (profit != null && !(o.max_profit != null && o.max_profit >= profit)) return false;
   if (loss != null && !(o.max_loss != null && Math.abs(o.max_loss) <= Math.abs(loss))) return false;
@@ -317,7 +352,84 @@ export function passesFilters(o: ScreenOutcome | null | undefined, f: ResultFilt
 }
 
 function filtersActive(f: ResultFilters): boolean {
-  return Object.values(f).some((v) => v.trim() !== "");
+  return Object.values(f).some((v) => (v ?? "").trim() !== "");
+}
+
+function contextOf(row: ScreenRow, strategy: ScreenStrategy): FilterContext {
+  return { forecast: row.forecast_vol ?? row.realised_vol, ivRv: row.iv_rv_ratio, buyer: strategy === "debit_spread" };
+}
+
+// --- presets -------------------------------------------------------------------
+
+/** Everything a screen is set to, under a name: the strategy and its side,
+ * the screen's own bounds, the pricing, and the limits on the results. */
+export interface ScreenPreset {
+  name: string;
+  builtIn?: boolean;
+  /** Why it is set the way it is (built-in presets). */
+  note?: string;
+  strategy: ScreenStrategy;
+  side: OptionKind;
+  dteMin: string;
+  dteMax: string;
+  deltaMin: string;
+  deltaMax: string;
+  minOi: string;
+  wingPoints: string;
+  maxSpread: string;
+  earnings: "avoid" | "early" | "ignore";
+  priceAt: "mid" | "natural";
+  twoExpiries: boolean;
+  filters: ResultFilters;
+}
+
+/** The presets the app ships with. The first is the one argued for in the
+ * note: premium selling where the edge is measurable, the fill honest and
+ * the event risk out of the window. */
+export const BUILT_IN_PRESETS: ScreenPreset[] = [
+  {
+    name: "Bot gems · 30–45 DTE",
+    builtIn: true,
+    note:
+      "Bull put spreads 30-45 days out, short at 12-20 delta: the stretch where theta pays well and gamma is still mild. " +
+      "Priced at the natural, so the credit is one a limit fills at. No earnings inside the expiry (the rich IV before a " +
+      "report pays for the print, not an edge). Quotes within 10 %, open interest 5,000+. Kept only where the premium is " +
+      "rich against the stock's own movement (IV/RV 1.2+) and the breakeven vol sits 3+ points over the forecast -- the " +
+      "measured edge -- with loss probability up to 22 %, loss : gain up to 6 and the breakeven at least 0.9 sigma away. " +
+      "EV is left open: under the market's own odds a fairly priced spread is about zero by construction.",
+    strategy: "credit_spread",
+    side: "put",
+    dteMin: "30",
+    dteMax: "45",
+    deltaMin: "0.12",
+    deltaMax: "0.20",
+    minOi: "5000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "22",
+      maxLossGain: "6",
+      minToBe: "0.9",
+      minMargin: "3",
+      minIvRv: "1.2",
+    },
+  },
+];
+
+const PRESETS_KEY = "screener.presets";
+
+function loadPresets(): ScreenPreset[] {
+  try {
+    const raw = getStored(PRESETS_KEY);
+    const list = raw ? (JSON.parse(raw) as ScreenPreset[]) : [];
+    return Array.isArray(list) ? list.filter((p) => p && typeof p.name === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Whether the next report falls before the expiry, and how far into the
@@ -378,7 +490,7 @@ function CandidateTable({
   onSelectSymbol?: (symbol: string) => void;
 }) {
   const all = row.candidates ?? [];
-  const cands = all.filter((c) => passesFilters(c.outcome, filters));
+  const cands = all.filter((c) => passesFilters(c.outcome, filters, contextOf(row, strategy)));
   if (cands.length === 0) {
     return <p className="order-hint">None of the {all.length} other candidates meets the filters.</p>;
   }
@@ -696,6 +808,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     setFiltersState(NO_FILTERS);
     store(STORE_FILTERS, JSON.stringify(NO_FILTERS));
   };
+  // Presets: the built-in ones and the reader's own, kept with the other
+  // per-user preferences so they follow the login, not the browser.
+  const [savedPresets, setSavedPresets] = useState<ScreenPreset[]>(loadPresets);
+  const [presetName, setPresetName] = useState("");
+  const [activePreset, setActivePreset] = useState<string>("");
+  const allPresets = [...BUILT_IN_PRESETS, ...savedPresets];
   // A second expiry for the candidates: one more chain a symbol.
   const [twoExpiries, setTwoExpiriesState] = useState(() => stored(STORE_TWO_EXPIRIES) === "1");
   const toggleTwoExpiries = () =>
@@ -703,6 +821,10 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
       store(STORE_TWO_EXPIRIES, v ? "0" : "1");
       return !v;
     });
+  const setTwoExpiries = (on: boolean) => {
+    setTwoExpiriesState(on);
+    store(STORE_TWO_EXPIRIES, on ? "1" : "0");
+  };
   // Watchlist, or the whole tradable universe narrowed by stage one. The
   // universe by default: the watchlist answers "is this one worth it",
   // the universe answers "where is there anything worth it at all", and
@@ -765,6 +887,58 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategy, side]);
 
+  const snapshot = (name: string): ScreenPreset => ({
+    name,
+    strategy,
+    side,
+    dteMin,
+    dteMax,
+    deltaMin,
+    deltaMax,
+    minOi,
+    wingPoints,
+    maxSpread,
+    earnings,
+    priceAt,
+    twoExpiries,
+    filters,
+  });
+  const applyPreset = (p: ScreenPreset) => {
+    setStrategy(p.strategy);
+    setSide(p.side);
+    setDteMin(p.dteMin);
+    setDteMax(p.dteMax);
+    setDeltaMin(p.deltaMin);
+    setDeltaMax(p.deltaMax);
+    setMinOi(p.minOi);
+    setWingPoints(p.wingPoints);
+    setMaxSpread(p.maxSpread);
+    setEarnings(p.earnings);
+    setPriceAt(p.priceAt);
+    setTwoExpiries(p.twoExpiries);
+    const next = { ...NO_FILTERS, ...p.filters };
+    setFiltersState(next);
+    store(STORE_FILTERS, JSON.stringify(next));
+    setActivePreset(p.name);
+  };
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name || BUILT_IN_PRESETS.some((b) => b.name === name)) return;
+    const next = [...savedPresets.filter((p) => p.name !== name), snapshot(name)];
+    setSavedPresets(next);
+    setStored(PRESETS_KEY, JSON.stringify(next));
+    setActivePreset(name);
+    setPresetName("");
+  };
+  const deletePreset = (name: string) => {
+    const next = savedPresets.filter((p) => p.name !== name);
+    setSavedPresets(next);
+    setStored(PRESETS_KEY, JSON.stringify(next));
+    if (activePreset === name) setActivePreset("");
+  };
+  const activeIsOwn = savedPresets.some((p) => p.name === activePreset);
+  const activeNote = allPresets.find((p) => p.name === activePreset)?.note;
+
   const run = async () => {
     if (!universe && symbols.length === 0) return;
     setLoading(true);
@@ -803,6 +977,57 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
 
   return (
     <div className="opt-screener">
+      <div className="opt-preference screen-presets">
+        <label title="Every screen setting and result filter under a name. Choosing one sets them all; press the screen button to run it.">
+          Preset{" "}
+          <select
+            value={activePreset}
+            onChange={(e) => {
+              const p = allPresets.find((x) => x.name === e.target.value);
+              if (p) applyPreset(p);
+              else setActivePreset("");
+            }}
+          >
+            <option value="">—</option>
+            {allPresets.map((p) => (
+              <option key={p.name} value={p.name} title={p.note}>
+                {p.builtIn ? "★ " : ""}
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {activeIsOwn && (
+          <button type="button" className="timeframe-button" onClick={() => deletePreset(activePreset)} title="Delete this saved preset">
+            Delete
+          </button>
+        )}
+        <input
+          type="text"
+          className="screen-preset-name"
+          placeholder="Save current as…"
+          value={presetName}
+          maxLength={60}
+          onChange={(e) => setPresetName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") savePreset();
+          }}
+        />
+        <button
+          type="button"
+          className="timeframe-button"
+          disabled={!presetName.trim() || BUILT_IN_PRESETS.some((b) => b.name === presetName.trim())}
+          onClick={savePreset}
+          title="Save the strategy, side, screen bounds, pricing and result filters as they are now. A name already saved is replaced; a built-in name is taken."
+        >
+          Save
+        </button>
+        {activeNote && (
+          <span className="order-hint screen-preset-note" title={activeNote}>
+            {activeNote}
+          </span>
+        )}
+      </div>
       <div className="opt-preference">
         {STRATEGIES.map((b) => (
           <button
@@ -997,6 +1222,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           <input type="number" min={0} step={0.1} placeholder="σ" value={filters.minToBe} onChange={(e) => setFilter("minToBe", e.target.value)} />
           <span aria-hidden> σ</span>
         </label>
+        <label title="Breakeven volatility at least this many points past the forecast (for a debit: below it) -- the margin for error, and where a premium seller's edge comes from.">
+          BE margin ≥{" "}
+          <input type="number" step={1} placeholder="pts" value={filters.minMargin} onChange={(e) => setFilter("minMargin", e.target.value)} />
+        </label>
+        <label title="Implied over realised volatility at least. 1.2 is where the screen calls the premium rich.">
+          IV/RV ≥{" "}
+          <input type="number" min={0} step={0.05} placeholder="×" value={filters.minIvRv} onChange={(e) => setFilter("minIvRv", e.target.value)} />
+        </label>
         {filtersActive(filters) && (
           <button type="button" className="timeframe-button" onClick={clearFilters}>
             Clear
@@ -1053,7 +1286,8 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           </p>
           {filtersActive(filters) && (
             <p className="order-hint">
-              {result.rows.filter((r) => passesFilters(r.outcome, filters)).length} of {result.rows.length} rows meet the
+              {result.rows.filter((r) => passesFilters(r.outcome, filters, contextOf(r, result.strategy))).length} of{" "}
+              {result.rows.length} rows meet the
               filters below the screen settings ·{" "}
               <button type="button" className="link-button" onClick={clearFilters}>
                 clear
@@ -1163,7 +1397,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
             </thead>
             <tbody>
               {sortRows(
-                result.rows.filter((r) => passesFilters(r.outcome, filters)),
+                result.rows.filter((r) => passesFilters(r.outcome, filters, contextOf(r, result.strategy))),
                 sort.by,
                 sort.desc,
               ).map((row) => (

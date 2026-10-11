@@ -231,9 +231,29 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
           </>
         )}
 
+        <h3>Presets</h3>
+        <dl>
+          <dt>Preset · Save current as…</dt>
+          <dd>
+            Every screen setting — strategy and side, DTE, delta band, open interest, wing, quote limit, earnings,
+            mid or natural, +1 expiry — and every result filter, under a name. Choosing one sets them all; the screen
+            button runs it. Saved presets follow your login. ★ marks the built-in ones.
+          </dd>
+          <dt>★ Bot gems · 30–45 DTE</dt>
+          <dd>
+            Bull put spreads 30–45 days out with the short at 12–20 delta, where theta pays well and gamma is still
+            mild; priced at the natural; no earnings inside the expiry; quotes within 10 %, open interest 5,000+.
+            Kept only where the premium is rich against the stock's own movement (IV/RV 1.2+) and the breakeven vol
+            sits 3+ points over the forecast — the measured edge — with loss probability up to 22 %, loss : gain up
+            to 6 and the breakeven at least 0.9σ away. EV is left open on purpose: under the market's own odds a
+            fairly priced spread is worth about zero by construction, so an EV ≥ 0 limit would keep almost nothing.
+            <BookRefLine refs={[NATENBERG.marginForError, NATENBERG.volForecasting]} />
+          </dd>
+        </dl>
+
         <h3>Show only</h3>
         <dl>
-          <dt>Loss ≤ · Profit ≥ · Max loss ≤ · Loss : Gain ≤ · EV ≥ · To BE ≥</dt>
+          <dt>Loss ≤ · Profit ≥ · Max loss ≤ · Loss : Gain ≤ · EV ≥ · To BE ≥ · BE margin ≥ · IV/RV ≥</dt>
           <dd>
             Limits on each structure's own numbers, applied at once to the rows on screen — a stored run included —
             and to the candidates under a row. Blank means no limit; a row that does not carry the number fails the

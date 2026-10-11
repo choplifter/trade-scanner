@@ -35,3 +35,34 @@ describe("screen result filters", () => {
     expect(passesFilters({ ...pltr, to_breakeven_sigma: null }, { ...none, minToBe: "0.5" })).toBe(false);
   });
 });
+
+describe("the margin and IV/RV limits, and the built-in preset", () => {
+  const ctx = { forecast: 0.436, ivRv: 1.3, buyer: false };
+  const withBe = { ...pltr, breakeven_vol: 0.54 };
+
+  it("reads the breakeven-vol margin for the structure's side", async () => {
+    const { passesFilters: pass } = await import("./ScreenerTab");
+    expect(pass(withBe, { ...none, minMargin: "10" }, ctx)).toBe(true); // 54.0 - 43.6 = 10.4
+    expect(pass(withBe, { ...none, minMargin: "11" }, ctx)).toBe(false);
+    expect(pass(withBe, { ...none, minMargin: "0" }, { ...ctx, buyer: true })).toBe(false); // a buyer wants it below
+    expect(pass(withBe, { ...none, minMargin: "3" }, { ...ctx, forecast: null })).toBe(false);
+  });
+
+  it("limits IV/RV off the row", async () => {
+    const { passesFilters: pass } = await import("./ScreenerTab");
+    expect(pass(withBe, { ...none, minIvRv: "1.2" }, ctx)).toBe(true);
+    expect(pass(withBe, { ...none, minIvRv: "1.5" }, ctx)).toBe(false);
+  });
+
+  it("ships a preset that keeps a structure like PLTR's on its margin, not its EV", async () => {
+    const { BUILT_IN_PRESETS, passesFilters: pass } = await import("./ScreenerTab");
+    const gems = BUILT_IN_PRESETS[0];
+    expect(gems.name).toMatch(/Bot gems/);
+    expect(gems.earnings).toBe("avoid");
+    expect(gems.priceAt).toBe("natural");
+    expect(gems.filters.minEv).toBe("");
+    // PLTR's 175/170: 18 % loss, 5.5 : 1, +10.4 margin, IV/RV 1.3 -- but the
+    // breakeven 0.98 sigma away clears the 0.9 bar.
+    expect(pass(withBe, gems.filters, ctx)).toBe(true);
+  });
+});
