@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ScreenOutcome } from "../../types/options";
 import { passesFilters } from "./ScreenerTab";
 
-const none = { maxLossProb: "", minProfit: "", maxLoss: "", maxLossGain: "", minEv: "", minToBe: "" };
+const none = { maxLossProb: "", minProfit: "", maxLoss: "", maxLossGain: "", minEv: "", minToBe: "", minMargin: "", minIvRv: "", earningsOk: "" };
 const pltr: ScreenOutcome = {
   expected_value: -10.08,
   win_probability: 0.817,
@@ -74,5 +74,26 @@ describe("a run stored before the outcome carried its distance to breakeven", ()
     const ctx = { forecast: 0.436, ivRv: 1.3, buyer: false, toBeSigma: 0.98 };
     expect(pass(old, { ...none, minToBe: "0.9" }, ctx)).toBe(true);
     expect(pass(old, { ...none, minToBe: "1.0" }, ctx)).toBe(false);
+  });
+});
+
+describe("the earnings-ok limit and the early-earnings preset", () => {
+  it("takes out a row whose earnings rule failed and keeps one without a known date", async () => {
+    const { passesFilters: pass } = await import("./ScreenerTab");
+    const base = { forecast: 0.436, ivRv: 1.3, buyer: false };
+    expect(pass(pltr, { ...none, earningsOk: "1" }, { ...base, earningsPassed: false })).toBe(false);
+    expect(pass(pltr, { ...none, earningsOk: "1" }, { ...base, earningsPassed: true })).toBe(true);
+    expect(pass(pltr, { ...none, earningsOk: "1" }, { ...base, earningsPassed: null })).toBe(true);
+  });
+
+  it("ships the early-earnings preset further out and asking more", async () => {
+    const { BUILT_IN_PRESETS } = await import("./ScreenerTab");
+    const [gems, early] = BUILT_IN_PRESETS;
+    expect(early.name).toMatch(/early earnings/);
+    expect(early.earnings).toBe("early");
+    expect(early.filters.earningsOk).toBe("1");
+    expect(Number(early.deltaMax)).toBeLessThan(Number(gems.deltaMax));
+    expect(Number(early.filters.minMargin)).toBeGreaterThan(Number(gems.filters.minMargin));
+    expect(Number(early.filters.minToBe)).toBeGreaterThan(Number(gems.filters.minToBe));
   });
 });

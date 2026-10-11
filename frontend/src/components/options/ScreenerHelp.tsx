@@ -253,11 +253,20 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             to sell. The line above the table says which limit removed what.
             <BookRefLine refs={[NATENBERG.marginForError, NATENBERG.volForecasting]} />
           </dd>
+          <dt>★ Bot gems · 30–45 DTE · early earnings</dt>
+          <dd>
+            The same, with a report allowed in the first third of the position's life: the volatility it props up
+            collapses within days, and weeks of decay follow. A later report is taken out (Earnings ok). Because this
+            sells the print too, the strikes sit further out — 10–16 delta, the breakeven 1.1σ+ away — and the margin
+            asked for is larger, 5+ points with IV/RV 1.3+: the forecast is read off ordinary days and knows nothing of
+            the report's jump, so part of any margin here is that jump. The riskier trade; size it as one.
+            <BookRefLine refs={[NATENBERG.gaps]} />
+          </dd>
         </dl>
 
         <h3>Show only</h3>
         <dl>
-          <dt>Loss ≤ · Profit ≥ · Max loss ≤ · Loss : Gain ≤ · EV ≥ · To BE ≥ · BE margin ≥ · IV/RV ≥</dt>
+          <dt>Loss ≤ · Profit ≥ · Max loss ≤ · Loss : Gain ≤ · EV ≥ · To BE ≥ · BE margin ≥ · IV/RV ≥ · Earnings ok</dt>
           <dd>
             Limits on each structure's own numbers, applied at once to the rows on screen — a stored run included —
             and to the candidates under a row. Blank means no limit; a row that does not carry the number fails the

@@ -292,6 +292,9 @@ interface ResultFilters {
   minMargin: string;
   /** Implied over realised volatility at least. */
   minIvRv: string;
+  /** "1": only rows whose earnings criterion passed -- under "early", a
+   * report late in the position's life is otherwise still listed. */
+  earningsOk: string;
 }
 
 const NO_FILTERS: ResultFilters = {
@@ -303,6 +306,7 @@ const NO_FILTERS: ResultFilters = {
   minToBe: "",
   minMargin: "",
   minIvRv: "",
+  earningsOk: "",
 };
 
 /** What a row knows that its outcome does not: the forecast its margin is
@@ -314,6 +318,9 @@ export interface FilterContext {
   /** The breakeven's distance in sigmas when the outcome does not carry it
    * (a run stored before it did): read off the strikes, credit and IV. */
   toBeSigma?: number | null;
+  /** The row's earnings criterion: false when it failed, true when it
+   * passed, null when not judged or no date is known (an ETF). */
+  earningsPassed?: boolean | null;
 }
 
 function limit(text: string): number | null {
@@ -337,6 +344,12 @@ export function passesFilters(
   const toBe = limit(f.minToBe ?? "");
   const margin = limit(f.minMargin ?? "");
   const ivRv = limit(f.minIvRv ?? "");
+  const earningsOk = (f.earningsOk ?? "") === "1";
+  if (!earningsOk && [lossProb, profit, loss, ratio, ev, toBe, margin, ivRv].every((v) => v == null)) return true;
+  // A row whose earnings rule failed: under "early", a report late in the
+  // position's life. Unknown (no date, not judged) is not a failure here --
+  // that is most often an ETF, which reports nothing.
+  if (earningsOk && ctx.earningsPassed === false) return false;
   if ([lossProb, profit, loss, ratio, ev, toBe, margin, ivRv].every((v) => v == null)) return true;
   if (ivRv != null && !(ctx.ivRv != null && ctx.ivRv >= ivRv)) return false;
   if (!o) return false;
@@ -382,6 +395,7 @@ function contextOf(row: ScreenRow, strategy: ScreenStrategy): FilterContext {
     ivRv: row.iv_rv_ratio,
     buyer: strategy === "debit_spread",
     toBeSigma: row.outcome?.to_breakeven_sigma ?? toBeSigmaOf(row),
+    earningsPassed: row.criteria.find((c) => c.key === "earnings")?.passed ?? null,
   };
 }
 
@@ -394,6 +408,7 @@ const FILTER_LABELS: Record<keyof ResultFilters, string> = {
   minToBe: "To BE",
   minMargin: "BE margin",
   minIvRv: "IV/RV",
+  earningsOk: "Earnings",
 };
 
 /** How many of `rows` each active limit removes on its own -- what turns
@@ -467,6 +482,40 @@ export const BUILT_IN_PRESETS: ScreenPreset[] = [
       minToBe: "0.9",
       minMargin: "3",
       minIvRv: "1.2",
+      earningsOk: "1",
+    },
+  },
+  {
+    name: "Bot gems · 30–45 DTE · early earnings",
+    builtIn: true,
+    note:
+      "The same bull put spreads, but a report in the first third of the position's life is allowed: the implied " +
+      "volatility the report props up collapses within days, while weeks of decay follow on strikes chosen for the " +
+      "whole period. A report later than that is taken out (Earnings ok). This sells the print as well as the premium, " +
+      "so the strikes sit further out to survive the gap -- short at 10-16 delta, the breakeven at least 1.1 sigma away " +
+      "-- and the margin asked for is larger, 5+ points over the forecast with IV/RV 1.3+, because the forecast is read " +
+      "off ordinary days and knows nothing of the report's jump: part of that margin is the jump itself. Size it as the " +
+      "riskier trade it is.",
+    strategy: "credit_spread",
+    side: "put",
+    dteMin: "30",
+    dteMax: "45",
+    deltaMin: "0.10",
+    deltaMax: "0.16",
+    minOi: "5000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "early",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "20",
+      maxLossGain: "12",
+      minToBe: "1.1",
+      minMargin: "5",
+      minIvRv: "1.3",
+      earningsOk: "1",
     },
   },
 ];
@@ -1280,6 +1329,14 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         <label title="Implied over realised volatility at least. 1.2 is where the screen calls the premium rich.">
           IV/RV ≥{" "}
           <input type="number" min={0} step={0.05} placeholder="×" value={filters.minIvRv} onChange={(e) => setFilter("minIvRv", e.target.value)} />
+        </label>
+        <label title="Only rows whose earnings rule passed. Under 'early ok' a report late in the position's life fails the rule but the row is still listed; this takes it out. Rows with no known date (most ETFs) stay.">
+          <input
+            type="checkbox"
+            checked={filters.earningsOk === "1"}
+            onChange={(e) => setFilter("earningsOk", e.target.checked ? "1" : "")}
+          />{" "}
+          Earnings ok
         </label>
         {filtersActive(filters) && (
           <button type="button" className="timeframe-button" onClick={clearFilters}>
