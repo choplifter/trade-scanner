@@ -194,6 +194,34 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
           )}
         </dl>
 
+        {(winged || sells) && (
+          <>
+            <h3>More than one structure per symbol</h3>
+            <dl>
+              <dt>▸ n — the other candidates</dt>
+              <dd>
+                Each row is one structure at the delta band above. The button beside Ticket unfolds the same structure
+                at 10, 16 and 25 delta on the same expiry, valued the same way — what Barchart lists as separate rows,
+                kept under the symbol. <strong>+1 expiry</strong> adds them on a second expiry in the window, at the
+                cost of one more chain per symbol.
+              </dd>
+              <dt>Mid · Natural</dt>
+              <dd>
+                What credit, expected value and the extremes are priced at: the mids, or the natural — every leg at
+                its bid or ask, which is Barchart's convention and the honest number for a limit meant to fill at
+                once. The chance of profit is net of crossing the quotes either way. The candidate table shows both
+                credits.
+              </dd>
+              <dt>To BE</dt>
+              <dd>
+                How far the nearest breakeven sits from the price: in percent, and in standard deviations to expiry
+                at the at-the-money IV — 1σ is about where a 16-delta strike sits. Sorts by the sigmas.
+                <BookRefLine refs={[NATENBERG.volatilityAsStdDev]} />
+              </dd>
+            </dl>
+          </>
+        )}
+
         <h3>When nothing passes, these are the levers</h3>
         <dl>
           {winged && (

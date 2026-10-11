@@ -6735,3 +6735,16 @@ td.chain-side.chain-stale {
 .key-figure.bad {
   border-color: var(--delta-down);
 }
+
+/* The other candidates under a screen row (ScreenerTab's CandidateTable). */
+.screen-candidates {
+  margin: 4px 0 6px 16px;
+  width: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.screen-candidates td,
+.screen-candidates th {
+  padding: 2px 8px;
+}

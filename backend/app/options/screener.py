@@ -297,6 +297,17 @@ class ScreenRequest(BaseModel):
     # bear put, on the calls a bull call. Ignored by the other strategies,
     # whose side is fixed (see sides_for).
     side: Literal["put", "call"] = "put"
+    # What the structure's credit, expectancy and extremes are priced at:
+    # the mids (the default, as before) or the natural -- every leg filled
+    # at its bid or ask, Barchart's convention and the honest number for a
+    # limit meant to fill at once. The chance of profit is net of the cross
+    # either way.
+    price_at: Literal["mid", "natural"] = "mid"
+    # Besides the row's own structure, the same one at CANDIDATE_DELTAS
+    # (no extra fetch), and with `candidate_expiries` 2 on a second expiry
+    # in the window too (one more chain a symbol).
+    candidates: bool = True
+    candidate_expiries: int = Field(default=1, ge=1, le=2)
     # 0 screens today's expiry (0DTE).
     dte_min: int = Field(default=DTE_RANGE[0], ge=0, le=400)
     dte_max: int = Field(default=DTE_RANGE[1], ge=0, le=400)
@@ -440,6 +451,8 @@ class Row:
     # _side_outcome.
     put_outcome: dict | None = None
     call_outcome: dict | None = None
+    # The same structure at other deltas (and expiries): see _candidates.
+    candidates: list = field(default_factory=list)
     # The calendar's slope: the back expiry's ATM IV and front over back.
     back_expiry: date | None = None
     back_iv: float | None = None
@@ -506,6 +519,7 @@ class Row:
             "outcome": self.outcome,
             "put_outcome": self.put_outcome,
             "call_outcome": self.call_outcome,
+            "candidates": self.candidates,
             "risk_share": None if self.risk_share is None else round(self.risk_share, 4),
             "back_expiry": self.back_expiry.isoformat() if self.back_expiry else None,
             "back_iv": None if self.back_iv is None else round(self.back_iv, 4),
@@ -1129,16 +1143,9 @@ async def _priced(
     if cone is not None:
         row.cone_pct, row.cone_window = round(cone.percentile, 1), cone.window
     band = (req.short_delta_min, req.short_delta_max)
-    traded = sides_for(req.strategy, req.side)
-    row.short_put = pick_short(chain.rows, "put", band) if "put" in traded else None
-    row.short_call = pick_short(chain.rows, "call", band) if "call" in traded else None
-    if req.strategy in SPREAD_STRATEGIES:
-        for leg, kind, attr in ((row.short_put, "put", "put_spread"), (row.short_call, "call", "call_spread")):
-            if leg is None:
-                continue
-            target, reach = req.wing_width_for(chain.spot, _years_left(row.expiry) if row.expiry else None)
-            wing = pick_wing(chain.rows, kind, leg["strike"], chain.spot, target=target, reach=reach)
-            setattr(row, attr, vertical_of(leg, wing))
+    parts = structure_on(chain, req, band, expiry)
+    row.short_put, row.short_call = parts["short_put"], parts["short_call"]
+    row.put_spread, row.call_spread = parts["put_spread"], parts["call_spread"]
     # The chain's smile, fitted once for the row: every chance below is
     # read under it (app.options.distribution).
     years_left = _years_left(row.expiry) if row.expiry else 0.0
@@ -1149,6 +1156,28 @@ async def _priced(
     if req.strategy in SPREAD_STRATEGIES and row.expiry:
         row.put_outcome = _side_outcome(row.put_spread, "put", chain, row.expiry, dist)
         row.call_outcome = _side_outcome(row.call_spread, "call", chain, row.expiry, dist)
+    # The same structure at other deltas, and on a second expiry if asked:
+    # what Barchart lists as separate rows, kept under the symbol here.
+    if req.candidates and row.outcome is not None and (req.strategy in SPREAD_STRATEGIES or req.strategy in ("cash_secured_put", "covered_call")):
+        seen = {parts_key(expiry, parts)}
+        row.candidates = candidates_on(chain, req, expiry, row.atm_iv, dist, seen)
+        if req.candidate_expiries > 1:
+            others = [e for e in listed if e != expiry]
+            second = pick_expiry(others, today, req.dte_min, req.dte_max, prefer_monthly=req.prefer_monthly)
+            if second is not None:
+                try:
+                    other_chain = await service.chain(symbol, second, width)
+                except Exception:
+                    logger.debug("Screener: no second chain for %s %s", symbol, second, exc_info=True)
+                else:
+                    other_iv = atm_iv_of(other_chain.rows, other_chain.spot)
+                    other_years = _years_left(second)
+                    other_dist = (
+                        Distribution.from_chain(other_chain.rows, other_chain.spot, other_iv, other_years)
+                        if other_iv and other_years > 0
+                        else None
+                    )
+                    row.candidates += candidates_on(other_chain, req, second, other_iv, other_dist, seen)
     if req.strategy == "calendar":
         # The slope needs a second expiry, so this is the one strategy that
         # costs two chain fetches a symbol. Roughly twice the front's DTE,
@@ -1243,15 +1272,62 @@ def preselect(universe: dict, req: ScreenRequest) -> Preselection:
     return Preselection(symbols=selected, considered=len(universe or {}), reasons=reasons)
 
 
-def _outcome_for(row: Row, req: ScreenRequest, chain: Chain, dist=None) -> dict | None:
-    """The structure this screen would write, valued. Built from the legs
-    the row already picked, so the numbers belong to the strikes shown and
-    not to some other version of the trade."""
+# The short deltas every row is also tried at: about 1.3, 1.0 and 0.7
+# standard deviations out -- far, textbook, near.
+CANDIDATE_DELTAS = (0.10, 0.16, 0.25)
+
+
+def structure_on(chain: Chain, req: ScreenRequest, band: tuple[float, float], expiry: date) -> dict:
+    """The legs this screen writes on `chain` with short deltas in `band`:
+    {short_put, short_call, put_spread, call_spread}, each None where the
+    strategy does not trade that side or the chain cannot place it."""
+    traded = sides_for(req.strategy, req.side)
+    parts: dict = {"short_put": None, "short_call": None, "put_spread": None, "call_spread": None}
+    for kind in traded:
+        leg = pick_short(chain.rows, kind, band)
+        parts[f"short_{kind}"] = leg
+        if leg is not None and req.strategy in SPREAD_STRATEGIES:
+            target, reach = req.wing_width_for(chain.spot, _years_left(expiry))
+            wing = pick_wing(chain.rows, kind, leg["strike"], chain.spot, target=target, reach=reach)
+            parts[f"{kind}_spread"] = vertical_of(leg, wing)
+    return parts
+
+
+def breakevens_of(legs: list[dict], net: float) -> list[float]:
+    """Where the payoff at expiry crosses zero, for legs (kind, strike,
+    side) bought (+) or sold (-) at `net` per share. The payoff is linear
+    between strikes, so a sign change between two breakpoints is solved
+    exactly by interpolation."""
+    from app.options.payoff import intrinsic
+
+    def pnl(price: float) -> float:
+        value = sum((1 if leg["side"] == "buy" else -1) * intrinsic(leg["kind"], price, leg["strike"]) for leg in legs)
+        return value - net
+
+    strikes = sorted({leg["strike"] for leg in legs})
+    points = [max(0.0, strikes[0] * 0.01)] + strikes + [strikes[-1] * 3]
+    out: list[float] = []
+    for a, b in zip(points, points[1:]):
+        pa, pb = pnl(a), pnl(b)
+        if pa == 0:
+            out.append(round(a, 2))
+        elif pa * pb < 0:
+            out.append(round(a + (b - a) * pa / (pa - pb), 2))
+    return sorted(set(out))
+
+
+def value_structure(
+    parts: dict, req: ScreenRequest, chain: Chain, expiry: date, atm_iv: float | None, dist=None
+) -> dict | None:
+    """The structure `parts` describes, valued: the expectation and chances
+    of structure_outcome, priced at the mid or the natural (req.price_at),
+    plus its breakeven volatility and how far its nearest breakeven sits
+    from the price -- in percent and in standard deviations to expiry."""
     legs: list[dict] = []
     credit = 0.0
     cross = 0.0
     if req.strategy in ("cash_secured_put", "covered_call"):
-        leg = row.short_put if req.strategy == "cash_secured_put" else row.short_call
+        leg = parts["short_put"] if req.strategy == "cash_secured_put" else parts["short_call"]
         if leg is None or leg.get("mid") is None:
             return None
         kind = "put" if req.strategy == "cash_secured_put" else "call"
@@ -1260,7 +1336,7 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain, dist=None) -> dict 
         cross = _half_spread(leg)
     elif req.strategy in SPREAD_STRATEGIES:
         kinds = sides_for(req.strategy, req.side)
-        pairs = [row.put_spread if kind == "put" else row.call_spread for kind in kinds]
+        pairs = [parts["put_spread"] if kind == "put" else parts["call_spread"] for kind in kinds]
         if any(p is None for p in pairs):
             return None
         for pair, kind in zip(pairs, kinds):
@@ -1274,25 +1350,91 @@ def _outcome_for(row: Row, req: ScreenRequest, chain: Chain, dist=None) -> dict 
         # A long option or a calendar: the screen judged the chain, not a
         # structure, so there is nothing here to value.
         return None
-    years = _years_left(row.expiry) if row.expiry else 0.0
-    if not row.expiry:
+    if not expiry:
         return None
-    outcome = structure_outcome(legs, credit, chain.spot, row.atm_iv, years, row.expiry, cross=cross, dist=dist)
-    if outcome is not None:
-        # The volatility the price implies, against which the realised
-        # one is the margin for error (app.options.position_risk).
-        from app.options.position_risk import RiskLeg, breakeven_vol
+    years = _years_left(expiry)
+    mid_credit, mid_cross = credit, cross
+    # At the natural every leg fills at its bid or ask: the credit shrinks
+    # (a debit grows) by the cross, and nothing is left to charge the
+    # chance for -- the same win, read off a worse price.
+    if req.price_at == "natural":
+        credit -= cross
+        cross = 0.0
+    outcome = structure_outcome(legs, credit, chain.spot, atm_iv, years, expiry, cross=cross, dist=dist)
+    if outcome is None:
+        return None
+    outcome["price_at"] = req.price_at
+    outcome["credit"] = round(mid_credit, 4)
+    outcome["credit_natural"] = round(mid_credit - mid_cross, 4)
+    # The volatility the price implies, against which the forecast is the
+    # margin for error (app.options.position_risk).
+    from app.options.position_risk import RiskLeg, breakeven_vol
 
-        risk_legs = [
-            RiskLeg(leg["kind"], leg["strike"], row.expiry, -1 if leg["side"] == "sell" else 1, leg["iv"]) for leg in legs
-        ]
-        be = (
-            breakeven_vol(risk_legs, chain.spot, datetime.now(timezone.utc), -credit, row.atm_iv)
-            if row.atm_iv
-            else None
-        )
-        outcome["breakeven_vol"] = round(be, 4) if be is not None else None
+    risk_legs = [RiskLeg(leg["kind"], leg["strike"], expiry, -1 if leg["side"] == "sell" else 1, leg["iv"]) for leg in legs]
+    be = breakeven_vol(risk_legs, chain.spot, datetime.now(timezone.utc), -credit, atm_iv) if atm_iv else None
+    outcome["breakeven_vol"] = round(be, 4) if be is not None else None
+    # How far the price may move before the structure stops paying.
+    bes = breakevens_of(legs, -credit)
+    outcome["breakevens"] = bes
+    if bes and chain.spot:
+        nearest = min(bes, key=lambda b: abs(b - chain.spot))
+        outcome["to_breakeven_pct"] = round(nearest / chain.spot - 1, 4)
+        sigma = atm_iv * math.sqrt(years) if atm_iv and years > 0 else None
+        outcome["to_breakeven_sigma"] = round(math.log(nearest / chain.spot) / sigma, 2) if sigma else None
+    else:
+        outcome["to_breakeven_pct"] = None
+        outcome["to_breakeven_sigma"] = None
     return outcome
+
+
+def _outcome_for(row: Row, req: ScreenRequest, chain: Chain, dist=None) -> dict | None:
+    """The structure this screen would write, valued. Built from the legs
+    the row already picked, so the numbers belong to the strikes shown and
+    not to some other version of the trade."""
+    parts = {
+        "short_put": row.short_put,
+        "short_call": row.short_call,
+        "put_spread": row.put_spread,
+        "call_spread": row.call_spread,
+    }
+    return value_structure(parts, req, chain, row.expiry, row.atm_iv, dist) if row.expiry else None
+
+
+def parts_key(expiry: date, parts: dict) -> tuple:
+    """What makes two structures the same: the expiry and every strike."""
+    legs = []
+    for name, part in sorted(parts.items()):
+        if part is None:
+            continue
+        legs.append((name, part.get("short_strike", part.get("strike")), part.get("long_strike")))
+    return (expiry, tuple(legs))
+
+
+def candidates_on(
+    chain: Chain, req: ScreenRequest, expiry: date, atm_iv: float | None, dist, seen: set
+) -> list[dict]:
+    """The row's structure at each of CANDIDATE_DELTAS on this chain, valued
+    the same way; a set of strikes already listed (`seen`) is skipped."""
+    out: list[dict] = []
+    for target in CANDIDATE_DELTAS:
+        parts = structure_on(chain, req, (target, target), expiry)
+        key = parts_key(expiry, parts)
+        if key in seen:
+            continue
+        outcome = value_structure(parts, req, chain, expiry, atm_iv, dist)
+        if outcome is None:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "expiry": expiry.isoformat(),
+                "dte": (expiry - datetime.now(timezone.utc).date()).days,
+                "delta_target": target,
+                **parts,
+                "outcome": outcome,
+            }
+        )
+    return out
 
 
 def _side_outcome(vertical: dict | None, kind: str, chain: Chain, expiry: date, dist=None) -> dict | None:
@@ -1401,6 +1543,7 @@ async def screen_underlyings(
         "side": req.side,
         "sides": list(sides_for(req.strategy, req.side)),
         "structure": VERTICAL_NAMES.get((req.strategy, req.side)),
+        "price_at": req.price_at,
         "bias": req.bias,
         # Stage one, when it ran: how many names were considered and what
         # the ones that never got a chain fell on.

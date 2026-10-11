@@ -975,6 +975,11 @@ export interface ScreenRequest {
   /** Which side a vertical is written on (credit: bull put / bear call;
    * debit: bear put / bull call). Ignored by the fixed-side strategies. */
   side?: OptionKind;
+  /** Credit, expectancy and extremes at the mids or at the natural. */
+  price_at?: "mid" | "natural";
+  /** The row's structure at other deltas too; 2 adds a second expiry. */
+  candidates?: boolean;
+  candidate_expiries?: 1 | 2;
   /** Omitted with `scan_universe`: stage one picks the list. */
   symbols?: string[] | null;
   /** Screen the tradable universe: stage one narrows it on price and
@@ -1045,13 +1050,36 @@ export interface ScreenOutcome {
   max_profit: number | null;
   max_loss: number | null;
   risk_reward: number | null;
+  /** What the numbers above are priced at, and both credits per share. */
+  price_at?: "mid" | "natural";
+  credit?: number;
+  credit_natural?: number;
+  /** Where the payoff at expiry crosses zero, and how far the nearest of
+   * them is from the price -- as a fraction and in sigmas to expiry. */
+  breakevens?: number[];
+  to_breakeven_pct?: number | null;
+  to_breakeven_sigma?: number | null;
   /** The ATM-level volatility at which the model values the structure at
    * its credit (debit): Natenberg's margin for error against realised. */
   breakeven_vol?: number | null;
 }
 
+/** The row's structure at another delta (or expiry) -- backend
+ * screener.candidates_on. */
+export interface ScreenCandidate {
+  expiry: string;
+  dte: number;
+  delta_target: number;
+  short_put: ScreenShortLeg | null;
+  short_call: ScreenShortLeg | null;
+  put_spread: ScreenVertical | null;
+  call_spread: ScreenVertical | null;
+  outcome: ScreenOutcome;
+}
+
 export interface ScreenRow {
   symbol: string;
+  candidates?: ScreenCandidate[];
   expiry: string | null;
   dte: number | null;
   spot: number | null;
@@ -1130,6 +1158,7 @@ export interface ScreenResponse {
   sides?: OptionKind[];
   /** "bull put", "bear call"… for a vertical. */
   structure?: string | null;
+  price_at?: "mid" | "natural";
   bias: ScreenBias;
   criteria: {
     dte: [number, number];

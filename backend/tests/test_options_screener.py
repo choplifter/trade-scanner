@@ -1337,3 +1337,85 @@ def test_a_cash_secured_put_is_not_judged_on_a_call_and_a_condor_keeps_both():
     condor = _run(_Service({"A": _chain(iv=0.40)}), ScreenRequest(symbols=["A"], strategy="iron_condor"), closes={"A": _closes(0.01)})
     assert condor["sides"] == ["put", "call"]
     assert {"short_put_delta", "short_call_delta"} <= _keys(condor["rows"][0])
+
+
+# --- natural pricing, breakeven distance, candidates ---------------------------
+
+
+def test_at_the_natural_the_credit_and_the_expectation_are_lower_and_the_mid_still_shown():
+    service = _Service({"A": _chain(iv=0.40, spread=0.10)})
+    mid = _run(service, ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    nat = _run(service, ScreenRequest(symbols=["A"], strategy="credit_spread", price_at="natural"), closes={"A": _closes(0.01)})
+    om, on = mid["rows"][0]["outcome"], nat["rows"][0]["outcome"]
+    assert nat["price_at"] == "natural" and on["price_at"] == "natural"
+    assert on["credit"] == om["credit"] and on["credit_natural"] < on["credit"]
+    assert on["expected_value"] < om["expected_value"]
+    assert on["max_profit"] < om["max_profit"]
+
+
+def test_the_breakeven_is_the_short_strike_less_the_credit_and_its_distance_is_given():
+    body = _run(_Service({"A": _chain(iv=0.40)}), ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    out = row["outcome"]
+    short, credit = row["put_spread"]["short_strike"], out["credit"]
+    assert out["breakevens"] == [pytest.approx(short - credit, abs=0.01)]
+    assert out["to_breakeven_pct"] < 0, "a bull put's breakeven sits below the price"
+    assert out["to_breakeven_sigma"] < 0
+
+
+def test_breakevens_of_a_condor_are_both_shorts_widened_by_the_credit():
+    from app.options.screener import breakevens_of
+
+    legs = [
+        {"kind": "put", "strike": 85, "side": "buy"},
+        {"kind": "put", "strike": 90, "side": "sell"},
+        {"kind": "call", "strike": 110, "side": "sell"},
+        {"kind": "call", "strike": 115, "side": "buy"},
+    ]
+    assert breakevens_of(legs, -1.5) == [88.5, 111.5]
+
+
+def test_each_row_carries_its_structure_at_other_deltas_without_repeats():
+    body = _run(_Service({"A": _chain(iv=0.40)}), ScreenRequest(symbols=["A"], strategy="credit_spread"), closes={"A": _closes(0.01)})
+    row = body["rows"][0]
+    cands = row["candidates"]
+    assert 1 <= len(cands) <= 3
+    shorts = [c["put_spread"]["short_strike"] for c in cands]
+    assert len(set(shorts)) == len(shorts), "no candidate twice"
+    assert row["put_spread"]["short_strike"] not in shorts, "nor the row's own structure again"
+    assert all(c["outcome"]["expected_value"] is not None and c["short_call"] is None for c in cands)
+
+
+def test_candidates_can_be_switched_off():
+    body = _run(_Service({"A": _chain(iv=0.40)}), ScreenRequest(symbols=["A"], strategy="credit_spread", candidates=False), closes={"A": _closes(0.01)})
+    assert body["rows"][0]["candidates"] == []
+
+
+class _TwoExpiries(_Service):
+    """The same chain listed on two expiries in the window."""
+
+    def __init__(self, chain: Chain, second: date):
+        super().__init__({"A": chain})
+        self.second = second
+
+    async def expiries(self, symbol: str) -> dict:
+        body = await super().expiries(symbol)
+        body["expiries"].append({"expiry": self.second.isoformat(), "dte": (self.second - TODAY).days, "contract_count": 40})
+        return body
+
+    async def chain(self, symbol: str, expiry: date, width: float | None = None) -> Chain:
+        self.fetched.append(f"{symbol}:{expiry}")
+        base = self.chains[symbol]
+        return base if expiry == base.expiry else Chain(
+            underlying=base.underlying, expiry=expiry, spot=base.spot, feed=base.feed, as_of=base.as_of, rows=base.rows
+        )
+
+
+def test_a_second_expiry_costs_one_more_chain_and_adds_its_own_candidates():
+    chain = _chain(iv=0.40)
+    second = chain.expiry + timedelta(days=7)
+    service = _TwoExpiries(chain, second)
+    body = _run(service, ScreenRequest(symbols=["A"], strategy="credit_spread", candidate_expiries=2), closes={"A": _closes(0.01)})
+    expiries = {c["expiry"] for c in body["rows"][0]["candidates"]}
+    assert second.isoformat() in expiries
+    assert sum(1 for f in service.fetched if f.startswith("A:")) == 2

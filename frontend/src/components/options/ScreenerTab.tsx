@@ -13,6 +13,7 @@ import type {
   ScreenRow,
   ScreenShortLeg,
   ScreenStrategy,
+  ScreenCandidate,
   OptionKind,
   ScreenVertical,
   Strategy,
@@ -220,6 +221,7 @@ const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
   "Loss prob": (r) => r.outcome?.loss_probability ?? null,
   EV: (r) => r.outcome?.expected_value ?? null,
   "BE vol": (r) => r.outcome?.breakeven_vol ?? null,
+  "To BE": (r) => (r.outcome?.to_breakeven_sigma != null ? Math.abs(r.outcome.to_breakeven_sigma) : null),
   "Risk %": (r) => r.risk_share,
 };
 
@@ -261,6 +263,109 @@ function sideColumns(result: ScreenResponse): { kind: OptionKind; label: string 
         ? "Short put"
         : "Short call";
   return [{ kind, label }];
+}
+
+/** "−4.2% · 1.1σ": how far the nearest breakeven sits from the price. */
+function toBreakeven(o: ScreenOutcome | null | undefined): string {
+  if (!o || o.to_breakeven_pct == null) return "—";
+  const p = o.to_breakeven_pct * 100;
+  const pctText = `${p > 0 ? "+" : p < 0 ? "−" : ""}${Math.abs(p).toFixed(1)}%`;
+  return o.to_breakeven_sigma == null ? pctText : `${pctText} · ${Math.abs(o.to_breakeven_sigma).toFixed(1)}σ`;
+}
+
+/** The structure a candidate describes, as the row-shaped value structureOf
+ * reads -- a candidate carries the same legs a row does. */
+function candidateRow(row: ScreenRow, c: ScreenCandidate): ScreenRow {
+  return {
+    ...row,
+    expiry: c.expiry,
+    dte: c.dte,
+    short_put: c.short_put,
+    short_call: c.short_call,
+    put_spread: c.put_spread,
+    call_spread: c.call_spread,
+    outcome: c.outcome,
+  };
+}
+
+function candidateStrikes(c: ScreenCandidate): string {
+  const parts: string[] = [];
+  if (c.put_spread) parts.push(`${formatPrice(c.put_spread.long_strike)}/${formatPrice(c.put_spread.short_strike)}P`);
+  else if (c.short_put) parts.push(`${formatPrice(c.short_put.strike)}P`);
+  if (c.call_spread) parts.push(`${formatPrice(c.call_spread.short_strike)}/${formatPrice(c.call_spread.long_strike)}C`);
+  else if (c.short_call) parts.push(`${formatPrice(c.short_call.strike)}C`);
+  return parts.join(" · ");
+}
+
+/** The row's structure at the other deltas (and expiry), one line each,
+ * valued the same way -- Barchart's many rows per symbol, kept under it. */
+function CandidateTable({ row, strategy, onSelectSymbol }: { row: ScreenRow; strategy: ScreenStrategy; onSelectSymbol?: (symbol: string) => void }) {
+  const cands = row.candidates ?? [];
+  return (
+    <table className="performance-table screen-candidates">
+      <thead>
+        <tr>
+          <th>Expiry</th>
+          <th title="The short delta this candidate was built at">Δ</th>
+          <th>Strikes</th>
+          <th title="Credit per share at the mid / at the natural">Credit mid / nat</th>
+          <th>Loss prob</th>
+          <th>EV</th>
+          <th>R/R</th>
+          <th title="How far the nearest breakeven sits from the price">To BE</th>
+          <th title="Breakeven volatility less the forecast, read for the seller">BE margin</th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {cands.map((c) => {
+          const o = c.outcome;
+          const shown = candidateRow(row, c);
+          const expected = row.forecast_vol ?? row.realised_vol;
+          const margin =
+            o.breakeven_vol != null && expected != null
+              ? (strategy === "debit_spread" ? expected - o.breakeven_vol : o.breakeven_vol - expected) * 100
+              : null;
+          const structure = structureOf(shown, strategy);
+          return (
+            <tr key={`${c.expiry}-${c.delta_target}-${candidateStrikes(c)}`}>
+              <td>
+                {formatExpiry(c.expiry)} ({c.dte}d)
+              </td>
+              <td>{Math.round(c.delta_target * 100)}Δ</td>
+              <td>{candidateStrikes(c)}</td>
+              <td>
+                {o.credit != null ? o.credit.toFixed(2) : "—"} / {o.credit_natural != null ? o.credit_natural.toFixed(2) : "—"}
+              </td>
+              <td>{pct(o.loss_probability)}</td>
+              <td className={o.expected_value > 0 ? "delta-up" : "delta-down"}>{formatMoney(o.expected_value)}</td>
+              <td>{o.risk_reward == null ? "—" : `${o.risk_reward.toFixed(1)} : 1`}</td>
+              <td>{toBreakeven(o)}</td>
+              <td className={margin == null ? undefined : margin >= 0 ? "delta-up" : "delta-down"}>
+                {margin == null ? "—" : `${margin >= 0 ? "+" : ""}${margin.toFixed(1)}`}
+              </td>
+              <td>
+                {structure && (
+                  <button
+                    type="button"
+                    className="timeframe-button"
+                    title="Load these strikes into the spread ticket on the Chain tab"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectSymbol?.(row.symbol);
+                      requestTicket({ symbol: row.symbol, structure });
+                    }}
+                  >
+                    Ticket
+                  </button>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
 }
 
 function sortRows(rows: ScreenRow[], by: string | null, desc: boolean): ScreenRow[] {
@@ -420,6 +525,8 @@ function SideCell({
 const STORE_STRATEGY = "screener.strategy";
 const STORE_UNIVERSE = "screener.universe";
 const STORE_SIDE = "screener.side";
+const STORE_PRICE_AT = "screener.priceAt";
+const STORE_TWO_EXPIRIES = "screener.twoExpiries";
 const VERTICAL_LABELS: Record<"credit_spread" | "debit_spread", Record<OptionKind, string>> = {
   credit_spread: { put: "Bull put", call: "Bear call" },
   debit_spread: { put: "Bear put", call: "Bull call" },
@@ -464,6 +571,28 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  // Which rows have their other candidates unfolded.
+  const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
+  const toggleUnfolded = (symbol: string) =>
+    setUnfolded((cur) => {
+      const next = new Set(cur);
+      if (next.has(symbol)) next.delete(symbol);
+      else next.add(symbol);
+      return next;
+    });
+  // Barchart prices at the natural; the mid stays the default here.
+  const [priceAt, setPriceAtState] = useState<"mid" | "natural">(() => (stored(STORE_PRICE_AT) === "natural" ? "natural" : "mid"));
+  const setPriceAt = (next: "mid" | "natural") => {
+    setPriceAtState(next);
+    store(STORE_PRICE_AT, next);
+  };
+  // A second expiry for the candidates: one more chain a symbol.
+  const [twoExpiries, setTwoExpiriesState] = useState(() => stored(STORE_TWO_EXPIRIES) === "1");
+  const toggleTwoExpiries = () =>
+    setTwoExpiriesState((v) => {
+      store(STORE_TWO_EXPIRIES, v ? "0" : "1");
+      return !v;
+    });
   // Watchlist, or the whole tradable universe narrowed by stage one. The
   // universe by default: the watchlist answers "is this one worth it",
   // the universe answers "where is there anything worth it at all", and
@@ -534,6 +663,8 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
       const bounds = {
         strategy,
         ...(vertical ? { side } : {}),
+        price_at: priceAt,
+        candidate_expiries: (twoExpiries ? 2 : 1) as 1 | 2,
         // 0 is today's expiry (0DTE), not a blank.
         dte_min: numeric(dteMin, 30, true),
         dte_max: numeric(dteMax, 60, true),
@@ -607,6 +738,33 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           title="Screen the tradable universe instead of the watchlist. Stage one narrows it on price and dollar volume -- numbers the scanner's universe already carries, so that part is free -- and only the survivors cost a chain fetch."
         >
           {universe ? "Universe" : "Watchlist"}
+        </button>
+        <span className="screen-side-toggle">
+          {(["mid", "natural"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              className="timeframe-button"
+              aria-pressed={priceAt === k}
+              onClick={() => setPriceAt(k)}
+              title={
+                k === "mid"
+                  ? "Credit, EV and the extremes at the mids; the chance of profit is net of crossing the quotes either way."
+                  : "Credit, EV and the extremes at the natural -- every leg at its bid or ask, Barchart's convention and the honest number for a limit meant to fill at once."
+              }
+            >
+              {k === "mid" ? "Mid" : "Natural"}
+            </button>
+          ))}
+        </span>
+        <button
+          type="button"
+          className="timeframe-button"
+          aria-pressed={twoExpiries}
+          onClick={toggleTwoExpiries}
+          title="Besides each row's own structure the screen lists it at 10, 16 and 25 delta on the same expiry (no extra cost). This adds the same on a second expiry in the window -- one more chain fetch per symbol."
+        >
+          +1 expiry
         </button>
         <button
           type="button"
@@ -780,6 +938,12 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       onSort={onSort}
                     />
                     <Th
+                      label="To BE"
+                      title="How far the nearest breakeven sits from the price, in percent and in standard deviations to expiry at the at-the-money IV. Sorts by the sigmas."
+                      sort={sort}
+                      onSort={onSort}
+                    />
+                    <Th
                       label="Risk %"
                       title="The max loss against your account's equity -- the size decision, as opposed to R/R, which is the structure's own shape. The criterion fails past 2 %."
                       sort={sort}
@@ -892,6 +1056,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                           {row.outcome ? formatMoney(row.outcome.expected_value) : "—"}
                         </td>
                         <BreakevenVolCell row={row} buyer={result.strategy === "debit_spread"} />
+                        <td>{toBreakeven(row.outcome)}</td>
                         <td className={row.risk_share != null && row.risk_share > 0.02 ? "delta-down" : undefined}>
                           {row.risk_share == null ? "—" : pct(row.risk_share, 1)}
                         </td>
@@ -901,6 +1066,20 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       <td>{row.term_ratio == null ? "—" : `${row.term_ratio.toFixed(2)}×`}</td>
                     )}
                     <td className="screen-actions">
+                      {(row.candidates?.length ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          className="timeframe-button"
+                          aria-pressed={unfolded.has(row.symbol)}
+                          title="The same structure at 10, 16 and 25 delta (and on a second expiry with +1 expiry), valued the same way"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleUnfolded(row.symbol);
+                          }}
+                        >
+                          {unfolded.has(row.symbol) ? "▾" : "▸"} {row.candidates!.length}
+                        </button>
+                      )}
                       {(() => {
                         const structure = structureOf(row, result.strategy);
                         return structure ? (
@@ -942,9 +1121,16 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                       </button>
                     </td>
                   </tr>
+                  {unfolded.has(row.symbol) && (row.candidates?.length ?? 0) > 0 && (
+                    <tr key={`${row.symbol}-candidates`} className="screen-detail">
+                      <td colSpan={20 + sideColumns(result).length - 1}>
+                        <CandidateTable row={row} strategy={result.strategy} onSelectSymbol={onSelectSymbol} />
+                      </td>
+                    </tr>
+                  )}
                   {open === row.symbol && (
                     <tr key={`${row.symbol}-criteria`} className="screen-detail">
-                      <td colSpan={19 + sideColumns(result).length - 1}>
+                      <td colSpan={20 + sideColumns(result).length - 1}>
                         <Criteria row={row} />
                       </td>
                     </tr>
