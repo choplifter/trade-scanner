@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -234,6 +235,65 @@ def natural_net(row: ScreenRow, chain) -> float | None:
         total += price if leg.side == "sell" else -price
     return round(total, 4)
 
+# The screen's own bars, applied to an imported row: the widest leg's quote
+# against its mid (screener.MAX_SPREAD_FRACTION) and the credit against the
+# width it risks (screener.MIN_CREDIT_TO_WIDTH).
+MAX_QUOTE_FRACTION = 0.10
+MIN_CREDIT_TO_WIDTH = 0.10
+
+
+def worst_quote(row: ScreenRow, chain) -> float | None:
+    """The widest leg's bid/ask as a share of its own mid -- the leg that
+    decides whether the package fills. None when a leg is not two-sided."""
+    from app.options.screener import spread_fraction
+
+    worst = 0.0
+    for leg in row.legs:
+        quote = chain.quote(leg.kind, leg.strike)
+        frac = spread_fraction(quote.bid, quote.ask) if quote is not None else None
+        if frac is None:
+            return None
+        worst = max(worst, frac)
+    return round(worst, 4)
+
+
+def widest_wing(row: ScreenRow) -> float | None:
+    """The wider of the structure's verticals, the width it risks."""
+    widths = []
+    for kind in ("put", "call"):
+        strikes = sorted(l.strike for l in row.legs if l.kind == kind)
+        if len(strikes) == 2:
+            widths.append(strikes[1] - strikes[0])
+    return max(widths) if widths else None
+
+
+def checks_for(ours: dict, row: ScreenRow, net: float | None) -> list[dict]:
+    """The screen's verdict on an imported row: what Barchart's list does not
+    judge -- whether it can be filled, whether it is worth anything at the
+    natural and at the stock's own volatility, whether a report sits inside
+    it, whether the credit pays for the width. A None is "not known", left
+    out of the verdict rather than failed."""
+    out: list[dict] = []
+    wq = ours.get("worst_quote")
+    out.append({"key": "quote", "label": "Quote width", "passed": None if wq is None else wq <= MAX_QUOTE_FRACTION,
+                "detail": "a leg is not quoted on both sides" if wq is None else f"widest leg {wq:.0%} of its mid, wanted {MAX_QUOTE_FRACTION:.0%} or less"})
+    ev = ours.get("expected_value")
+    out.append({"key": "ev", "label": "EV at the natural", "passed": None if ev is None else ev > 0,
+                "detail": "not valued" if ev is None else f"{ev:+,.0f} per contract under the chain's smile"})
+    ev_rv = ours.get("expected_value_rv")
+    out.append({"key": "ev_rv", "label": "EV at the realised-vol forecast", "passed": None if ev_rv is None else ev_rv > 0,
+                "detail": "no forecast" if ev_rv is None else f"{ev_rv:+,.0f} per contract if the stock moves as its history says"})
+    inside = ours.get("earnings_inside")
+    out.append({"key": "earnings", "label": "Earnings", "passed": not inside,
+                "detail": f"reports {ours.get('earnings_date')}, before this expiry" if inside else "none before expiry (or no date known)"})
+    width = widest_wing(row)
+    if width and net is not None and net > 0:
+        ctw = net / width
+        out.append({"key": "credit_to_width", "label": "Credit vs width", "passed": ctw >= MIN_CREDIT_TO_WIDTH,
+                    "detail": f"{ctw:.0%} of the width at the natural, wanted {MIN_CREDIT_TO_WIDTH:.0%}+"})
+    return out
+
+
 # Chains fetched per import at most, by default: one per (symbol, expiry)
 # among the rows checked. A 4,787-row export is mostly the same few dozen
 # chains, so rows far outnumber chains.
@@ -395,6 +455,24 @@ async def enrich(
         report = earnings.get(row.symbol)
         ours["earnings_date"] = report.isoformat() if report else None
         ours["earnings_inside"] = bool(report and report <= row.expiry)
+        # What the screen judges and Barchart does not: the fill, the
+        # distance to the breakeven, and a verdict over all of it.
+        from app.options.screener import breakevens_of
+
+        ours["worst_quote"] = worst_quote(row, chain)
+        if net is not None:
+            bes = breakevens_of([{"kind": l.kind, "strike": l.strike, "side": l.side} for l in row.legs], -net)
+            nearest = min(bes, key=lambda b: abs(b - chain.spot)) if bes and chain.spot else None
+            if nearest is not None:
+                sigma = atm * math.sqrt(years) if atm and years > 0 else None
+                ours["to_breakeven_pct"] = round(nearest / chain.spot - 1, 4)
+                ours["to_breakeven_sigma"] = round(math.log(nearest / chain.spot) / sigma, 2) if sigma else None
+        checks = checks_for(ours, row, net)
+        judged = [c["passed"] for c in checks if c["passed"] is not None]
+        ours["checks"] = checks
+        ours["passed"] = bool(judged) and all(judged)
+        ours["score"] = sum(1 for p in judged if p)
+        ours["of"] = len(judged)
         item["ours"] = ours
         out.append(item)
     return out

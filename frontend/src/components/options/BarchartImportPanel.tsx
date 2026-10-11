@@ -25,7 +25,7 @@ const DEPTHS = [
   { rows: 1000, chains: 100, label: "first 1000 rows (slow)" },
 ];
 
-type SortKey = "Symbol" | "Expiry" | "Net" | "Loss BC" | "Ours skew" | "EV" | "EV (RV)";
+type SortKey = "Symbol" | "Expiry" | "Net" | "Loss BC" | "Ours skew" | "EV" | "EV (RV)" | "Verdict" | "Worst leg" | "To BE";
 const SORTS: Record<SortKey, (r: BarchartScreenRow) => number | string | null> = {
   Symbol: (r) => r.symbol,
   Expiry: (r) => r.dte,
@@ -34,7 +34,23 @@ const SORTS: Record<SortKey, (r: BarchartScreenRow) => number | string | null> =
   "Ours skew": (r) => r.ours?.loss_prob_skew ?? null,
   EV: (r) => r.ours?.expected_value ?? null,
   "EV (RV)": (r) => r.ours?.expected_value_rv ?? null,
+  // Passing rows first, then by how many checks they pass.
+  Verdict: (r) => (r.ours?.of ? (r.ours.passed ? 100 : 0) + (r.ours.score ?? 0) : null),
+  "Worst leg": (r) => r.ours?.worst_quote ?? null,
+  "To BE": (r) => (r.ours?.to_breakeven_sigma != null ? Math.abs(r.ours.to_breakeven_sigma) : null),
 };
+
+function verdictTitle(r: BarchartScreenRow): string {
+  const checks = r.ours?.checks ?? [];
+  return checks.map((c) => `${c.passed == null ? "·" : c.passed ? "✓" : "✗"} ${c.label}: ${c.detail}`).join("\n");
+}
+
+function toBe(pctValue: number | null | undefined, sigma: number | null | undefined): string {
+  if (pctValue == null) return "—";
+  const p = pctValue * 100;
+  const text = `${p > 0 ? "+" : p < 0 ? "−" : ""}${Math.abs(p).toFixed(1)}%`;
+  return sigma == null ? text : `${text} · ${Math.abs(sigma).toFixed(1)}σ`;
+}
 
 function strikes(row: BarchartScreenRow): string {
   return row.legs
@@ -169,6 +185,7 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
               <table className="opt-table bc-import-table">
                 <thead>
                   <tr>
+                    {th("Verdict", "The screen's own checks on this row: quote width, EV at the natural and at the realised-vol forecast, earnings inside the expiry, credit against width. Hover a row's mark for each check. Sorts passing rows first.")}
                     {th("Symbol")}
                     {th("Expiry")}
                     <th scope="col">Legs</th>
@@ -183,6 +200,8 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
                     {th("EV", "Our expected value per contract at today's natural prices for the same strikes, on the at-the-money distribution. About zero for anything priced at its own IV.")}
                     {th("EV (RV)", "The same at the stock's realised-vol forecast instead of its IV: what the condor earns on average if the stock moves as its history says. Positive where implied runs enough above realised to pay for the risk and the bid/ask.")}
                     <th scope="col">Earnings</th>
+                    {th("Worst leg", "The widest leg's bid/ask as a share of its mid -- the leg that decides whether the package fills. Red past 10 %, the screen's bar.")}
+                    {th("To BE", "How far the nearest breakeven sits from the price, in percent and in sigmas to expiry.")}
                     <th scope="col" title="Barchart's IV rank / ours (ours needs 20 recorded sessions).">IV rank</th>
                     <th scope="col" aria-label="Actions" />
                   </tr>
@@ -193,6 +212,12 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
                     const worse = o?.loss_prob_skew != null && r.loss_prob != null && o.loss_prob_skew > r.loss_prob + 0.02;
                     return (
                       <tr key={`${r.symbol}-${r.expiry}-${i}`}>
+                        <td
+                          className={o?.of ? (o.passed ? "delta-up" : "delta-down") : undefined}
+                          title={o?.checks ? verdictTitle(r) : undefined}
+                        >
+                          {o?.of ? `${o.passed ? "✓" : "✗"} ${o.score}/${o.of}` : "—"}
+                        </td>
                         <th scope="row">{r.symbol}</th>
                         <td>
                           {formatExpiry(r.expiry)}
@@ -222,6 +247,10 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
                         <td className={o?.earnings_inside ? "delta-down" : undefined} title={o?.earnings_inside ? "Reports before this expiry" : undefined}>
                           {o?.earnings_date ? formatExpiry(o.earnings_date) : "—"}
                         </td>
+                        <td className={o?.worst_quote != null && o.worst_quote > 0.1 ? "delta-down" : undefined}>
+                          {o?.worst_quote == null ? "—" : `${(o.worst_quote * 100).toFixed(0)} %`}
+                        </td>
+                        <td>{toBe(o?.to_breakeven_pct, o?.to_breakeven_sigma)}</td>
                         <td>
                           {r.iv_rank == null ? "—" : `${r.iv_rank.toFixed(0)} %`} / {o?.iv_rank == null ? "—" : `${o.iv_rank.toFixed(0)} %`}
                         </td>

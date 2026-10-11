@@ -231,3 +231,36 @@ def test_barcharts_real_bull_put_layout_reads_the_sold_leg_first():
     assert row.loss_prob == pytest.approx(0.28) and row.iv_rank == pytest.approx(80.04)
     assert ticket_for(row)["short_strike"] == 24.0 and ticket_for(row)["long_strike"] == 22.0
     assert is_screener_export("bull-put-spread-option-screener-bot-bull-put-10-10-2026.csv")
+
+
+# --- the screen's verdict on an imported row -----------------------------------
+
+
+def _condor_row():
+    from datetime import date
+
+    from app.options.barchart_screener import Leg, ScreenRow
+
+    legs = [Leg(14.0, "put", "buy", 0.06), Leg(14.5, "put", "sell", 0.10), Leg(16.0, "call", "sell", 0.26), Leg(16.5, "call", "buy", 0.15)]
+    return ScreenRow("NU", 15.56, date(2026, 10, 16), 10, legs, 16.15, 14.35, 0.15, 0.35, 65.6, 0.44)
+
+
+def test_the_verdict_passes_only_when_every_known_check_does():
+    from app.options.barchart_screener import checks_for
+
+    row = _condor_row()
+    good = {"worst_quote": 0.08, "expected_value": 4.0, "expected_value_rv": 12.0, "earnings_inside": False}
+    checks = checks_for(good, row, 0.15)
+    assert {c["key"]: c["passed"] for c in checks} == {
+        "quote": True, "ev": True, "ev_rv": True, "earnings": True, "credit_to_width": True,
+    }, "0.15 on half a point of width is 30 %"
+    wide = checks_for({**good, "worst_quote": 0.4}, row, 0.15)
+    assert next(c for c in wide if c["key"] == "quote")["passed"] is False
+    unknown = checks_for({**good, "worst_quote": None, "expected_value_rv": None}, row, 0.15)
+    assert {c["key"]: c["passed"] for c in unknown}["ev_rv"] is None, "not known is left out, not failed"
+
+
+def test_the_widest_wing_is_the_risk_of_the_structure():
+    from app.options.barchart_screener import widest_wing
+
+    assert widest_wing(_condor_row()) == 0.5

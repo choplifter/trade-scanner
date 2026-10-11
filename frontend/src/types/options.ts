@@ -1287,6 +1287,15 @@ export interface BarchartScreenRow {
     earnings_date?: string | null;
     earnings_inside?: boolean;
     iv_rank?: number | null;
+    /** The widest leg's bid/ask against its mid. */
+    worst_quote?: number | null;
+    to_breakeven_pct?: number | null;
+    to_breakeven_sigma?: number | null;
+    /** The screen's verdict: each check, and whether all known ones pass. */
+    checks?: { key: string; label: string; passed: boolean | null; detail: string }[];
+    passed?: boolean;
+    score?: number;
+    of?: number;
   };
 }
 
