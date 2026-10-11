@@ -270,6 +270,56 @@ function sideColumns(result: ScreenResponse): { kind: OptionKind; label: string 
   return [{ kind, label }];
 }
 
+/** Limits on a structure's own numbers, applied to the rows on screen --
+ * no new run needed, so they work on a stored run too. Each is a string as
+ * typed; blank means no limit. */
+interface ResultFilters {
+  /** Loss probability at most, in percent. */
+  maxLossProb: string;
+  /** Maximum profit per contract at least, in dollars. */
+  minProfit: string;
+  /** Maximum loss per contract at most, in dollars (a positive number). */
+  maxLoss: string;
+  /** Loss : gain at most, e.g. 5 for 5 : 1. */
+  maxLossGain: string;
+  /** Expected value per contract at least, in dollars. */
+  minEv: string;
+  /** Nearest breakeven at least this many sigmas from the price. */
+  minToBe: string;
+}
+
+const NO_FILTERS: ResultFilters = { maxLossProb: "", minProfit: "", maxLoss: "", maxLossGain: "", minEv: "", minToBe: "" };
+
+function limit(text: string): number | null {
+  if (text.trim() === "") return null;
+  const n = Number(text.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Whether a structure's outcome meets every limit set. A number the
+ * outcome does not carry fails a limit on it: "unknown" is not "within". */
+export function passesFilters(o: ScreenOutcome | null | undefined, f: ResultFilters): boolean {
+  const lossProb = limit(f.maxLossProb);
+  const profit = limit(f.minProfit);
+  const loss = limit(f.maxLoss);
+  const ratio = limit(f.maxLossGain);
+  const ev = limit(f.minEv);
+  const toBe = limit(f.minToBe);
+  if ([lossProb, profit, loss, ratio, ev, toBe].every((v) => v == null)) return true;
+  if (!o) return false;
+  if (lossProb != null && !(o.loss_probability * 100 <= lossProb)) return false;
+  if (profit != null && !(o.max_profit != null && o.max_profit >= profit)) return false;
+  if (loss != null && !(o.max_loss != null && Math.abs(o.max_loss) <= Math.abs(loss))) return false;
+  if (ratio != null && !(o.risk_reward != null && o.risk_reward <= ratio)) return false;
+  if (ev != null && !(o.expected_value >= ev)) return false;
+  if (toBe != null && !(o.to_breakeven_sigma != null && Math.abs(o.to_breakeven_sigma) >= toBe)) return false;
+  return true;
+}
+
+function filtersActive(f: ResultFilters): boolean {
+  return Object.values(f).some((v) => v.trim() !== "");
+}
+
 /** Whether the next report falls before the expiry, and how far into the
  * position: early is the crush arriving while the strikes are far away,
  * late a gap meeting high gamma and little time. */
@@ -316,8 +366,22 @@ function candidateStrikes(c: ScreenCandidate): string {
 
 /** The row's structure at the other deltas (and expiry), one line each,
  * valued the same way -- Barchart's many rows per symbol, kept under it. */
-function CandidateTable({ row, strategy, onSelectSymbol }: { row: ScreenRow; strategy: ScreenStrategy; onSelectSymbol?: (symbol: string) => void }) {
-  const cands = row.candidates ?? [];
+function CandidateTable({
+  row,
+  strategy,
+  filters,
+  onSelectSymbol,
+}: {
+  row: ScreenRow;
+  strategy: ScreenStrategy;
+  filters: ResultFilters;
+  onSelectSymbol?: (symbol: string) => void;
+}) {
+  const all = row.candidates ?? [];
+  const cands = all.filter((c) => passesFilters(c.outcome, filters));
+  if (cands.length === 0) {
+    return <p className="order-hint">None of the {all.length} other candidates meets the filters.</p>;
+  }
   return (
     <table className="performance-table screen-candidates">
       <thead>
@@ -545,6 +609,7 @@ const STORE_SIDE = "screener.side";
 const STORE_PRICE_AT = "screener.priceAt";
 const STORE_TWO_EXPIRIES = "screener.twoExpiries";
 const STORE_ALL_COLUMNS = "screener.allColumns";
+const STORE_FILTERS = "screener.filters";
 const VERTICAL_LABELS: Record<"credit_spread" | "debit_spread", Record<OptionKind, string>> = {
   credit_spread: { put: "Bull put", call: "Bear call" },
   debit_spread: { put: "Bear put", call: "Bull call" },
@@ -613,6 +678,24 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
       store(STORE_ALL_COLUMNS, v ? "0" : "1");
       return !v;
     });
+  // Limits on the rows' own numbers, remembered between visits.
+  const [filters, setFiltersState] = useState<ResultFilters>(() => {
+    try {
+      return { ...NO_FILTERS, ...(JSON.parse(stored(STORE_FILTERS) ?? "{}") as Partial<ResultFilters>) };
+    } catch {
+      return NO_FILTERS;
+    }
+  });
+  const setFilter = (key: keyof ResultFilters, value: string) =>
+    setFiltersState((cur) => {
+      const next = { ...cur, [key]: value };
+      store(STORE_FILTERS, JSON.stringify(next));
+      return next;
+    });
+  const clearFilters = () => {
+    setFiltersState(NO_FILTERS);
+    store(STORE_FILTERS, JSON.stringify(NO_FILTERS));
+  };
   // A second expiry for the candidates: one more chain a symbol.
   const [twoExpiries, setTwoExpiriesState] = useState(() => stored(STORE_TWO_EXPIRIES) === "1");
   const toggleTwoExpiries = () =>
@@ -881,6 +964,46 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         </label>
       </div>
 
+      <div className="opt-preference screen-filters screen-result-filters">
+        <span
+          className="order-hint"
+          title="Limits on each structure's own numbers, applied to the rows on screen at once -- also to a stored run, and to the candidates under a row. Blank means no limit; a number a row does not carry fails the limit."
+        >
+          Show only:
+        </span>
+        <label title="Loss probability at most, in percent -- the share of the implied distribution under which the structure ends in a loss (net of crossing the quotes).">
+          Loss ≤{" "}
+          <input type="number" min={0} max={100} step={1} placeholder="%" value={filters.maxLossProb} onChange={(e) => setFilter("maxLossProb", e.target.value)} />
+          <span aria-hidden> %</span>
+        </label>
+        <label title="Maximum profit per contract at least, in dollars -- for a credit structure, the credit.">
+          Profit ≥{" "}
+          <input type="number" min={0} step={5} placeholder="$" value={filters.minProfit} onChange={(e) => setFilter("minProfit", e.target.value)} />
+        </label>
+        <label title="Maximum loss per contract at most, in dollars -- the width less the credit for a credit spread.">
+          Max loss ≤{" "}
+          <input type="number" min={0} step={50} placeholder="$" value={filters.maxLoss} onChange={(e) => setFilter("maxLoss", e.target.value)} />
+        </label>
+        <label title="Loss : gain at most -- 5 keeps structures risking up to five dollars per dollar they can make.">
+          Loss : Gain ≤{" "}
+          <input type="number" min={0} step={0.5} placeholder=": 1" value={filters.maxLossGain} onChange={(e) => setFilter("maxLossGain", e.target.value)} />
+        </label>
+        <label title="Expected value per contract at least, in dollars. 0 keeps only structures worth something under the market's own odds.">
+          EV ≥{" "}
+          <input type="number" step={5} placeholder="$" value={filters.minEv} onChange={(e) => setFilter("minEv", e.target.value)} />
+        </label>
+        <label title="The nearest breakeven at least this many standard deviations from the price -- 1 is about where a 16-delta strike sits.">
+          To BE ≥{" "}
+          <input type="number" min={0} step={0.1} placeholder="σ" value={filters.minToBe} onChange={(e) => setFilter("minToBe", e.target.value)} />
+          <span aria-hidden> σ</span>
+        </label>
+        {filtersActive(filters) && (
+          <button type="button" className="timeframe-button" onClick={clearFilters}>
+            Clear
+          </button>
+        )}
+      </div>
+
       {error && <p className="order-rejection">{error}</p>}
       {!universe && symbols.length === 0 && <p className="widget-empty">Add symbols to the watchlist to screen them.</p>}
 
@@ -928,6 +1051,15 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 ? ` · earnings only in the first ${Math.round(result.criteria.early_earnings_fraction * 100)} % of the position`
                 : ""}
           </p>
+          {filtersActive(filters) && (
+            <p className="order-hint">
+              {result.rows.filter((r) => passesFilters(r.outcome, filters)).length} of {result.rows.length} rows meet the
+              filters below the screen settings ·{" "}
+              <button type="button" className="link-button" onClick={clearFilters}>
+                clear
+              </button>
+            </p>
+          )}
           <table className="opt-table screen-table">
             <thead>
               <tr>
@@ -1030,7 +1162,11 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
               </tr>
             </thead>
             <tbody>
-              {sortRows(result.rows, sort.by, sort.desc).map((row) => (
+              {sortRows(
+                result.rows.filter((r) => passesFilters(r.outcome, filters)),
+                sort.by,
+                sort.desc,
+              ).map((row) => (
                 <>
                   <tr
                     key={row.symbol}
@@ -1223,7 +1359,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                   {unfolded.has(row.symbol) && (row.candidates?.length ?? 0) > 0 && (
                     <tr key={`${row.symbol}-candidates`} className="screen-detail">
                       <td colSpan={40}>
-                        <CandidateTable row={row} strategy={result.strategy} onSelectSymbol={onSelectSymbol} />
+                        <CandidateTable row={row} strategy={result.strategy} filters={filters} onSelectSymbol={onSelectSymbol} />
                       </td>
                     </tr>
                   )}

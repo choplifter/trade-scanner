@@ -231,6 +231,18 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
           </>
         )}
 
+        <h3>Show only</h3>
+        <dl>
+          <dt>Loss ≤ · Profit ≥ · Max loss ≤ · Loss : Gain ≤ · EV ≥ · To BE ≥</dt>
+          <dd>
+            Limits on each structure's own numbers, applied at once to the rows on screen — a stored run included —
+            and to the candidates under a row. Blank means no limit; a row that does not carry the number fails the
+            limit rather than slipping through. A sensible start for premium selling: Loss ≤ 20 %, Loss : Gain ≤ 6,
+            To BE ≥ 1σ — then EV ≥ 0 to see whether anything is worth it under the market's own odds. The line above
+            the table says how many rows the limits keep.
+          </dd>
+        </dl>
+
         <h3>When nothing passes, these are the levers</h3>
         <dl>
           {winged && (
