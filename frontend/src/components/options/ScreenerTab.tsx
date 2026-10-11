@@ -586,6 +586,41 @@ export const BUILT_IN_PRESETS: ScreenPreset[] = [
     },
   },
   {
+    name: "Bot gems · 0DTE iron condor",
+    builtIn: true,
+    note:
+      "Iron condors expiring today, on the names with daily expiries -- run it on a watchlist of SPY, QQQ, IWM. Both " +
+      "shorts far out, at 5-12 delta, the nearer breakeven at least 1.0 sigma of the hours left away: the bet is a quiet " +
+      "rest of the day, and on expiry day gamma turns a short near the money in minutes. Two credits on one width at risk, " +
+      "so the bars are a little looser than the bull put's on loss : gain (up to 12) and wider on loss probability (up to " +
+      "20 %, both tails together). The call side brings little on an index -- the skew sits in the puts -- and a condor " +
+      "with no call credit at the natural is left out. Breakeven vol 2+ points over the forecast, IV/RV left open (read " +
+      "on the 30-60 day IV). Natural pricing, quotes within 10 %. Not in the screen, but part of the trade: enter after " +
+      "10:00 ET, skip FOMC and CPI days and trend days, prefer a positive dealer-gamma regime (see GEX), close a side " +
+      "that is tested rather than wait, and close before 15:30 ET (15:45 for SPY and QQQ) -- Alpaca liquidates what it " +
+      "cannot cover from then.",
+    strategy: "iron_condor",
+    side: "put",
+    dteMin: "0",
+    dteMax: "0",
+    deltaMin: "0.05",
+    deltaMax: "0.12",
+    minOi: "2000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "20",
+      maxLossGain: "12",
+      minToBe: "1.0",
+      minMargin: "2",
+      earningsOk: "1",
+    },
+  },
+  {
     name: "Bot gems · Bear call 30–45 DTE",
     builtIn: true,
     note:

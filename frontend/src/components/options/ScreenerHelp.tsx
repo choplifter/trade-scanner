@@ -296,6 +296,14 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             enter after 10:00 ET, skip FOMC and CPI days, prefer positive dealer gamma, close before Alpaca's 15:30 /
             15:45 ET liquidation.
           </dd>
+          <dt>★ 0DTE iron condor</dt>
+          <dd>
+            The same day's expiry on both sides, on a watchlist of SPY, QQQ, IWM: shorts at 5–12 delta, the nearer
+            breakeven 1.0σ+ of the hours left away. Two credits on one width at risk, so loss : gain up to 12 and loss
+            probability up to 20 % (both tails); margin 2+, IV/RV open. The calls bring little on an index — the skew
+            sits in the puts. A bet on a quiet afternoon: skip FOMC, CPI and trend days, close a tested side early, and
+            out before Alpaca's 15:30 / 15:45 ET liquidation.
+          </dd>
           <dt>★ ETF condor</dt>
           <dd>
             Iron condors on quiet index and sector ETFs — run it on a watchlist of them, since the universe picks mostly
