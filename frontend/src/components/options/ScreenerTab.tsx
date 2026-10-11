@@ -24,6 +24,7 @@ import { formatExpiry } from "../../utils/occ";
 import { ScreenerHelp } from "./ScreenerHelp";
 import { CHEAP_IV_RATIO, CONE_TITLE, ivTone, RICH_IV_RATIO, ratioTone, sideTone, toneClass } from "./eventMarks";
 import { requestOptimizer } from "./optimizerIntent";
+import { withGloss } from "./glossary";
 import { requestTicket } from "./ticketIntent";
 
 interface ScreenerTabProps {
@@ -599,14 +600,14 @@ function CandidateTable({
       <thead>
         <tr>
           <th>Expiry</th>
-          <th title="The short delta this candidate was built at">Δ</th>
+          <th title={withGloss("Δ", "The short delta this candidate was built at")}>Δ</th>
           <th>Strikes</th>
-          <th title="Credit per share at the mid / at the natural">Credit mid / nat</th>
+          <th title={withGloss("Mid nat", "Credit per share at the mid / at the natural")}>Credit mid / nat</th>
           <th>Loss prob</th>
-          <th>EV</th>
-          <th>R/R</th>
-          <th title="How far the nearest breakeven sits from the price">To BE</th>
-          <th title="Breakeven volatility less the forecast, read for the seller">BE margin</th>
+          <th title={withGloss("EV")}>EV</th>
+          <th title={withGloss("R/R")}>Loss : Gain</th>
+          <th title={withGloss("To BE σ", "How far the nearest breakeven sits from the price")}>To BE</th>
+          <th title={withGloss("BE margin", "Breakeven volatility less the forecast, read for the seller")}>BE margin</th>
           <th />
         </tr>
       </thead>
@@ -692,7 +693,7 @@ function Th({
   return (
     <th
       scope="col"
-      title={title}
+      title={withGloss(label, title)}
       aria-sort={active ? (sort.desc ? "descending" : "ascending") : undefined}
       className={sortable ? "screen-sortable" : undefined}
       onClick={sortable ? () => onSort(label) : undefined}
@@ -1235,7 +1236,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
       <ScreenerHelp open={helpOpen} onClose={() => setHelpOpen(false)} strategy={strategy} />
 
       <div className="opt-preference screen-filters">
-        <label title="Days to expiry. The screen takes the listed expiry nearest the middle of this window; past 60 days it asks for the full expiry board.">
+        <label title={withGloss("DTE", "Days to expiry. The screen takes the listed expiry nearest the middle of this window; past 60 days it asks for the full expiry board.")}>
           DTE{" "}
           <input type="number" min={0} max={400} step={1} value={dteMin} onChange={(e) => setDteMin(e.target.value)} />
           <span aria-hidden>–</span>
@@ -1253,13 +1254,13 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         >
           0DTE
         </button>
-        <label title="The band the short strike's delta must fall in. 0.10-0.20 is the conventional premium-selling range; higher takes more premium and more risk.">
+        <label title={withGloss("Δ", "The band the short strike's delta must fall in. 0.10-0.20 is the conventional premium-selling range; higher takes more premium and more risk.")}>
           Δ{" "}
           <input type="number" min={0.01} max={0.99} step={0.01} value={deltaMin} onChange={(e) => setDeltaMin(e.target.value)} />
           <span aria-hidden>–</span>
           <input type="number" min={0.01} max={0.99} step={0.01} value={deltaMax} onChange={(e) => setDeltaMax(e.target.value)} />
         </label>
-        <label title="Open interest across the screened expiry's fetched strikes -- one expiry's, an order of magnitude below a whole-chain number.">
+        <label title={withGloss("OI", "Open interest across the screened expiry's fetched strikes -- one expiry's, an order of magnitude below a whole-chain number.")}>
           OI{" "}
           <input type="number" min={0} step={500} value={minOi} onChange={(e) => setMinOi(e.target.value)} />
         </label>
@@ -1296,7 +1297,7 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
         >
           Show only:
         </span>
-        <label title="Loss probability at most, in percent -- the share of the implied distribution under which the structure ends in a loss (net of crossing the quotes).">
+        <label title={withGloss("Loss ≤", "Loss probability at most, in percent -- the share of the implied distribution under which the structure ends in a loss (net of crossing the quotes).")}>
           Loss ≤{" "}
           <input type="number" min={0} max={100} step={1} placeholder="%" value={filters.maxLossProb} onChange={(e) => setFilter("maxLossProb", e.target.value)} />
           <span aria-hidden> %</span>
@@ -1313,20 +1314,20 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
           Loss : Gain ≤{" "}
           <input type="number" min={0} step={0.5} placeholder=": 1" value={filters.maxLossGain} onChange={(e) => setFilter("maxLossGain", e.target.value)} />
         </label>
-        <label title="Expected value per contract at least, in dollars. 0 keeps only structures worth something under the market's own odds.">
+        <label title={withGloss("EV ≥", "Expected value per contract at least, in dollars. 0 keeps only structures worth something under the market's own odds.")}>
           EV ≥{" "}
           <input type="number" step={5} placeholder="$" value={filters.minEv} onChange={(e) => setFilter("minEv", e.target.value)} />
         </label>
-        <label title="The nearest breakeven at least this many standard deviations from the price -- 1 is about where a 16-delta strike sits.">
+        <label title={withGloss("To BE ≥", "The nearest breakeven at least this many standard deviations from the price -- 1 is about where a 16-delta strike sits.")}>
           To BE ≥{" "}
           <input type="number" min={0} step={0.1} placeholder="σ" value={filters.minToBe} onChange={(e) => setFilter("minToBe", e.target.value)} />
           <span aria-hidden> σ</span>
         </label>
-        <label title="Breakeven volatility at least this many points past the forecast (for a debit: below it) -- the margin for error, and where a premium seller's edge comes from.">
+        <label title={withGloss("BE margin ≥", "Breakeven volatility at least this many points past the forecast (for a debit: below it) -- the margin for error, and where a premium seller's edge comes from.")}>
           BE margin ≥{" "}
           <input type="number" step={1} placeholder="pts" value={filters.minMargin} onChange={(e) => setFilter("minMargin", e.target.value)} />
         </label>
-        <label title="Implied over realised volatility at least. 1.2 is where the screen calls the premium rich.">
+        <label title={withGloss("IV/RV ≥", "Implied over realised volatility at least. 1.2 is where the screen calls the premium rich.")}>
           IV/RV ≥{" "}
           <input type="number" min={0} step={0.05} placeholder="×" value={filters.minIvRv} onChange={(e) => setFilter("minIvRv", e.target.value)} />
         </label>

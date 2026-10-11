@@ -14,7 +14,7 @@ export function GreeksLine({ greeks }: { greeks: PositionGreeks }) {
     <span className="position-greeks">
       <span
         title={withBook(
-          "Delta in share equivalents: the position gains this many dollars per 1 $ rise of the underlying.",
+          "Δ = delta. In share equivalents: the position gains this many dollars per 1 $ rise of the underlying.",
           NATENBERG.delta,
         )}
       >
@@ -33,17 +33,17 @@ export function GreeksLine({ greeks }: { greeks: PositionGreeks }) {
         </span>
       )}
       {" · "}
-      <span title="Gamma: how much that delta changes per 1 $ move -- negative means the position turns against the move.">
+      <span title="Γ = gamma: how much that delta changes per 1 $ move -- negative means the position turns against the move.">
         Γ {signed(greeks.gamma, 2)}
       </span>
       {" · "}
-      <span title={withBook("Theta: dollars the position earns (+) or loses (−) per calendar day at a standing price.", NATENBERG.theta)}>
+      <span title={withBook("Θ = theta: dollars the position earns (+) or loses (−) per calendar day at a standing price.", NATENBERG.theta)}>
         Θ {signed(greeks.theta, 0)} $/day
       </span>
       {" · "}
       <span
         title={withBook(
-          "Vega: dollars the position gains (+) or loses (−) when implied volatility rises one point. A condor or a credit spread is short vega: a volatility spike costs it this much per point before the stock has moved at all.",
+          "V = vega: dollars the position gains (+) or loses (−) when implied volatility rises one point. A condor or a credit spread is short vega: a volatility spike costs it this much per point before the stock has moved at all.",
           NATENBERG.vega,
         )}
       >
@@ -82,7 +82,7 @@ export function VolMargin({
         ? " Less than half a year of closes: the forecast is the 20-session reading alone."
         : "";
   const title = withBook(
-    `The volatility at which the model values this package at its limit: ${pct(breakevenVol)} at the money. ` +
+    `BE vol = breakeven volatility: the volatility at which the model values this package at its limit -- ${pct(breakevenVol)} at the money (ATM = at the money). ` +
       (seller == null
         ? "No greeks, so no side to judge the forecast from."
         : seller

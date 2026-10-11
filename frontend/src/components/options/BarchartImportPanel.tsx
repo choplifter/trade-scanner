@@ -4,6 +4,7 @@ import { importBarchartScreen, listBarchartScreens } from "../../api/options";
 import type { BarchartImportResponse, BarchartScreenFile, BarchartScreenRow, LoadableStructure } from "../../types/options";
 import { formatExpiry } from "../../utils/occ";
 import { NATENBERG, withBook } from "./bookRefs";
+import { withGloss } from "./glossary";
 import { requestTicket } from "./ticketIntent";
 
 interface BarchartImportPanelProps {
@@ -88,7 +89,7 @@ export function BarchartImportPanel({ onSelectSymbol }: BarchartImportPanelProps
     });
   }, [result, sort]);
   const th = (label: SortKey, title?: string) => (
-    <th scope="col" title={title} aria-sort={sort.by === label ? (sort.desc ? "descending" : "ascending") : "none"}>
+    <th scope="col" title={withGloss(label, title)} aria-sort={sort.by === label ? (sort.desc ? "descending" : "ascending") : "none"}>
       <button type="button" className="link-button" onClick={() => onSort(label)}>
         {label}
         {sort.by === label ? (sort.desc ? " ▼" : " ▲") : ""}

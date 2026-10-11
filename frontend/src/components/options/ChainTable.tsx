@@ -8,6 +8,7 @@ import { symbolDragProps } from "../../utils/dragSymbol";
 import { updateSettings, type ChainGreek } from "../../api/settings";
 import { useSettings } from "../../hooks/useSettings";
 import { atmIv } from "../../utils/atmIv";
+import { withGloss } from "./glossary";
 
 /** The greek column cycles Δ -> Γ -> Θ -> V on a header click; the choice is
  * kept in the settings so every chain shows the same one. One column
@@ -326,7 +327,7 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
   };
   const greekHeader = (
     <th>
-      <button type="button" className="chain-greek-toggle" onClick={cycleGreek} title={greek.title} aria-label={`Greek column: ${greek.key}`}>
+      <button type="button" className="chain-greek-toggle" onClick={cycleGreek} title={withGloss(greek.label, greek.title)} aria-label={`Greek column: ${greek.key}`}>
         {greek.label}
       </button>
     </th>
@@ -377,21 +378,21 @@ export function ChainTable({ chain, selection, pickable, onPick, onMoveLeg }: Ch
             </th>
           </tr>
           <tr>
-            <th title={oiTitle}>OI</th>
-            <th title={volTitle}>Vol</th>
-            <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV{readable ? " %" : ""}</th>
+            <th title={withGloss("OI", oiTitle)}>OI</th>
+            <th title={withGloss("Vol", volTitle)}>Vol</th>
+            <th title={withGloss("IV", replay ? "Implied volatility solved from the last print" : undefined)}>IV{readable ? " %" : ""}</th>
             {greekHeader}
             <th title={quoteTitle}>Bid{replay ? "*" : ""}</th>
-            <th>{replay ? "Last" : "Mid"}</th>
+            <th title={replay ? undefined : withGloss("Mid")}>{replay ? "Last" : "Mid"}</th>
             <th title={quoteTitle}>Ask{replay ? "*" : ""}</th>
             <th className="chain-strike" />
             <th title={quoteTitle}>Bid{replay ? "*" : ""}</th>
-            <th>{replay ? "Last" : "Mid"}</th>
+            <th title={replay ? undefined : withGloss("Mid")}>{replay ? "Last" : "Mid"}</th>
             <th title={quoteTitle}>Ask{replay ? "*" : ""}</th>
             {greekHeader}
-            <th title={replay ? "Implied volatility solved from the last print" : undefined}>IV{readable ? " %" : ""}</th>
-            <th title={volTitle}>Vol</th>
-            <th title={oiTitle}>OI</th>
+            <th title={withGloss("IV", replay ? "Implied volatility solved from the last print" : undefined)}>IV{readable ? " %" : ""}</th>
+            <th title={withGloss("Vol", volTitle)}>Vol</th>
+            <th title={withGloss("OI", oiTitle)}>OI</th>
           </tr>
         </thead>
         <tbody>
