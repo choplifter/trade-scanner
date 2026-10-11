@@ -287,6 +287,15 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
             the report's jump, so part of any margin here is that jump. The riskier trade; size it as one.
             <BookRefLine refs={[NATENBERG.gaps]} />
           </dd>
+          <dt>★ 0DTE bull put</dt>
+          <dd>
+            Bull put spreads expiring today, on a watchlist of names with daily expiries (SPY, QQQ, IWM). Far out —
+            5–12 delta, the breakeven 1.1σ+ of the hours left away — because gamma peaks on expiry day; the wing
+            shrinks with the time left. Loss probability up to 12 %, loss : gain up to 15, margin 2+; IV/RV is left
+            open, since for a same-day expiry it is read on the 30–60 day IV. The note lists what the screen cannot:
+            enter after 10:00 ET, skip FOMC and CPI days, prefer positive dealer gamma, close before Alpaca's 15:30 /
+            15:45 ET liquidation.
+          </dd>
           <dt>★ ETF condor</dt>
           <dd>
             Iron condors on quiet index and sector ETFs — run it on a watchlist of them, since the universe picks mostly

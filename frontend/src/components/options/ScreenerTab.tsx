@@ -552,6 +552,40 @@ export const BUILT_IN_PRESETS: ScreenPreset[] = [
     },
   },
   {
+    name: "Bot gems · 0DTE bull put",
+    builtIn: true,
+    note:
+      "Bull put spreads expiring today, on the names with daily expiries -- run it on a watchlist of SPY, QQQ, IWM (the " +
+      "universe has few dailies). The short sits far out, at 5-12 delta, with the breakeven at least 1.1 sigma of the hours " +
+      "left away: on expiry day gamma is at its highest, and a short near the money turns in minutes. The wing shrinks " +
+      "with the time left. Loss probability up to 12 %, loss : gain up to 15 (thin credits are the nature of a far 0DTE " +
+      "short -- EV and margin say whether they pay), breakeven vol 2+ points over the forecast. IV/RV is left open: for a " +
+      "same-day expiry it is read on the 30-60 day IV, not on today's. Natural pricing, quotes within 10 %. Not in the " +
+      "screen, but part of the trade: enter after the open has settled (10:00 ET or later), skip FOMC and CPI days, prefer " +
+      "a positive dealer-gamma regime (see GEX), and close before 15:30 ET (15:45 for SPY and QQQ) -- Alpaca liquidates " +
+      "what it cannot cover from then.",
+    strategy: "credit_spread",
+    side: "put",
+    dteMin: "0",
+    dteMax: "0",
+    deltaMin: "0.05",
+    deltaMax: "0.12",
+    minOi: "2000",
+    wingPoints: "",
+    maxSpread: "10",
+    earnings: "avoid",
+    priceAt: "natural",
+    twoExpiries: false,
+    filters: {
+      ...NO_FILTERS,
+      maxLossProb: "12",
+      maxLossGain: "15",
+      minToBe: "1.1",
+      minMargin: "2",
+      earningsOk: "1",
+    },
+  },
+  {
     name: "Bot gems · Bear call 30–45 DTE",
     builtIn: true,
     note:

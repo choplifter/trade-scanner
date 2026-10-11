@@ -124,3 +124,15 @@ describe("near misses", () => {
     expect(nearMisses(rows, filters, "credit_spread")).toEqual([{ symbol: "ONE", label: "Loss : Gain" }]);
   });
 });
+
+describe("the 0DTE bull put preset", () => {
+  it("screens today's expiry far out, and leaves IV/RV open", async () => {
+    const { BUILT_IN_PRESETS } = await import("./ScreenerTab");
+    const zero = BUILT_IN_PRESETS.find((p) => p.name.includes("0DTE"))!;
+    expect(zero.strategy).toBe("credit_spread");
+    expect(zero.side).toBe("put");
+    expect([zero.dteMin, zero.dteMax]).toEqual(["0", "0"]);
+    expect(Number(zero.deltaMax)).toBeLessThanOrEqual(0.12);
+    expect(zero.filters.minIvRv).toBe("");
+  });
+});
