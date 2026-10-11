@@ -221,8 +221,6 @@ const SORTS: Record<string, (r: ScreenRow) => number | string | null> = {
   "Short put": (r) => r.short_put?.delta ?? null,
   "Short call": (r) => r.short_call?.delta ?? null,
   "Loss : Gain": (r) => r.outcome?.risk_reward ?? null,
-  Credit: (r) => creditPerContract(r, undefined),
-  Debit: (r) => creditPerContract(r, undefined, true),
   // Reports inside the expiry first, the soonest at the top.
   Earnings: (r) => (r.earnings_date && earningsInside(r).inside ? Date.parse(r.earnings_date) : null),
   "Loss prob": (r) => r.outcome?.loss_probability ?? null,
@@ -270,23 +268,6 @@ function sideColumns(result: ScreenResponse): { kind: OptionKind; label: string 
         ? "Short put"
         : "Short call";
   return [{ kind, label }];
-}
-
-/** The structure's credit (or debit) per contract, at whatever the run was
- * priced at -- the absolute figure Barchart shows. Older stored runs carry
- * no credit on the outcome: read off the legs instead. */
-function creditPerContract(row: ScreenRow, priceAt: "mid" | "natural" | undefined, debit = false): number | null {
-  const o = row.outcome;
-  if (!o) return null;
-  if (o.credit != null) {
-    const perShare = priceAt === "natural" && o.credit_natural != null ? o.credit_natural : o.credit;
-    return Math.abs(perShare) * 100;
-  }
-  // A run stored before the outcome carried its credit: a written
-  // structure keeps exactly its credit at best, a bought one loses exactly
-  // its debit at worst.
-  const extreme = debit ? o.max_loss : o.max_profit;
-  return extreme == null ? null : Math.abs(extreme);
 }
 
 /** Whether the next report falls before the expiry, and how far into the
@@ -1001,12 +982,6 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 {result.rows.some((r) => r.outcome) && (
                   <>
                     <Th
-                      label={result.strategy === "debit_spread" ? "Debit" : "Credit"}
-                      title={`What the structure ${result.strategy === "debit_spread" ? "costs" : "brings in"} per contract, at the ${result.price_at === "natural" ? "natural (every leg at its bid or ask)" : "mid"} -- the absolute figure Barchart shows.`}
-                      sort={sort}
-                      onSort={onSort}
-                    />
-                    <Th
                       label="Loss : Gain"
                       title="The most it can lose against the most it can make, per contract. 7 : 1 means seven dollars at risk for every one it pays -- a ratio a high chance of profit has to make up for, which is what the EV says whether it does."
                       sort={sort}
@@ -1167,12 +1142,6 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                     ))}
                     {result.rows.some((r) => r.outcome) && (
                       <>
-                        <td>
-                          {(() => {
-                            const c = creditPerContract(row, result.price_at, result.strategy === "debit_spread");
-                            return c == null ? "—" : formatMoney(c);
-                          })()}
-                        </td>
                         <td>{row.outcome?.risk_reward == null ? "—" : `${row.outcome.risk_reward.toFixed(1)} : 1`}</td>
                         <td>
                           {row.outcome

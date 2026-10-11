@@ -58,7 +58,7 @@ export function ScreenerHelp({ open, onClose, strategy }: ScreenerHelpProps) {
         <p className="options-help-intro">
           The table shows the essentials by default: whether it can be filled (worst leg), whether the premium is
           rich (IV/RV, IV rank), whether a report falls before the expiry (Earnings, red with a ⚠ when it does), the
-          structure with its credit per contract, its maximum profit and loss and its loss : gain (the most it can lose against the most it can
+          structure with its maximum profit (for a credit structure: the credit) and loss per contract and its loss : gain (the most it can lose against the most it can
           make — 7 : 1 is seven dollars at risk per dollar of credit), its loss probability and expected value, the
           breakeven-vol margin and the room to the breakeven. <strong>All columns</strong> adds IV and realised vol, the cone, open interest
           and volume and the account risk; every row's criteria (click the row) carry the same
