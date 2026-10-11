@@ -1345,6 +1345,11 @@ def value_structure(
             credit += pair["credit"]
             cross += pair.get("cross", 0.0)
         if req.strategy == "debit_spread":
+            # Bought, not written: the leg at the delta band is the long one
+            # and the wing beyond it is sold. Flipping the price alone valued
+            # a credit spread someone had paid for -- the payoff upside down.
+            for leg in legs:
+                leg["side"] = "buy" if leg["side"] == "sell" else "sell"
             credit = -abs(credit)
     else:
         # A long option or a calendar: the screen judged the chain, not a

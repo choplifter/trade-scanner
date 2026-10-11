@@ -1419,3 +1419,20 @@ def test_a_second_expiry_costs_one_more_chain_and_adds_its_own_candidates():
     expiries = {c["expiry"] for c in body["rows"][0]["candidates"]}
     assert second.isoformat() in expiries
     assert sum(1 for f in service.fetched if f.startswith("A:")) == 2
+
+
+def test_a_debit_spread_is_valued_as_bought_its_long_leg_at_the_delta_band():
+    body = _run(
+        _Service({"A": _chain(iv=0.20)}),
+        ScreenRequest(symbols=["A"], strategy="debit_spread"),
+        closes={"A": _closes(0.02)},
+    )
+    row = body["rows"][0]
+    out, pair = row["outcome"], row["put_spread"]
+    assert body["structure"] == "bear put"
+    # A bear put: bought at the delta strike, sold further down. It loses at
+    # most what it cost and makes at most the width less that.
+    debit = abs(out["credit"])
+    assert out["max_loss"] == pytest.approx(-debit * 100, abs=1.0)
+    assert out["max_profit"] == pytest.approx((pair["width"] - debit) * 100, abs=1.0)
+    assert out["breakevens"] == [pytest.approx(pair["short_strike"] - debit, abs=0.01)]

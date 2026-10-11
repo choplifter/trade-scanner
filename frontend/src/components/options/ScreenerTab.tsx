@@ -48,8 +48,8 @@ const STRATEGIES: { key: ScreenStrategy; label: string; title: string }[] = [
   },
   {
     key: "credit_spread",
-    label: "Bull put spread",
-    title: "A put credit spread: the short put at the delta band, a put further out bought as the wing -- with enough credit against the width it risks. The chain qualities as for the cash-secured put.",
+    label: "Credit spread",
+    title: "A vertical written for a credit -- a bull put on the puts or a bear call on the calls, chosen beside it: the short at the delta band, a further strike bought as the wing, with enough credit against the width it risks. The chain qualities as for the cash-secured put.",
   },
   {
     key: "iron_condor",
@@ -59,18 +59,11 @@ const STRATEGIES: { key: ScreenStrategy; label: string; title: string }[] = [
   {
     key: "debit_spread",
     label: "Debit spread",
-    title: "Wants implied volatility cheap against realised, and a wing to sell against the long leg.",
+    title: "A vertical bought for a debit -- a bear put or a bull call, chosen beside it: the long leg at the delta band, a further strike sold against it. Wants implied volatility cheap against realised.",
   },
-  {
-    key: "long_option",
-    label: "Long option",
-    title: "Cheap implied volatility and quotes tight enough that the debit is not the spread.",
-  },
-  {
-    key: "calendar",
-    label: "Calendar",
-    title: "Wants the front expiry's implied volatility above the back one's -- the only screen that costs a second chain fetch per symbol.",
-  },
+  // Long option and calendar are screened by the backend but judge only the
+  // chain -- no structure, no expectation, nothing to load -- so they stay
+  // off the bar until they name a structure like the rest.
 ];
 
 /**
@@ -78,10 +71,10 @@ const STRATEGIES: { key: ScreenStrategy; label: string; title: string }[] = [
  * ticket -- the screener found the expiry and the strikes, so sending the
  * reader back to the chain to re-pick them by hand would be busywork.
  *
- * Null where the row does not name a shape: a long option or a debit
- * spread has no short strike to build from (the screen judged the chain,
- * not a direction), and a calendar's second leg is in another expiry the
- * row carries only as a date. Those rows offer the chain instead.
+ * Null where the row does not name a shape: a long option has no strike
+ * to build from (the screen judged the chain, not a direction), and a
+ * calendar's second leg is in another expiry the row carries only as a
+ * date. Neither is offered on the bar any more (see STRATEGIES).
  */
 export function structureOf(row: ScreenRow, strategy: ScreenStrategy): LoadableStructure | null {
   if (!row.expiry) return null;
@@ -102,6 +95,16 @@ export function structureOf(row: ScreenRow, strategy: ScreenStrategy): LoadableS
     return {
       strategy: shape,
       ticket: { ...base, strategy: shape, long_strike: pair.long_strike, short_strike: pair.short_strike },
+    };
+  }
+  if (strategy === "debit_spread" && (row.put_spread || row.call_spread)) {
+    // Bought: the leg at the delta band is the long one, the wing beyond it
+    // is sold -- a bear put on the puts, a bull call on the calls.
+    const pair = row.put_spread ?? row.call_spread!;
+    const shape = (row.put_spread ? "bear_put" : "bull_call") as Strategy;
+    return {
+      strategy: shape,
+      ticket: { ...base, strategy: shape, long_strike: pair.short_strike, short_strike: pair.long_strike },
     };
   }
   if (strategy === "iron_condor" && row.put_spread && row.call_spread) {
