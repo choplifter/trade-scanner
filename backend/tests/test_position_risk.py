@@ -327,3 +327,11 @@ def test_a_stock_through_the_short_strike_is_tested_whatever_the_delta():
     legs = [RiskLeg("put", 95.0, EXPIRY, -1, None), RiskLeg("put", 90.0, EXPIRY, 1, None)]
     state = adjustment_state("bull_put", legs, 94.0, NOW)
     assert state["tested"] == "put" and state["sides"]["put"]["delta"] is None
+
+
+def test_a_breakeven_far_from_todays_level_is_not_reported():
+    legs = _condor(0.20)
+    # A credit the model only reaches near three times today's volatility.
+    price = _value(legs, 0.60)
+    assert breakeven_vol(legs, SPOT, NOW, price, 0.20) is None
+    assert abs(breakeven_vol(legs, SPOT, NOW, _value(legs, 0.30), 0.20) - 0.30) < 1e-3, "1.5x is still in band"

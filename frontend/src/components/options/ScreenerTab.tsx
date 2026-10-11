@@ -426,6 +426,24 @@ const FILTER_LABELS: Record<keyof ResultFilters, string> = {
   earningsOk: "Earnings",
 };
 
+/** Rows that fail exactly one active limit, and which: what to loosen when
+ * nothing passes. */
+export function nearMisses(
+  rows: ScreenRow[],
+  filters: ResultFilters,
+  strategy: ScreenStrategy,
+): { symbol: string; label: string }[] {
+  const active = (Object.keys(filters) as (keyof ResultFilters)[]).filter((k) => (filters[k] ?? "").trim() !== "");
+  const out: { symbol: string; label: string }[] = [];
+  for (const row of rows) {
+    const ctx = contextOf(row, strategy);
+    if (passesFilters(row.outcome, filters, ctx)) continue;
+    const failed = active.filter((k) => !passesFilters(row.outcome, { ...NO_FILTERS, [k]: filters[k] }, ctx));
+    if (failed.length === 1) out.push({ symbol: row.symbol, label: FILTER_LABELS[failed[0]] });
+  }
+  return out;
+}
+
 /** How many of `rows` each active limit removes on its own -- what turns
  * "no rows" into "the earnings rule and BE margin took them". */
 function filterFunnel(rows: ScreenRow[], filters: ResultFilters, strategy: ScreenStrategy): { label: string; removed: number }[] {
@@ -1647,6 +1665,28 @@ export function ScreenerTab({ onSelectSymbol }: ScreenerTabProps) {
                 ? ` · earnings only in the first ${Math.round(result.criteria.early_earnings_fraction * 100)} % of the position`
                 : ""}
           </p>
+          {filtersActive(filters) &&
+            result.rows.length > 0 &&
+            !result.rows.some((r) => passesFilters(r.outcome, filters, contextOf(r, result.strategy))) &&
+            (() => {
+              const misses = nearMisses(result.rows, filters, result.strategy);
+              return (
+                <div className="screen-guide">
+                  <strong>No row meets every filter.</strong>{" "}
+                  {misses.length > 0 ? (
+                    <>
+                      Missing by one: {misses.map((m) => `${m.symbol} (${m.label})`).join(", ")}. Loosen that filter, or
+                      clear them all.
+                    </>
+                  ) : (
+                    <>Every row misses by two or more -- the line below says which filter removes most.</>
+                  )}{" "}
+                  <button type="button" className="link-button" onClick={clearFilters}>
+                    Clear filters
+                  </button>
+                </div>
+              );
+            })()}
           {filtersActive(filters) && (
             <p className="order-hint">
               {result.rows.filter((r) => passesFilters(r.outcome, filters, contextOf(r, result.strategy))).length} of{" "}

@@ -109,3 +109,18 @@ describe("presets for every visible strategy", () => {
     expect(new Set(BUILT_IN_PRESETS.map((p) => p.name)).size).toBe(BUILT_IN_PRESETS.length);
   });
 });
+
+describe("near misses", () => {
+  it("names the rows that fail exactly one filter, and the filter", async () => {
+    const { nearMisses } = await import("./ScreenerTab");
+    const row = (symbol: string, o: Partial<ScreenOutcome>) =>
+      ({ symbol, outcome: { ...pltr, ...o }, criteria: [], forecast_vol: 0.436, realised_vol: 0.4, iv_rv_ratio: 1.3 }) as never;
+    const filters = { ...none, maxLossProb: "20", maxLossGain: "5" };
+    const rows = [
+      row("ONE", { loss_probability: 0.18, risk_reward: 5.5 }), // fails loss : gain only
+      row("TWO", { loss_probability: 0.3, risk_reward: 7 }), // fails both
+      row("OK", { loss_probability: 0.1, risk_reward: 3 }),
+    ];
+    expect(nearMisses(rows, filters, "credit_spread")).toEqual([{ symbol: "ONE", label: "Loss : Gain" }]);
+  });
+});

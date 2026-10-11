@@ -200,7 +200,12 @@ def breakeven_vol(legs: list[RiskLeg], spot: float, now: datetime, price: float,
     def f(k: float) -> float:
         return _package_value(legs, spot, now, k) - price
 
-    grid = [0.05 * i for i in range(1, 81)]  # 0.05x .. 4x today's level
+    # Half to twice today's level. A condor's value is not monotonic in its
+    # volatility (the wings take over far out), so a wide search finds a
+    # second root that means nothing: IVV's condor on 2026-10-11 came back
+    # at 40 % against a 14 % IV. A price no level in this band reaches has
+    # no breakeven volatility worth showing.
+    grid = [0.5 + 0.025 * i for i in range(0, 61)]
     values = [f(k) for k in grid]
     roots: list[float] = []
     for (a, fa), (b, fb) in zip(zip(grid, values), zip(grid[1:], values[1:])):

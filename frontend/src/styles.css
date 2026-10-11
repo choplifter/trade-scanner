@@ -6888,3 +6888,9 @@ td.chain-side.chain-stale {
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
+
+/* In the guided panel the run button sits at the start of its step, not
+   pushed to the far edge as it was in the old single toolbar. */
+.screen-step .opt-run {
+  margin-left: 0;
+}
