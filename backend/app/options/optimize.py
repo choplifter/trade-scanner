@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.ai.options_context import _chain_block, pick_expiries
 from app.options.chain import ExpiryInfo
+from app.options.custom import chance_of_touch, nearest_breakeven
 from app.options.distribution import Distribution
 from app.options.models import STRATEGY_LABELS, Strategy
 from app.options.optimizer import (
@@ -498,6 +499,12 @@ async def optimize_structures(
                 )
                 continue
             points, risk, chance, payoff_legs, net_signed = repriced
+            touch_at = nearest_breakeven(spread.breakevens, spread.spot)
+            touch = (
+                chance_of_touch(spread.spot, touch_at, sigma, years)
+                if touch_at is not None and sigma is not None and years is not None and years > 0
+                else None
+            )
             pnl_min = min(points)
             # What the market charges to take this package, against its
             # own price. A card whose numbers only exist at a mid nobody
@@ -592,6 +599,12 @@ async def optimize_structures(
                     "pnl_at_target_after_cross": round(sum(points) / len(points) - cross_total, 2),
                     "return_on_risk_after_cross": round((pnl_min - cross_total) / risk, 4),
                     "chance": chance,
+                    # The chance the market trades at the nearest breakeven
+                    # at any point before the horizon -- what a stop is
+                    # managed against, roughly twice the odds of ending
+                    # beyond it. Same reflection formula as the ticket's.
+                    "touch": touch,
+                    "touch_at": touch_at,
                     # Price x volatility at the horizon -- see
                     # optimizer.scenario_matrix. The middle IV row is the
                     # card's own number; the rows around it are what the

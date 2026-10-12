@@ -237,6 +237,14 @@ export function ResultCard({
         >
           <strong>{r.chance == null ? "—" : `${(r.chance * 100).toFixed(0)}%`}</strong> Chance
         </span>
+        {r.touch != null && r.touch_at != null && (
+          <span
+            className="opt-stat plain"
+            title={`The chance the underlying trades at ${r.touch_at.toFixed(2)} -- the nearest breakeven -- at any point before the horizon. Roughly twice the odds of finishing beyond it, and the number a stop is managed against.`}
+          >
+            <strong>{(r.touch * 100).toFixed(0)}%</strong> Touch {r.touch_at.toFixed(2)}
+          </span>
+        )}
         <span
           className="opt-stat plain"
           title="P/L if the underlying is at the target on the horizon date, each leg's IV unchanged (with a range: its worst point), less the cost of crossing the market once."

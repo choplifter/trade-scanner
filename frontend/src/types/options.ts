@@ -756,6 +756,10 @@ export interface OptimizerResult {
    * distribution, not a forecast. The bar it has to clear is the cost of
    * crossing the market, not zero. Null when no IV was available. */
   chance: number | null;
+  /** Chance the underlying trades at `touch_at` (the nearest breakeven)
+   * at any point before the horizon. Null without an IV or a breakeven. */
+  touch?: number | null;
+  touch_at?: number | null;
   /** P/L at the horizon across price and implied volatility -- the card's
    * own number is the middle IV row. Null when there is no implied move or
    * a leg has no IV. */

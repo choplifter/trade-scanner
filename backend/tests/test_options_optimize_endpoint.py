@@ -350,6 +350,16 @@ def test_results_carry_chance_implied_move_and_honour_the_slider():
     assert by_return["target"]["points"][0] == 104.0
 
 
+def test_results_carry_the_chance_of_touching_the_nearest_breakeven():
+    body = _run(_Service(), _req(target_high=106.0))
+    for r in body["results"]:
+        if not r["breakevens"]:
+            continue
+        spot = r["spread"]["spot"]
+        assert r["touch_at"] == min(r["breakevens"], key=lambda b: abs(b - spot))
+        assert 0 < r["touch"] <= 1
+
+
 def test_an_outlook_sets_the_families_when_none_are_given():
     body = _run(_Service(), _req(target_low=95.0, outlook="bearish", budget=2000.0))
     assert body["outlook"] == "bearish"
