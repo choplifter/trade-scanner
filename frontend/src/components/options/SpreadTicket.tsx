@@ -85,6 +85,9 @@ const PREVIEW_DEBOUNCE_MS = 300;
 const RISK_OPEN_KEY = "options:riskChartOpen";
 
 interface SpreadTicketProps {
+  /** A size handed over with a loaded structure (the Optimizer's sizing);
+   * a new seq sets the quantity once, the user's edits stand after that. */
+  qtyPreset?: { qty: number; seq: number } | null;
   symbol: string;
   expiry: string;
   chain: ChainResponse | null;
@@ -425,8 +428,12 @@ export function SpreadTicket({
   onAddLeg,
   onUpdateLeg,
   onRemoveLeg,
+  qtyPreset = null,
 }: SpreadTicketProps) {
   const [qty, setQty] = useState("1");
+  useEffect(() => {
+    if (qtyPreset) setQty(String(qtyPreset.qty));
+  }, [qtyPreset]);
   const [limit, setLimit] = useState("");
   const [limitEdited, setLimitEdited] = useState(false);
   const [orderType, setOrderType] = useState<OptionOrderType>("limit");

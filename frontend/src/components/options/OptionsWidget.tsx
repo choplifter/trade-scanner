@@ -323,6 +323,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
   // so the legs can only be planted once the chain for that expiry is
   // actually in. Setting them any earlier means watching the auto-pick
   // overwrite them a render later.
+  const [qtyPreset, setQtyPreset] = useState<{ qty: number; seq: number } | null>(null);
   const pendingIdeaRef = useRef<{ legs: Legs; expiry: string; longExpiry?: string } | null>(null);
   // One loader for anything that arrives as {strategy, ticket}: the Idea
   // tab's suggestions and the Optimizer's results.
@@ -340,6 +341,12 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
     }
 
     pendingIdeaRef.current = { ...resolved, expiry: idea.ticket.expiry };
+    // The size comes along: the Optimizer sizes a structure to the risk
+    // budget, and its P/L is for that many -- a ticket left at 1 shows a
+    // different profit for the same structure.
+    if (Number.isInteger(idea.ticket.qty) && idea.ticket.qty > 0) {
+      setQtyPreset((prev) => ({ qty: idea.ticket.qty, seq: (prev?.seq ?? 0) + 1 }));
+    }
     // A calendar or diagonal is traded in one kind; the ticket's legs say
     // which, and the widget's own toggle has to agree or the pick context
     // describes a different spread.
@@ -894,6 +901,7 @@ export function OptionsWidget({ symbol, mode, onSelectSymbol, focusContract }: O
                   mode={mode}
                   onSubmitted={spreads.afterAction}
                   onSelectSymbol={onSelectSymbol}
+                  qtyPreset={qtyPreset}
                   ctx={ctx}
                   expiries={expiries}
                   onTimeKind={setTimeKind}
