@@ -232,11 +232,24 @@ def _expiry_infos(raw: list) -> list[ExpiryInfo]:
     ]
 
 
-def choose_expiries(infos: list[ExpiryInfo], horizon: date, today: date) -> list[date]:
+def _alive(e: ExpiryInfo, now: datetime | None) -> bool:
+    """Listed and not yet settled: a day or more left, or -- given `now` --
+    today's own expiry before the 16:00 ET close. Expiring contracts carry
+    no IV from Alpaca, but the chain solves one from the mids, minute by
+    minute (chain.with_solved_iv), so a same-day horizon prices like any
+    other."""
+    if e.contract_count <= 0:
+        return False
+    if e.dte >= 1:
+        return True
+    return now is not None and e.dte == 0 and years_between(now, e.expiry) > 0
+
+
+def choose_expiries(infos: list[ExpiryInfo], horizon: date, today: date, now: datetime | None = None) -> list[date]:
     """The horizon's own expiry when it is listed, plus the listed expiries
     nearest the offsets after it -- never one before the horizon, since a
     leg that has expired by then has nothing to be worth."""
-    usable = [e for e in infos if e.expiry >= horizon and e.dte >= 1 and e.contract_count > 0]
+    usable = [e for e in infos if e.expiry >= horizon and _alive(e, now)]
     if not usable:
         return []
     h_dte = (horizon - today).days
@@ -340,10 +353,12 @@ async def optimize_structures(
     # they can click has to be one this can price.
     infos = _expiry_infos((await service.expiries(underlying, board=True)).get("expiries", []))
     horizon = req.horizon
-    if horizon <= today:
+    # Today's expiry is a horizon until the 16:00 ET close (0DTE); after it,
+    # or any earlier day, there is nothing left to price.
+    if horizon < today or years_between(now, horizon) <= 0:
         raise OrderRejected(
-            "The horizon must be after today: a contract expiring today has no greeks or implied volatility "
-            "to price a horizon on.",
+            "The horizon has already settled: today's expiry can be priced until the 16:00 ET close, "
+            "an earlier one not at all.",
             field="horizon",
         )
     if req.horizon_expiry is not None and req.horizon_expiry not in {e.expiry for e in infos}:
@@ -354,9 +369,9 @@ async def optimize_structures(
     earnings_block, infos = await _apply_earnings(earnings_calendar, underlying, horizon, infos, req.avoid_earnings, warnings)
     if req.horizon_only:
         # Only the horizon's own expiry: every leg expires there.
-        expiries = [e.expiry for e in infos if e.expiry == horizon and e.dte >= 1 and e.contract_count > 0]
+        expiries = [e.expiry for e in infos if e.expiry == horizon and _alive(e, now)]
     else:
-        expiries = choose_expiries(infos, horizon, today)
+        expiries = choose_expiries(infos, horizon, today, now)
     if not expiries:
         raise OrderRejected(f"No listed expiry on or after {horizon.isoformat()} for {underlying}", field="horizon")
 

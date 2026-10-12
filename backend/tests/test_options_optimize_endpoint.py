@@ -157,6 +157,17 @@ def test_choose_expiries_keeps_the_horizon_first_and_nothing_before_it():
     assert choose_expiries(infos, FAR + timedelta(days=30), TODAY) == []
 
 
+
+def test_todays_expiry_is_a_horizon_until_the_close():
+    # 0DTE: Alpaca sends no IV on expiry day, but the chain solves one from
+    # the mids, so today's expiry is priced like any other until 16:00 ET.
+    infos = [ExpiryInfo(expiry=e, dte=(e - TODAY).days, contract_count=40) for e in (TODAY, EARLY, NEAR)]
+    assert choose_expiries(infos, TODAY, TODAY, NOW)[0] == TODAY
+    after_close = datetime.combine(TODAY, time(16, 30), tzinfo=ET)
+    assert TODAY not in choose_expiries(infos, TODAY, TODAY, after_close)
+    # Without a clock only whole days count, as before.
+    assert TODAY not in choose_expiries(infos, TODAY, TODAY)
+
 # --- the run -------------------------------------------------------------------------
 
 
@@ -189,14 +200,29 @@ def test_results_are_ranked_priced_by_the_service_and_previewed_once_each():
     assert body["disclaimer"] and body["warnings"] == []
 
 
-def test_a_horizon_today_or_unlisted_or_beyond_the_board_is_refused():
+def test_a_settled_or_unlisted_or_beyond_the_board_horizon_is_refused():
     service = _Service()
-    with pytest.raises(OrderRejected):
-        _run(service, _req(horizon_expiry=None, horizon_date=TODAY))
+    after_close = datetime.combine(TODAY, time(16, 30), tzinfo=ET)
+    with pytest.raises(OrderRejected, match="settled"):
+        asyncio.run(
+            optimize_structures(service, "X", _req(horizon_expiry=None, horizon_date=TODAY), today=TODAY, now=after_close)
+        )
+    with pytest.raises(OrderRejected, match="settled"):
+        _run(service, _req(horizon_expiry=None, horizon_date=TODAY - timedelta(days=1)))
     with pytest.raises(OrderRejected):
         _run(service, _req(horizon_expiry=TODAY + timedelta(days=14)))
     with pytest.raises(OrderRejected):
         _run(service, _req(horizon_expiry=None, horizon_date=date(2027, 1, 15)))
+
+
+def test_a_same_day_horizon_runs_before_the_close_and_is_refused_after_it():
+    service = _Service(expiries=(TODAY, NEAR, MID, FAR))
+    body = _run(service, _req(horizon_expiry=TODAY, horizon_only=True))
+    assert TODAY in service.chain_calls
+    assert body["results"] and all(r["ticket"]["expiry"] == TODAY.isoformat() for r in body["results"])
+    after_close = datetime.combine(TODAY, time(16, 30), tzinfo=ET)
+    with pytest.raises(OrderRejected, match="settled"):
+        asyncio.run(optimize_structures(service, "X", _req(horizon_expiry=TODAY), today=TODAY, now=after_close))
 
 
 def test_no_price_refuses_rather_than_answering_emptily():

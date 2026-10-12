@@ -209,6 +209,28 @@ function labelFor(s: Strategy): string {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+/** An expiry the optimizer can still price: a day or more left, or
+ * today's before the 16:00 ET close -- the chain solves the IV Alpaca
+ * stops sending on expiry day from the mids (backend chain.with_solved_iv),
+ * so 0DTE prices like any other horizon until the bell. */
+function pricable(e: ExpiryInfo): boolean {
+  if (e.dte >= 1) return true;
+  return e.dte === 0 && hoursToCloseEt() > 0;
+}
+
+/** Hours from now to today's 16:00 ET close; 0 once it is past. */
+function hoursToCloseEt(): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    minute: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "24");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return Math.max(0, 16 - hour - minute / 60);
+}
+
 /** Expiries as OptionStrat lays them out: a month band with its days. An
  * expiry that is the first to be held through the earnings report or a
  * macro release carries a dot; with "hold through earnings" off, the ones
@@ -226,7 +248,7 @@ function ExpiryChips({
   allowThroughEarnings: boolean;
   onChange: (e: string) => void;
 }) {
-  const usable = expiries.filter((e) => e.dte >= 1);
+  const usable = expiries.filter((e) => pricable(e));
   const marks = eventMarks(usable, events);
   const groups: { month: string; items: ExpiryInfo[] }[] = [];
   for (const e of usable) {
@@ -401,16 +423,15 @@ export function OptimizerTab({
 
   // A horizon that is not one of this symbol's listed expiries (a stale one
   // from before the switch, an expiry that has since dropped off) falls back
-  // to the first with a day left.
+  // to the first still pricable.
   useEffect(() => {
     if (expiries.length === 0 || horizonExpiry === "") return;
     if (expiries.some((e) => e.expiry === horizonExpiry)) return;
-    setHorizonExpiry(expiries.find((e) => e.dte >= 1)?.expiry ?? "");
+    setHorizonExpiry(expiries.find((e) => pricable(e))?.expiry ?? "");
   }, [expiries, horizonExpiry]);
 
   // A fresh symbol: the target starts at its spot, the horizon at the first
-  // expiry with a day left (a contract expiring today has no IV to price a
-  // horizon on).
+  // expiry with a day left -- today's (0DTE) is there to pick, not to start on.
   useEffect(() => {
     if (remembered) return;
     if (spot != null && target === "") setTarget(spot.toFixed(2));
@@ -426,14 +447,16 @@ export function OptimizerTab({
   useEffect(() => {
     if (holdThroughEarnings || !earnings?.report_date || !horizonExpiry) return;
     if (!heldThroughEarnings(horizonExpiry, earnings)) return;
-    const before = expiries.filter((e) => e.dte >= 1 && !heldThroughEarnings(e.expiry, earnings));
+    const before = expiries.filter((e) => pricable(e) && !heldThroughEarnings(e.expiry, earnings));
     if (before.length) setHorizonExpiry(before[before.length - 1].expiry);
   }, [holdThroughEarnings, earnings, horizonExpiry, expiries]);
 
   // The one-sigma implied move to the chosen horizon, from the chain on
   // screen: spot x ATM IV x sqrt(T). What the outlook buttons work in.
   const chainIv = useMemo(() => atmIv(chain), [chain]);
-  const horizonDte = expiries.find((e) => e.expiry === horizonExpiry)?.dte ?? null;
+  // Today's expiry counts in hours left to the close, as a fraction of a day.
+  const listedDte = expiries.find((e) => e.expiry === horizonExpiry)?.dte ?? null;
+  const horizonDte = listedDte === 0 ? hoursToCloseEt() / 24 : listedDte;
   const impliedMove = useMemo(() => impliedMoveOf(spot, chainIv, horizonDte), [spot, chainIv, horizonDte]);
 
   // Earnings inside the horizon: the horizon expiry's chain and the last
@@ -442,7 +465,7 @@ export function OptimizerTab({
   const horizonThroughEarnings = heldThroughEarnings(horizonExpiry, earnings);
   const preExpiry = useMemo(() => {
     if (!earnings?.report_date) return null;
-    const before = expiries.filter((e) => e.dte >= 1 && e.expiry < earnings.report_date!);
+    const before = expiries.filter((e) => pricable(e) && e.expiry < earnings.report_date!);
     return before.length ? before[before.length - 1].expiry : null;
   }, [expiries, earnings]);
   const preDte = expiries.find((e) => e.expiry === preExpiry)?.dte ?? null;
@@ -586,6 +609,14 @@ export function OptimizerTab({
     if (!intent || intent.seq === handledRef.current) return;
     if (!symbol || intent.symbol !== symbol || !chain || chain.underlying !== symbol || spot == null) return;
     if (horizonExpiry === "" || !expiries.some((e) => e.expiry === horizonExpiry)) return;
+    // The caller's own horizon first, so the outlook's target is read off
+    // that horizon's implied move (a 0DTE row's is hours, not days): the
+    // effect runs again once it is set.
+    const wanted = intent.request?.horizon_expiry;
+    if (wanted && wanted !== horizonExpiry && expiries.some((e) => e.expiry === wanted && pricable(e))) {
+      setHorizonExpiry(wanted);
+      return;
+    }
     handledRef.current = intent.seq;
     const p = viewParams(intent.outlook);
     const over = intent.request ?? {};

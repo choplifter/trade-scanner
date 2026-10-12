@@ -1242,8 +1242,13 @@ def test_each_side_is_valued_under_its_own_corner_of_the_smile():
     from app.options.screener import _side_outcome
 
     chain = _skewed_chain()
-    put = _side_outcome({"short_strike": 258.0, "long_strike": 250.0, "credit": 0.795}, "put", chain, EXPIRY)
-    call = _side_outcome({"short_strike": 303.0, "long_strike": 312.0, "credit": 0.74}, "call", chain, EXPIRY)
+    # The time left is read off the real clock (_years_left), so the expiry
+    # is too: the readings were 49 days before IWM's 20 November expiry. A
+    # fixed date shrank the time under the same credits until the put side
+    # came out positive (2026-10-12).
+    expiry = date.today() + timedelta(days=49)
+    put = _side_outcome({"short_strike": 258.0, "long_strike": 250.0, "credit": 0.795}, "put", chain, expiry)
+    call = _side_outcome({"short_strike": 303.0, "long_strike": 312.0, "credit": 0.74}, "call", chain, expiry)
     assert put is not None and call is not None
     assert put["expected_value"] < 0, "the put wing costs more volatility than the short earns"
     assert call["expected_value"] > put["expected_value"], "the call side is the one carrying this structure"
